@@ -1,5 +1,5 @@
 [project]
-name = "rag-assistant"
+name = "rag-zk"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -23,7 +23,7 @@ dependencies = [
   "safetensors>=0.4.5",
   "datasets<3",
   "huggingface-hub>=0.26.2",
-  "spacy>=3.7.5",
+  "spacy>=3.7.5,<3.8",
   "nltk>=3.9.1",
   "mlflow==2.18",
   "openpyxl>=3.1.5",
@@ -38,6 +38,8 @@ dependencies = [
   "llama-index-node-parser-docling>=0.3.0",
   "docling>2",
   "sqlmodel>=0.0.22",
+  "pydantic-settings>=2.6.1",
+  "pytest>=8.3.4",
 ]
 
 [dependency-groups]
@@ -56,11 +58,14 @@ name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
+[tool.uv.pip]
+prerelease = "if-necessary-or-explicit"
+
 [tool.uv.sources]
-rag-assistant = { path = "../rag_assistant", editable = true }
+rag-assistant = { path = "../rag_zk", editable = true }
 
 [tool.uv.workspace]
-members = ["rag-assistant"]
+members = ["rag-zk"]
 
 
 # --- ruff -------------------------------------------------------------------
