@@ -1,5 +1,6 @@
 # Editors
 .ipynb_checkpoints/
+.profile
 .ruff_cache/
 .vscode/
 *.profraw
@@ -23,6 +24,7 @@ Thumbs.db
 # Python and Node dependencies
 venv/
 .venv/
+.local/
 node_modules/
 
 # Extras
@@ -79,8 +81,8 @@ data/
 .task/
 .temp*
 TODO.md
-
-
+chromium-profile
+chrome-profile
 
 
 # retain files
