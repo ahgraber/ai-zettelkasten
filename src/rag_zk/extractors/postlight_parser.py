@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class PostlightSettings(BaseSettings):
     """Configuration for @postlight/parser."""
 
-    timeout: int = Field(default=45, ge=15, lt=600)
+    timeout: int = Field(default=45, ge=15, lt=3600)
     model_config = SettingsConfigDict(extra="ignore")
 
 
