@@ -144,7 +144,7 @@ class ChromeSettings(BaseSettings):
     CHROME_EXTRA_ARGS: List[str] = Field(default=[])
 
     # Chrome Options Tuning
-    CHROME_TIMEOUT: int = Field(default=45, ge=15, lt=600)  # global process timeout - 10
+    CHROME_TIMEOUT: int = Field(default=45, ge=15, lt=3600)  # global process timeout - 10
     CHROME_HEADLESS: bool = Field(default=True)
     CHROME_SANDBOX: bool = Field(default=True)  # false if in docker
     CHROME_RESOLUTION: str = Field(default="1440,2000")

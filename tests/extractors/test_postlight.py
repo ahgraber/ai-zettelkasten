@@ -42,7 +42,7 @@ class TestExtractor:
         extractor = PostlightExtractor()
 
         assert (
-            actual := extractor.validate_extract(json.dumps({"title": "this a test"}))
+            actual := extractor.validate_extract(json.dumps({"content": "this a test"}))
         ) == ScrapeStatus.COMPLETE, f"Error: Expected successful validation, got {actual}"
 
         assert (
