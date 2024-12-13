@@ -7,13 +7,10 @@ import platform
 from subprocess import PIPE, CalledProcessError, CompletedProcess, Popen, TimeoutExpired, run
 from typing import Any, List, Tuple, override
 
-from pydantic import ConfigDict, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-from rag_zk.datamodel.schema import ScrapeStatus, Source, ValidatedURL
-from rag_zk.extractors.base import ExtractionError, Extractor
-from rag_zk.extractors.utils import atomic_write, dedupe
-from rag_zk.utilities.path_helpers import (
+from ai_zk.datamodel.schema import ScrapeStatus, Source, ValidatedURL
+from ai_zk.extractors.base import ExtractionError, Extractor
+from ai_zk.extractors.utils import atomic_write, dedupe
+from ai_zk.utilities.path_helpers import (
     DEFAULT_ENV_PATH,
     PATHStr,
     find_binary_abspath,
@@ -22,6 +19,8 @@ from rag_zk.utilities.path_helpers import (
     path_is_file,
     symlink_to_bin,
 )
+from pydantic import ConfigDict, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 

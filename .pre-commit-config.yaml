@@ -4,6 +4,8 @@
 exclude: |
   (?x)^(
     ^.*(copier-answers\.ya?ml)$
+    ^.*(package-lock\.json)$
+    ^.*(uv\.lock)$
   )$
 
 repos:
@@ -66,19 +68,19 @@ repos:
     rev: "v8.21.2"
     hooks:
       - id: gitleaks
-  - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
-    rev: "3.0.3"
-    hooks:
-      - id: editorconfig-checker
-        name: Check editorconfig compliance
-        exclude: |
-          (?x)^(
-            # these file types may have nonstandard indents
-            ^(LICENSE)$ |
-            ^.*(\.md)$ |
-            ^.*(\.rst)$
-          )$
-        stages: [commit]
+  # - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
+  #   rev: "3.0.3"
+  #   hooks:
+  #     - id: editorconfig-checker
+  #       name: Check editorconfig compliance
+  #       exclude: |
+  #         (?x)^(
+  #           # these file types may have nonstandard indents
+  #           ^(LICENSE)$ |
+  #           ^.*(\.md)$ |
+  #           ^.*(\.rst)$
+  #         )$
+  #       stages: [commit]
   - repo: local
     hooks:
       - id: hadolint
