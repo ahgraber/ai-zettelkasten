@@ -1826,8 +1826,8 @@ let
     };
   };
   args = {
-    name = "rag_zk";
-    packageName = "rag_zk";
+    name = "ai_zk";
+    packageName = "ai_zk";
     src = ./..;
     dependencies = [
       sources."@asamuzakjp/dom-selector-2.0.2"

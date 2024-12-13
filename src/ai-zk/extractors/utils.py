@@ -14,7 +14,7 @@ from tempfile import NamedTemporaryFile
 from typing import List
 from urllib.parse import quote, unquote, urlparse
 
-from rag_zk.utilities.path_helpers import path_is_file
+from ai_zk.utilities.path_helpers import path_is_file
 
 logger = logging.getLogger(__name__)
 

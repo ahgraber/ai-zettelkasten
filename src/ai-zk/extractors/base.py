@@ -7,14 +7,9 @@ from pathlib import Path
 from typing import Any, Tuple, override
 from urllib.parse import quote, unquote, urlparse
 
-from pydantic import ConfigDict, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
-import requests
-from tqdm.auto import tqdm
-
-from rag_zk.datamodel.schema import ScrapeStatus, Source
-from rag_zk.extractors.utils import atomic_write
-from rag_zk.utilities.path_helpers import (
+from ai_zk.datamodel.schema import ScrapeStatus, Source
+from ai_zk.extractors.utils import atomic_write
+from ai_zk.utilities.path_helpers import (
     HostBinPath,
     PATHStr,
     add_node_bin_to_PATH,
@@ -23,6 +18,10 @@ from rag_zk.utilities.path_helpers import (
     path_is_dir,
     path_is_file,
 )
+from pydantic import ConfigDict, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+import requests
+from tqdm.auto import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +190,16 @@ class Extractor:
             content_hash = file_digest(f, "sha256").hexdigest()  # req. py>=3.11
         return content_hash
 
-    def exec(self, source: Source) -> Source:
+    ### TODO: don't double-barrel this, just make static file extractor
+    ### TODO: is_static_file can remain classmethod
+    def _static_file_handler(self, src: Source, out_dir_path: Path) -> ScrapeStatus:
+        """Process for static file extraction."""
+        pagename = urlparse(src.url).path.rsplit("/", 1)[-1]
+        out_file_path = out_dir_path / pagename
+        self.download_file(src.url, out_file_path)
+        return self.validate_download(out_file_path)
+
+    def __call__(self, source: Source) -> Source:
         """Execute extraction pipeline."""
         src = source.__deepcopy__()
 
@@ -200,15 +208,13 @@ class Extractor:
         src.scraped_at = datetime.datetime.now(datetime.timezone.utc)
         try:
             if self.is_static_file(src.url):
-                pagename = urlparse(src.url).path.rsplit("/", 1)[-1]
-                out_file_path = out_dir_path / pagename
-                self.download_file(src.url, out_file_path)
-                status = self.validate_download(out_file_path)
+                self._static_file_handler(src, out_dir_path)
             else:
                 out_file_path = out_dir_path / self.default_filename
                 extract = self.run(src.url)
                 extract = self.transform_extract(extract)
                 status = self.validate_extract(extract)
+                self.save(extract, out_file_path)
 
             src.scrape_status = status
             src.content_hash = self.hash(out_file_path)

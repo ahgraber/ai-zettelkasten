@@ -1,7 +1,7 @@
-# RAG-Zettelkasten
+# AI-Zettelkasten
 
-A RAG-based research assistant with the hopes of expanding QA-based RAG to a
-navigable [Zettelkasten](https://zettelkasten.de/introduction/)-style mindmap
+A AI research assistant with the hopes of expanding QA-based RAG to a navigable
+[Zettelkasten](https://zettelkasten.de/introduction/)-style mindmap
 
 ## Design
 
@@ -32,8 +32,7 @@ npm install 'single-file-cli'
 
 This repo uses nix devshells to manage project dependencies.
 
-Use node2nix to create `node-env.nix` from `package.json`
-`node-env.nix` will be picked up in the flake devshell
+Use node2nix to create `node-env.nix` from `package.json` `node-env.nix` will be picked up in the flake devshell
 
 ```sh
 node2nix -i package.json -o ./nix/node-packages.nix -c ./nix/default.nix -e ./nix/node-env.nix -18

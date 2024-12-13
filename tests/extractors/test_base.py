@@ -1,10 +1,9 @@
 from pathlib import Path
 
+from ai_zk.datamodel.schema import ScrapeStatus
+from ai_zk.extractors.base import ExtractionError, Extractor, ExtractorSettings
+from ai_zk.extractors.utils import atomic_write
 import pytest
-
-from rag_zk.datamodel.schema import ScrapeStatus
-from rag_zk.extractors.base import ExtractionError, Extractor, ExtractorSettings
-from rag_zk.extractors.utils import atomic_write
 
 
 class TestAtomicWrite:

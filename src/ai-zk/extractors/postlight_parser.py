@@ -5,13 +5,12 @@ from pathlib import Path
 from subprocess import CalledProcessError, CompletedProcess, run
 from typing import Any, Tuple, override
 
+from ai_zk.datamodel.schema import ScrapeStatus, Source, ValidatedURL
+from ai_zk.extractors.base import ExtractionError, Extractor
+from ai_zk.extractors.utils import atomic_write
+from ai_zk.utilities.path_helpers import add_node_bin_to_PATH, find_binary_abspath
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-from rag_zk.datamodel.schema import ScrapeStatus, Source, ValidatedURL
-from rag_zk.extractors.base import ExtractionError, Extractor
-from rag_zk.extractors.utils import atomic_write
-from rag_zk.utilities.path_helpers import add_node_bin_to_PATH, find_binary_abspath
 
 logger = logging.getLogger(__name__)
 
@@ -93,3 +92,6 @@ class PostlightExtractor(Extractor):
         out_dir_path = file_path.parent
         with atomic_write(out_dir_path / "metadata.json") as f:
             json.dump(article_json, f)
+
+    @override
+    def __call__(self, source: Source): ...

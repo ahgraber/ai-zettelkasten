@@ -7,28 +7,27 @@ import shutil
 import subprocess
 import typing as t
 
-from IPython.core.getipython import get_ipython
-from IPython.core.interactiveshell import InteractiveShell
-
 # from sqlalchemy import Engine
 # from sqlalchemy.exc import IntegrityError
 # from sqlmodel import Session, SQLModel, create_engine, select
-from rag_zk.core.database import (
+from ai_zk.core.database import (
     add_urls_to_backlog,
     get_db_engine,
     get_pending_sources,
     initialize_database,
     update_scraped_sources,
 )
-from rag_zk.extractors.base import ExtractionError, Extractor, ExtractorSettings
-from rag_zk.extractors.chrome import (
+from ai_zk.extractors.base import ExtractionError, Extractor, ExtractorSettings
+from ai_zk.extractors.chrome import (
     ChromeExtractor,
     ChromeHTMLExtractor,
     ChromeSettings,
 )
-from rag_zk.extractors.postlight_parser import PostlightExtractor, PostlightSettings
+from ai_zk.extractors.postlight_parser import PostlightExtractor, PostlightSettings
+from IPython.core.getipython import get_ipython
+from IPython.core.interactiveshell import InteractiveShell
 
-# from rag_zk.extractors.singlefile import scrape_singlefile
+# from ai_zk.extractors.singlefile import scrape_singlefile
 
 # %%
 ipython: InteractiveShell | None = get_ipython()
@@ -91,7 +90,7 @@ source = pending[0]
 # %%
 
 # %%
-# from rag_zk.utilities.path_helpers import add_node_bin_to_PATH, find_binary_abspath
+# from ai_zk.utilities.path_helpers import add_node_bin_to_PATH, find_binary_abspath
 
 # find_binary_abspath("postlight-parser", add_node_bin_to_PATH())
 # find_binary_abspath("single-file", add_node_bin_to_PATH())

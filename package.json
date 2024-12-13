@@ -1,5 +1,5 @@
 {
-  "name": "rag_zk",
+  "name": "ai_zk",
   "dependencies": {
     "@postlight/parser": "^2.2.3",
     "readability-extractor": "github:pirate/readability-extractor",

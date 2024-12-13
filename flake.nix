@@ -1,5 +1,5 @@
 {
-  description = "A simple flake to install dependencies for rag-zk";
+  description = "A simple flake to install dependencies for ai-zk";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -20,7 +20,7 @@
         in
         # pkgs.devshell.mkShell {
         pkgs.mkShell {
-          name = "rag_zk-devshell";
+          name = "ai_zk-devshell";
 
           # buildInputs = [
           #   nodeEnv.nodejs

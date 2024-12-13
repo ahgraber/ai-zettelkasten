@@ -5,11 +5,10 @@
 import logging
 import typing as t
 
+from ai_zk.datamodel.schema import ScrapeStatus, Source, SourceLink, ValidatedURL
 from sqlalchemy import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine, select
-
-from rag_zk.datamodel.schema import ScrapeStatus, Source, SourceLink, ValidatedURL
 
 logger = logging.getLogger(__file__)
 
