@@ -20,7 +20,7 @@
         in
         # pkgs.devshell.mkShell {
         pkgs.mkShell {
-          name = "ai_zk-devshell";
+          name = "aizk-devshell";
 
           # buildInputs = [
           #   nodeEnv.nodejs

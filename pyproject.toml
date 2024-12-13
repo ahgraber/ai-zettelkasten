@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 requires = [ "hatchling" ]
 
 [project]
-name = "ai-zk"
-version = "0.1.0"
+name = "aizk"
+# version = "0.beta"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,6 +15,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
 ]
+dynamic = [ "version" ]
 dependencies = [
   "accelerate>=1.1.1",
   "anthropic>=0.39",
@@ -77,7 +78,6 @@ test = [
   "pytest-asyncio>=0.24",
   "pytest-cov>=6",
 ]
-
 ds = [
   "numpy>=1.26",
   "pandas>=2.2",
@@ -91,6 +91,10 @@ plot = [
   "seaborn>=0.13",
 ]
 
+# --- hatch -----------------------------------------------------------
+# ref: https://packaging.python.org/en/latest/tutorials/packaging-projects/
+# these should match the "setup-requires" packages in `setup.cfg`
+
 [tool.hatch.version]
 path = "./src/VERSION"
 pattern = "^(?P<version>.+?)(\n)"
@@ -98,7 +102,7 @@ pattern = "^(?P<version>.+?)(\n)"
 [tool.hatch.build]
 only-include = [ "./src/VERSION", "src/ai-zk", "tests" ]
 skip-excluded-dirs = true
-# sources = ["src"]
+sources = [ "src" ]
 
 [tool.hatch.build.targets.sdist]
 
@@ -209,8 +213,7 @@ lint.per-file-ignores."notebooks/*" = [ "B018", "D", "S" ]
 lint.per-file-ignores."tests/*" = [ "D", "S101", "S301" ]
 # Avoid trying to fix extension types:
 lint.unfixable = [ "B" ]
-# --- pytest -----------------------------------------------------------------
-# ref: https://docs.pytest.org/en/7.3.x/reference/customize.html
+
 lint.flake8-bugbear.extend-immutable-calls = [
   "chr",
   "typer.Argument",
@@ -235,6 +238,7 @@ lint.isort.section-order = [
   "first-party",
   "local-folder",
 ]
+lint.isort.sections."known-first-party" = [ "ai-zk" ]
 lint.isort.sections."llm" = [ "langchain*", "llama-index*", "outlines", "ragas", "semantic_kernel" ]
 lint.isort.sections."plot" = [ "cmcrameri", "matplotlib", "mizani", "plotly", "plotnine", "seaborn" ]
 lint.isort.sections."sci" = [ "numpy", "pandas", "scipy", "sklearn", "statsmodels" ]
@@ -250,6 +254,8 @@ lint.isort.sections."torch" = [
 lint.mccabe.max-complexity = 18
 # --- ruff plugins --------------------
 lint.pep8-naming.ignore-names = [  ]
+# --- pytest -----------------------------------------------------------------
+# ref: https://docs.pytest.org/en/7.3.x/reference/customize.html
 lint.pydocstyle.convention = "numpy"
 
 [tool.pytest.ini_options]
@@ -296,9 +302,11 @@ source = [ "src" ]
 [tool.coverage.report]
 show_missing = true
 
+# --- uv ---------------------------------------------------------------------
+
 [tool.uv]
 package = true
-default-groups = [ "dev", "test" ]
+default-groups = [ "dev", "ds", "plot", "test" ]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
@@ -308,12 +316,5 @@ explicit = true
 [tool.uv.pip]
 prerelease = "if-necessary-or-explicit"
 
-#[tool.uv.sources]
-#ai-zk = { path = "src/ai-zk", editable = true }
-
-[tool.uv.workspace]
-members = [ "ai-zk" ]
-
-# --- build-system -----------------------------------------------------------
-# ref: https://packaging.python.org/en/latest/tutorials/packaging-projects/
-# these should match the "setup-requires" packages in `setup.cfg`
+[tool.uv.sources]
+ai-zk = { path = "src/ai-zk", editable = true }

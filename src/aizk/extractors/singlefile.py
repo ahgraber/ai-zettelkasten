@@ -4,15 +4,15 @@ import logging
 from pathlib import Path
 from subprocess import CalledProcessError, run
 
-from ai_zk.datamodel.schema import ScrapeStatus, Source
-from ai_zk.extractors.utils import (
+from aizk.datamodel.schema import ScrapeStatus, Source
+from aizk.extractors.utils import (
     atomic_write,
     bin_version,
     find_chrome_binary,
     find_node_binary,
     save_and_hash,
 )
-from ai_zk.utilities.path_helpers import add_node_bin_to_PATH, find_binary_abspath
+from aizk.utilities.path_helpers import add_node_bin_to_PATH, find_binary_abspath
 
 logger = logging.getLogger(__name__)
 
