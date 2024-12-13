@@ -5,7 +5,7 @@ import hashlib
 from docling.document_converter import DocumentConverter
 from sqlmodel import Field, Session, SQLModel, create_engine
 
-from ..datamodel.schema import *
+from aizk.datamodel.schema import *
 
 # %%
 converter = DocumentConverter()

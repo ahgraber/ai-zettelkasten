@@ -1,7 +1,6 @@
 # AI-Zettelkasten
 
-A AI research assistant with the hopes of expanding QA-based RAG to a navigable
-[Zettelkasten](https://zettelkasten.de/introduction/)-style mindmap
+An AI-driven [Zettelkasten](https://zettelkasten.de/introduction/)-style mindmap and assistant for deep research.
 
 ## Design
 
