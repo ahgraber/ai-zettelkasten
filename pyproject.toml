@@ -6,7 +6,7 @@ requires = [ "hatchling" ]
 [project]
 name = "aizk"
 # version = "0.beta"
-description = "Add your description here"
+description = "AI-driven zettelkasten mindmap"
 readme = "README.md"
 requires-python = ">=3.11"
 classifiers = [
@@ -19,6 +19,7 @@ dynamic = [ "version" ]
 dependencies = [
   "accelerate>=1.1.1",
   "anthropic>=0.39",
+  "bertopic>=0.16.4",
   "datasets<3",
   "docling>2",
   "fastapi>=0.115.5",
@@ -62,6 +63,7 @@ dependencies = [
   "torch>=2.2,<3",
   "torchmetrics>=1.6",
   "transformers>=4.46.3",
+  "turftopic>=0.10",
   "uvicorn>=0.32.1",
 ]
 
@@ -100,160 +102,16 @@ path = "./src/VERSION"
 pattern = "^(?P<version>.+?)(\n)"
 
 [tool.hatch.build]
-only-include = [ "./src/VERSION", "src/ai-zk", "tests" ]
+only-include = [ "./src/VERSION", "src/aizk", "tests" ]
 skip-excluded-dirs = true
 sources = [ "src" ]
 
 [tool.hatch.build.targets.sdist]
 
 [tool.hatch.build.targets.wheel]
-packages = [ "src/ai-zk" ]
+packages = [ "src/aizk" ]
 macos-max-compat = true
 
-# --- ruff -------------------------------------------------------------------
-
-[tool.ruff]
-line-length = 119
-
-# Line options
-indent-width = 4
-# Directories with source code; allow relative imports
-src = [ "notebooks", "src", "tests" ]
-
-extend-include = [ "*.ipynb" ]
-
-# # Assumed Python version
-# target-version = "py39" # managed in [project]requires-python above
-
-# file selection
-extend-exclude = [
-  "*.egg-info",
-  ".ci",
-  ".env",
-  ".envrc",
-  ".git",
-  ".ipynb_checkpoints",
-  ".nox",
-  ".pytest_cache",
-  ".tox",
-  "docs",
-]
-preview = false # do not use unstable rules/fixes
-# Autofix behavior
-fix = true
-
-# Group output violations by file
-output-format = "grouped"
-
-format.indent-style = "space"
-format.quote-style = "double"
-format.line-ending = "auto"
-format.skip-magic-trailing-comma = false
-format.docstring-code-format = true
-lint.select = [
-  "A",      # flake8 builtins
-  "B",      # flake8 bugbear
-  "C4",     # flake8 comprehensions
-  "C90",    # mccabe
-  "D",      # pydocstyle
-  "E",      # pycodestyle
-  "F",      # pyflakes
-  "I",      # isort
-  "N",      # pep8-naming
-  "NPY201", # numpy2.0 migration
-  # "PTH", # flake8-use-pathlib
-  "Q",   # flake8-quotes
-  "S",   # bandit
-  "SIM", # flake8-simplify
-  "TRY", # tryceratops
-  "W",   # pycodestyle
-  # "T20", # flake8 print
-]
-lint.ignore = [
-  "B905", # zip strict=True; remove once python <3.10 support is dropped.
-  # "W503",  # not in ruff
-  "COM812", # redundant w formatter
-  "COM819", # redundant w formatter
-  "D100",   # do not require module-level docstrings
-  "D104",   # do not require package docstrings
-  "D107",   # do not require docstrings in __init__ files
-  # "D205",  # don't require linebreak after docstring (ruff vs black conflict)
-  "D206",   # redundant w formatter
-  "D300",   # redundant w formatter
-  "E111",   # redundant w formatter
-  "E114",   # redundant w formatter
-  "E117",   # redundant w formatter
-  "E501",   # line too long
-  "F401",   # unused import
-  "F403",   # import *
-  "F405",   # defined from import *
-  "ISC001", # redundant w formatter
-  "ISC002", # redundant w formatter
-  # "F541",  # f-string missing placeholders
-  "N999", # allow "invalid" module names due to jinja templates
-  "Q000", # redundant w formatter
-  "Q001", # redundant w formatter
-  "Q002", # redundant w formatter
-  "Q003", # redundant w formatter
-  # "S101",  # assert
-  "S311",   # allow psuedorandom generators (we use for stats)
-  "SIM105", # allow except: pass
-  "TRY003", # Avoid specifying messages outside exception class; overly strict, especially for ValueError
-  "TRY201", # Allow raise without exception name (align with Sonarlint)
-  "W191",   # redundant w formatter
-]
-lint.exclude = [ "*.pyi" ]
-# # Ignore `E402` (import violations) in all `__init__.py` files,
-# # and in `path/to/file.py`.
-# "__init__.py" = ["E402"]
-# "path/to/file.py" = ["E402"]
-lint.per-file-ignores.".ci/*" = [ "D" ]
-lint.per-file-ignores."docs/*" = [ "D" ]
-lint.per-file-ignores."notebooks/*" = [ "B018", "D", "S" ]
-lint.per-file-ignores."tests/*" = [ "D", "S101", "S301" ]
-# Avoid trying to fix extension types:
-lint.unfixable = [ "B" ]
-
-lint.flake8-bugbear.extend-immutable-calls = [
-  "chr",
-  "typer.Argument",
-  "typer.Option",
-]
-lint.isort.combine-as-imports = true
-lint.isort.detect-same-package = true
-lint.isort.extra-standard-library = [ "yaml" ]
-lint.isort.force-sort-within-sections = true
-#lint.isort.force-to-top = [ "src", "torch" ]
-lint.isort.known-local-folder = [ "src" ] # for relative imports
-# forced-separate = ["scipy", "sklearn", "statsmodels", "torch"]
-lint.isort.relative-imports-order = "closest-to-furthest"
-lint.isort.section-order = [
-  "future",
-  "standard-library",
-  "third-party",
-  "sci",
-  "torch",
-  "llm",
-  "plot",
-  "first-party",
-  "local-folder",
-]
-lint.isort.sections."known-first-party" = [ "ai-zk" ]
-lint.isort.sections."llm" = [ "langchain*", "llama-index*", "outlines", "ragas", "semantic_kernel" ]
-lint.isort.sections."plot" = [ "cmcrameri", "matplotlib", "mizani", "plotly", "plotnine", "seaborn" ]
-lint.isort.sections."sci" = [ "numpy", "pandas", "scipy", "sklearn", "statsmodels" ]
-lint.isort.sections."torch" = [
-  "datasets",
-  "lightning",
-  "torch",
-  "torch*",
-  "tokenizers",
-  "transformers",
-  "sentence-transformers",
-]
-lint.mccabe.max-complexity = 18
-# --- ruff plugins --------------------
-lint.pep8-naming.ignore-names = [  ]
 # --- pytest -----------------------------------------------------------------
 # ref: https://docs.pytest.org/en/7.3.x/reference/customize.html
 lint.pydocstyle.convention = "numpy"
