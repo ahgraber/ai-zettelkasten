@@ -5,12 +5,13 @@ from pathlib import Path
 from subprocess import CalledProcessError, CompletedProcess, run
 from typing import Any, Tuple, override
 
-from ai_zk.datamodel.schema import ScrapeStatus, Source, ValidatedURL
-from ai_zk.extractors.base import ExtractionError, Extractor
-from ai_zk.extractors.utils import atomic_write
-from ai_zk.utilities.path_helpers import add_node_bin_to_PATH, find_binary_abspath
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from aizk.datamodel.schema import ScrapeStatus, Source, ValidatedURL
+from aizk.extractors.base import ExtractionError, Extractor
+from aizk.extractors.utils import atomic_write
+from aizk.utilities.path_helpers import add_node_bin_to_PATH, find_binary_abspath
 
 logger = logging.getLogger(__name__)
 

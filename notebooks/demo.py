@@ -7,27 +7,28 @@ import shutil
 import subprocess
 import typing as t
 
-# from sqlalchemy import Engine
-# from sqlalchemy.exc import IntegrityError
-# from sqlmodel import Session, SQLModel, create_engine, select
-from ai_zk.core.database import (
+from IPython.core.getipython import get_ipython  # NOQA: E402
+from IPython.core.interactiveshell import InteractiveShell  # NOQA: E402
+from sqlalchemy import Engine
+from sqlalchemy.exc import IntegrityError
+from sqlmodel import Session, SQLModel, create_engine, select
+
+from aizk.core.database import (
     add_urls_to_backlog,
     get_db_engine,
     get_pending_sources,
     initialize_database,
     update_scraped_sources,
 )
-from ai_zk.extractors.base import ExtractionError, Extractor, ExtractorSettings
-from ai_zk.extractors.chrome import (
+from aizk.extractors.base import ExtractionError, Extractor, ExtractorSettings
+from aizk.extractors.chrome import (
     ChromeExtractor,
     ChromeHTMLExtractor,
     ChromeSettings,
 )
-from ai_zk.extractors.postlight_parser import PostlightExtractor, PostlightSettings
-from IPython.core.getipython import get_ipython
-from IPython.core.interactiveshell import InteractiveShell
+from aizk.extractors.postlight_parser import PostlightExtractor, PostlightSettings
 
-# from ai_zk.extractors.singlefile import scrape_singlefile
+# from aizk.extractors.singlefile import SinglefileExtractor, SinglefileSettings
 
 # %%
 ipython: InteractiveShell | None = get_ipython()
@@ -90,7 +91,7 @@ source = pending[0]
 # %%
 
 # %%
-# from ai_zk.utilities.path_helpers import add_node_bin_to_PATH, find_binary_abspath
+# from aizk.utilities.path_helpers import add_node_bin_to_PATH, find_binary_abspath
 
 # find_binary_abspath("postlight-parser", add_node_bin_to_PATH())
 # find_binary_abspath("single-file", add_node_bin_to_PATH())

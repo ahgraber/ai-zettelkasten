@@ -7,9 +7,14 @@ from pathlib import Path
 from typing import Any, Tuple, override
 from urllib.parse import quote, unquote, urlparse
 
-from ai_zk.datamodel.schema import ScrapeStatus, Source
-from ai_zk.extractors.utils import atomic_write
-from ai_zk.utilities.path_helpers import (
+from pydantic import ConfigDict, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+import requests
+from tqdm.auto import tqdm
+
+from aizk.datamodel.schema import ScrapeStatus, Source
+from aizk.extractors.utils import atomic_write
+from aizk.utilities.path_helpers import (
     HostBinPath,
     PATHStr,
     add_node_bin_to_PATH,
@@ -18,10 +23,6 @@ from ai_zk.utilities.path_helpers import (
     path_is_dir,
     path_is_file,
 )
-from pydantic import ConfigDict, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
-import requests
-from tqdm.auto import tqdm
 
 logger = logging.getLogger(__name__)
 

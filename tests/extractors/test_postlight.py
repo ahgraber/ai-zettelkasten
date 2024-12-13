@@ -1,10 +1,11 @@
 import json
 from pathlib import Path
 
-from ai_zk.datamodel.schema import ScrapeStatus
-from ai_zk.extractors.base import ExtractionError
-from ai_zk.extractors.postlight_parser import PostlightExtractor, PostlightSettings
 import pytest
+
+from aizk.datamodel.schema import ScrapeStatus
+from aizk.extractors.base import ExtractionError
+from aizk.extractors.postlight_parser import PostlightExtractor, PostlightSettings
 
 
 class TestExtractor:
