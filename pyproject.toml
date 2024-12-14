@@ -1,5 +1,4 @@
 [build-system]
-# ref: https://hatch.pypa.io/1.2/version/#configuration
 build-backend = "hatchling.build"
 requires = [ "hatchling" ]
 
@@ -18,8 +17,10 @@ classifiers = [
 dynamic = [ "version" ]
 dependencies = [
   "accelerate>=1.1.1",
+  "aisuite[all]>=0.1.3",
   "anthropic>=0.39",
   "bertopic>=0.16.4",
+  "chardet>=5.2",
   "datasets<3",
   "docling>2",
   "fastapi>=0.115.5",
@@ -47,6 +48,7 @@ dependencies = [
   "openpyxl>=3.1.5",
   "pydantic>=2.9.2",
   "pydantic-settings>=2.6.1",
+  "pypandoc>=1.14",
   "python-dateutil>=2.9.0.post0",
   "python-dotenv>=1.0.1",
   "ragas>=0.2.8",

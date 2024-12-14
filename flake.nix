@@ -33,6 +33,8 @@
 
           # a list of packages to add to the shell environment
           packages = [
+            #--- cli ---
+            pkgs.pandoc
             #--- node ---
             pkgs.deno
             pkgs.node2nix
