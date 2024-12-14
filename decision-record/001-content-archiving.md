@@ -64,3 +64,11 @@ Reason for not selecting:
 ## Additional Notes
 
 Revisit ArchiveBox in the future; it may make sense to use it and reduce the scope of this project
+
+### References
+
+- [List of Chromium Command Line Switches « Peter Beverloo](https://peter.sh/experiments/chromium-command-line-switches/)
+- [postlight/parser: 📜 Extract meaningful content from the chaos of a web page](https://github.com/postlight/parser)
+- [gildas-lormeau/SingleFile: Web Extension for saving a faithful copy of a complete web page in a single HTML file](https://github.com/gildas-lormeau/SingleFile)
+- [Y2Z/monolith: ⬛️ CLI tool for saving complete web pages as a single HTML file](https://github.com/Y2Z/monolith)
+- [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox)
