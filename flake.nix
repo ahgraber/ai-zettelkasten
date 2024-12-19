@@ -34,6 +34,7 @@
           # a list of packages to add to the shell environment
           packages = [
             #--- cli ---
+            # pkgs.ungoogled-chromium # not available on mac
             pkgs.pandoc
             #--- node ---
             pkgs.deno

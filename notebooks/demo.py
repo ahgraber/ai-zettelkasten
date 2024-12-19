@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import typing as t
+from urllib.parse import quote, unquote, urlparse
 
 from IPython.core.getipython import get_ipython  # NOQA: E402
 from IPython.core.interactiveshell import InteractiveShell  # NOQA: E402
@@ -20,7 +21,13 @@ from aizk.core.database import (
     initialize_database,
     update_scraped_sources,
 )
-from aizk.extractors.base import ExtractionError, Extractor, ExtractorSettings
+from aizk.extractors.base import (
+    STATICFILE_EXTENSIONS,
+    ExtractionError,
+    Extractor,
+    ExtractorSettings,
+    StaticFileExtractor,
+)
 from aizk.extractors.chrome import (
     ChromeExtractor,
     ChromeHTMLExtractor,
@@ -89,6 +96,34 @@ pending = get_pending_sources(engine)
 source = pending[0]
 
 # %%
+static_dir = datadir / "static"
+static_dir.mkdir(exist_ok=True)
+staticfile_extractor = StaticFileExtractor(out_dir=static_dir)
+
+
+# %%
+def is_static_file(url: str) -> bool:
+    """Determine whether file is static or requires rendering."""
+    # TODO: the proper way is with MIME type detection + ext, not only extension
+    pagename = urlparse(url).path.rsplit("/", 1)[-1]
+    extension = Path(pagename).suffix.replace(".", "")
+    return extension.lower() in STATICFILE_EXTENSIONS
+
+
+for source in pending:
+    ext = source.url
+    if is_static_file(source.url):
+        print(f"downloading {source.url}")
+        staticfile_extractor(source)
+
+# %%
+postlight_dir = datadir / "postlight-parser"
+postlight_dir.mkdir(exist_ok=True)
+postlight_extractor = PostlightExtractor(out_dir=postlight_dir)
+
+# %%
+for source in pending:
+    postlight_extractor(source)
 
 # %%
 # from aizk.utilities.path_helpers import add_node_bin_to_PATH, find_binary_abspath
@@ -97,14 +132,18 @@ source = pending[0]
 # find_binary_abspath("single-file", add_node_bin_to_PATH())
 
 # %%
-chrome_dir = Path("./data/chrome")
+chrome_dir = datadir / "chrome"
 chrome_dir.mkdir(exist_ok=True)
+# chrome_extractor = ChromeExtractor(out_dir=chrome_dir)
 
 # %%
-chrome_extractor = ChromeExtractor(out_dir=chrome_dir)
+chrome_html_extractor = ChromeHTMLExtractor(out_dir=chrome_dir)
+
+for source in pending:
+    chrome_html_extractor(source)
 
 # %%
-chrome_html_extractor = ChromeHTMLExtractor()  # (out_dir=chrome_dir)
+
 
 # %%
 extract = chrome_html_extractor.run(pending[1].url)
@@ -126,12 +165,10 @@ result = run(  # NOQA: S603
 )
 
 # %%
-postlight_dir = Path("./data/postlight-parser")
-postlight_dir.mkdir(exist_ok=True)
-postlight_extractor = PostlightExtractor(out_dir=postlight_dir)
+
 
 # %%
-postlight_extractor.exec(source)
+postlight_extractor(pending[0])
 
 # %%
 extract = postlight_extractor.run(pending[4].url)
