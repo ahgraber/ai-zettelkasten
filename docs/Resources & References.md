@@ -60,6 +60,14 @@ See also
 - [AutoRAG documentation](https://docs.auto-rag.com/)
 - [RAGFlow](https://ragflow.io/)
 - [pingcap/autoflow: pingcap/autoflow is a Graph RAG based and conversational knowledge base tool built with TiDB Serverless Vector Storage](https://github.com/pingcap/autoflow?tab=readme-ov-file)
+- [kubemq-io/kubemq-graph-rag](https://github.com/kubemq-io/kubemq-graph-rag) via
+  [The One Tool You Absolutely Need to Efficiently Scale Retrieval-Augmented Generation | HackerNoon](https://hackernoon.com/the-one-tool-you-absolutely-need-to-efficiently-scale-retrieval-augmented-generation)
 
 - [ucbepic/docetl: A system for agentic LLM-powered data processing and ETL](https://github.com/ucbepic/docetl)
 - [NirDiamant/Controllable-RAG-Agent: This repository provides an advanced Retrieval-Augmented Generation (RAG) solution for complex question answering. It uses sophisticated graph based algorithm to handle the tasks.](https://github.com/NirDiamant/Controllable-RAG-Agent)
+
+annotation tools
+
+- [HumanSignal/label-studio: Label Studio is a multi-type data labeling and annotation tool with standardized output format](https://github.com/HumanSignal/label-studio)
+- [doccano/doccano: Open source annotation tool for machine learning practitioners.](https://github.com/doccano/doccano)
+- [inception-project/inception: INCEpTION provides a semantic annotation platform offering intelligent annotation assistance and knowledge management.](https://github.com/inception-project/inception)

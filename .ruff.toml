@@ -109,7 +109,6 @@ unfixable = ["B"]
 "notebooks/*" = ["B018", "D", "S"]
 "**/tests/*" = ["D", "S101", "S301"]
 
-
 # --- ruff plugins --------------------
 [lint.flake8-bugbear]
 extend-immutable-calls = [

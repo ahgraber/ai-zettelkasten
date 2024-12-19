@@ -53,7 +53,8 @@ Pros:
 Cons:
 
 - Feels like way more than I need.
-- Current version with `abx-plugin` ecosystem is still under development
+- Current version with `abx-plugin` ecosystem is still under development (stable is v0.7, dev is v0.8, anticipated next
+  stable release is v0.9)
 - Do I really need the ArchiveBox package manager?
 
 Reason for not selecting:
@@ -61,9 +62,24 @@ Reason for not selecting:
 - I want to try it myself (ArchiveBox will be a good source for inspiration / comparison)
 - Trying to minimize this project's dependencies
 
+### Option 3: [Firecrawl](https://www.firecrawl.dev/)
+
+Pros:
+
+- Service and [self-hosted](https://github.com/mendableai/firecrawl/blob/main/SELF_HOST.md)
+  - service supposedly handles captchas and bot detection
+- All-in-one does scraping, crawling, and parsing
+- Integrations with LLM/AI Frameworks
+
+Cons:
+
+- Service costs $ (though it seems reasonable), given the goal is to scrape (not crawl) a limited set of pages
+- Self-hosted version does not handle bot detection or captchas
+
 ## Additional Notes
 
-Revisit ArchiveBox in the future; it may make sense to use it and reduce the scope of this project
+Revisit ArchiveBox in the future (especially after their v0.9 release!); it may make sense to use it and reduce the
+scope of this project
 
 ### References
 

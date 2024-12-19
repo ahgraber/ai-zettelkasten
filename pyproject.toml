@@ -46,6 +46,7 @@ dependencies = [
   "nltk>=3.9.1",
   "openai>=1.55",
   "openpyxl>=3.1.5",
+  "playwright>=1.49.1",
   "pydantic>=2.9.2",
   "pydantic-settings>=2.6.1",
   "pypandoc>=1.14",
@@ -82,6 +83,7 @@ test = [
   "pytest-asyncio>=0.24",
   "pytest-cov>=6",
 ]
+
 ds = [
   "numpy>=1.26",
   "pandas>=2.2",
@@ -94,10 +96,6 @@ plot = [
   "plotnine>=0.14",
   "seaborn>=0.13",
 ]
-
-# --- hatch -----------------------------------------------------------
-# ref: https://packaging.python.org/en/latest/tutorials/packaging-projects/
-# these should match the "setup-requires" packages in `setup.cfg`
 
 [tool.hatch.version]
 path = "./src/VERSION"
@@ -113,10 +111,6 @@ sources = [ "src" ]
 [tool.hatch.build.targets.wheel]
 packages = [ "src/aizk" ]
 macos-max-compat = true
-
-# --- pytest -----------------------------------------------------------------
-# ref: https://docs.pytest.org/en/7.3.x/reference/customize.html
-lint.pydocstyle.convention = "numpy"
 
 [tool.pytest.ini_options]
 addopts = '''
@@ -150,8 +144,6 @@ pythonpath = "src"
 testpaths = [ "tests" ]
 # log_cli = true
 
-# --- coverage ---------------------------------------------------------------
-
 [tool.coverage.paths]
 source = [ "src", "*/site-packages" ]
 
@@ -161,8 +153,6 @@ source = [ "src" ]
 
 [tool.coverage.report]
 show_missing = true
-
-# --- uv ---------------------------------------------------------------------
 
 [tool.uv]
 package = true

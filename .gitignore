@@ -22,10 +22,11 @@ Thumbs.db
 .envrc
 
 # Python and Node dependencies
-venv/
-.venv/
 .local/
+.venv/
+bin/
 node_modules/
+venv/
 
 # Extras
 *pytest*
