@@ -40,10 +40,13 @@ def path_is_abspath(path: Path) -> Path:
 def path_is_dir(path: Path) -> Path:
     """Test whether path is dir."""
     path = path_is_abspath(path)
-    if os.path.isdir(path) and os.access(path, os.R_OK):
-        return path
+    if os.path.isdir(path):
+        if os.access(path, os.R_OK):
+            return path
+        else:
+            raise PermissionError(f"Path is not readable: {path}")
     else:
-        raise NotADirectoryError(f"Path is not a directory or we dont have permission to read it: {path}")
+        raise NotADirectoryError(f"Path is not a directory: {path}")
 
 
 BinDirPath = Annotated[Path, AfterValidator(path_is_dir)]
@@ -102,10 +105,13 @@ def add_python_bin_to_PATH(PATH: PATHStr = DEFAULT_ENV_PATH) -> PATHStr:  # NOQA
 def path_is_file(path: Path | str) -> Path:
     """Test whether path is file."""
     path = Path(path) if isinstance(path, str) else path
-    if os.path.isfile(path) and os.access(path, os.R_OK):
-        return path
+    if os.path.isfile(path):
+        if os.access(path, os.R_OK):
+            return path
+        else:
+            raise PermissionError(f"Path is not readable: {path}")
     else:
-        raise FileNotFoundError(f"Path is not a file or we dont have permission to read it: {path}")
+        raise FileNotFoundError(f"Path is not a file: {path}")
 
 
 HostExistsPath = Annotated[Path, AfterValidator(path_is_file)]
@@ -113,7 +119,7 @@ HostExistsPath = Annotated[Path, AfterValidator(path_is_file)]
 
 def path_is_executable(path: HostExistsPath) -> HostExistsPath:
     """Test whether path is executable."""
-    if os.path.isfile(path) and os.access(path, os.X_OK):
+    if path_is_file(path) and os.access(path, os.X_OK):
         return path
     else:
         raise PermissionError(f"Path is not executable (fix by running `chmod +x {path}`)")

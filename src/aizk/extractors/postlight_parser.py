@@ -1,3 +1,9 @@
+"""PostlightExtractor.
+
+@postlight/parser formerly known as @postlight/mercury-parser
+ref: https://github.com/ArchiveBox/ArchiveBox/blob/dev/archivebox/pkgs/abx-plugin-mercury/abx_plugin_mercury/mercury.py
+"""
+
 import datetime
 import json
 import logging
@@ -39,7 +45,7 @@ class PostlightExtractor(Extractor):
 
         super().__init__(
             config=config or PostlightSettings(),
-            out_dir=out_dir or Path.cwd() / "data" / PostlightExtractor.name,
+            out_dir=out_dir or Path.cwd() / "data" / self.name,
         )
 
         # self.config = self.validate_config(config or PostlightSettings())
@@ -57,7 +63,7 @@ class PostlightExtractor(Extractor):
         cmd = [str(self.binary), url]
         logger.debug(f"{cmd=}")
         result = run(  # NOQA: S603
-            cmd,  # NOQA: S603
+            cmd,  # NOQA: S607
             capture_output=True,
             timeout=self.config.timeout,
         )
@@ -94,5 +100,5 @@ class PostlightExtractor(Extractor):
         with atomic_write(out_dir_path / "metadata.json") as f:
             json.dump(article_json, f)
 
-    @override
-    def __call__(self, source: Source): ...
+    # @override
+    # def __call__(self, source: Source): ...
