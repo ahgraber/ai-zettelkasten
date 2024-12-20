@@ -82,8 +82,9 @@ test = [
   "pytest>=8.3.4",
   "pytest-asyncio>=0.24",
   "pytest-cov>=6",
+  "pytest-responses>=0.5.1",
+  "responses>=0.25.3",
 ]
-
 ds = [
   "numpy>=1.26",
   "pandas>=2.2",

@@ -1,22 +1,214 @@
 # ruff: NOQA: E731
+import asyncio
+from collections import deque
 from contextlib import contextmanager
-from datetime import datetime, timezone
-from hashlib import file_digest
-from html import escape, unescape
+from functools import wraps
+from inspect import iscoroutinefunction
 import logging
 import os
 from pathlib import Path
-import re
-import shutil
 from subprocess import PIPE, CalledProcessError, CompletedProcess, Popen, TimeoutExpired, run
-import sys
 from tempfile import NamedTemporaryFile
+import time
 from typing import List
-from urllib.parse import quote, unquote, urlparse
 
 from aizk.utilities.path_helpers import path_is_file
 
 logger = logging.getLogger(__name__)
+
+
+def bin_version(bin_path: Path | str) -> str | None:
+    """Get version a specified binary."""
+    bin_path = Path(bin_path)
+    if not bin_path.exists():
+        logger.debug(f"{bin_path} does not exist")
+        return None
+
+    cmd = [bin_path, "--version"]
+    result = run(  # NOQA: S603
+        cmd,
+        # env=os.environ | {"LANG": "C"},
+        capture_output=True,
+    )
+
+    try:
+        result.check_returncode()  # raises error if failed
+    except CalledProcessError:
+        logger.debug(f"{' '.join(cmd)} failed with non-zero exit code")
+        return None
+
+    version_str = result.stdout.strip().decode()
+    # take first 3 columns of first line of version info
+    return " ".join(version_str.split("\n")[0].strip().split()[:3])
+
+
+def dedupe(options: List[str]) -> List[str]:
+    """Deduplicate the given CLI args by key=value. Options that come later override earlier."""
+    deduped = {}
+
+    for option in options:
+        key = option.split("=")[0]
+        deduped[key] = option
+
+    return list(deduped.values())
+
+
+class TimeWindowRateLimiter:
+    """Rate limiter that allows a maximum number of actions over sliding time window (seconds).
+
+    If the maximum number of actions occurs in the time window, the rate limiter will block until a slot becomes available.
+    This is not an async limiter; it assumes that actions are synchronous and blocking.
+    Therefore, if an action takes a long time to complete, it will block subsequent actions from starting until it completes _even if it exceeds the window period_.
+    """
+
+    def __init__(self, max_actions: int, window_seconds: int, min_interval: float = 0.1):
+        if max_actions > 0:
+            self.max_actions = max_actions
+        else:
+            raise ValueError("max_actions must be > 0")
+
+        if window_seconds > 0:
+            self.window_seconds = window_seconds
+        else:
+            raise ValueError("window_seconds must be > 0")
+
+        if min_interval >= 0:
+            self.min_interval = min_interval
+        else:
+            raise ValueError("min_interval must be >= 0")
+
+        self.start_times = deque()
+        self.n_active = 0
+        self.last = time.monotonic()
+
+    def _update(self):
+        """Remove actions should no longer be blocking the queue.
+
+        An action may take longer to execute than the time period we track.
+        This action counts against the limit until its start time exits the window.
+        Once its start time exits the window, its slot becomes available for new operations, while the action itself continues running to completion.
+        """
+        window_start = time.monotonic() - self.window_seconds
+
+        while self.start_times and self.start_times[0] < window_start:
+            self.start_times.popleft()
+            if self.n_active > 0:
+                logging.debug("Sliding window freed a slot")
+                self.n_active -= 1
+
+    def _wait(self):
+        """Wait until a slot is available."""
+        while True:
+            self._update()
+            if len(self.start_times) < self.max_actions:
+                self.start_times.append(time.monotonic())
+                self.n_active += 1
+                break
+
+            if self.start_times:
+                wait_time = max(self.min_interval, self.start_times[0] + self.window_seconds - time.monotonic())
+                if wait_time > 0:
+                    logging.debug(f"Waiting {wait_time:.2f} seconds")
+                    time.sleep(wait_time)
+
+    def _complete(self):
+        """Remove completed action from active count."""
+        logging.debug("Completing action")
+        self.n_active -= 1
+
+    def __call__(self, func):
+        """Apply rate limiting to a function as a decorator."""
+
+        # TODO: add support for async functions?
+        @wraps(func)
+        def wrapped(*args, **kwargs):
+            self._wait()
+            try:
+                return func(*args, **kwargs)
+            finally:
+                self._complete()
+
+        return wrapped
+
+
+# atomic write
+# https://stackoverflow.com/questions/2333872/how-to-make-file-creation-an-atomic-operation
+@contextmanager
+def atomic_write(filepath: Path | str, is_binary: bool = False):
+    """Write to temporary file object that atomically moves to destination upon exiting."""
+    filepath = Path(filepath)
+
+    dirpath, fname = filepath.parent, filepath.name
+    dirpath.mkdir(parents=True, exist_ok=True)
+
+    with NamedTemporaryFile(
+        mode="wb" if is_binary else "w",
+        dir=dirpath,
+        prefix=fname,
+        suffix=".tmp",
+        delete_on_close=False,
+    ) as tmp:
+        try:
+            yield tmp
+        finally:
+            tmp.flush()  # libc -> OS
+            os.fsync(tmp.fileno())  # OS -> disc
+        os.replace(tmp.name, filepath)
+
+
+def download_file(url: str, file_path: Path, timeout: int = 600):
+    """Download a file."""
+    import requests
+    from tqdm.auto import tqdm
+
+    try:
+        # First, send a HEAD request to get file size
+        head_response = requests.head(url, timeout=timeout)
+        head_response.raise_for_status()
+        total_size = int(head_response.headers.get("content-length", 0))
+    except requests.exceptions.RequestException:
+        logger.exception("Could not query file head")
+        raise
+
+    try:
+        with requests.get(url, stream=True, timeout=timeout) as response:
+            # Raise an exception for bad status codes
+            response.raise_for_status()
+
+            # Get the total file size
+            total_size = int(response.headers.get("content-length", 0))
+
+            with (
+                atomic_write(file_path, is_binary=True) as f,
+                tqdm(total=total_size, unit="iB", unit_scale=True, desc=str(file_path)) as progress_bar,
+            ):
+                for chunk in response.iter_content(chunk_size=8192):
+                    size = f.write(chunk)
+                    progress_bar.update(size)
+
+        logger.info(f"File downloaded successfully: {file_path}")
+
+    except requests.exceptions.RequestException:
+        logger.exception("Download failed")
+        raise
+
+
+def validate_file(filepath: Path | str, min_bytes: int = 1) -> bool:
+    """Validate that downloaded file exists and is of minimum size."""
+    if min_bytes < 1:
+        raise ValueError("Minimum file size must be at least 1 byte")
+
+    filepath = path_is_file(filepath)
+
+    # Get file size
+    file_size = filepath.stat().st_size
+
+    # Check minimum size
+    if file_size < min_bytes:
+        logger.error(f"File is too small: found {file_size} bytes, expected at least {min_bytes} bytes.")
+        return False
+
+    return True
 
 
 # ### Parsing Helpers
@@ -87,42 +279,6 @@ logger = logging.getLogger(__name__)
 #     return extension(url).lower() in STATICFILE_EXTENSIONS
 
 
-def bin_version(bin_path: Path | str) -> str | None:
-    """Get version a specified binary."""
-    bin_path = Path(bin_path)
-    if not bin_path.exists():
-        logger.debug(f"{bin_path} does not exist")
-        return None
-
-    cmd = [bin_path, "--version"]
-    result = run(  # NOQA: S603
-        cmd,
-        # env=os.environ | {"LANG": "C"},
-        capture_output=True,
-    )
-
-    try:
-        result.check_returncode()  # raises error if failed
-    except CalledProcessError:
-        logger.debug(f"{' '.join(cmd)} failed with non-zero exit code")
-        return None
-
-    version_str = result.stdout.strip().decode()
-    # take first 3 columns of first line of version info
-    return " ".join(version_str.split("\n")[0].strip().split()[:3])
-
-
-def dedupe(options: List[str]) -> List[str]:
-    """Deduplicate the given CLI args by key=value. Options that come later override earlier."""
-    deduped = {}
-
-    for option in options:
-        key = option.split("=")[0]
-        deduped[key] = option
-
-    return list(deduped.values())
-
-
 # def find_node_binary(binary: str) -> Path | None:
 #     """Find path to specified node package binary."""
 #     binary_path = NODE_BIN_PATH / binary
@@ -170,81 +326,6 @@ def dedupe(options: List[str]) -> List[str]:
 # POSTLIGHTPARSER_BINARY = find_node_binary("postlight-parser")
 # READABILITY_BINARY = find_node_binary("readability-extractor")
 # SINGLEFILE_BINARY = find_node_binary("single-file")
-
-
-def download_file(url, filename, timeout: int = 600):
-    """Download a file."""
-    import requests
-    from tqdm.auto import tqdm
-
-    try:
-        # First, send a HEAD request to get file size
-        head_response = requests.head(url, timeout=timeout)
-        head_response.raise_for_status()
-        total_size = int(head_response.headers.get("content-length", 0))
-    except requests.exceptions.RequestException:
-        logger.exception("Could not query file head")
-
-    try:
-        with requests.get(url, stream=True, timeout=timeout) as response:
-            # Raise an exception for bad status codes
-            response.raise_for_status()
-
-            # Get the total file size
-            total_size = int(response.headers.get("content-length", 0))
-
-            with (
-                atomic_write(filename, is_binary=True) as f,
-                tqdm(total=total_size, unit="iB", unit_scale=True, desc=filename) as progress_bar,
-            ):
-                for chunk in response.iter_content(chunk_size=8192):
-                    size = f.write(chunk)
-                    progress_bar.update(size)
-
-        logger.info(f"File downloaded successfully: {filename}")
-
-    except requests.exceptions.RequestException:
-        logger.exception("Download failed")
-
-
-# atomic write
-# https://stackoverflow.com/questions/2333872/how-to-make-file-creation-an-atomic-operation
-@contextmanager
-def atomic_write(filepath: Path | str, is_binary: bool = False):
-    """Write to temporary file object that atomically moves to destination upon exiting."""
-    filepath = Path(filepath)
-
-    dirpath, fname = filepath.parent, filepath.name
-    dirpath.mkdir(parents=True, exist_ok=True)
-
-    with NamedTemporaryFile(
-        mode="wb" if is_binary else "w",
-        dir=dirpath,
-        prefix=fname,
-        suffix=".tmp",
-        delete_on_close=False,
-    ) as tmp:
-        try:
-            yield tmp
-        finally:
-            tmp.flush()  # libc -> OS
-            os.fsync(tmp.fileno())  # OS -> disc
-        os.replace(tmp.name, filepath)
-
-
-def validate_download(filepath: Path | str, min_bytes: int = 1) -> bool:
-    """Validate that downloaded file exists and is of minimum size."""
-    filepath = path_is_file(filepath)
-
-    # Get file size
-    file_size = filepath.stat().st_size
-
-    # Check minimum size
-    if file_size < min_bytes:
-        logger.error(f"File is too small: found {file_size} bytes, expected at least {min_bytes} bytes.")
-        return False
-
-    return True
 
 
 # def save_and_hash(filepath: Path | str, content: str):
