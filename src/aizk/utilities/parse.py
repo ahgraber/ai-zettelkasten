@@ -1,87 +1,72 @@
 # ruff: NOQA: E731
-from datetime import datetime, timezone
-from functools import wraps
-from hashlib import sha256
-from html import escape, unescape
-import http.cookiejar
-from inspect import signature
-import json as pyjson
+import json
+import logging
 from pathlib import Path
 import re
 import typing as t
 from typing import Any, Callable, List, Optional
 from urllib.parse import quote, unquote, urlparse
 
-from base32_crockford import encode as base32_encode  # type: ignore
-from dateparser import parse as dateparser
+from pydantic import HttpUrl, ValidationError
 
-try:
-    import chardet  # type:ignore
-
-    detect_encoding = lambda rawdata: chardet.detect(rawdata)["encoding"]
-except ImportError:
-    detect_encoding = lambda rawdata: "utf-8"
+logger = logging.getLogger(__name__)
 
 
-### Parsing Helpers
+def detect_encoding(rawdata: bytes) -> str:
+    """Detect the encoding of a byte string."""
+    import chardet
 
-# All of these are (str) -> str
-# shortcuts to: https://docs.python.org/3/library/urllib.parse.html#url-parsing
-scheme = lambda url: urlparse(url).scheme.lower()
-without_scheme = lambda url: urlparse(url)._replace(scheme="").geturl().removeprefix("//").removesuffix("//")
-without_query = lambda url: urlparse(url)._replace(query="").geturl().removeprefix("//").removesuffix("//")
-without_fragment = lambda url: urlparse(url)._replace(fragment="").geturl().removeprefix("//").removesuffix("//")
-without_path = (
-    lambda url: urlparse(url)._replace(path="", fragment="", query="").geturl().removeprefix("//").removesuffix("//")
-)
-path = lambda url: urlparse(url).path
-basename = lambda url: urlparse(url).path.rsplit("/", 1)[-1]
-domain = lambda url: urlparse(url).netloc
-query = lambda url: urlparse(url).query
-fragment = lambda url: urlparse(url).fragment
-extension = lambda url: basename(url).rsplit(".", 1)[-1].lower() if "." in basename(url) else ""
-base_url = lambda url: without_scheme(url)  # uniq base url used to dedupe links
-
-without_www = lambda url: url.replace("://www.", "://", 1)
-without_trailing_slash = lambda url: url[:-1] if url[-1] == "/" else url.replace("/?", "?")
-hashurl = lambda url: base32_encode(int(sha256(base_url(url).encode("utf-8")).hexdigest(), 16))[:20]
-
-urlencode = lambda s: s and quote(s, encoding="utf-8", errors="replace")
-urldecode = lambda s: s and unquote(s)
-htmlencode = lambda s: s and escape(s, quote=True)
-htmldecode = lambda s: s and unescape(s)
-
-short_ts = lambda ts: str(parse_date(ts).timestamp()).split(".")[0]
-ts_to_date_str = lambda ts: ts and parse_date(ts).strftime("%Y-%m-%d %H:%M")
-ts_to_iso = lambda ts: ts and parse_date(ts).isoformat()
-
-COLOR_REGEX = re.compile(r"\[(?P<arg_1>\d+)(;(?P<arg_2>\d+)(;(?P<arg_3>\d+))?)?m")
+    encoding = chardet.detect(rawdata)
+    logger.info(encoding)
+    return encoding["encoding"] or "utf-8"
 
 
 # https://mathiasbynens.be/demo/url-regex
-URL_REGEX = re.compile(
-    r"(?=("
-    r"http[s]?://"  # start matching from allowed schemes
-    r"(?:[a-zA-Z]|[0-9]"  # followed by allowed alphanum characters
-    r"|[-_$@.&+!*\(\),]"  #   or allowed symbols (keep hyphen first to match literal hyphen)
-    r"|[^\u0000-\u007F])+"  #   or allowed unicode bytes
-    r'[^\]\[<>"\'\s]+'  # stop parsing at these symbols
-    r"))",
-    re.IGNORECASE | re.UNICODE,
+# https://gist.github.com/dperini/729294
+URL_REGEX = (
+    r"(?:http|ftp)s?://"  # http:// or https://
+    r"(?![-_])(?:[-\w\u00a1-\uffff]{0,63}[^-_]\.)+"  # domain...
+    r"(?:[a-z\u00a1-\uffff]{2,}\.?)"  # tld
+    r"(?:[/?#]\S*)?"  # path
+    # r"(?:[/?#]\S+?)?"  # path  uses +? to match as few as possible
 )
 
 
-def parens_are_matched(string: str, open_char="(", close_char=")"):
-    """Check that all parentheses in a string are balanced and nested properly."""
-    count = 0
-    for c in string:
-        if c == open_char:
-            count += 1
-        elif c == close_char:
-            count -= 1
-        if count < 0:
-            return False
-    return count == 0
+def extract_url(text: str) -> list[str]:
+    """Identify urls (url-like strings) from text."""
+    pattern = re.compile(URL_REGEX, re.IGNORECASE | re.UNICODE)
+    matches = re.findall(pattern, text)
+    return matches
+
+
+def validate_url(url: str) -> str:
+    """Validate a URL."""
+    try:
+        _url = HttpUrl(url)
+    except ValidationError:
+        logger.exception(f"Invalid URL: {url}")
+        raise
+
+    return str(_url)
+
+
+def extract_md_url(text: str) -> list[tuple[str, str]]:
+    """Identify markdown-style urls (i.e., [title](url) ) and extract (title, url)."""
+    pattern = re.compile(
+        r"(?:\[|\\\[)"  # initial '['
+        r"([\s\S]*?)"  # title text
+        r"(?:(?:\]|\\\])\()"  # middle ']('
+        f"({URL_REGEX})"  # url
+        r"(?:\))",  # final ')'
+        re.IGNORECASE | re.UNICODE,
+    )
+    # Find all matches
+    matches = re.findall(pattern, text)
+
+    # # clean multispaces / newlines
+    matches = [(" ".join(title.split()), url) for title, url in matches]
+
+    return matches
 
 
 def fix_url_from_markdown(url_str: str) -> str:
@@ -100,11 +85,11 @@ def fix_url_from_markdown(url_str: str) -> str:
 
     # cut off one trailing character at a time
     # until parens are balanced e.g. /a(b)c).x(y)z -> /a(b)c
-    while not parens_are_matched(trimmed_url):
+    while not check_matched_pairs(trimmed_url):
         trimmed_url = trimmed_url[:-1]
 
     # make sure trimmed url is still valid
-    if re.findall(URL_REGEX, trimmed_url):
+    if extract_url(trimmed_url):
         return trimmed_url
 
     return url_str
@@ -112,50 +97,97 @@ def fix_url_from_markdown(url_str: str) -> str:
 
 def find_all_urls(urls_str: str):
     """Find all urls in text blob."""
-    for url in re.findall(URL_REGEX, urls_str):
+    for url in extract_url(urls_str):
         yield fix_url_from_markdown(url)
 
 
-def is_static_file(url: str):
-    """Determine whether file is static or requires rendering."""
-    # TODO: the proper way is with MIME type detection + ext, not only extension
-    STATICFILE_EXTENSIONS = { # NOQA:N806
-        # 99.999% of the time, URLs ending in these extensions are static files,
-        # and can be downloaded as-is, not html pages that need to be rendered
-        "gif", "jpeg", "jpg", "png", "tif", "tiff", "wbmp", "ico", "jng", "bmp",
-        "svg", "svgz", "webp", "ps", "eps", "ai", "mp3", "mp4", "m4a", "mpeg",
-        "mpg", "mkv", "mov", "webm", "m4v", "flv", "wmv", "avi", "ogg", "ts", "m3u8",
-        "pdf", "txt", "rtf", "rtfd", "doc", "docx", "ppt", "pptx", "xls", "xlsx",
-        "atom", "rss", "css", "js", "json", "dmg", "iso", "img", "rar", "war",
-        "hqx", "zip", "gz", "bz2", "7z",
-        # Less common extensions to consider adding later
-        # jar, swf, bin, com, exe, dll, deb
-        # ear, hqx, eot, wmlc, kml, kmz, cco, jardiff, jnlp, run, msi, msp, msm,
-        # pl pm, prc pdb, rar, rpm, sea, sit, tcl tk, der, pem, crt, xpi, xspf,
-        # ra, mng, asx, asf, 3gpp, 3gp, mid, midi, kar, jad, wml, htc, mml
-        # These are always treated as pages, not as static files, never add them:
-        # html, htm, shtml, xhtml, xml, aspx, php, cgi
-    }  # fmt: skip
-    return extension(url).lower() in STATICFILE_EXTENSIONS
+def validate_arxiv_url(url: str) -> str:
+    """Validate arXiv URL."""
+    if "arxiv.org" not in url:
+        raise ValueError("URL must be from arXiv.org")
+
+    try:
+        _url = HttpUrl(url)
+    except ValidationError:
+        logger.exception(f"Invalid URL: {url}")
+        raise
+
+    if not (_url.path.startswith("/pdf") or _url.path.startswith("/abs") or _url.path.startswith("/html")):
+        raise ValueError("URL must be to PDF, abstract, or HTML page")
+    else:
+        return str(_url)
 
 
-def parse_date(date: t.Any) -> datetime:
-    """Parse unix timestamps, iso format, and human-readable strings."""
-    if date is None:
-        return None  # type: ignore
+def check_matched_pairs(string: str, open_char="(", close_char=")"):
+    """Check that all parentheses in a string are balanced and nested properly."""
+    count = 0
+    for c in string:
+        if c == open_char:
+            count += 1
+        elif c == close_char:
+            count -= 1
+        if count < 0:
+            return False
+    return count == 0
 
-    if isinstance(date, datetime):
-        if date.tzinfo is None:
-            return date.replace(tzinfo=timezone.utc)
 
-        if date.tzinfo.utcoffset(datetime.now()).seconds != 0:
-            raise ValueError("Refusing to load a non-UTC date!")
-        return date
+def extract_json(text: str) -> str:
+    """Identify json from a text blob by matching '[]' or '{}'.
 
-    if isinstance(date, (float, int)):
-        date = str(date)
+    Warning: This will identify the first json structure!
+    """
+    # check for markdown indicator; if present, start there
+    md_json_idx = text.find("```json")
+    if md_json_idx != -1:
+        text = text[md_json_idx:]
 
-    if isinstance(date, str):
-        return dateparser(date, settings={"TIMEZONE": "UTC"}).astimezone(timezone.utc)
+    # search for json delimiter pairs
+    left_bracket_idx = text.find("[")
+    left_brace_idx = text.find("{")
 
-    raise ValueError("Tried to parse invalid date! {}".format(date))
+    indices = [idx for idx in (left_bracket_idx, left_brace_idx) if idx != -1]
+    start_idx = min(indices) if indices else None
+
+    # If no delimiter found, return the original text
+    if start_idx is None:
+        return text
+
+    # Identify the exterior delimiters defining JSON
+    open_char = text[start_idx]
+    close_char = "]" if open_char == "[" else "}"
+
+    # Initialize a count to keep track of delimiter pairs
+    count = 0
+    for i, char in enumerate(text[start_idx:], start=start_idx):
+        if char == open_char:
+            count += 1
+        elif char == close_char:
+            count -= 1
+
+        # When count returns to zero, we've found a complete structure
+        if count == 0:
+            return text[start_idx : i + 1]
+
+    return text  # In case of unbalanced JSON, return the original text
+
+
+# def parse_date(date: t.Any) -> datetime:
+#     """Parse unix timestamps, iso format, and human-readable strings."""
+#     if date is None:
+#         return None  # type: ignore
+
+#     if isinstance(date, datetime):
+#         if date.tzinfo is None:
+#             return date.replace(tzinfo=timezone.utc)
+
+#         if date.tzinfo.utcoffset(datetime.now()).seconds != 0:
+#             raise ValueError("Refusing to load a non-UTC date!")
+#         return date
+
+#     if isinstance(date, (float, int)):
+#         date = str(date)
+
+#     if isinstance(date, str):
+#         return dateparser(date, settings={"TIMEZONE": "UTC"}).astimezone(timezone.utc)
+
+#     raise ValueError("Tried to parse invalid date! {}".format(date))
