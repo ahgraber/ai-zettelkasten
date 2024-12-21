@@ -6,26 +6,18 @@ import logging
 import os
 from pathlib import Path
 import re
-import subprocess
 from typing import Any, List
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 from pydantic import (
-    AfterValidator,
-    BaseModel,
-    BeforeValidator,
-    ConfigDict,
     Field,
     HttpUrl,
-    TypeAdapter,
     ValidationError,
 )
-from pydantic_core import Url
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 import requests
-import tenacity
-from typing_extensions import Annotated, override
+from typing_extensions import override
 
 from aizk.datamodel.schema import ScrapeStatus, Source
 from aizk.extractors.base import ExtractionError, Extractor, ExtractorSettings
@@ -56,8 +48,10 @@ class ArxivExtractor(Extractor):
         config: ArxivSettings | dict[str, Any] | None = None,
         out_dir: Path | str | None = None,
     ):
+        config = self.validate_config(config or {})
+
         super().__init__(
-            config=config or ArxivSettings(),
+            config=config,
             out_dir=out_dir or Path.cwd() / "data" / self.name,
         )
 
@@ -70,7 +64,7 @@ class ArxivExtractor(Extractor):
         return cfg
 
     @classmethod
-    def _validate_arxiv_url(cls, url: str) -> str:
+    def validate_arxiv_url(cls, url: str) -> str:
         """Validate arXiv URL."""
         if "arxiv.org" not in url:
             raise ValueError("URL must be from arXiv.org")
@@ -87,9 +81,9 @@ class ArxivExtractor(Extractor):
             return str(_url)
 
     @classmethod
-    def _get_arxiv_id(cls, url: str) -> str:
+    def get_arxiv_id(cls, url: str) -> str:
         """Extract arXiv ID from url."""
-        url = cls._validate_arxiv_url(url)
+        url = cls.validate_arxiv_url(url)
         path = urlparse(url).path
 
         # ref: https://arxiv.org/help/arxiv_identifier
@@ -101,23 +95,23 @@ class ArxivExtractor(Extractor):
             raise ValueError("Could not find arXiv ID in URL.")
 
     @classmethod
-    def _to_abs_url(cls, arxiv_id: str) -> str:
+    def to_abs_url(cls, arxiv_id: str) -> str:
         """Convert arXiv ID to abstract URL."""
         return f"https://arxiv.org/abs/{arxiv_id}"
 
     @classmethod
-    def _to_html_url(cls, arxiv_id: str) -> str:
+    def to_html_url(cls, arxiv_id: str) -> str:
         """Convert arXiv ID to HTML URL."""
         return f"https://arxiv.org/html/{arxiv_id}"
 
     @classmethod
-    def _to_pdf_url(cls, arxiv_id: str) -> str:
+    def to_pdf_url(cls, arxiv_id: str) -> str:
         """Convert arXiv ID to PDF URL."""
         return f"https://arxiv.org/pdf/{arxiv_id}.pdf"
 
     def get_abs_metadata(self, arxiv_id: str, out_dir_path: Path):
         """Extract metadata from arXiv abstract page."""
-        url = self._to_abs_url(arxiv_id)
+        url = self.to_abs_url(arxiv_id)
 
         response = requests.get(url, timeout=self.config.timeout)
         if response.status_code != 200:
@@ -155,7 +149,7 @@ class ArxivExtractor(Extractor):
 
     def get_html_content(self, arxiv_id: str, out_dir_path: Path):
         """Extract HTML content from arXiv HTML page."""
-        url = self._to_html_url(arxiv_id)
+        url = self.to_html_url(arxiv_id)
         try:
             download_file(url, out_dir_path / f"{arxiv_id}.html", timeout=self.config.timeout)
         except requests.exceptions.HTTPError:
@@ -164,13 +158,13 @@ class ArxivExtractor(Extractor):
 
     def get_pdf_file(self, arxiv_id: str, out_dir_path: Path):
         """Download PDF file from arXiv."""
-        url = self._to_pdf_url(arxiv_id)
+        url = self.to_pdf_url(arxiv_id)
         download_file(url, out_dir_path / f"{arxiv_id}.pdf", timeout=self.config.timeout)
 
     @override
     def run(self, url: str, out_dir_path: Path):
         """Run the extraction."""
-        arxiv_id = self._get_arxiv_id(url)
+        arxiv_id = self.get_arxiv_id(url)
 
         # these functions download the files
         if self.config.with_metadata:
@@ -192,7 +186,7 @@ class ArxivExtractor(Extractor):
         out_dir_path = self.out_dir / str(src.uuid)
         out_dir_path.mkdir(exist_ok=True)
         src.scraped_at = datetime.datetime.now(datetime.timezone.utc)
-        arxiv_id = self._get_arxiv_id(src.url)
+        arxiv_id = self.get_arxiv_id(src.url)
 
         try:
             self.run(src.url, out_dir_path)
