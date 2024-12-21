@@ -15,13 +15,13 @@ from tqdm.auto import tqdm
 from aizk.datamodel.schema import ScrapeStatus, Source
 from aizk.extractors.utils import atomic_write, download_file, validate_file
 from aizk.utilities.path_helpers import (
-    HostBinPath,
-    PATHStr,
-    add_node_bin_to_PATH,
+    ExecPath,
+    SysPATH,
+    add_node_bindir_to_syspath,
     find_binary_abspath,
-    path_is_abspath,
     path_is_dir,
     path_is_file,
+    path_is_valid,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,40 +64,34 @@ class Extractor:
 
     def __init__(
         self,
-        # binary: Path | str,
-        out_dir: Path | str | None = None,
         config: BaseSettings | dict[str, Any] | None = None,
+        binary: Path | str | None = None,
+        out_dir: Path | str | None = None,
     ):
-        # self.binary = binary  # calls setter
+        self.config = self.validate_config(config or {})  # calls setter
+
+        self.binary = binary or "not specified"  # calls setter
         self.out_dir = out_dir  # calls setter
-        self.config = config  # calls setter
-
-    @property
-    def binary(self) -> Path | str:  # NOQA:D102
-        return self._binary
-
-    def init_binary(self, bin_path_or_name: Path | str, syspath: PATHStr | None = None) -> HostBinPath | Path:
-        """Run any system setup required to initialize binary."""
-        if bin_path_or_name is None:  # e.g. type or range check
-            raise ValueError("'binary' must be provided as Path or name")
-
-        return find_binary_abspath(bin_path_or_name, syspath)
-
-    @binary.setter
-    def binary(self, bin_path_or_name: Path | str, syspath: PATHStr | None = None):
-        self._binary = self.init_binary(bin_path_or_name, syspath)
 
     @property
     def config(self):  # NOQA:D102
         return self._config
 
-    def validate_config(self, config: BaseSettings | dict[str, Any]):
-        """Validate the extractor config."""
-        return config
-
     @config.setter
-    def config(self, config: BaseSettings | dict[str, Any] | None):
-        self._config = self.validate_config(config or ExtractorSettings())
+    def config(self, config: BaseSettings):
+        self._config = config
+
+    def validate_config(self, cfg: BaseSettings | dict[str, Any]):
+        """Validate the extractor config."""
+        return ExtractorSettings.model_validate(cfg)
+
+    @property
+    def binary(self) -> Path | str:  # NOQA:D102
+        return self._binary
+
+    @binary.setter
+    def binary(self, binary: Path | str):
+        self._binary = binary
 
     @property
     def out_dir(self) -> Path:  # NOQA:D102
@@ -196,15 +190,10 @@ class StaticFileExtractor(Extractor):
         config: ExtractorSettings | dict[str, Any] | None = None,
         out_dir: Path | str | None = None,
     ):
-        self.binary = find_binary_abspath("curl", add_node_bin_to_PATH())
-
         super().__init__(
             config=config or ExtractorSettings(),
             out_dir=out_dir or Path.cwd() / "data" / self.name,
         )
-
-        # self.config = self.validate_config(config or PostlightSettings())
-        # self.out_dir = out_dir or Path.cwd() / "data" / PostlightExtractor.name
 
     @override
     def run(self, url: str, file_path: Path):
@@ -221,7 +210,7 @@ class StaticFileExtractor(Extractor):
         src.scraped_at = datetime.datetime.now(datetime.timezone.utc)
 
         try:
-            pagename = urlparse(src.url).path.rsplit("/", 1)[-1]
+            pagename = urlparse(src.url).path.rsplit("/", 1)[-1]  # rightmost part of the path
             out_file_path = out_dir_path / pagename
 
             # this is different from standard (no extract text to validate and save)

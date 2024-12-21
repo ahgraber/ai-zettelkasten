@@ -1,13 +1,22 @@
 # ruff: NOQA: E731
+"""ChromeExtractor, ChromeHTMLExtractor, ChromePDFExtractor, ChromeScreenshotExtractor.
+
+- ref: https://github.com/ArchiveBox/ArchiveBox/blob/dev/archivebox/pkgs/abx-plugin-chrome/abx_plugin_chrome/dom.py
+- ref: https://github.com/ArchiveBox/ArchiveBox/blob/dev/archivebox/pkgs/abx-plugin-chrome/abx_plugin_chrome/pdf.py
+- ref: https://github.com/ArchiveBox/ArchiveBox/blob/dev/archivebox/pkgs/abx-plugin-chrome/abx_plugin_chrome/screenshot.py
+"""
+
+import itertools
 import json
 import logging
 import os
 from pathlib import Path
 import platform
 from subprocess import PIPE, CalledProcessError, CompletedProcess, Popen, TimeoutExpired, run
+import sys
 from typing import Any, List, Tuple, override
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, TypeAdapter
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from aizk.datamodel.schema import ScrapeStatus, Source, ValidatedURL
@@ -15,9 +24,11 @@ from aizk.extractors.base import ExtractionError, Extractor
 from aizk.extractors.utils import atomic_write, dedupe
 from aizk.utilities.path_helpers import (
     DEFAULT_ENV_PATH,
-    PATHStr,
+    ExecPath,
+    SysPATH,
     find_binary_abspath,
-    get_local_bin,
+    get_local_bin_dir,
+    path_is_dir,
     path_is_executable,
     path_is_file,
     symlink_to_bin,
@@ -34,8 +45,11 @@ CHROMIUM_BINARY_NAMES_LINUX = [
     "chromium-browser-canary",
     "chromium-browser-dev",
 ]
-CHROMIUM_BINARY_NAMES_MACOS = ["/Applications/Chromium.app/Contents/MacOS/Chromium"]
-CHROMIUM_BINARY_NAMES = CHROMIUM_BINARY_NAMES_LINUX + CHROMIUM_BINARY_NAMES_MACOS
+CHROMIUM_BINARY_NAMES_MACOS = ["Chromium"]
+CHROMIUM_BINARY_FULL_MACOS = [
+    f"/Applications/{name}.app/Contents/MacOS/{name}" for name in CHROMIUM_BINARY_NAMES_MACOS
+]
+CHROMIUM_BINARY_NAMES = CHROMIUM_BINARY_NAMES_LINUX + CHROMIUM_BINARY_NAMES_MACOS + CHROMIUM_BINARY_FULL_MACOS
 
 CHROME_BINARY_NAMES_LINUX = [
     "google-chrome",
@@ -47,35 +61,58 @@ CHROME_BINARY_NAMES_LINUX = [
     "chrome",
 ]
 CHROME_BINARY_NAMES_MACOS = [
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+    "Google Chrome",
+    "Google Chrome Canary",
 ]
-CHROME_BINARY_NAMES = CHROME_BINARY_NAMES_LINUX + CHROME_BINARY_NAMES_MACOS
+CHROME_BINARY_FULL_MACOS = [f"/Applications/{name}.app/Contents/MacOS/{name}" for name in CHROME_BINARY_NAMES_MACOS]
+CHROME_BINARY_NAMES = CHROME_BINARY_NAMES_LINUX + CHROME_BINARY_NAMES_MACOS + CHROME_BINARY_FULL_MACOS
 
 CHROME_SAVE_ACTIONS = {"html": "--dump-dom", "pdf": "--print-to-pdf", "image": "--screenshot"}
 
 
-def autodetect_system_chrome_install(PATH: PATHStr | None = None) -> Path:  # NOQA: N803
-    """Find system Chrome/Chromium if exists in default locations."""
-    for bin_name in CHROME_BINARY_NAMES + CHROMIUM_BINARY_NAMES:
+def detect_playwright_chrome_install(playwright_browser_path: Path | str | None = None) -> Path | None:
+    """Find Chrome/Chromium installed by playwright if exists."""
+    playwright_browser_path = path_is_dir(playwright_browser_path or os.environ.get("PLAYWRIGHT_BROWSERS_PATH"))
+
+    bin_names = [name for name in CHROME_BINARY_NAMES + CHROMIUM_BINARY_NAMES if "/" not in name]
+
+    # recursively search playwright browser path for chrome/chromium names
+    test_paths = list(itertools.chain.from_iterable(playwright_browser_path.rglob(bin_name) for bin_name in bin_names))
+
+    for bin_path in test_paths:
         try:
-            abspath = find_binary_abspath(bin_name, PATH=PATH if PATH else DEFAULT_ENV_PATH)
+            abspath = find_binary_abspath(bin_path, syspath=None)
         except FileNotFoundError:
             pass
         else:
             return abspath
 
-    # return None
-    raise FileNotFoundError("Could not find Chrome/Chromium binary on default system paths. Is it installed?")
+    # raise FileNotFoundError("Could not find Chrome/Chromium binary in specified path. Is it installed?")
+    logger.error("Could not find Chrome/Chromium binary on default system paths. Is it installed?")
+    return None
+
+
+def detect_system_chrome_install(syspath: SysPATH | None = None) -> Path | None:
+    """Find system Chrome/Chromium if exists in default locations."""
+    for bin_name in CHROME_BINARY_NAMES + CHROMIUM_BINARY_NAMES:
+        try:
+            abspath = find_binary_abspath(bin_name, syspath=syspath if syspath else DEFAULT_ENV_PATH)
+        except FileNotFoundError:
+            pass
+        else:
+            return abspath
+
+    # raise FileNotFoundError("Could not find Chrome/Chromium binary on default system paths. Is it installed?")
+    logger.error("Could not find Chrome/Chromium binary on default system paths. Is it installed?")
+    return None
 
 
 class ChromeSettings(BaseSettings):
     """Default Chrome settings."""
 
-    # USE_CHROME: bool = Field(default=True)
-    # CHROME_BINARY: str = Field(default="chrome")
-
     # Chrome Binary
+    CHROME_BINARY: str = Field(default=str(detect_playwright_chrome_install()))
+
     CHROME_DEFAULT_ARGS: List[str] = Field(
         default=[
             "--disable-sync",
@@ -144,7 +181,7 @@ class ChromeSettings(BaseSettings):
     CHROME_EXTRA_ARGS: List[str] = Field(default=[])
 
     # Chrome Options Tuning
-    CHROME_TIMEOUT: int = Field(default=45, ge=15, lt=3600)  # global process timeout - 10
+    CHROME_TIMEOUT: int = Field(default=90, ge=15, lt=3600)  # global process timeout - 10
     CHROME_HEADLESS: bool = Field(default=True)
     CHROME_SANDBOX: bool = Field(default=True)  # false if in docker
     CHROME_RESOLUTION: str = Field(default="1440,2000")
@@ -155,18 +192,14 @@ class ChromeSettings(BaseSettings):
         default=(
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/118.0.0.0 Safari/537.36"
+            "Chrome/118.0.0.0 Safari/537.36"  # "Chrome/131.0.0.0 Safari/537.36"
         )
     )
     CHROME_USER_DATA_DIR: Path | None = Field(default=Path.cwd() / ".profile" / "chrome")
     CHROME_PROFILE_NAME: str = Field(default="Default")
 
     # Extractor Toggles
-    SAVE_SCREENSHOT: bool = Field(default=True)
-    SAVE_DOM: bool = Field(default=True)
-    SAVE_PDF: bool = Field(default=True)
-
-    OVERWRITE: bool = Field(default=False)
+    # OVERWRITE: bool = Field(default=False)
 
     def validate(self):
         """Validate settings."""
@@ -277,27 +310,17 @@ class ChromeExtractor(Extractor):
 
     def __init__(
         self,
-        config: dict[str, Any] | None = None,
+        config: ChromeSettings | dict[str, Any] | None = None,
         out_dir: Path | str | None = None,
     ):
-        # super().__init__(
-        #     out_dir=out_dir or Path.cwd() / "data" / self.name
-        # )
-        self.binary = self.init_binary()
-        # self.config = config or {}
-        self.config = self.validate_config(config or {})
-        self.out_dir = out_dir or Path.cwd() / "data" / ChromeExtractor.name
+        config = self.validate_config(config or {})
+        binary = config.CHROME_BINARY or detect_playwright_chrome_install() or detect_system_chrome_install()
 
-    @override
-    def init_binary(
-        self,
-        bin_path_or_name="Chrome",  # ignored; for equivalent signatures
-        syspath: PATHStr | None = None,
-    ) -> Path:
-        chrome_bin = autodetect_system_chrome_install(PATH=syspath)
-        # symlink = symlink_to_bin(chrome_bin)
-        # return symlink
-        return chrome_bin
+        super().__init__(
+            config=config,
+            binary=binary,
+            out_dir=out_dir or Path.cwd() / "data" / self.name,
+        )
 
     @override
     def cleanup(self):
@@ -317,13 +340,13 @@ class ChromeExtractor(Extractor):
                 pass
 
     @override
-    def validate_config(self, c: BaseSettings | dict[str, Any]) -> ChromeSettings:
+    def validate_config(self, cfg: ChromeSettings | dict[str, Any]) -> ChromeSettings:
         """Validate the extractor config."""
-        return ChromeSettings.model_validate(c)
+        return ChromeSettings.model_validate(cfg)
 
 
 class ChromeHTMLExtractor(ChromeExtractor):
-    """Chrome html extractor."""
+    """Chrome extractor that saves page HTML."""
 
     name: str = "chrome-html"
     default_filename: str = "output.html"
@@ -337,17 +360,17 @@ class ChromeHTMLExtractor(ChromeExtractor):
         super().__init__(config=config, out_dir=out_dir)
 
     @override
-    def run(self, url: ValidatedURL | str):
+    def run(self, url: ValidatedURL | str) -> str | bytes:
         # Get HTML version of article
         cmd = [
             str(self.binary),
             *CHROME_CONFIG.chrome_args(),
-            "--dump-dom",
+            CHROME_SAVE_ACTIONS["html"],  # "--dump-dom",
             url,
         ]
         logger.debug(f"{cmd=}")
         result = run(  # NOQA: S603
-            cmd,
+            cmd,  # NOQA: S607
             capture_output=True,
             timeout=self.config.CHROME_TIMEOUT,
         )
@@ -357,16 +380,80 @@ class ChromeHTMLExtractor(ChromeExtractor):
         except CalledProcessError as e:
             raise ExtractionError(f"{self.name} extraction of {url} failed:\n'{result.stderr.decode()}'") from e
 
-        return result.stdout
+        return result.stdout.decode()
+
+
+class ChromePDFExtractor(ChromeExtractor):
+    """Chrome extractor that saves page as PDF."""
+
+    name: str = "chrome-html"
+    default_filename: str = "output.html"
+    config: ChromeSettings
+
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        out_dir: Path | str | None = None,
+    ):
+        super().__init__(config=config, out_dir=out_dir)
 
     @override
-    def validate_extract(self, extract) -> Tuple[ScrapeStatus, str]:
+    def run(self, url: ValidatedURL | str) -> str | bytes:
+        # Get HTML version of article
+        cmd = [
+            str(self.binary),
+            *CHROME_CONFIG.chrome_args(),
+            CHROME_SAVE_ACTIONS["pdf"],  # "--print-to-pdf",
+            url,
+        ]
+        logger.debug(f"{cmd=}")
+        result = run(  # NOQA: S603
+            cmd,  # NOQA: S607
+            capture_output=True,
+            timeout=self.config.CHROME_TIMEOUT,
+        )
+
         try:
-            content = extract.decode()
-        except Exception as e:
-            return ScrapeStatus("ERROR"), f"Failed to decode content: {e}"
+            result.check_returncode()  # raises error if failed
+        except CalledProcessError as e:
+            raise ExtractionError(f"{self.name} extraction of {url} failed:\n'{result.stderr.decode()}'") from e
 
-        if content is None or len(content) < 5:
-            return ScrapeStatus("ERROR"), "Process completed successfully but content is missing."
+        return result.stdout.decode()
 
-        return ScrapeStatus("COMPLETE"), content
+
+class ChromeScreenshotExtractor(ChromeExtractor):
+    """Chrome extractor that saves screenshot of page."""
+
+    name: str = "chrome-html"
+    default_filename: str = "output.html"
+    config: ChromeSettings
+
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        out_dir: Path | str | None = None,
+    ):
+        super().__init__(config=config, out_dir=out_dir)
+
+    @override
+    def run(self, url: ValidatedURL | str) -> str | bytes:
+        # Get HTML version of article
+        cmd = [
+            str(self.binary),
+            *CHROME_CONFIG.chrome_args(),
+            CHROME_SAVE_ACTIONS["image"],  # "--screenshot",
+            url,
+        ]
+        logger.debug(f"{cmd=}")
+        result = run(  # NOQA: S603
+            cmd,  # NOQA: S607
+            capture_output=True,
+            timeout=self.config.CHROME_TIMEOUT,
+        )
+
+        try:
+            result.check_returncode()  # raises error if failed
+        except CalledProcessError as e:
+            raise ExtractionError(f"{self.name} extraction of {url} failed:\n'{result.stderr.decode()}'") from e
+
+        return result.stdout.decode()

@@ -17,7 +17,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from aizk.datamodel.schema import ScrapeStatus, Source, ValidatedURL
 from aizk.extractors.base import ExtractionError, Extractor
 from aizk.extractors.utils import atomic_write
-from aizk.utilities.path_helpers import add_node_bin_to_PATH, find_binary_abspath
+from aizk.utilities.path_helpers import add_node_bindir_to_syspath, find_binary_abspath
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 class PostlightSettings(BaseSettings):
     """Configuration for @postlight/parser."""
 
+    binary: str = Field(default=str(find_binary_abspath("postlight-parser", add_node_bindir_to_syspath())))
     timeout: int = Field(default=45, ge=15, lt=3600)
     model_config = SettingsConfigDict(extra="ignore")
 
@@ -41,15 +42,14 @@ class PostlightExtractor(Extractor):
         config: PostlightSettings | dict[str, Any] | None = None,
         out_dir: Path | str | None = None,
     ):
-        self.binary = find_binary_abspath(self.name, add_node_bin_to_PATH())
+        config = self.validate_config(config or {})
+        binary = config.binary or find_binary_abspath(self.name, add_node_bindir_to_syspath())
 
         super().__init__(
-            config=config or PostlightSettings(),
+            config=config,
+            binary=binary,
             out_dir=out_dir or Path.cwd() / "data" / self.name,
         )
-
-        # self.config = self.validate_config(config or PostlightSettings())
-        # self.out_dir = out_dir or Path.cwd() / "data" / PostlightExtractor.name
 
     @override
     def validate_config(self, cfg: PostlightSettings | dict[str, Any]) -> PostlightSettings:
