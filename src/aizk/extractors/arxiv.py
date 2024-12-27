@@ -109,7 +109,7 @@ class ArxivExtractor(Extractor):
         """Convert arXiv ID to PDF URL."""
         return f"https://arxiv.org/pdf/{arxiv_id}.pdf"
 
-    def get_abs_metadata(self, arxiv_id: str, out_dir_path: Path):
+    def get_abs_metadata(self, arxiv_id: str, out_dir: Path):
         """Extract metadata from arXiv abstract page."""
         url = self.to_abs_url(arxiv_id)
 
@@ -144,61 +144,61 @@ class ArxivExtractor(Extractor):
             "abstract": paper_abstract.strip(),
         }
 
-        with atomic_write(out_dir_path / "metadata.json") as f:
+        with atomic_write(out_dir / "metadata.json", binary_mode=False) as f:
             json.dump(metadata, f)
 
-    def get_html_content(self, arxiv_id: str, out_dir_path: Path):
+    def get_html_content(self, arxiv_id: str, out_dir: Path):
         """Extract HTML content from arXiv HTML page."""
         url = self.to_html_url(arxiv_id)
         try:
-            download_file(url, out_dir_path / f"{arxiv_id}.html", timeout=self.config.timeout)
+            download_file(url, out_dir / f"{arxiv_id}.html", timeout=self.config.timeout)
         except requests.exceptions.HTTPError:
             # Log but don't raise if HTML page is not available
             logger.warning(f"Could not download HTML content from {url}, check if page exists.")
 
-    def get_pdf_file(self, arxiv_id: str, out_dir_path: Path):
+    def get_pdf_file(self, arxiv_id: str, out_dir: Path):
         """Download PDF file from arXiv."""
         url = self.to_pdf_url(arxiv_id)
-        download_file(url, out_dir_path / f"{arxiv_id}.pdf", timeout=self.config.timeout)
+        download_file(url, out_dir / f"{arxiv_id}.pdf", timeout=self.config.timeout)
 
     @override
-    def run(self, url: str, out_dir_path: Path):
+    def run(self, url: str, out_dir: Path):
         """Run the extraction."""
         arxiv_id = self.get_arxiv_id(url)
 
         # these functions download the files
         if self.config.with_metadata:
-            self.get_abs_metadata(arxiv_id, out_dir_path)
+            self.get_abs_metadata(arxiv_id, out_dir)
 
         if self.config.with_pdf:
-            self.get_pdf_file(arxiv_id, out_dir_path)
+            self.get_pdf_file(arxiv_id, out_dir)
 
         if self.config.with_html:
-            self.get_html_content(arxiv_id, out_dir_path)
+            self.get_html_content(arxiv_id, out_dir)
 
-        return out_dir_path
+        return out_dir
 
     @override
     def __call__(self, source: Source) -> Source:
         """Execute extraction pipeline."""
         src = source.model_copy()
 
-        out_dir_path = self.out_dir / str(src.uuid)
-        out_dir_path.mkdir(exist_ok=True)
+        out_dir_uuid = self.out_dir / str(src.uuid)
+        out_dir_uuid.mkdir(exist_ok=True)
         src.scraped_at = datetime.datetime.now(datetime.timezone.utc)
         arxiv_id = self.get_arxiv_id(src.url)
 
         try:
-            self.run(src.url, out_dir_path)
+            self.run(src.url, out_dir_uuid)
 
             file_validations = []
             if self.config.with_metadata:
-                file_validations.append(self.validate_file(out_dir_path / "metadata.json"))
+                file_validations.append(self.validate_file(out_dir_uuid / "metadata.json"))
             if self.config.with_pdf:
-                file_validations.append(self.validate_file(out_dir_path / f"{arxiv_id}.pdf"))
-            if self.config.with_html and (out_dir_path / f"{arxiv_id}.html").exists():
+                file_validations.append(self.validate_file(out_dir_uuid / f"{arxiv_id}.pdf"))
+            if self.config.with_html and (out_dir_uuid / f"{arxiv_id}.html").exists():
                 # if file doesn't exist, then html page may not exist (which is sometimes expected)
-                file_validations.append(self.validate_file(out_dir_path / f"{arxiv_id}.html"))
+                file_validations.append(self.validate_file(out_dir_uuid / f"{arxiv_id}.html"))
 
             if all(file_validations):
                 src.scrape_status = ScrapeStatus.COMPLETE
@@ -206,11 +206,11 @@ class ArxivExtractor(Extractor):
                 raise ExtractionError("Not all files were downloaded successfully")  # NOQA: TRY301
 
             priority_file = (
-                out_dir_path / f"{arxiv_id}.pdf"
-                if (out_dir_path / f"{arxiv_id}.pdf").exists()
-                else (out_dir_path / f"{arxiv_id}.html")
-                if (out_dir_path / f"{arxiv_id}.html").exists()
-                else out_dir_path / "metadata.json"
+                out_dir_uuid / f"{arxiv_id}.pdf"
+                if (out_dir_uuid / f"{arxiv_id}.pdf").exists()
+                else (out_dir_uuid / f"{arxiv_id}.html")
+                if (out_dir_uuid / f"{arxiv_id}.html").exists()
+                else out_dir_uuid / "metadata.json"
             )
             src.content_hash = self.hash(priority_file)
             src.file = str(priority_file)
@@ -219,7 +219,7 @@ class ArxivExtractor(Extractor):
             src.scrape_status = ScrapeStatus.ERROR
             src.error_message = str(e)
 
-            with (out_dir_path / "errors.txt").open("a") as f:
+            with (out_dir_uuid / "errors.txt").open("a") as f:
                 lines = [str(src.scraped_at), f"Failed to extract url {src.url}", f"Error: {str(e)}"]
                 f.writelines(line + os.linesep for line in lines)
 

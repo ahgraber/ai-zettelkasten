@@ -12,12 +12,16 @@
       [mendel5/alternative-front-ends: Overview of alternative open source front-ends for popular internet platforms (e.g. YouTube, Twitter, etc.)](https://github.com/mendel5/alternative-front-ends)
       for alternative source sites
 - webhook triggers next step (prefect to send docling run?)
+
   - archivebox saves to s3(?), use minio to send webhook notification? --> might be able to use archivebox to send the
     webhook notification instead of S3
   - [ArchiveBox's archive file layout structure](https://github.com/ArchiveBox/ArchiveBox?tab=readme-ov-file#archive-layout)
     - [Automating API Calls on New MinIO S3 Files - Claude](https://claude.ai/chat/1db7a147-4800-4005-acd4-e5eb7fe27f63)
     - Might be able to use archivebox itself to send the webhook -
       [Webhook notification for automation? · ArchiveBox/ArchiveBox · Discussion #1597](https://github.com/ArchiveBox/ArchiveBox/discussions/1597)
+
+- [dgtlmoon/changedetection.io: The best and simplest free open source web page change detection, website watcher, restock monitor and notification service. Restock Monitor, change detection. Designed for simplicity - Simply monitor which websites had a text change for free. Free Open source web page change detection, Website defacement monitoring, Price change notification](https://github.com/dgtlmoon/changedetection.io/tree/master)
+  - [dgtlmoon/pyppeteer-ng: Headless chrome/chromium automation library (unofficial port of puppeteer)](https://github.com/dgtlmoon/pyppeteer-ng/tree/dev?tab=readme-ov-file)
 
 ## parse
 

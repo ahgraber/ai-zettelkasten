@@ -9,7 +9,7 @@ import json
 import logging
 from pathlib import Path
 from subprocess import CalledProcessError, CompletedProcess, run
-from typing import Any, Tuple, override
+from typing import Any, List, Tuple, override
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -56,36 +56,44 @@ class PostlightExtractor(Extractor):
         """Validate the extractor config."""
         return PostlightSettings.model_validate(cfg)
 
+    def cmd(self, url: ValidatedURL | str) -> List[str]:
+        """Generate CLI command."""
+        cmd = [
+            str(self.binary),
+            url,
+        ]
+        return cmd
+
     @override
-    def run(self, url: ValidatedURL | str):
+    def run(self, url: ValidatedURL | str, out_dir: Path):
         """Run the extraction."""
         # Get HTML version of article
-        cmd = [str(self.binary), url]
+        cmd = self.cmd(url)
         logger.debug(f"{cmd=}")
         result = run(  # NOQA: S603
             cmd,  # NOQA: S607
+            cwd=out_dir,
             capture_output=True,
+            text=True,
             timeout=self.config.timeout,
         )
 
         try:
             result.check_returncode()  # raises error if failed
         except CalledProcessError as e:
-            raise ExtractionError(f"{self.name} extraction of {url} failed:\n'{result.stderr.decode()}'") from e
+            self.cleanup()
+            raise ExtractionError(f"{self.name} extraction of {url} failed:\n'{result.stderr}'") from e
 
         return result.stdout
 
     @override
-    def validate_extract(self, extract: str) -> ScrapeStatus:
+    def validate_extract(self, extract: str) -> bool:
         try:
             article_json = json.loads(extract)
-        except json.JSONDecodeError:
-            return ScrapeStatus.ERROR
+        except json.JSONDecodeError as e:
+            raise ExtractionError("Extract failed validation.") from e
 
-        if article_json.get("error") or article_json.get("failed") or (article_json.get("content") is None):
-            return ScrapeStatus.ERROR
-
-        return ScrapeStatus.COMPLETE
+        return article_json.get("error") or article_json.get("failed") or (article_json.get("content") is None)
 
     @override
     def save(self, extract: Any, file_path: Path):

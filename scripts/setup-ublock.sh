@@ -13,7 +13,7 @@ unzip uBOLite.zip -d "$UBO_DIR"
 rm -f uBOLite.zip
 
 # Patch uBlock Origin Lite to respect rulesets enabled in manifest.json
-# use "sed -i '' ..." on normal mac
+  # use "sed -i '' ..." on normal mac
 sed -i "s/const out = \[ 'default' \];/const out = await dnr.getEnabledRulesets();/" "$UBO_DIR/js/ruleset-manager.js"
 
 # Enable annoyances rulesets in manifest.json

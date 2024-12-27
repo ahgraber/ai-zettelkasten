@@ -19,7 +19,7 @@ An AI-driven [Zettelkasten](https://zettelkasten.de/introduction/)-style mindmap
 ```sh
 npm install @postlight/parser
 npm install 'git+https://github.com/pirate/readability-extractor'
-npm install 'single-file-cli'
+npm install 'single-file-cli@1.1.54' # version is important!
 ```
 
 ### Inference

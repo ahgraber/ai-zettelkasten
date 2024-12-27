@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 
 # BROWSER_BIN="/Applications/Chromium.app/Contents/MacOS/Chromium"
-BROWSER_BIN="./bin/pw-browsers/chromium_headless_shell-1148/chrome-mac/headless_shell"
+# BROWSER_BIN="$PLAYWRIGHT_BROWSERS_PATH/chromium_headless_shell-1148/chrome-mac/headless_shell"
+BROWSER_BIN="$PLAYWRIGHT_BROWSERS_PATH/chromium-1148/chrome-mac/Chromium.app/Contents/MacOS/Chromium"
 
 # ref: https://github.com/sissbruecker/linkding/blob/master/siteroot/settings/base.pya
 URL="https://sqlmodel.tiangolo.com/tutorial/insert/#create-a-session"
+
 npx single-file "$URL" \
 --browser-executable-path="$BROWSER_BIN" \
 --browser-arg="--headless=new" \
---browser-arg="--user-data-dir=./chromium-profile" \
+--browser-arg="--user-data-dir=$CHROME_USER_DATA" \
 --browser-arg="--load-extension=uBOLite.chromium.mv3" \
 --debug-messages-file=./debug.txt \
 --errors-file=./errors.txt \
