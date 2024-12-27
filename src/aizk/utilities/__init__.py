@@ -1,5 +1,6 @@
 from .parse import URL_REGEX, detect_encoding, extract_json, extract_url, find_all_urls, validate_url
 from .path_helpers import find_binary_abspath, path_is_dir, path_is_executable, path_is_file, path_is_valid
+from .process import TimeWindowRateLimiter
 
 __all__ = [
     "URL_REGEX",
@@ -13,4 +14,5 @@ __all__ = [
     "path_is_executable",
     "path_is_file",
     "path_is_valid",
+    "TimeWindowRateLimiter",
 ]
