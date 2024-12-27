@@ -1,15 +1,10 @@
 # ruff: NOQA: E731
-import asyncio
-from collections import deque
 from contextlib import contextmanager
-from functools import wraps
-from inspect import iscoroutinefunction
 import logging
 import os
 from pathlib import Path
-from subprocess import PIPE, CalledProcessError, CompletedProcess, Popen, TimeoutExpired, run
+from subprocess import CalledProcessError, run
 from tempfile import NamedTemporaryFile
-import time
 from typing import List
 
 from aizk.utilities.path_helpers import path_is_file
@@ -53,88 +48,20 @@ def dedupe(options: List[str]) -> List[str]:
     return list(deduped.values())
 
 
-class TimeWindowRateLimiter:
-    """Rate limiter that allows a maximum number of actions over sliding time window (seconds).
-
-    If the maximum number of actions occurs in the time window, the rate limiter will block until a slot becomes available.
-    This is not an async limiter; it assumes that actions are synchronous and blocking.
-    Therefore, if an action takes a long time to complete, it will block subsequent actions from starting until it completes _even if it exceeds the window period_.
-    """
-
-    def __init__(self, max_actions: int, window_seconds: int, min_interval: float = 0.1):
-        if max_actions > 0:
-            self.max_actions = max_actions
-        else:
-            raise ValueError("max_actions must be > 0")
-
-        if window_seconds > 0:
-            self.window_seconds = window_seconds
-        else:
-            raise ValueError("window_seconds must be > 0")
-
-        if min_interval >= 0:
-            self.min_interval = min_interval
-        else:
-            raise ValueError("min_interval must be >= 0")
-
-        self.start_times = deque()
-        self.n_active = 0
-        self.last = time.monotonic()
-
-    def _update(self):
-        """Remove actions should no longer be blocking the queue.
-
-        An action may take longer to execute than the time period we track.
-        This action counts against the limit until its start time exits the window.
-        Once its start time exits the window, its slot becomes available for new operations, while the action itself continues running to completion.
-        """
-        window_start = time.monotonic() - self.window_seconds
-
-        while self.start_times and self.start_times[0] < window_start:
-            self.start_times.popleft()
-            if self.n_active > 0:
-                logging.debug("Sliding window freed a slot")
-                self.n_active -= 1
-
-    def _wait(self):
-        """Wait until a slot is available."""
-        while True:
-            self._update()
-            if len(self.start_times) < self.max_actions:
-                self.start_times.append(time.monotonic())
-                self.n_active += 1
-                break
-
-            if self.start_times:
-                wait_time = max(self.min_interval, self.start_times[0] + self.window_seconds - time.monotonic())
-                if wait_time > 0:
-                    logging.debug(f"Waiting {wait_time:.2f} seconds")
-                    time.sleep(wait_time)
-
-    def _complete(self):
-        """Remove completed action from active count."""
-        logging.debug("Completing action")
-        self.n_active -= 1
-
-    def __call__(self, func):
-        """Apply rate limiting to a function as a decorator."""
-
-        # TODO: add support for async functions?
-        @wraps(func)
-        def wrapped(*args, **kwargs):
-            self._wait()
-            try:
-                return func(*args, **kwargs)
-            finally:
-                self._complete()
-
-        return wrapped
+def get_write_mode(data):
+    """Determine whether data is bytes vs string."""
+    if isinstance(data, bytes):
+        return "wb"
+    elif isinstance(data, str):
+        return "w"
+    else:
+        raise TypeError("Data must be either string or bytes")
 
 
 # atomic write
 # https://stackoverflow.com/questions/2333872/how-to-make-file-creation-an-atomic-operation
 @contextmanager
-def atomic_write(filepath: Path | str, is_binary: bool = False):
+def atomic_write(filepath: Path | str, binary_mode: bool = False):
     """Write to temporary file object that atomically moves to destination upon exiting."""
     filepath = Path(filepath)
 
@@ -142,7 +69,7 @@ def atomic_write(filepath: Path | str, is_binary: bool = False):
     dirpath.mkdir(parents=True, exist_ok=True)
 
     with NamedTemporaryFile(
-        mode="wb" if is_binary else "w",
+        mode="wb" if binary_mode else "w",
         dir=dirpath,
         prefix=fname,
         suffix=".tmp",
@@ -179,7 +106,7 @@ def download_file(url: str, file_path: Path, timeout: int = 600):
             total_size = int(response.headers.get("content-length", 0))
 
             with (
-                atomic_write(file_path, is_binary=True) as f,
+                atomic_write(file_path, binary_mode=True) as f,
                 tqdm(total=total_size, unit="iB", unit_scale=True, desc=str(file_path)) as progress_bar,
             ):
                 for chunk in response.iter_content(chunk_size=8192):

@@ -5,15 +5,16 @@ from .base import (
     ExtractorSettings,
     StaticFileExtractor,
 )
-
-# from .chrome import (
-#     ChromeExtractor,
-#     ChromeHTMLExtractor,
-#     ChromeSettings,
-# )
-# from .singlefile import SinglefileExtractor, SinglefileSettings
+from .chrome import (
+    ChromeExtractor,
+    ChromeHTMLExtractor,
+    ChromePDFExtractor,
+    ChromeScreenshotExtractor,
+    ChromeSettings,
+)
+from .playwright import PlaywrightExtractor, PlaywrightSettings
 from .postlight_parser import PostlightExtractor, PostlightSettings
-from .utils import TimeWindowRateLimiter
+from .singlefile import SingleFileExtractor, SingleFileSettings
 
 __all__ = [
     "ArxivExtractor",
@@ -22,12 +23,15 @@ __all__ = [
     "ExtractionError",
     "STATICFILE_EXTENSIONS",
     "StaticFileExtractor",
-    # "ChromeExtractor",
-    # "ChromeHTMLExtractor",
-    # "ChromeSettings",
+    "ChromeExtractor",
+    "ChromeHTMLExtractor",
+    "ChromePDFExtractor",
+    "ChromeScreenshotExtractor",
+    "ChromeSettings",
+    "PlaywrightExtractor",
+    "PlaywrightSettings",
     "PostlightExtractor",
     "PostlightSettings",
-    # "SinglefileExtractor",
-    # "SinglefileSettings",
-    "TimeWindowRateLimiter",
+    "SingleFileExtractor",
+    "SingleFileSettings",
 ]

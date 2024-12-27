@@ -33,10 +33,10 @@ class TestExtractor:
     def test_cleanup(self):
         pass  # noop / not implemented
 
-    def test_run(self):
+    def test_run(self, tmp_path):
         extractor = Extractor()
         with pytest.raises(NotImplementedError):
-            extractor.run("http://this.is/a/test")
+            extractor.run("http://this.is/a/test", out_dir=tmp_path)
 
     def test_transform_extract(self):
         extractor = Extractor()

@@ -1,64 +1,12 @@
 import os
 from pathlib import Path
-import time
 from unittest.mock import Mock, patch
 
 import pytest
 import requests
 import responses  # For mocking HTTP requests
 
-from aizk.extractors.utils import TimeWindowRateLimiter, atomic_write, download_file, validate_file
-
-
-class TestTimeLimitRateLimiter:
-    def test_init_invalid_parameters(self):
-        with pytest.raises(ValueError, match="max_actions must be > 0"):
-            TimeWindowRateLimiter(max_actions=0, window_seconds=10)
-
-        with pytest.raises(ValueError, match="max_actions must be > 0"):
-            TimeWindowRateLimiter(max_actions=-1, window_seconds=10)
-
-        with pytest.raises(ValueError, match="window_seconds must be > 0"):
-            TimeWindowRateLimiter(max_actions=5, window_seconds=0)
-
-        with pytest.raises(ValueError, match="min_interval must be >= 0"):
-            TimeWindowRateLimiter(max_actions=5, window_seconds=10, min_interval=-0.1)
-
-    def test_instant_function(self):
-        """'Instant' function will end up rate limited due to max actions."""
-        limiter = TimeWindowRateLimiter(max_actions=5, window_seconds=5)
-
-        @limiter
-        def testfunc():
-            return 1
-
-        start = time.monotonic()
-        result = [testfunc() for _ in range(10)]
-        end = time.monotonic()
-
-        assert sum(result) == 10
-        # Limiter allows 5 actions every 5 seconds.
-        # 5 actions in the first 5-second-window, then the remaining 5 almost immediately after.
-        assert end - start > 5
-
-    def test_function_with_nonblocking_runtime(self):
-        """If function runtime * window_actions > window_seconds, then no blocking occurs."""
-        limiter = TimeWindowRateLimiter(max_actions=5, window_seconds=5)
-
-        @limiter
-        def testfunc():
-            time.sleep(2)
-            return 1
-
-        start = time.monotonic()
-        result = [testfunc() for _ in range(10)]
-        end = time.monotonic()
-
-        assert sum(result) == 10
-        # Limiter allows 5 actions every 5 seconds.
-        # Each action takes 2 seconds, so each window will only hold 2.5 actions
-        # The limiter is not the blocker, the function runtime is.
-        assert end - start >= 20
+from aizk.extractors.utils import atomic_write, download_file, validate_file
 
 
 class TestAtomicWrite:
@@ -66,7 +14,7 @@ class TestAtomicWrite:
         name = "test.txt"
         content = "this is only a test"
 
-        with atomic_write(tmp_path / name, is_binary=False) as f:
+        with atomic_write(tmp_path / name, binary_mode=False) as f:
             f.write(content)
 
         assert (tmp_path / name).read_text() == content
@@ -76,8 +24,8 @@ class TestAtomicWrite:
         name = "test.txt"
         content = "this is only a test"
 
-        # If text is encoded, is_binary should be True
-        with atomic_write(tmp_path / name, is_binary=True) as f:
+        # If text is encoded, binary_mode should be True
+        with atomic_write(tmp_path / name, binary_mode=True) as f:
             f.write(content.encode("utf-8"))
 
         assert (tmp_path / name).read_text() == content
@@ -87,10 +35,10 @@ class TestAtomicWrite:
         name = "test.txt"
         content = "this is only a test"
 
-        # If text is encoded, is_binary should be True
+        # If text is encoded, binary_mode should be True
         with (
             pytest.raises(TypeError),
-            atomic_write(tmp_path / name, is_binary=False) as f,
+            atomic_write(tmp_path / name, binary_mode=False) as f,
         ):
             f.write(content.encode("utf-8"))
 
@@ -98,10 +46,10 @@ class TestAtomicWrite:
         name = "test.txt"
         content = "this is only a test"
 
-        # If text is string, is_binary should be False
+        # If text is string, binary_mode should be False
         with (
             pytest.raises(TypeError),
-            atomic_write(tmp_path / name, is_binary=True) as f,
+            atomic_write(tmp_path / name, binary_mode=True) as f,
         ):
             f.write(content)
 

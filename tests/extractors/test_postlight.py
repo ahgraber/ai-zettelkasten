@@ -28,9 +28,9 @@ class TestExtractor:
         # same as base.Extractor / not implemented
         pass
 
-    def test_run(self):
+    def test_run(self, tmp_path):
         extractor = PostlightExtractor()
-        extract = extractor.run("https://aimlbling-about.ninerealmlabs.com/blog/")
+        extract = extractor.run("https://aimlbling-about.ninerealmlabs.com/blog/", out_dir=tmp_path)
         # extract from postlight-parser should be
         assert extractor.validate_extract(extract) == ScrapeStatus.COMPLETE
 

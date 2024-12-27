@@ -1,6 +1,6 @@
 # %%
 import datetime
-import enum
+from enum import Enum
 import typing as t
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
@@ -43,7 +43,7 @@ class SourceLink(BaseModel):  # NOQA: D101
         return urlparse(self.url).netloc
 
 
-class ScrapeStatus(enum.Enum):  # NOQA:D101
+class ScrapeStatus(Enum):  # NOQA:D101
     PENDING = "PENDING"
     COMPLETE = "COMPLETE"
     ERROR = "ERROR"
