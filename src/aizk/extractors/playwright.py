@@ -12,43 +12,63 @@ Ref:
 
 import asyncio
 import datetime
-import itertools
 import logging
 import os
 from pathlib import Path
-from subprocess import CalledProcessError  # , run
+import subprocess
 import sys
 from typing import Any, List, Tuple, override
 
 from playwright.async_api import Playwright, async_playwright
 from playwright_stealth import Stealth  # https://github.com/Mattwmaster58/playwright_stealth
-from pydantic import ConfigDict, Field, TypeAdapter
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from aizk.datamodel.schema import ScrapeStatus, Source, ValidatedURL
 from aizk.extractors.base import ExtractionError, Extractor
-from aizk.extractors.chrome import CHROME_USER_AGENT, detect_playwright_chromium, detect_system_chrome
-from aizk.extractors.utils import atomic_write, dedupe, download_file, get_write_mode, validate_file
+from aizk.extractors.utils import get_write_mode
+from aizk.utilities.file_helpers import AtomicWriter
 from aizk.utilities.path_helpers import (
-    DEFAULT_ENV_PATH,
-    ExecPath,
-    SysPATH,
-    find_binary_abspath,
-    get_local_bin_dir,
     path_is_dir,
     path_is_executable,
-    path_is_file,
-    symlink_to_bin,
 )
 
 logger = logging.getLogger(__file__)
 
+CHROME_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/118.0.0.0 Safari/537.36"  # "Chrome/131.0.0.0 Safari/537.36"
+)
 
-browser_dir_path = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or "~/Library/Caches/ms-playwright")
+
+def detect_playwright_chromium() -> Path | None:
+    """Find Chromium installed by playwright if exists."""
+    result = subprocess.run(  # NOQA: S603
+        [f"{Path(sys.executable).parent}/playwright", "install", "chromium", "--dry-run"],
+        capture_output=True,
+        text=True,
+    )
+
+    try:
+        result.check_returncode()  # raises error if failed
+    except subprocess.CalledProcessError:
+        logging.exception("Error running 'playwright' command: ")
+
+    browser_path = result.stdout.splitlines()[1].replace("Install location:", "").strip()
+    browser_path = path_is_dir(browser_path)
+
+    if sys.platform == "darwin":
+        for app in browser_path.rglob("*.app/Contents/MacOS/Chromium"):
+            if browser := path_is_executable(app):
+                return browser
+    # TODO Linux
 
 
 class PlaywrightSettings(BaseSettings):
     """Default Playwright / Chromium settings."""
+
+    model_config = SettingsConfigDict(extra="ignore")
 
     # Chrome Binary - not really used except for ensuring it exists
     binary: str = Field(default=str(detect_playwright_chromium()))
@@ -56,7 +76,9 @@ class PlaywrightSettings(BaseSettings):
 
     chrome_user_agent: str = Field(default=CHROME_USER_AGENT)
 
-    chrome_profile_dir: Path | None = Field(default=Path.cwd() / ".profile" / "chrome")
+    chrome_profile_dir: Path | None = Field(
+        default=Path(os.environ.get("CHROME_USER_DATA") or Path.cwd() / ".profile" / "chrome")
+    )
     chrome_profile_name: str = Field(default="Default")
 
     # Chrome Options Tuning
@@ -69,6 +91,7 @@ class PlaywrightSettings(BaseSettings):
     save_pdf: bool = Field(default=True)
     save_png: bool = Field(default=True)
 
+    @model_validator(mode="after")
     def validate(self):
         """Validate settings."""
         if self.timeout <= self.pageload_timeout:
@@ -98,11 +121,13 @@ class PlaywrightSettings(BaseSettings):
         if not any([self.save_dom, self.save_pdf, self.save_png]):
             logger.error("At least one save method must be true: ['save_dom', 'save_pdf', 'save_png']")
 
+        return self
+
 
 class PlaywrightExtractor(Extractor):
     """Playwright / Chromium extractor."""
 
-    name: str = "pw_chromium"
+    name: str = "playwright"
     default_filename: str = "content.html"
     config: PlaywrightSettings
 
@@ -110,7 +135,7 @@ class PlaywrightExtractor(Extractor):
         self,
         config: PlaywrightSettings | dict[str, Any] | None = None,
         out_dir: Path | str | None = None,
-        loop: asyncio.BaseEventLoop | None = None,
+        ensure_out_dir: bool = False,
     ):
         config = self.validate_config(config or {})
         binary = config.binary or detect_playwright_chromium()
@@ -119,15 +144,8 @@ class PlaywrightExtractor(Extractor):
             config=config,
             binary=binary,
             out_dir=out_dir or Path.cwd() / "data" / self.name,
+            ensure_out_dir=ensure_out_dir,
         )
-
-        if loop is None:
-            try:
-                self.loop = asyncio.get_running_loop()
-            except RuntimeError:
-                self.loop = asyncio.new_event_loop()
-        else:
-            self.loop = loop
 
         self.cleanup()
 
@@ -178,8 +196,10 @@ class PlaywrightExtractor(Extractor):
             if self.config.save_dom:
                 html_content = await page.content()
 
-                with atomic_write(out_dir / "content.html", binary_mode=get_write_mode(html_content) == "wb") as f:
-                    f.write(html_content)
+                async with AtomicWriter(
+                    out_dir / "content.html", binary_mode=get_write_mode(html_content) == "wb"
+                ) as f:
+                    await f.write(html_content)
 
             # Save PDF - returns bytes if no path provided
             if self.config.save_pdf:
@@ -189,62 +209,86 @@ class PlaywrightExtractor(Extractor):
                     display_header_footer=False,
                 )
 
-                with atomic_write(out_dir / "content.pdf", binary_mode=get_write_mode(pdf_content) == "wb") as f:
-                    f.write(pdf_content)
+                async with AtomicWriter(out_dir / "content.pdf", binary_mode=get_write_mode(pdf_content) == "wb") as f:
+                    await f.write(pdf_content)
 
             # Save screenshot - returns bytes if no path provided
             if self.config.save_png:
                 await page.emulate_media(media="screen", color_scheme="light")
+                await page.reload(wait_until="load", timeout=self.config.pageload_timeout * 1000)
                 img_content = await page.screenshot(
                     # path="./content.png",
                     full_page=True,
                     scale="device",
                 )
 
-                with atomic_write(out_dir / "content.png", binary_mode=get_write_mode(pdf_content) == "wb") as f:
-                    f.write(img_content)
+                async with AtomicWriter(out_dir / "content.png", binary_mode=get_write_mode(img_content) == "wb") as f:
+                    await f.write(img_content)
 
             await context.close()
 
-    def __call__(self, source: Source) -> Source:
+    @override
+    async def __call__(self, source: Source) -> Source:
         """Execute extraction pipeline."""
         src = source.model_copy()
 
         out_dir_uuid = self.out_dir / str(src.uuid)
         out_dir_uuid.mkdir(exist_ok=True)
+
         src.scraped_at = datetime.datetime.now(datetime.timezone.utc)
 
         try:
-            self.loop.create_task(self.run(src.url, out_dir_uuid))
+            logger.info(f"Extracting from {src.url} with PlaywrightExtractor")
+            await self.run(src.url, out_dir_uuid)
+
+        except Exception as e:
+            src.scrape_status = ScrapeStatus.ERROR
+            src.error_message = str(e)
+
+            with (out_dir_uuid / "errors.txt").open("a") as f:
+                lines = [
+                    str(src.scraped_at),
+                    f"Failed to extract url {src.url}",
+                    f"Error: {str(e)}",
+                ]
+                f.writelines(line + os.linesep for line in lines)
+
+            self.cleanup()
+            return src
+
+        try:
+            logger.debug("Validating extraction...")
 
             # these are in reverse priority for file/hash representation
             # 'html' is preferred; evaluated last
-            scrape_statuses = []
+            scrapes = []
             if self.config.save_png:
                 file_path = out_dir_uuid / "content.png"
                 if self.validate_file(file_path):
-                    scrape_statuses.append(True)
+                    scrapes.append(file_path)
                 else:
                     logger.error(f"Error during png validation for {src.url}")
 
             if self.config.save_pdf:
                 file_path = out_dir_uuid / "content.pdf"
                 if self.validate_file(file_path):
-                    scrape_statuses.append(True)
+                    scrapes.append(file_path)
                 else:
                     logger.error(f"Error during pdf validation for {src.url}")
 
             if self.config.save_dom:
                 file_path = out_dir_uuid / "content.html"
                 if self.validate_file(file_path):
-                    scrape_statuses.append(True)
+                    scrapes.append(file_path)
                 else:
                     logger.error(f"Error during html validation for {src.url}")
 
-            if any(scrape_statuses):
+            if any(scrapes):
                 src.scrape_status = ScrapeStatus.COMPLETE
-                src.content_hash = self.hash(file_path)
+                src.content_hash = self.hash(scrapes[-1])
                 src.file = str(file_path)
+            else:
+                raise ExtractionError("All playwright files failed validation.")  # NOQA: TRY301
 
         except Exception as e:
             src.scrape_status = ScrapeStatus.ERROR

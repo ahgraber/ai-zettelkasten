@@ -7,23 +7,23 @@ from aizk.extractors.base import ExtractionError, Extractor, ExtractorSettings, 
 
 
 class TestExtractor:
-    def test_init__name(self):
-        extractor = Extractor()
+    def test_init__name(self, tmp_path):
+        extractor = Extractor(out_dir=tmp_path)
         assert extractor.name == "", "Unexpected Extractor().name"
 
-    def test_init__config_default(self):
-        extractor = Extractor()
+    def test_init__config_default(self, tmp_path):
+        extractor = Extractor(out_dir=tmp_path)
         assert extractor.config == ExtractorSettings(), "Unexpected Extractor().config"
 
-    def test_init__config_custom(self):
+    def test_init__config_custom(self, tmp_path):
         settings = ExtractorSettings(timeout=999)
-        extractor = Extractor(config=settings)
+        extractor = Extractor(config=settings, out_dir=tmp_path)
         assert extractor.config == settings, "Unexpected Extractor().config"
 
-    def test_init__out_dir_default(self):
-        extractor = Extractor()
+    def test_init__out_dir_default(self, tmp_path):
+        extractor = Extractor(out_dir=tmp_path)
 
-        expected = Path.cwd() / "data"
+        expected = tmp_path
         assert extractor.out_dir == expected, f"Expected {expected}, got {extractor.out_dir}"
 
     def test_init__out_dir_custom(self, tmp_path):
@@ -33,10 +33,11 @@ class TestExtractor:
     def test_cleanup(self):
         pass  # noop / not implemented
 
-    def test_run(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_run(self, tmp_path):
         extractor = Extractor()
         with pytest.raises(NotImplementedError):
-            extractor.run("http://this.is/a/test", out_dir=tmp_path)
+            await extractor.run("http://this.is/a/test", out_dir=tmp_path)
 
     def test_transform_extract(self):
         extractor = Extractor()

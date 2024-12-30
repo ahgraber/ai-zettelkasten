@@ -1,37 +1,37 @@
 # ruff: NOQA: E731
 """ChromeExtractor, ChromeHTMLExtractor, ChromePDFExtractor, ChromeScreenshotExtractor.
 
+NOTE: this is a work-in-progress
+
 - ref: https://github.com/ArchiveBox/ArchiveBox/blob/dev/archivebox/pkgs/abx-plugin-chrome/abx_plugin_chrome/dom.py
 - ref: https://github.com/ArchiveBox/ArchiveBox/blob/dev/archivebox/pkgs/abx-plugin-chrome/abx_plugin_chrome/pdf.py
 - ref: https://github.com/ArchiveBox/ArchiveBox/blob/dev/archivebox/pkgs/abx-plugin-chrome/abx_plugin_chrome/screenshot.py
 """
 
-import itertools
+import asyncio
+import datetime
 import logging
 import os
 from pathlib import Path
-from subprocess import CalledProcessError  # , run
+import subprocess
 import sys
 from typing import Any, List, Tuple, override
+import warnings
 
-from pydantic import ConfigDict, Field, TypeAdapter
+from pydantic import Field, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from aizk.datamodel.schema import ScrapeStatus, Source, ValidatedURL
 from aizk.extractors.base import ExtractionError, Extractor
-from aizk.extractors.utils import atomic_write, dedupe
+from aizk.utilities.file_helpers import AtomicWriter
 from aizk.utilities.path_helpers import (
     DEFAULT_ENV_PATH,
-    ExecPath,
     SysPATH,
     find_binary_abspath,
-    get_local_bin_dir,
     path_is_dir,
     path_is_executable,
-    path_is_file,
-    symlink_to_bin,
 )
-from aizk.utilities.process import run
+from aizk.utilities.process import run_
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ CHROME_BINARY_NAMES_MACOS = [
 CHROME_BINARY_FULL_MACOS = [f"/Applications/{name}.app/Contents/MacOS/{name}" for name in CHROME_BINARY_NAMES_MACOS]
 CHROME_BINARY_NAMES = CHROME_BINARY_NAMES_LINUX + CHROME_BINARY_NAMES_MACOS + CHROME_BINARY_FULL_MACOS
 
-CHROME_SAVE_ACTIONS = {"html": "--dump-dom", "pdf": "--print-to-pdf", "image": "--screenshot"}
+# CHROME_SAVE_ACTIONS = {"html": "--dump-dom", "pdf": "--print-to-pdf", "image": "--screenshot"}
 
 CHROME_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -77,8 +77,6 @@ CHROME_USER_AGENT = (
 
 def detect_playwright_chromium() -> Path | None:
     """Find Chromium installed by playwright if exists."""
-    import subprocess
-
     result = subprocess.run(  # NOQA: S603
         [f"{Path(sys.executable).parent}/playwright", "install", "chromium", "--dry-run"],
         capture_output=True,
@@ -115,29 +113,44 @@ def detect_system_chrome(syspath: SysPATH | None = None) -> Path | None:
     return None
 
 
+def dedupe(options: List[str]) -> List[str]:
+    """Deduplicate the given CLI args by key=value. Options that come later override earlier."""
+    deduped = {}
+
+    for option in options:
+        key = option.split("=")[0]
+        deduped[key] = option
+
+    return list(deduped.values())
+
+
 class ChromeSettings(BaseSettings):
     """Default Chrome settings."""
 
+    model_config = SettingsConfigDict(extra="ignore")
+
     # Chrome Binary
     binary: str = Field(default=str(detect_playwright_chromium()))
-    timeout: int = Field(default=90, ge=15, lt=3600)  # global process timeout - 10
+    timeout: int = Field(default=15, ge=15, lt=3600)  # global process timeout - 10
 
     # Cookies & Auth
-    chrome_user_agent: str = Field(CHROME_USER_AGENT)
+    chrome_user_agent: str = Field(default=CHROME_USER_AGENT)
 
-    chrome_profile_dir: Path | None = Field(default=Path.cwd() / ".profile" / "chrome")
+    chrome_profile_dir: Path | None = Field(
+        default=Path(os.environ.get("CHROME_USER_DATA") or Path.cwd() / ".profile" / "chrome")
+    )
     chrome_profile_name: str = Field(default="Default")
 
     # Chrome Options Tuning
     headless: bool = Field(default=True)
     sandbox: bool = Field(default=True)  # false if in docker
     resolution: str = Field(default="1440,2000")
-    pageload_timeout: int = Field(default=10, ge=5, lt=3600)  # wait for page to finish loading
+    pageload_timeout: int = Field(default=6, ge=5, lt=3600)  # wait for page to finish loading
     check_ssl_validity: bool = Field(default=True)
 
-    # save_dom: bool = Field(default=True)
-    # save_pdf: bool = Field(default=True)
-    # save_png: bool = Field(default=True)
+    save_dom: bool = Field(default=True)
+    save_pdf: bool = Field(default=True)
+    save_png: bool = Field(default=True)
 
     default_args: List[str] = Field(
         default=[
@@ -181,7 +194,7 @@ class ChromeSettings(BaseSettings):
             "--disable-breakpad",
             "--run-all-compositor-stages-before-draw",
             "--use-fake-device-for-media-stream",  # provide fake camera if site tries to request camera access
-            "--simulate-outdated-no-au=Tue, 31 Dec 2099 23:59:59 GMT",  # ignore chrome updates
+            "--simulate-outdated-no-au='Tue, 31 Dec 2099 23:59:59 GMT'",  # ignore chrome updates
             "--force-gpu-mem-available-mb=4096",  # allows for longer full page screenshots
             "--password-store=basic",
             "--use-mock-keychain",
@@ -206,17 +219,15 @@ class ChromeSettings(BaseSettings):
     )
     extra_args: List[str] = Field(default=[])
 
-    # Extractor Toggles
-    # OVERWRITE: bool = Field(default=False)
-
+    @model_validator(mode="after")
     def validate(self):
         """Validate settings."""
         if self.timeout <= self.pageload_timeout:
-            logger.error(
+            raise ValueError(
                 f"Global timeout ({self.timeout}) must be longer than pageload timeout ({self.pageload_timeout})"
             )
         if self.pageload_timeout < 5:
-            logger.error(
+            raise ValueError(
                 f"Warning: pageload_timeout is set too low! "
                 f"(currently set to pageload_timeout={self.pageload_timeout} seconds).\n"
                 "Chrome will fail to fully load the site if set to < 5 second."
@@ -229,42 +240,42 @@ class ChromeSettings(BaseSettings):
             # warn if nesting chrome_profile_dir and chrome_profile_name
             # do not want "path/to/profile/dir/Default/Default"
             if str(self.chrome_profile_dir).endswith("/Default"):
-                logger.error(
+                raise ValueError(
                     "Try removing '/Default' from the end e.g. chrome_profile_dir='{}'".format(
                         str(self.chrome_profile_dir).removesuffix("/Default")
                     )
                 )
             path_is_dir(self.chrome_profile_dir / self.chrome_profile_name)
 
-    @property
-    def cli_args(self) -> str:
-        """Provide args in CLI-friendly newline-delimited list."""
-        return "\n".join(self.chrome_args())
+        if not any([self.save_dom, self.save_pdf, self.save_png]):
+            raise ValueError("At least one save method must be true: ['save_dom', 'save_pdf', 'save_png']")
 
-    def chrome_args(self, **options) -> List[str]:
+        return self
+
+    @computed_field
+    @property
+    def chrome_args(self) -> List[str]:
         """Build a chrome shell command with arguments."""
         # Chrome CLI flag documentation:
         # - https://developer.chrome.com/docs/chromium/headless
         # - https://peter.sh/experiments/chromium-command-line-switches/
 
-        options = self.model_copy(update=options)
-
-        cmd_args = [
-            *options.default_args,
-            *options.extra_args,
-            f"--user-agent={options.chrome_user_agent}",
-            f"--window-size={options.resolution}",
-            f"--timeout={options.pageload_timeout * 1000}",  # pageload_timeout is milliseconds
+        args = [
+            *self.default_args,
+            *self.extra_args,
+            f"--user-agent='{self.chrome_user_agent}'",
+            f"--window-size={self.resolution}",
+            f"--timeout={self.pageload_timeout * 1000}",  # pageload_timeout is milliseconds
         ]
 
-        if options.headless:
-            cmd_args += ["--headless=new"]  # expects chrome version >= 112
+        if self.headless:
+            args += ["--headless=new"]  # expects chrome version >= 112
 
-        if not options.sandbox:
+        if not self.sandbox:
             # assume this means we are running inside a docker container
             # in docker, GPU support is limited, sandboxing is unnecessary,
             # and SHM is limited to 64MB by default (which is too low to be usable).
-            cmd_args += (
+            args += (
                 "--no-sandbox",
                 "--no-zygote",
                 "--disable-dev-shm-usage",
@@ -273,38 +284,54 @@ class ChromeSettings(BaseSettings):
                 # "--password-store=basic",
             )
 
-        if not options.check_ssl_validity:
-            cmd_args += ("--disable-web-security", "--ignore-certificate-errors")
+        if not self.check_ssl_validity:
+            args += ("--disable-web-security", "--ignore-certificate-errors")
 
-        if options.chrome_profile_dir:
+        if self.chrome_profile_dir:
             # remove SingletonLock file
-            lockfile = options.chrome_profile_dir / options.chrome_profile_name / "SingletonLock"
+            lockfile = self.chrome_profile_dir / self.chrome_profile_name / "SingletonLock"
             lockfile.unlink(missing_ok=True)
 
-            cmd_args.append(f"--user-data-dir={options.chrome_profile_dir}")
-            cmd_args.append(f"--profile-directory={options.chrome_profile_name or 'Default'}")
+            args.append(f"--user-data-dir={self.chrome_profile_dir}")
+            args.append(f"--profile-directory={self.chrome_profile_name or 'Default'}")
 
             # if chrome profile is set has no preferences, let chrome know it is normal
-            if not os.path.isfile(options.chrome_profile_dir / options.chrome_profile_name / "Preferences"):
-                cmd_args.remove("--no-first-run")
-                cmd_args.append("--first-run")
+            if not os.path.isfile(self.chrome_profile_dir / self.chrome_profile_name / "Preferences"):
+                args.remove("--no-first-run")
+                args.append("--first-run")
 
-        return dedupe(cmd_args)
+        if self.save_dom:
+            args.append("--dump-dom")
+        if self.save_pdf:
+            args.append("--print-to-pdf")
+        if self.save_png:
+            args.append("--screenshot")
+
+        return args
 
 
 class ChromeExtractor(Extractor):
     """Chrome extractor."""
 
     name: str = "chrome"
-    default_filename: str = "output.html"
-    save_action: str = "None"
+    default_filename: str = "content.html"
     config: ChromeSettings
 
     def __init__(
         self,
         config: ChromeSettings | dict[str, Any] | None = None,
         out_dir: Path | str | None = None,
+        ensure_out_dir: bool = False,
     ):
+        warnings.warn(
+            (
+                "ChromeExtractor is proof-of-concept only, use PlaywrightExtractor instead."
+                "The unaddressed issue is that the Chrome process doesn't seem to stop once the CLI command has been executed, leading to timeout errors"
+            ),
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         config = self.validate_config(config or {})
         binary = config.binary or detect_playwright_chromium() or detect_system_chrome()
 
@@ -312,6 +339,7 @@ class ChromeExtractor(Extractor):
             config=config,
             binary=binary,
             out_dir=out_dir or Path.cwd() / "data" / self.name,
+            ensure_out_dir=ensure_out_dir,
         )
 
         self.cleanup()
@@ -342,138 +370,123 @@ class ChromeExtractor(Extractor):
         """Generate CLI command."""
         cmd = [
             str(self.binary),
-            *self.config.chrome_args(),
-            CHROME_SAVE_ACTIONS[self.save_action],  # "--dump-dom",
+            *self.config.chrome_args,
             url,
         ]
         return cmd
 
     @override
-    def run(self, url: ValidatedURL | str, out_dir: Path) -> str | bytes:
+    async def run(self, url: ValidatedURL | str, out_dir: Path) -> str | bytes:
         cmd = self.cmd(url)
-        logger.debug(f"{cmd=}")
-        result = run(  # NOQA: S603
-            cmd,  # NOQA: S607
-            cwd=out_dir,
-            capture_output=True,
-            text=True,
-            timeout=self.config.timeout,
-        )
-
+        logger.debug(f"Running Chrome extraction with cli {cmd=}")
         try:
-            result.check_returncode()  # raises error if failed
-        except CalledProcessError as e:
-            self.cleanup()
-            raise ExtractionError(f"{self.name} extraction of {url} failed:\n'{result.stderr}'") from e
+            result = run_(  # NOQA: S603
+                cmd,  # NOQA: S607
+                cwd=out_dir,
+                capture_output=True,
+                text=True,
+                timeout=self.config.timeout,
+            )
 
-        return result.stdout
+            try:
+                result.check_returncode()  # raises error if failed
+                content = result.stdout
+            except subprocess.CalledProcessError as e:
+                self.cleanup()
+                raise ExtractionError(f"{self.name} extraction of {url} failed:\n'{result.stderr}'") from e
 
+        except subprocess.TimeoutExpired as te:
+            # Because the chrome process may do what we asked, but not exit before timing out,
+            # the content may be present in the TimeoutExpired object
+            if not self.config.save_dom:
+                raise te
 
-class ChromeHTMLExtractor(ChromeExtractor):
-    """Chrome extractor that saves page HTML."""
+            logger.info(
+                "This may raise a TimeoutExpired error; this is a result of the Chrome process remaining alive once the CLI command has completed and can (generally) be ignored."
+            )
+            content = te.stdout
+            if self.config.save_dom and (content is None or len(content) == 0):
+                raise te
 
-    name: str = "chrome-html"
-    default_filename: str = "output.html"
-    save_action: str = "html"
-    config: ChromeSettings
-
-    def __init__(
-        self,
-        config: dict[str, Any] | None = None,
-        out_dir: Path | str | None = None,
-    ):
-        super().__init__(config=config, out_dir=out_dir)
+        return content or ""
 
     @override
-    def run(self, url: ValidatedURL | str, out_dir: Path) -> str | bytes:
-        cmd = self.cmd(url)
-        logger.debug(f"{cmd=}")
-        result = run(  # NOQA: S603
-            cmd,  # NOQA: S607
-            cwd=out_dir,
-            capture_output=True,
-            text=True,
-            timeout=self.config.timeout,
-        )
+    async def __call__(self, source: Source) -> Source:
+        """Execute extraction pipeline."""
+        src = source.model_copy()
+
+        out_dir_uuid = self.out_dir / str(src.uuid)
+        out_dir_uuid.mkdir(exist_ok=True)
+
+        src.scraped_at = datetime.datetime.now(datetime.timezone.utc)
 
         try:
-            result.check_returncode()  # raises error if failed
-        except CalledProcessError as e:
+            logger.info(f"Extracting from {src.url} with ChromeExtractor")
+            extract = await self.run(src.url, out_dir_uuid)
+        except Exception as e:
+            src.scrape_status = ScrapeStatus.ERROR
+            src.error_message = str(e)
+
+            with (out_dir_uuid / "errors.txt").open("a") as f:
+                lines = [
+                    str(src.scraped_at),
+                    f"Failed to extract url {src.url}",
+                    f"Error: {str(e)}",
+                ]
+                f.writelines(line + os.linesep for line in lines)
+
             self.cleanup()
-            raise ExtractionError(f"{self.name} extraction of {url} failed:\n'{result.stderr}'") from e
-
-        return result.stdout
-
-
-class ChromePDFExtractor(ChromeExtractor):
-    """Chrome extractor that saves page as PDF."""
-
-    name: str = "chrome-pdf"
-    default_filename: str = "output.pdf"
-    save_action: str = "pdf"
-    config: ChromeSettings
-
-    def __init__(
-        self,
-        config: dict[str, Any] | None = None,
-        out_dir: Path | str | None = None,
-    ):
-        super().__init__(config=config, out_dir=out_dir)
-
-    @override
-    def run(self, url: ValidatedURL | str, out_dir: Path) -> str | bytes:
-        cmd = self.cmd(url)
-        logger.debug(f"{cmd=}")
-        result = run(  # NOQA: S603
-            cmd,  # NOQA: S607
-            cwd=out_dir,
-            capture_output=True,
-            text=True,
-            timeout=self.config.timeout,
-        )
+            return src
 
         try:
-            result.check_returncode()  # raises error if failed
-        except CalledProcessError as e:
+            logger.debug("Validating extraction...")
+
+            # these are in reverse priority for file/hash representation
+            # 'html' is preferred; evaluated last
+            scrapes = []
+            if self.config.save_png:
+                file_path = out_dir_uuid / "screenshot.png"
+                if self.validate_file(file_path):
+                    scrapes.append(file_path)
+                else:
+                    logger.error(f"Error during png validation for {src.url}")
+
+            if self.config.save_pdf:
+                file_path = out_dir_uuid / "output.pdf"
+                if self.validate_file(file_path):
+                    scrapes.append(file_path)
+                else:
+                    logger.error(f"Error during pdf validation for {src.url}")
+
+            if self.config.save_dom:
+                extract = self.transform_extract(extract)
+                if self.validate_extract(extract):
+                    logger.debug("Extraction validation successful!")
+
+                file_path = out_dir_uuid / "content.html"
+                logger.debug(f"Saving to file {str(file_path)}...")
+                self.save(extract, file_path)
+
+                if self.validate_file(file_path):
+                    scrapes.append(file_path)
+                else:
+                    logger.error(f"Error during html validation for {src.url}")
+
+            if any(scrapes):
+                src.scrape_status = ScrapeStatus.COMPLETE
+                src.content_hash = self.hash(scrapes[-1])
+                src.file = str(file_path)
+            else:
+                raise ExtractionError("All playwright files failed validation.")  # NOQA: TRY301
+
+        except Exception as e:
+            src.scrape_status = ScrapeStatus.ERROR
+            src.error_message = str(e)
+
+            with (out_dir_uuid / "errors.txt").open("a") as f:
+                lines = [str(src.scraped_at), f"Failed to extract url {src.url}", f"Error: {str(e)}"]
+                f.writelines(line + os.linesep for line in lines)
+
             self.cleanup()
-            raise ExtractionError(f"{self.name} extraction of {url} failed:\n'{result.stderr}'") from e
 
-        return result.stdout
-
-    # TODO: override __call__
-
-
-class ChromeScreenshotExtractor(ChromeExtractor):
-    """Chrome extractor that saves screenshot of page."""
-
-    name: str = "chrome-png"
-    default_filename: str = "screenshot.png"
-    save_action: str = "image"
-    config: ChromeSettings
-
-    def __init__(
-        self,
-        config: dict[str, Any] | None = None,
-        out_dir: Path | str | None = None,
-    ):
-        super().__init__(config=config, out_dir=out_dir)
-
-    @override
-    def run(self, url: ValidatedURL | str, out_dir: Path) -> str | bytes:
-        cmd = self.cmd(url)
-        logger.debug(f"{cmd=}")
-        result = run(  # NOQA: S603
-            cmd,  # NOQA: S607
-            cwd=out_dir,
-            capture_output=True,
-            text=True,
-            timeout=self.config.timeout,
-        )
-
-        try:
-            result.check_returncode()  # raises error if failed
-        except CalledProcessError as e:
-            self.cleanup()
-            raise ExtractionError(f"{self.name} extraction of {url} failed:\n'{result.stderr}'") from e
-
-        return result.stdout
+        return src

@@ -1,5 +1,6 @@
 """Based heavily on https://github.com/MarkHershey/arxiv-dl."""
 
+import asyncio
 import datetime
 import json
 import logging
@@ -21,7 +22,8 @@ from typing_extensions import override
 
 from aizk.datamodel.schema import ScrapeStatus, Source
 from aizk.extractors.base import ExtractionError, Extractor, ExtractorSettings
-from aizk.extractors.utils import atomic_write, download_file
+from aizk.extractors.utils import download_file
+from aizk.utilities.file_helpers import AtomicWriter
 
 logger = logging.getLogger(__name__)
 
@@ -47,12 +49,14 @@ class ArxivExtractor(Extractor):
         self,
         config: ArxivSettings | dict[str, Any] | None = None,
         out_dir: Path | str | None = None,
+        ensure_out_dir: bool = False,
     ):
         config = self.validate_config(config or {})
 
         super().__init__(
             config=config,
             out_dir=out_dir or Path.cwd() / "data" / self.name,
+            ensure_out_dir=ensure_out_dir,
         )
 
     @override
@@ -144,7 +148,7 @@ class ArxivExtractor(Extractor):
             "abstract": paper_abstract.strip(),
         }
 
-        with atomic_write(out_dir / "metadata.json", binary_mode=False) as f:
+        with AtomicWriter(out_dir / "metadata.json", binary_mode=False) as f:
             json.dump(metadata, f)
 
     def get_html_content(self, arxiv_id: str, out_dir: Path):
@@ -162,7 +166,7 @@ class ArxivExtractor(Extractor):
         download_file(url, out_dir / f"{arxiv_id}.pdf", timeout=self.config.timeout)
 
     @override
-    def run(self, url: str, out_dir: Path):
+    async def run(self, url: str, out_dir: Path):
         """Run the extraction."""
         arxiv_id = self.get_arxiv_id(url)
 
@@ -179,7 +183,7 @@ class ArxivExtractor(Extractor):
         return out_dir
 
     @override
-    def __call__(self, source: Source) -> Source:
+    async def __call__(self, source: Source) -> Source:
         """Execute extraction pipeline."""
         src = source.model_copy()
 
@@ -189,7 +193,8 @@ class ArxivExtractor(Extractor):
         arxiv_id = self.get_arxiv_id(src.url)
 
         try:
-            self.run(src.url, out_dir_uuid)
+            logger.info(f"Extracting from {src.url} with ArxivExtractor")
+            await self.run(src.url, out_dir_uuid)
 
             file_validations = []
             if self.config.with_metadata:

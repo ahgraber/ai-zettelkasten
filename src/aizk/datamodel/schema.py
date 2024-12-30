@@ -76,8 +76,8 @@ class Source(SQLModel, table=True):  # NOQA:D101
     scraped_at: datetime.datetime | None = None
     scrape_status: ScrapeStatus = ScrapeStatus("PENDING")
     content_hash: str | None = None
-    error_message: str | None = None
     file: str | None = None
+    error_message: str | None = None
 
     @computed_field
     @property

@@ -6,52 +6,7 @@ import pytest
 import requests
 import responses  # For mocking HTTP requests
 
-from aizk.extractors.utils import atomic_write, download_file, validate_file
-
-
-class TestAtomicWrite:
-    def test_write_str(self, tmp_path):
-        name = "test.txt"
-        content = "this is only a test"
-
-        with atomic_write(tmp_path / name, binary_mode=False) as f:
-            f.write(content)
-
-        assert (tmp_path / name).read_text() == content
-        assert len(list(tmp_path.iterdir())) == 1
-
-    def test_write_binary(self, tmp_path):
-        name = "test.txt"
-        content = "this is only a test"
-
-        # If text is encoded, binary_mode should be True
-        with atomic_write(tmp_path / name, binary_mode=True) as f:
-            f.write(content.encode("utf-8"))
-
-        assert (tmp_path / name).read_text() == content
-        assert len(list(tmp_path.iterdir())) == 1
-
-    def test_write_needs_binary(self, tmp_path):
-        name = "test.txt"
-        content = "this is only a test"
-
-        # If text is encoded, binary_mode should be True
-        with (
-            pytest.raises(TypeError),
-            atomic_write(tmp_path / name, binary_mode=False) as f,
-        ):
-            f.write(content.encode("utf-8"))
-
-    def test_write_extra_binary(self, tmp_path):
-        name = "test.txt"
-        content = "this is only a test"
-
-        # If text is string, binary_mode should be False
-        with (
-            pytest.raises(TypeError),
-            atomic_write(tmp_path / name, binary_mode=True) as f,
-        ):
-            f.write(content)
+from aizk.extractors.utils import download_file, validate_file
 
 
 class TestDownloadFile:

@@ -1,147 +1,144 @@
+"""SinglefileExtractor.
+
+- ref: https://github.com/ArchiveBox/ArchiveBox/blob/dev/archivebox/pkgs/abx-plugin-singlefile/abx_plugin_singlefile/singlefile.py
+- ref: https://github.com/sissbruecker/linkding/blob/master/bookmarks/services/singlefile.py
+"""
+
+import asyncio
 import datetime
+import itertools
 import json
 import logging
+import os
 from pathlib import Path
-from subprocess import CalledProcessError, run
+import platform
+import subprocess
+import sys
+from typing import Any, List, Tuple, override
 
-from aizk.datamodel.schema import ScrapeStatus, Source
-from aizk.extractors.utils import (
-    atomic_write,
-    bin_version,
-    find_chrome_binary,
-    find_node_binary,
-    save_and_hash,
+from pydantic import ConfigDict, Field, TypeAdapter
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from aizk.datamodel.schema import ScrapeStatus, Source, ValidatedURL
+from aizk.extractors.base import ExtractionError, Extractor
+from aizk.extractors.chrome import ChromeSettings, detect_playwright_chromium, detect_system_chrome
+from aizk.extractors.utils import bin_version
+from aizk.utilities.file_helpers import AtomicWriter
+from aizk.utilities.path_helpers import (
+    DEFAULT_ENV_PATH,
+    ExecPath,
+    SysPATH,
+    add_node_bindir_to_syspath,
+    find_binary_abspath,
+    get_local_bin_dir,
+    path_is_dir,
+    path_is_executable,
+    path_is_file,
+    symlink_to_bin,
 )
-from aizk.utilities.path_helpers import add_node_bin_to_PATH, find_binary_abspath
 
 logger = logging.getLogger(__name__)
 
-TIMEOUT = 60
 
-CHROME_BINARY = find_chrome_binary()
-CHROME_DEFAULT_OPTIONS = {
-    "CHROME_BINARY": CHROME_BINARY,
-    "CHROME_VERSION": bin_version(CHROME_BINARY),
-    "CHROME_HEADLESS": True,
-    "CHROME_USER_AGENT": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
-    "CHROME_USER_DATA_DIR": "./chromium-profile",
-    "CHROME_WINDOW_SIZE": "1440,2000",
-    "CHROME_TIMEOUT": 0,
-    "CHROME_CHECK_SSL_VALIDITY": True,
-    "CHROME_ADBLOCK_EXTENSION": "uBOLite.chromium.mv3",
-    "CHROME_SANDBOX": True,
-}
+class SingleFileSettings(BaseSettings):
+    """Default SingleFile Settings."""
 
-# SINGLEFILE_BINARY = find_node_binary("single-file")
-SINGLEFILE_BINARY = find_binary_abspath("postlight-parser", PATH=add_node_bin_to_PATH())
-SINGLEFILE_ARGS = [
-    "--dump-content",  # Dump the content of the processed page in the console ('true' when running in Docker) <boolean>
-]
-SINGLEFILE_TIMEOUT_SEC = TIMEOUT
+    model_config = SettingsConfigDict(extra="ignore")
 
+    binary: str = Field(default=str(find_binary_abspath("single-file", add_node_bindir_to_syspath())))
+    timeout: int = Field(default=45, ge=15, lt=3600)
 
-def chrome_args(**options) -> list[str]:
-    """Build chrome shell command arguments."""
-    options = {**CHROME_DEFAULT_OPTIONS, **options}
-    cmd_args = []
-
-    if options["CHROME_BINARY"] is None:
-        raise FileNotFoundError("Could not find any CHROME_BINARY installed on your system")
-    # cmd_args = [options["CHROME_BINARY"]]
-
-    if options["CHROME_HEADLESS"]:
-        cmd_args.append("--headless=new")  # req: chrome > v111
-
-    if options["CHROME_USER_AGENT"]:
-        cmd_args.append("--user-agent={}".format(options["CHROME_USER_AGENT"]))
-
-    if options["CHROME_USER_DATA_DIR"]:
-        cmd_args.append("--user-data-dir={}".format(options["CHROME_USER_DATA_DIR"]))
-
-    if options["CHROME_WINDOW_SIZE"]:
-        cmd_args.append("--window-size={}".format(options["CHROME_WINDOW_SIZE"]))
-
-    if options["CHROME_TIMEOUT"]:
-        cmd_args.append("--timeout={}".format(options["CHROME_TIMEOUT"] * 1000))
-
-    if not options["CHROME_CHECK_SSL_VALIDITY"]:
-        cmd_args.extend(["--disable-web-security", "--ignore-certificate-errors"])
-
-    if options["CHROME_ADBLOCK_EXTENSION"]:
-        cmd_args.append("--load-extension={}".format(options["CHROME_ADBLOCK_EXTENSION"]))
-
-    if not options["CHROME_SANDBOX"]:
-        # assume this means we are running inside a docker container
-        # in docker, GPU support is limited, sandboxing is unnecessary,
-        # and SHM is limited to 64MB by default (which is too low to be usable).
-        cmd_args.extend(
-            [
-                "--no-sandbox",
-                "--no-zygote",
-                "--disable-dev-shm-usage",
-                "--disable-software-rasterizer",
-                "--run-all-compositor-stages-before-draw",
-                "--hide-scrollbars",
-                "--autoplay-policy=no-user-gesture-required",
-                "--no-first-run",
-                "--use-fake-ui-for-media-stream",
-                "--use-fake-device-for-media-stream",
-                "--disable-sync",
-            ]
-        )
-
-    return cmd_args
-
-
-def scrape_singlefile(source: Source, out_dir: Path, timeout: int = TIMEOUT) -> Source:
-    """Download reader friendly version using @postlight/parser."""
-    output_folder = out_dir.expanduser().resolve()
-
-    source.scraped_at = datetime.datetime.now(datetime.timezone.utc)
-
-    chrome_options = chrome_args(CHROME_TIMEOUT=0)
-
-    # SingleFile CLI Docs: https://github.com/gildas-lormeau/SingleFile/tree/master/cli
-    chrome_options = [f"--browser-executable-path={CHROME_BINARY}"] + [
-        f"--browser-arg={option}" for option in chrome_options
-    ]
-    singlefile_options = sorted(set(SINGLEFILE_ARGS + chrome_options))  # singlefile does not like duplicate
-    # Get HTML version of article
-    cmd = [SINGLEFILE_BINARY, source.url] + singlefile_options
-    logger.debug(f"{cmd=}")
-    result = run(  # NOQA: S603
-        cmd,
-        capture_output=True,
-        timeout=timeout,
+    singlefile_args: List[str] = Field(
+        default=[
+            "--dump-content",  # Dump the content of the processed page in the console ('true' when running in Docker) <boolean>
+        ]
     )
 
-    # error states
-    try:
-        result.check_returncode()  # raises error if failed
-    except CalledProcessError:
-        source.scrape_status = ScrapeStatus("ERROR")
-        source.error_message = "Non-zero exit code from @postlight/parser"
-        logger.debug(source.error_message)
 
-    try:
-        article_json = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        source.scrape_status = ScrapeStatus("ERROR")
-        source.error_message = "Failed to parse JSON response from @postlight/parser"
-        logger.debug(source.error_message)
+class SingleFileExtractor(Extractor):
+    """single-file extractor."""
 
-    if article_json.get("error") or article_json.get("failed") or (article_json.get("content") is None):
-        source.scrape_status = ScrapeStatus("ERROR")
-        source.error_message = "@postlight/parser was unable to get article HTML from the URL"
-        logger.debug(source.error_message)
+    name: str = "single-file"
+    default_filename: str = "content.html"
+    config: SingleFileSettings
 
-    # success
-    source.scrape_status = ScrapeStatus("COMPLETE")
-    fpath = output_folder / "content.html"
-    source.content_hash = save_and_hash(fpath, article_json.pop("content"))
-    source.file = str(fpath)
+    def __init__(
+        self,
+        config: SingleFileSettings | dict[str, Any] | None = None,
+        chrome_config: ChromeSettings | dict[str, Any] | None = None,
+        out_dir: Path | str | None = None,
+        ensure_out_dir: bool = False,
+    ):
+        config = self.validate_config(config or {})
 
-    with atomic_write(output_folder / "metadata.json") as f:
-        json.dump(article_json, f)
+        binary = config.binary or find_binary_abspath(self.name, add_node_bindir_to_syspath())
 
-    return source
+        super().__init__(
+            config=config,
+            binary=binary,
+            out_dir=out_dir or Path.cwd() / "data" / self.name,
+            ensure_out_dir=ensure_out_dir,
+        )
+
+        self.chrome_config = ChromeSettings.model_validate(chrome_config or {})
+
+    @override
+    def validate_config(self, cfg: SingleFileSettings | dict[str, Any]) -> SingleFileSettings:
+        """Validate the extractor config."""
+        return SingleFileSettings.model_validate(cfg)
+
+    @override
+    def cleanup(self):
+        """Clean up any state or runtime files that Chrome leaves behind when killed by a timeout or other error."""
+        try:
+            linux_lock_file = Path("~/.config/chromium/SingletonLock").expanduser()
+            linux_lock_file.unlink(missing_ok=True)
+        except Exception as e:
+            logger.debug(f"Ignoring exception {e}")
+            pass
+
+        if self.chrome_config.chrome_profile_dir:
+            try:
+                (self.chrome_config.chrome_profile_dir / "SingletonLock").unlink(missing_ok=True)
+            except Exception as e:
+                logger.debug(f"Ignoring exception {e}")
+                pass
+
+    def cmd(self, url: ValidatedURL | str) -> List[str]:
+        """Generate CLI command."""
+        chrome_args = [f"--browser-arg={option}" for option in self.chrome_config.chrome_args]
+
+        singlefile_args = [
+            f"--browser-executable-path={self.chrome_config.binary}",
+            "--dump-content",
+        ]
+
+        cmd = [
+            str(self.binary),
+            url,
+            *chrome_args,
+            *singlefile_args,
+        ]
+
+        return cmd
+
+    @override
+    async def run(self, url: ValidatedURL | str, out_dir: Path):
+        """Run the extraction."""
+        cmd = self.cmd(url)
+        logger.debug(f"Running single-file extraction with cli {cmd=}")
+        result = subprocess.run(  # NOQA: S603
+            cmd,  # NOQA: S607
+            cwd=out_dir,
+            capture_output=True,
+            text=True,
+            timeout=self.config.timeout,
+        )
+
+        try:
+            result.check_returncode()  # raises error if failed
+        except subprocess.CalledProcessError as e:
+            self.cleanup()
+            raise ExtractionError(f"{self.name} extraction of {url} failed:\n'{result.stderr}'") from e
+
+        return result.stdout
