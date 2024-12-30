@@ -44,6 +44,8 @@
 ## chunk
 
 [chonkie-ai/chonkie: 🦛 CHONK your texts with Chonkie ✨ - The no-nonsense RAG chunking library](https://github.com/chonkie-ai/chonkie)
+[[2312.06648] Dense X Retrieval: What Retrieval Granularity Should We Use?](https://arxiv.org/abs/2312.06648) -
+deconstruct text blobs into propositions (complete factoids)
 
 ## index
 
@@ -58,6 +60,7 @@
 
 See also
 
+- [Building AI Products—Part I: Back-end Architecture](https://philcalcado.com/2024/12/14/building-ai-products-part-i.html)
 - [Introduction — Build, scale, and manage user-facing Retrieval-Augmented Generation applications.](https://r2r-docs.sciphi.ai/introduction)
 - [Future-House/paper-qa: High accuracy RAG for answering questions from scientific documents with citations](https://github.com/Future-House/paper-qa)
 - [prsdm/smart-rag](https://github.com/prsdm/smart-rag/)

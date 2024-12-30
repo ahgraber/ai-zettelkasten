@@ -4,7 +4,6 @@ import logging
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import typing as t
 from urllib.parse import quote, unquote, urlparse
 
@@ -21,21 +20,27 @@ from aizk.core.database import (
     initialize_database,
     update_scraped_sources,
 )
-from aizk.extractors.base import (
+from aizk.datamodel.schema import ScrapeStatus, Source
+from aizk.extractors import (
     STATICFILE_EXTENSIONS,
+    ArxivExtractor,
+    ArxivSettings,
+    ChromeExtractor,
+    ChromeSettings,
     ExtractionError,
-    Extractor,
+    # Extractor,
     ExtractorSettings,
+    PlaywrightExtractor,
+    PlaywrightSettings,
+    PostlightExtractor,
+    PostlightSettings,
+    SingleFileExtractor,
+    SingleFileSettings,
     StaticFileExtractor,
 )
-from aizk.extractors.chrome import (
-    ChromeExtractor,
-    ChromeHTMLExtractor,
-    ChromeSettings,
-)
-from aizk.extractors.postlight_parser import PostlightExtractor, PostlightSettings
-
-# from aizk.extractors.singlefile import SinglefileExtractor, SinglefileSettings
+from aizk.extractors.chrome import detect_playwright_chromium
+from aizk.utilities import AsyncTimeWindowRateLimiter, TimeWindowRateLimiter, basic_log_config, get_repo_path
+from aizk.utilities.async_helpers import synchronize
 
 # %%
 ipython: InteractiveShell | None = get_ipython()
@@ -44,19 +49,19 @@ if ipython is not None:
     ipython.run_line_magic("autoreload", "2")
 
 # %%
+basic_log_config()
+
 logger = logging.getLogger(__file__)
+logger.setLevel(logging.DEBUG)
 
 # %%
-repo = subprocess.check_output(  # NOQA: S603
-    ["git", "rev-parse", "--show-toplevel"],  # NOQA: S607
-    cwd=Path(__file__).parent,
-    encoding="utf-8",
-).strip()
-repo = Path(repo).expanduser().resolve()
+repo = get_repo_path(__file__)
 
 datadir = repo / "data"
 datadir.mkdir(exist_ok=True)
+savedir = datadir / "scrape"
 
+# %%
 # SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
 SQLALCHEMY_DATABASE_URL = f"sqlite:///{datadir}/test.db"
 
@@ -66,42 +71,20 @@ shutil.rmtree(datadir / "scrape", ignore_errors=True)
 Path(SQLALCHEMY_DATABASE_URL.removeprefix("sqlite:///")).unlink(missing_ok=True)
 
 # %%
-engine = get_db_engine(
-    SQLALCHEMY_DATABASE_URL,
-    echo=True,  # for dev
+arxiv_extractor = ArxivExtractor(out_dir=savedir / "arxiv", ensure_out_dir=True)
+playwright_extractor = PlaywrightExtractor(out_dir=savedir / "playwright", ensure_out_dir=True)
+singlefile_extractor = SingleFileExtractor(
+    chrome_config=ChromeSettings(binary=str(detect_playwright_chromium())),
+    out_dir=savedir / "singlefile",
+    ensure_out_dir=True,
 )
-
-# %%
-initialize_database(engine)
-
-# %%
-urls = [
-    "https://sqlmodel.tiangolo.com/tutorial/insert/#create-a-session",
-    "https://reinforcedknowledge.com/transformers-attention-is-all-you-need/",
-    # Attn is all you need
-    "https://arxiv.org/abs/1706.03762",
-    "https://arxiv.org/html/1706.03762v7",
-    "https://arxiv.org/pdf/1706.03762",
-    # hard to scrape (scrolling background effects, javascript animations/charts)
-    "https://www.bloomberg.com/graphics/2023-generative-ai-bias/",
-    "https://www.washingtonpost.com/technology/interactive/2023/ai-generated-images-bias-racism-sexism-stereotypes/",
-    "https://www.washingtonpost.com/technology/interactive/2024/ai-bias-beautiful-women-ugly-images/",
-]
-add_urls_to_backlog(engine, urls)
+staticfile_extractor = StaticFileExtractor(out_dir=savedir / "staticfile", ensure_out_dir=True)
 
 
 # %%
-pending = get_pending_sources(engine)
-
-source = pending[0]
-
-# %%
-static_dir = datadir / "static"
-static_dir.mkdir(exist_ok=True)
-staticfile_extractor = StaticFileExtractor(out_dir=static_dir)
+alimiter = AsyncTimeWindowRateLimiter(5, 20)  # 5 requests every 20 seconds
 
 
-# %%
 def is_static_file(url: str) -> bool:
     """Determine whether file is static or requires rendering."""
     # TODO: the proper way is with MIME type detection + ext, not only extension
@@ -110,98 +93,86 @@ def is_static_file(url: str) -> bool:
     return extension.lower() in STATICFILE_EXTENSIONS
 
 
-for source in pending:
-    ext = source.url
-    if is_static_file(source.url):
-        print(f"downloading {source.url}")
-        staticfile_extractor(source)
+@alimiter
+async def scrape(source: Source):
+    """Scrape logic."""
+    url = source.url
 
-# %%
-postlight_dir = datadir / "postlight-parser"
-postlight_dir.mkdir(exist_ok=True)
-postlight_extractor = PostlightExtractor(out_dir=postlight_dir)
+    if is_static_file(url):
+        logger.info(f"StaticFileExtractor({url})")
+        result = await staticfile_extractor(source)
+        if result.scrape_status == ScrapeStatus.COMPLETE:
+            return result
 
-# %%
-for source in pending:
-    postlight_extractor(source)
+    if "arxiv.org" in url:
+        logger.info(f"ArxivExtractor({url})")
+        result = await arxiv_extractor(source)
+        if result.scrape_status == ScrapeStatus.COMPLETE:
+            return result
 
-# %%
-# from aizk.utilities.path_helpers import add_node_bin_to_PATH, find_binary_abspath
+    logger.info(f"SingleFileExtractor({url})")
+    result = await singlefile_extractor(source)
+    if result.scrape_status == ScrapeStatus.COMPLETE:
+        return result
 
-# find_binary_abspath("postlight-parser", add_node_bin_to_PATH())
-# find_binary_abspath("single-file", add_node_bin_to_PATH())
-
-# %%
-chrome_dir = datadir / "chrome"
-chrome_dir.mkdir(exist_ok=True)
-# chrome_extractor = ChromeExtractor(out_dir=chrome_dir)
-
-# %%
-chrome_html_extractor = ChromeHTMLExtractor(out_dir=chrome_dir)
-
-for source in pending:
-    chrome_html_extractor(source)
-
-# %%
+    logger.info(f"PlaywrightExtractor({url})")
+    result = await playwright_extractor(source)
+    return result
 
 
 # %%
-extract = chrome_html_extractor.run(pending[1].url)
-
-# %%
-from subprocess import run  # NOQA: E402
-
-cmd = [
-    str(chrome_html_extractor.binary),
-    *chrome_html_extractor.config.chrome_args(),
-    "--dump-dom",
-    pending[1].url,
-]
-
-result = run(  # NOQA: S603
-    cmd,
-    capture_output=True,
-    timeout=chrome_html_extractor.config.CHROME_TIMEOUT,
+engine = get_db_engine(
+    SQLALCHEMY_DATABASE_URL,
+    echo=True,  # for dev
 )
 
-# %%
-
-
-# %%
-postlight_extractor(pending[0])
+initialize_database(engine)
 
 # %%
-extract = postlight_extractor.run(pending[4].url)
-
-# %%
-updates = []
-for source in pending:
-    processed_source = postlight_extractor.exec(source)
-    updates.append(processed_source)
-
-update_scraped_sources(engine, updates)
-
-# %%
-# updates = [
-#     Source(
-#         **links[0].model_dump(),
-#         scraped_at=datetime.datetime.now(),
-#         scrape_status=ScrapeStatus("COMPLETE"),
-#         content_hash="1234qwer",
-#         error_message=None,
-#         file="./test",
-#     ),
-#     Source(
-#         **links[1].model_dump(),
-#         scraped_at=datetime.datetime.today(),
-#         scrape_status=ScrapeStatus("ERROR"),
-#         content_hash=None,
-#         error_message="ERROR MESSAGE",
-#         file=None,
-#     ),
+# urls = [
+#     "https://sqlmodel.tiangolo.com/tutorial/insert/#create-a-session",
+#     "https://reinforcedknowledge.com/transformers-attention-is-all-you-need/",
+#     # Attn is all you need
+#     "https://arxiv.org/abs/1706.03762",
+#     "https://arxiv.org/html/1706.03762v7",
+#     "https://arxiv.org/pdf/1706.03762",
+#     # hard to scrape (scrolling background effects, javascript animations/charts)
+#     "https://www.bloomberg.com/graphics/2023-generative-ai-bias/",
+#     "https://www.washingtonpost.com/technology/interactive/2023/ai-generated-images-bias-racism-sexism-stereotypes/",
+#     "https://www.washingtonpost.com/technology/interactive/2024/ai-bias-beautiful-women-ugly-images/",
 # ]
-# update_scraped_sources(engine, updates)
+urls = [
+    "https://adoption.microsoft.com/en-us/project-sophia/",
+    "https://www.theregister.com/2024/03/29/microsoft_azure_safety_tools/",
+    "https://aider.chat/2024/03/08/claude-3.html",
+    "https://www.databricks.com/blog/introducing-dbrx-new-state-art-open-llm",
+    "https://www.mov-axbx.com/wopr/wopr_concept.html",
+    "https://www.linkedin.com/posts/llamaindex_save-memory-and-money-in-the-rag-activity-7179169269031587840-nVgs",
+    "https://www.jdsupra.com/legalnews/utah-passes-artificial-intelligence-1386840/",
+    "https://knowingmachines.org/models-all-the-way",
+    "https://arxiv.org/abs/2403.16977",
+]
+add_urls_to_backlog(engine, urls)
 
+
+# %%
+pending = get_pending_sources(engine)
+results = []
+for source in pending:
+    # await scrape(source)
+    results.append(synchronize(scrape, source))
+
+# %%
+update_scraped_sources(engine, results)
+
+# %%
+
+
+# %%
+
+# %%
+
+# %%
 
 # %%
 from docling.document_converter import DocumentConverter  # NOQA: E402

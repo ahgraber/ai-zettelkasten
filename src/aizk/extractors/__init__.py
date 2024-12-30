@@ -7,9 +7,6 @@ from .base import (
 )
 from .chrome import (
     ChromeExtractor,
-    ChromeHTMLExtractor,
-    ChromePDFExtractor,
-    ChromeScreenshotExtractor,
     ChromeSettings,
 )
 from .playwright import PlaywrightExtractor, PlaywrightSettings
@@ -24,9 +21,6 @@ __all__ = [
     "STATICFILE_EXTENSIONS",
     "StaticFileExtractor",
     "ChromeExtractor",
-    "ChromeHTMLExtractor",
-    "ChromePDFExtractor",
-    "ChromeScreenshotExtractor",
     "ChromeSettings",
     "PlaywrightExtractor",
     "PlaywrightSettings",
