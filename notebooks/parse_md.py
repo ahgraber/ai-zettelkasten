@@ -12,8 +12,10 @@ import pandas as pd
 
 from aizk.utilities.parse import (
     URL_REGEX,
+    clean_link_title,
+    clean_url,
     extract_md_url,
-    fix_url_from_markdown,
+    find_all_urls,
 )
 
 logging.basicConfig()
@@ -21,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # %%
 data_dir = Path(__file__).parents[1] / "data"
-treadmill = data_dir / "treadmill"
+treadmill = data_dir / "source" / "treadmill"
 
 
 # %%
@@ -34,88 +36,6 @@ def clean_textblob(text: str) -> str:
     return text
 
 
-def clean_title(title: str) -> str:
-    """Clean titles.
-
-    Some titles still need cleaning after parsing:
-    "There's An AI: The Best AI Tools Directory\\]([https://theresanai.com/" --> "There's An AI: The Best AI Tools Directory"
-    "\\[2407.20516\\] Machine Unlearning in Generative AI: A Survey\\]([https://arxiv.org/abs/2407.20516" --> "[2407.20516] Machine Unlearning in Generative AI: A Survey
-    """
-    # replace extra escapes
-    title = title.replace("\\", "")
-    # split on possible markdown-url divider ']('
-    title = title.split("](")[0]
-
-    return title
-
-
-def safelink_to_url(url: str) -> str:
-    """Convert safelinks to original url."""
-    safelinks_str = "https://nam11.safelinks.protection.outlook.com"  # typos:disable
-    if safelinks_str not in url:
-        return url
-    else:
-        # Try unquote first (for general URL decoding)
-        try:
-            decoded = urlparse.unquote(url)
-        except ValueError:
-            # If unquote fails, try unquote_plus (for '+' encoding)
-            decoded = urlparse.unquote_plus(url)
-
-        pattern = re.compile(f"{safelinks_str}\\/\\?url=(.*?)&data=")
-        matches = re.findall(pattern, decoded)
-
-        if matches:
-            return matches[0]
-        else:
-            raise ValueError(f"Could not find safelinks url in {decoded}")
-
-
-def emergentmind_to_arxiv(url: str) -> str:
-    """Convert emergentmind links to arxiv.org."""
-    pattern = re.compile(r"(?:emergentmind.com/papers/)(\d+\.\d+)", re.IGNORECASE)
-    if matches := re.findall(pattern, url):
-        return f"https://arxiv.org/abs/{matches[0]}"
-    else:
-        return url
-
-
-def hugginface_to_arxiv(url: str) -> str:
-    """Convert huggingface papers links to arxiv.org."""
-    pattern = re.compile(r"(?:huggingface.co/papers/)(\d+\.\d+)", re.IGNORECASE)
-    if matches := re.findall(pattern, url):
-        return f"https://arxiv.org/abs/{matches[0]}"
-    else:
-        return url
-
-
-def standardize_arxiv(url: str) -> str:
-    """Point to standard arxiv abstract pages."""
-    pattern = re.compile(r"(?:arxiv.org/[a-z]+?/)(\d+\.\d+)", re.IGNORECASE)
-    if matches := re.findall(pattern, url):
-        return f"https://arxiv.org/abs/{matches[0]}"
-    else:
-        return url
-
-
-def clean_url(url: str) -> str:
-    """Clean url after identification."""
-
-    # sometimes urls have weird markdown-like artifacts
-    # "...)[–](...,    ...)[—](...,    ...)['](...,    ...)['](...,    ...)[\\](...,    ...)[�](..."
-    # _split = re.split(r"\)\[[^\w\d]+?\]\(", url, flags=re.IGNORECASE)
-    _split = re.split(r"\)\[[^\]\(]+?\]\(", url, flags=re.IGNORECASE)
-    if _split:
-        url = _split[0]
-
-    url = fix_url_from_markdown(url)
-    url = safelink_to_url(url)
-    url = emergentmind_to_arxiv(url)
-    url = hugginface_to_arxiv(url)
-    url = standardize_arxiv(url)
-    return url
-
-
 # %%
 dfs = []
 for file in sorted((treadmill).rglob("*.md")):
@@ -125,7 +45,7 @@ for file in sorted((treadmill).rglob("*.md")):
     dfs.append(
         pd.DataFrame(
             {
-                "title": clean_title(title),
+                "title": clean_link_title(title),
                 "url": clean_url(url),
             }
             for title, url in extract_md_url(clean_textblob(text))
@@ -182,5 +102,18 @@ df.to_csv(treadmill / "treadmill_2024.csv", index=False)
 # df["title"] = df["get_title"].fillna(df["title"]).apply(lambda title: " ".join(title.split()))
 # df = df.drop(columns=["get_title"])
 # df.to_csv(treadmill / "treadmill_2024.csv", index=False)
+
+# %%
+len(df[df["url"].str.contains("arxiv.org")])
+len(df[df["url"].str.contains("github.com")])
+len(df[df["url"].str.contains("news.ycombinator.com")])
+
+# %%
+social = ["linkedin", "x.com", "twitter.com"]
+len(df[df["url"].str.contains("|".join(social), na=False)])
+
+# %%
+medium = ["medium.com", "towardsdatascience", "archive.is", "substack"]
+len(df[df["url"].str.contains("|".join(medium), na=False)])
 
 # %%
