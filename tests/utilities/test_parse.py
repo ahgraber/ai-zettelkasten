@@ -1,6 +1,19 @@
 import pytest
 
-from aizk.utilities.parse import check_matched_pairs, extract_json, extract_md_url, extract_url, validate_url
+from aizk.utilities.parse import (
+    check_matched_pairs,
+    clean_link_title,
+    clean_url,
+    emergentmind_to_arxiv,
+    extract_json,
+    extract_md_url,
+    extract_url,
+    fix_url_from_markdown,
+    huggingface_to_arxiv,
+    safelink_to_url,
+    standardize_arxiv,
+    validate_url,
+)
 
 
 # %%
@@ -152,14 +165,202 @@ class TestExtractMarkdownURL:
         for t, e in zip(testcases, expected):
             assert extract_md_url(t) == e
 
+    def test_whitespace_handling(self):
+        text = "[Multi  Space\n\nTitle](http://test.com)"
+        assert extract_md_url(text) == [("Multi Space Title", "http://test.com")]
+
+    def test_escaped_brackets(self):
+        text = "\\[Title\\](http://escaped.com)"
+        assert extract_md_url(text) == [("Title", "http://escaped.com")]
+
+    def test_special_chars(self):
+        text = "[Title!@#$%](https://special.com)"
+        assert extract_md_url(text) == [("Title!@#$%", "https://special.com")]
+
     def test_no_urls(self):
         assert extract_md_url("This is a test with no urls.") == []
+
+    def test_empty_text(self):
+        assert extract_md_url("") == []
 
     def test_raw_urls(self):
         assert extract_md_url("http://this.is/a/test") == []
 
     def test_html_urls(self):
         assert extract_md_url("<a href='https://example.com'>link</a>") == []
+
+
+class TestCleanLinkTitle:
+    def test_basic_cleaning(self):
+        assert clean_link_title("Simple Title") == "Simple Title"
+
+    def test_remove_escapes(self):
+        assert clean_link_title("\\[Title\\]") == "[Title]"
+
+    def test_remove_url_part(self):
+        assert clean_link_title("Title](https://example.com") == "Title"
+
+    def test_combined_cleanup(self):
+        title = "\\[Title\\]([https://example.com"
+        assert clean_link_title(title) == "[Title"
+
+    def test_empty_string(self):
+        assert clean_link_title("") == ""
+
+    def test_real_examples(self):
+        title1 = "There's An AI: The Best AI Tools Directory\\]([https://theresanai.com/"
+        title2 = "\\[2407.20516\\] Machine Unlearning in Generative AI: A Survey\\]([https://arxiv.org/abs/2407.20516"
+
+        assert clean_link_title(title1) == "There's An AI: The Best AI Tools Directory"
+        assert clean_link_title(title2) == "[2407.20516] Machine Unlearning in Generative AI: A Survey"
+
+
+class TestFixURLFromMarkdown:
+    def test_balanced_url(self):
+        url = "https://example.com/page(info)"
+        assert fix_url_from_markdown(url) == url
+
+    def test_unbalanced_trailing(self):
+        url = "https://wikipedia.org/article_(topic).html)"
+        assert fix_url_from_markdown(url) == "https://wikipedia.org/article_(topic).html"
+
+    def test_multiple_trailing(self):
+        url = "https://example.com/page_(info)))"
+        assert fix_url_from_markdown(url) == "https://example.com/page_(info)"
+
+    def test_nested_parens(self):
+        url = "https://example.com/page_((nested))"
+        assert fix_url_from_markdown(url) == url
+
+    def test_no_parens(self):
+        url = "https://example.com/plain"
+        assert fix_url_from_markdown(url) == url
+
+    def test_invalid_url(self):
+        url = "not_a_url_(test)"
+        assert fix_url_from_markdown(url) == url
+
+    def test_complex_case(self):
+        url = "https://wikipedia.org/en/article_(Topic1)_(Topic2).html?param=value)"
+        assert fix_url_from_markdown(url) == "https://wikipedia.org/en/article_(Topic1)_(Topic2).html?param=value"
+
+
+class TestSafeLinkToURL:
+    def test_safe_link(self):
+        testcases = [
+            (
+                r"https://nam11.safelinks.protection.outlook.com/?url=https%3A%2F%2Fgithub.com%2FY2Z%2Fmonolith&data=05%7C02%7Cfake.email%40domain.com%7C3c9102cd3e7a4f28d75e08dc4ff0da05%7Cefa022f42c0246d8b6141b43989d652f%7C0%7C0%7C638473146309812612%7CUnknown%7CTWFpbGZsb3d8eyJWIjoiMC4wLjAwMDAiLCJQIjoiV2luMzIiLCJBTiI6Ik1haWwiLCJXVCI6Mn0%3D%7C40000%7C%7C%7C&sdata=MTRi%2FZxc1GwuazO%2BhltFhMyYrKbNGxgVAB%2F7ayQulz8%3D&reserved=0",
+                "https://github.com/Y2Z/monolith",
+            ),
+            (
+                r"https://nam11.safelinks.protection.outlook.com/?url=https%3A%2F%2Fwww.wired.com%2Fstory%2Feight-google-employees-invented-modern-ai-transformers-paper%2F&data=05%7C02%7Cfake.email%40domain.com%7C3c9102cd3e7a4f28d75e08dc4ff0da05%7Cefa022f42c0246d8b6141b43989d652f%7C0%7C0%7C638473146309824261%7CUnknown%7CTWFpbGZsb3d8eyJWIjoiMC4wLjAwMDAiLCJQIjoiV2luMzIiLCJBTiI6Ik1haWwiLCJXVCI6Mn0%3D%7C40000%7C%7C%7C&sdata=Y9x%2BuHaOhwoRod7Lz1wbcn73uHYjgxPpNC%2B%2FvLtyW2Q%3D&reserved=0",
+                "https://www.wired.com/story/eight-google-employees-invented-modern-ai-transformers-paper/",
+            ),
+        ]
+        for case in testcases:
+            assert safelink_to_url(case[0]) == case[1]
+
+
+class TestEmergentMindToArxiv:
+    def test_basic_conversion(self):
+        assert (
+            emergentmind_to_arxiv("https://emergentmind.com/papers/1706.03762") == "https://arxiv.org/abs/1706.03762"
+        )
+
+    def test_case_insensitive(self):
+        assert (
+            emergentmind_to_arxiv("https://EmergentMind.com/papers/1706.03762") == "https://arxiv.org/abs/1706.03762"
+        )
+
+    def test_non_emergentmind_url(self):
+        url = "https://example.com/1706.03762"
+        assert emergentmind_to_arxiv(url) == url
+
+    def test_invalid_paper_id(self):
+        url = "https://emergentmind.com/papers/invalid"
+        assert emergentmind_to_arxiv(url) == url
+
+    def test_empty_string(self):
+        assert emergentmind_to_arxiv("") == ""
+
+    def test_full_url_with_params(self):
+        assert (
+            emergentmind_to_arxiv("https://emergentmind.com/papers/1706.03762?param=value")
+            == "https://arxiv.org/abs/1706.03762"
+        )
+
+
+class TestHuggingfaceToArxiv:
+    def test_basic_conversion(self):
+        assert huggingface_to_arxiv("https://huggingface.co/papers/1706.03762") == "https://arxiv.org/abs/1706.03762"
+
+    def test_case_insensitive(self):
+        assert huggingface_to_arxiv("https://HuggingFace.co/papers/1706.03762") == "https://arxiv.org/abs/1706.03762"
+
+    def test_non_emergentmind_url(self):
+        url = "https://example.com/1706.03762"
+        assert huggingface_to_arxiv(url) == url
+
+    def test_invalid_paper_id(self):
+        url = "https://huggingface.co/papers/invalid"
+        assert huggingface_to_arxiv(url) == url
+
+    def test_empty_string(self):
+        assert huggingface_to_arxiv("") == ""
+
+    def test_full_url_with_params(self):
+        assert (
+            huggingface_to_arxiv("https://huggingface.co/papers/1706.03762?param=value")
+            == "https://arxiv.org/abs/1706.03762"
+        )
+
+
+class TestStandardizeArxiv:
+    def test_self_conversion(self):
+        assert standardize_arxiv("https://arxiv.org/abs/1706.03762") == "https://arxiv.org/abs/1706.03762"
+
+    def test_pdf_conversion(self):
+        assert standardize_arxiv("https://arxiv.org/pdf/1706.03762") == "https://arxiv.org/abs/1706.03762"
+
+    def test_html_conversion(self):
+        assert standardize_arxiv("https://arxiv.org/html/1706.03762") == "https://arxiv.org/abs/1706.03762"
+
+    def test_case_insensitive(self):
+        assert standardize_arxiv("https://arxiv.org/abs/1706.03762") == "https://arxiv.org/abs/1706.03762"
+
+    def test_invalid_paper_id(self):
+        url = "https://arxiv.org/abs/invalid"
+        assert standardize_arxiv(url) == url
+
+    def test_non_arxiv_url(self):
+        url = "https://example.com/1706.03762"
+        assert standardize_arxiv(url) == url
+
+    def test_empty_string(self):
+        assert standardize_arxiv("") == ""
+
+
+class TestCleanURL:
+    def test_basic_url(self):
+        url = "https://example.com"
+        assert clean_url(url) == url
+
+    def test_markdown_artifacts(self):
+        urls = [
+            "https://example.com)[–](https://other.com",
+            "https://example.com)[—](https://other.com",
+            "https://example.com)[\\](https://other.com",
+            "https://example.com)[�](https://other.com",
+        ]
+        for url in urls:
+            assert clean_url(url) == "https://example.com"
+
+    def test_multiple_cleanups(self):
+        url = "https://emergentmind.com/papers/2401.12345)[–](something"
+        assert clean_url(url) == "https://arxiv.org/abs/2401.12345"
+
+    def test_empty_string(self):
+        assert clean_url("") == ""
 
 
 class TestParensAreMatched:
