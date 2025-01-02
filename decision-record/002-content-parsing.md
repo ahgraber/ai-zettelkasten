@@ -22,11 +22,13 @@ Self-hosted:
 - [mindee/doctr: docTR (Document Text Recognition) - a seamless, high-performing & accessible library for OCR-related tasks powered by Deep Learning.](https://github.com/mindee/doctr)
 - [microsoft/markitdown: Python tool for converting files and office documents to Markdown.](https://github.com/microsoft/markitdown)
   (doesn't do pdf tables very well)
+- [Jina reader-lm-1.5b - Search Foundation Models](https://jina.ai/models/reader-lm-1.5b)
 
 Service:
 
 - [Pricing and usage data | LlamaCloud Documentation](https://docs.cloud.llamaindex.ai/llamaparse/usage_data)
 - [LLMWhisperer: Make Complex Document Data Ready for LLMs](https://unstract.com/llmwhisperer/)
+- [Jina Reader API](https://jina.ai/reader/)
 
 Benchmarks:
 
