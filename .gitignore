@@ -17,7 +17,7 @@ Thumbs.db
 .config.env
 .decrypted~*
 # .decrypted~*.yaml
-.env
+*.env
 .env.*
 .envrc
 

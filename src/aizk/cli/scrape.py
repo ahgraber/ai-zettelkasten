@@ -52,32 +52,36 @@ from aizk.utilities.path_helpers import path_is_dir, path_is_file
 logger = logging.getLogger(__name__)
 
 
-# %%
 def load_urls_from_recent(source_dir: Path, days: int | None) -> list[str]:
     """Identify new URLs from source directory."""
+    extensions = {".md", ".txt"}
     source_dir = path_is_dir(source_dir)
+
+    def _is_recent(file: Path) -> bool:
+        return datetime.datetime.fromtimestamp(file.stat().st_mtime) > cutoff_date
+
+    def _is_valid_file(file: Path) -> bool:
+        return file.is_file() and file.suffix in extensions
 
     if days:
         cutoff_date = datetime.datetime.now() - datetime.timedelta(days=days)
-        files = [
-            file
-            for file in source_dir.rglob("*")
-            if file.is_file() and datetime.datetime.fromtimestamp(file.stat().st_mtime) > cutoff_date
-        ]
+        files = [file for file in source_dir.rglob("*") if _is_recent(file) and _is_valid_file(file)]
     else:
-        files = [file for file in source_dir.rglob("*") if file.is_file()]
+        files = [file for file in source_dir.rglob("*") if _is_valid_file(file)]
 
     urls = []
     for file in files:
         with file.open("r") as f:
-            text = f.read()
+            try:
+                text = f.read()
+            except Exception:
+                logger.exception(f"Failed reading {file=}")
 
         urls.extend(find_all_urls(text))
 
     return urls
 
 
-# %%
 def is_static_file(url: str) -> bool:
     """Determine whether file is static or requires rendering."""
     # TODO: the proper way is with MIME type detection + ext, not only extension
@@ -86,7 +90,6 @@ def is_static_file(url: str) -> bool:
     return extension.lower() in STATICFILE_EXTENSIONS
 
 
-# @alimiter
 async def scrape(source: Source):
     """Scrape logic."""
     url = source.url
@@ -113,6 +116,13 @@ async def scrape(source: Source):
     return result
 
 
+async def run(pending: t.Sequence[Source], limiter: AsyncTimeWindowRateLimiter) -> list[Source]:
+    """Run scraping tasks."""
+    scrape_with_limiter = limiter(scrape)
+    results = await asyncio.gather(*[scrape_with_limiter(source) for source in pending])
+    return results
+
+
 # %%
 if __name__ == "__main__":
     basic_log_config()
@@ -121,19 +131,20 @@ if __name__ == "__main__":
     parser.add_argument("-e", "--env", type=Path, help="Path to a .env file.", default=Path.cwd() / ".aizk.env")
     parser.add_argument("-l", "--last", type=int, help="Consider files changed in last n days", default=7)
     args = parser.parse_args()
-    _ = dotenv.load_dotenv(args.env)
+
+    config = dotenv.dotenv_values(args.env)
 
     # configure via .env
-    sourcedir = Path(os.environ["SOURCE_DIR"])
+    sourcedir = Path(config["SOURCE_DIR"])
     try:
-        sourcedir = path_is_dir(os.environ["SOURCE_DIR"])
+        sourcedir = path_is_dir(config["SOURCE_DIR"])
     except FileNotFoundError:
         logger.info(f"Source directory {sourcedir} not found, creating...")
         sourcedir.mkdir(parents=True, exist_ok=True)
 
-    dbdir = Path(os.environ["SOURCE_DIR"])
+    dbdir = Path(config["DB_DIR"])
     try:
-        dbdir = path_is_dir(os.environ["DB_DIR"])
+        dbdir = path_is_dir(config["DB_DIR"])
     except FileNotFoundError:
         logger.info(f"DB directory {dbdir} not found, creating...")
         dbdir.mkdir(parents=True, exist_ok=True)
@@ -159,11 +170,9 @@ if __name__ == "__main__":
     )
 
     alimiter = AsyncTimeWindowRateLimiter(
-        int(os.environ.get("LIMITER_REQUESTS", 5)),
-        int(os.environ.get("LIMITER_SECONDS", 20)),
+        int(config("LIMITER_REQUESTS", 5)),
+        int(config("LIMITER_SECONDS", 20)),
     )  # 5 requests every 20 seconds
-
-    alimited_scrape = alimiter(scrape)
 
     logger.info("Connecting to database...")
     engine = get_db_engine(
@@ -179,11 +188,11 @@ if __name__ == "__main__":
 
     logger.info("Scraping sources...")
     pending = get_pending_sources(engine)
-    results = []
-    for source in pending:
-        # await scrape(alimited_scrape)
-        # asyncio.gather(alimited_scrape(source)) # TODO???
-        results.append(synchronize(alimited_scrape, source))
+
+    # alimited_scrape = alimiter(scrape)
+    # results = [synchronize(alimited_scrape, source) for source in pending]
+
+    results = asyncio.run(run(pending, alimiter))
 
     logger.info("Updating database...")
     update_scraped_sources(engine, results)
