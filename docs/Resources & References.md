@@ -40,6 +40,7 @@
 - [emcf/thepipe: Extract clean data from anywhere, powered by vision-language models ⚡](https://github.com/emcf/thepipe)
 - [microsoft/markitdown: Python tool for converting files and office documents to Markdown.](https://github.com/microsoft/markitdown)
 - [cyclotruc/gitdigest: Web interface to turn codebases into prompt-friendly text](https://github.com/cyclotruc/gitdigest?tab=readme-ov-file)
+- [[2408.15836] Knowledge Navigator: LLM-guided Browsing Framework for Exploratory Search in Scientific Literature](https://arxiv.org/abs/2408.15836)
 
 ## chunk
 
@@ -52,6 +53,19 @@ deconstruct text blobs into propositions (complete factoids)
 - [LlamaIndex - LlamaIndex](https://docs.llamaindex.ai/en/stable/)
 - [Introducing the Semantic Graph](https://neuml.hashnode.dev/introducing-the-semantic-graph)
 - [TrustGraph | TrustGraph](https://trustgraph.ai/docs/TrustGraph)
+
+### retrievers
+
+- bm25
+- Learned Sparse Retrieval
+  - SPLADE
+    - [naver/splade: SPLADE: sparse neural search (SIGIR21, SIGIR22)](https://github.com/naver/splade?tab=readme-ov-file)
+    - [From grep to SPLADE: a journey through semantic search](https://blog.elicit.com/semantic-search/)
+    - [SPLADE for Sparse Vector Search Explained | Pinecone](https://www.pinecone.io/learn/splade/)
+  - TILDE -
+    [[2108.08513] Fast Passage Re-ranking with Contextualized Exact Term Matching and Efficient Passage Expansion](https://arxiv.org/abs/2108.08513)
+  - [Context-Aware Document Term Weighting for Ad-Hoc Search](https://dl.acm.org/doi/pdf/10.1145/3366423.3380258)
+- vector
 
 ## serve
 
