@@ -1,3 +1,4 @@
+from pydantic import ValidationError
 import pytest
 
 from aizk.utilities.parse import (
@@ -12,6 +13,7 @@ from aizk.utilities.parse import (
     huggingface_to_arxiv,
     safelink_to_url,
     standardize_arxiv,
+    strip_utm_params,
     validate_url,
 )
 
@@ -245,6 +247,29 @@ class TestFixURLFromMarkdown:
         assert fix_url_from_markdown(url) == "https://wikipedia.org/en/article_(Topic1)_(Topic2).html?param=value"
 
 
+class TestStripUTMParams:
+    def test_basic_url(self):
+        url = "https://example.com"
+        assert strip_utm_params(url) == url
+
+    @pytest.mark.parametrize(
+        "test_input,expected",
+        [
+            ("https://example.com?utm_source=test", "https://example.com"),
+            ("https://example.com?id=123&utm_medium=email", "https://example.com?id=123"),
+            ("https://example.com?utm_source=test&utm_medium=email", "https://example.com"),
+            ("https://example.com/path?param=value&utm_source=test", "https://example.com/path?param=value"),
+            ("https://example.com?utm_source=test#fragment", "https://example.com#fragment"),
+        ],
+    )
+    def test_strip_utm_params(self, test_input, expected):
+        assert strip_utm_params(test_input) == expected
+
+    def test_invalid_url(self):
+        url = "not_a_url_(test)"
+        assert strip_utm_params(url) == url
+
+
 class TestSafeLinkToURL:
     def test_safe_link(self):
         testcases = [
@@ -353,14 +378,15 @@ class TestCleanURL:
             "https://example.com)[�](https://other.com",
         ]
         for url in urls:
-            assert clean_url(url) == "https://example.com"
+            assert clean_url(url) == "https://example.com/"
 
     def test_multiple_cleanups(self):
         url = "https://emergentmind.com/papers/2401.12345)[–](something"
         assert clean_url(url) == "https://arxiv.org/abs/2401.12345"
 
     def test_empty_string(self):
-        assert clean_url("") == ""
+        with pytest.raises(ValidationError):
+            clean_url("")
 
 
 class TestParensAreMatched:

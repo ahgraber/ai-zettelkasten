@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 import typing as t
 from typing import Any, Callable, List, Optional
-import urllib.parse as urlparse
+from urllib.parse import parse_qs, unquote, unquote_plus, urlencode, urljoin, urlparse, urlunparse
 
 from pydantic import HttpUrl, ValidationError
 
@@ -110,18 +110,41 @@ def fix_url_from_markdown(url_str: str) -> str:
     return url_str
 
 
+def strip_utm_params(url: str) -> str:
+    """Strip utm parameters from URL."""
+    parsed = urlparse(url)
+
+    params = parse_qs(parsed.query)
+    cleaned_params = {k: v[0] for k, v in params.items() if not k.startswith("utm_")}
+    cleaned = urlunparse(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            parsed.params,
+            urlencode(cleaned_params),
+            parsed.fragment,
+        )
+    )
+    if cleaned != url:
+        logger.debug(f"Stripped URL params: {url} -> {cleaned}")
+        return cleaned
+    else:
+        return url
+
+
 def safelink_to_url(url: str) -> str:
     """Convert safelinks to original url."""
-    safelinks_str = "https://nam11.safelinks.protection.outlook.com"  # typos:disable
+    safelinks_str = "safelinks.protection.outlook.com"  # typos:disable
     if safelinks_str not in url:
         return url
     else:
         # Try unquote first (for general URL decoding)
         try:
-            decoded = urlparse.unquote(url)
+            decoded = unquote(url)
         except ValueError:
             # If unquote fails, try unquote_plus (for '+' encoding)
-            decoded = urlparse.unquote_plus(url)
+            decoded = unquote_plus(url)
 
         pattern = re.compile(f"{safelinks_str}\\/\\?url=(.*?)&data=")
         matches = re.findall(pattern, decoded)
@@ -166,14 +189,15 @@ def clean_url(url: str) -> str:
     # _split = re.split(r"\)\[[^\w\d]+?\]\(", url, flags=re.IGNORECASE)
     _split = re.split(r"\)\[[^\]\(]+?\]\(", url, flags=re.IGNORECASE)
     if _split:
-        url = _split[0]
+        url = validate_url(_split[0])
 
     url = fix_url_from_markdown(url)
     url = safelink_to_url(url)
+    url = strip_utm_params(url)
     url = emergentmind_to_arxiv(url)
     url = huggingface_to_arxiv(url)
     url = standardize_arxiv(url)
-    return url
+    return validate_url(url)
 
 
 def find_all_urls(urls_str: str):
