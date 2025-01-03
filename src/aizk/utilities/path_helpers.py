@@ -11,6 +11,20 @@ from pydantic import AfterValidator, BeforeValidator, TypeAdapter, ValidationErr
 logger = logging.getLogger(__name__)
 
 
+def get_repo_path(file: str | Path) -> Path:
+    """Identify repo path with git."""
+    import subprocess
+
+    repo = subprocess.check_output(  # NOQA: S603
+        ["git", "rev-parse", "--show-toplevel"],  # NOQA: S607
+        cwd=Path(file).parent,
+        encoding="utf-8",
+    ).strip()
+
+    repo = Path(repo).expanduser().resolve()
+    return repo
+
+
 ### abx-pkg
 OPERATING_SYSTEM = platform.system().lower()
 DEFAULT_PATH: str = ":".join(

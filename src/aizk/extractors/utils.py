@@ -69,7 +69,7 @@ def download_file(url: str, file_path: Path, timeout: int = 600):
 
             with (
                 AtomicWriter(file_path, binary_mode=True) as f,
-                tqdm(total=total_size, unit="iB", unit_scale=True, desc=str(file_path)) as progress_bar,
+                tqdm(total=total_size, unit="iB", unit_scale=True, desc=str(file_path), leave=False) as progress_bar,
             ):
                 for chunk in response.iter_content(chunk_size=8192):
                     size = f.write(chunk)

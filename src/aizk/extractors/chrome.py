@@ -23,7 +23,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from aizk.datamodel.schema import ScrapeStatus, Source, ValidatedURL
 from aizk.extractors.base import ExtractionError, Extractor
-from aizk.utilities.file_helpers import AtomicWriter
 from aizk.utilities.path_helpers import (
     DEFAULT_ENV_PATH,
     SysPATH,

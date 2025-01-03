@@ -24,6 +24,7 @@ from aizk.datamodel.schema import ScrapeStatus, Source
 from aizk.extractors.base import ExtractionError, Extractor, ExtractorSettings
 from aizk.extractors.utils import download_file
 from aizk.utilities.file_helpers import AtomicWriter
+from aizk.utilities.log_helpers import suppress_logs
 
 logger = logging.getLogger(__name__)
 
@@ -154,11 +155,14 @@ class ArxivExtractor(Extractor):
     def get_html_content(self, arxiv_id: str, out_dir: Path):
         """Extract HTML content from arXiv HTML page."""
         url = self.to_html_url(arxiv_id)
+
+        # suppress exceptions and logs temporarily, some arxive.org/html/... pages don't exist and this is ok
         try:
-            download_file(url, out_dir / f"{arxiv_id}.html", timeout=self.config.timeout)
-        except requests.exceptions.HTTPError:
-            # Log but don't raise if HTML page is not available
-            logger.warning(f"Could not download HTML content from {url}, check if page exists.")
+            with suppress_logs(logging.getLogger("aizk.extractors.utils")):
+                download_file(url, out_dir / f"{arxiv_id}.html", timeout=self.config.timeout)
+        except requests.exceptions.RequestException:
+            logger.info(f"Could not download HTML content from {url}, check if page exists.")
+            pass
 
     def get_pdf_file(self, arxiv_id: str, out_dir: Path):
         """Download PDF file from arXiv."""
