@@ -3,13 +3,17 @@ import argparse
 import asyncio
 import datetime
 import hashlib
+from itertools import batched
 import logging
 import os
 from pathlib import Path
 import re
+import sys
 
 import dotenv
 from sqlmodel import Field, Session, SQLModel, create_engine
+from tqdm.asyncio import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 from aizk.core.database import (
     add_urls_to_backlog,
@@ -38,18 +42,23 @@ from aizk.extractors import (
     StaticFileExtractor,
 )
 from aizk.extractors.chrome import detect_playwright_chromium
-from aizk.utilities import AsyncTimeWindowRateLimiter, TimeWindowRateLimiter, basic_log_config, get_repo_path
-from aizk.utilities.async_helpers import synchronize
-from aizk.utilities.parse import (
-    URL_REGEX,
-    clean_link_title,
-    clean_url,
-    extract_md_url,
-    find_all_urls,
+from aizk.utilities import (
+    LOG_FMT,
+    AsyncTimeWindowRateLimiter,
+    basic_log_config,
+    # logging_redirect_tqdm,
+    path_is_dir,
+    path_is_file,
+    process_manager,
 )
-from aizk.utilities.path_helpers import path_is_dir, path_is_file
+from aizk.utilities.async_helpers import synchronize
+from aizk.utilities.url_helpers import find_all_urls, is_social_url
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger()
+formatter = logging.Formatter(LOG_FMT)
+handler = logging.StreamHandler(sys.stderr)
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 
 def load_urls_from_recent(source_dir: Path, days: int | None) -> list[str]:
@@ -79,7 +88,7 @@ def load_urls_from_recent(source_dir: Path, days: int | None) -> list[str]:
 
         urls.extend(find_all_urls(text))
 
-    return urls
+    return list(set(urls))
 
 
 def is_static_file(url: str) -> bool:
@@ -106,6 +115,16 @@ async def scrape(source: Source):
         if result.scrape_status == ScrapeStatus.COMPLETE:
             return result
 
+    if "youtube.com" in url:
+        logger.info("YouTube Extraction not yet implemented.")
+        return source
+
+    if is_social_url(url):
+        logger.info(
+            f"Extraction from social media is not supported.  Review {url} and submit referenced content as distinct sources."
+        )
+        return source
+
     logger.info(f"SingleFileExtractor({url})")
     result = await singlefile_extractor(source)
     if result.scrape_status == ScrapeStatus.COMPLETE:
@@ -119,18 +138,23 @@ async def scrape(source: Source):
 async def run(pending: t.Sequence[Source], limiter: AsyncTimeWindowRateLimiter) -> list[Source]:
     """Run scraping tasks."""
     scrape_with_limiter = limiter(scrape)
-    results = await asyncio.gather(*[scrape_with_limiter(source) for source in pending])
+    results = []
+
+    with process_manager("chromium"), process_manager("zsh"):
+        results = await tqdm.gather(*[scrape_with_limiter(source) for source in pending], position=1, leave=False)
+
     return results
 
 
 # %%
 if __name__ == "__main__":
-    basic_log_config()
-
     parser = argparse.ArgumentParser(description="Scrape URLs.")
     parser.add_argument("-e", "--env", type=Path, help="Path to a .env file.", default=Path.cwd() / ".aizk.env")
-    parser.add_argument("-l", "--last", type=int, help="Consider files changed in last n days", default=7)
+    parser.add_argument("-l", "--last", type=int, help="Consider files changed in last n days", default=None)
+    parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
+
+    basic_log_config(logging.DEBUG if args.verbose else logging.INFO)
 
     config = dotenv.dotenv_values(args.env)
 
@@ -170,14 +194,14 @@ if __name__ == "__main__":
     )
 
     alimiter = AsyncTimeWindowRateLimiter(
-        int(config("LIMITER_REQUESTS", 5)),
-        int(config("LIMITER_SECONDS", 20)),
+        int(config.get("LIMITER_REQUESTS", 5)),
+        int(config.get("LIMITER_SECONDS", 20)),
     )  # 5 requests every 20 seconds
 
     logger.info("Connecting to database...")
     engine = get_db_engine(
         SQLALCHEMY_DATABASE_URL,
-        echo=True,  # for dev
+        echo=args.verbose,  # for dev
     )
 
     initialize_database(engine)
@@ -191,8 +215,9 @@ if __name__ == "__main__":
 
     # alimited_scrape = alimiter(scrape)
     # results = [synchronize(alimited_scrape, source) for source in pending]
+    with logging_redirect_tqdm():
+        for batch in batched(tqdm(pending, position=0, leave=True), 100):
+            results = asyncio.run(run(batch, alimiter))
 
-    results = asyncio.run(run(pending, alimiter))
-
-    logger.info("Updating database...")
-    update_scraped_sources(engine, results)
+            logger.info("Updating database...")
+            update_scraped_sources(engine, results)

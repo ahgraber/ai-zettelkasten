@@ -3,13 +3,16 @@
 # from sqlalchemy.ext.declarative import declarative_base
 # from sqlalchemy.orm import Session, sessionmaker
 import logging
+from pathlib import Path
 import typing as t
+from uuid import UUID
 
 from sqlalchemy import Engine
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, delete, select
 
 from aizk.datamodel.schema import ScrapeStatus, Source, SourceLink, ValidatedURL
+from aizk.utilities import path_is_dir
 
 logger = logging.getLogger(__file__)
 
@@ -72,3 +75,19 @@ def update_scraped_sources(
 
         session.commit()
         # session.refresh(...) # not needed for single record session
+
+
+def delete_source(engine: Engine, source: Source, db_dir: Path | str):
+    """Delete source from database and file archive."""
+    with Session(engine) as session:
+        session.exec(delete(Source).where(Source.uuid == source.uuid))
+        session.commit()
+        # session.refresh(...) # not needed for single record session
+
+    # delete files
+    if db_dir := path_is_dir(db_dir):
+        # find all child directories named after the source uuid
+        dirs = list(db_dir.rglob(str(source.uuid)))
+        logger.debug(f"Deleting {len(dirs)} directories for source {source.uuid}")
+        for d in dirs:
+            d.rmdir()

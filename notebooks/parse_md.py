@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 
 import pandas as pd
 
+from aizk.utilities import basic_log_config
 from aizk.utilities.parse import (
     URL_REGEX,
     clean_link_title,
@@ -18,7 +19,7 @@ from aizk.utilities.parse import (
     find_all_urls,
 )
 
-logging.basicConfig()
+basic_log_config()
 logger = logging.getLogger(__name__)
 
 # %%

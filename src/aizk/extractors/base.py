@@ -10,7 +10,6 @@ from urllib.parse import urlparse
 
 from pydantic import ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from tqdm.auto import tqdm
 
 from aizk.datamodel.schema import ScrapeStatus, Source
 from aizk.extractors.utils import download_file, get_write_mode, validate_file
