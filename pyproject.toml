@@ -7,6 +7,7 @@ name = "aizk"
 # version = "0.beta"
 description = "AI-driven zettelkasten mindmap"
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
 classifiers = [
   "Programming Language :: Python :: 3 :: Only",

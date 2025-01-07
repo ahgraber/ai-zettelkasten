@@ -65,7 +65,9 @@ select = [
 ignore = [
   "B905",  # zip strict=True; remove once python <3.10 support is dropped.
   "D100",  # do not require module-level docstrings
+  "D101",  # do not require docstrings in public classes
   "D104",  # do not require package docstrings
+  "D105",  # do not require docstrings in magic (dunder) methods
   "D107",  # do not require docstrings in __init__ files
   # "D205",  # don't require linebreak after docstring (ruff vs black conflict)
   "D206",  # redundant w formatter
@@ -127,15 +129,15 @@ force-to-top = ["src", "torch"]
 relative-imports-order = "closest-to-furthest"
 known-first-party = ["aizk"]
 known-local-folder = ["src"] # for relative imports
-section-order = ["future", "standard-library", "third-party", "sci", "torch", "llm", "plot", "first-party", "local-folder"]
+section-order = ["future", "standard-library", "third-party", "torch", "llm", "web", "sci","plot", "first-party", "local-folder"]
 
 [lint.isort.sections]
 "sci" = ["numpy", "pandas", "scipy", "sklearn", "statsmodels"]
 "nlp" = ["nltk", "spacy", "langcodes"]
 "torch" = ["datasets", "lightning", "torch", "torch*", "tokenizers", "transformers", "sentence_transformers"]
-"llm" = ["langchain*", "llama_index*", "semantic_kernel", "openai", "ragas"]
+"llm" = ["aisuite", "langchain*", "llama_index*", "semantic_kernel", "openai", "ragas", "tiktoken"]
 "plot" = ["cmcrameri", "matplotlib", "mizani", "plotly", "plotnine", "seaborn"]
-
+"web" = ["fastapi", "reflex", "requests", "responses", "tenacity"]
 [lint.mccabe]
 max-complexity = 18
 
