@@ -27,6 +27,7 @@ dependencies = [
   "datasets<3",
   "docling>2",
   "fastapi>=0.115.5",
+  "gitingest>=0.1.2",
   "huggingface-hub>=0.23.5",
   "jinja2>=3.1.4",
   "json-repair>=0.30.3",
@@ -165,6 +166,7 @@ show_missing = true
 [tool.uv]
 package = true
 default-groups = [ "dev", "ds", "plot", "test" ]
+python-preference = "managed"
 
 [[tool.uv.index]]
 name = "pytorch-cpu"

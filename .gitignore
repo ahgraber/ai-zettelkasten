@@ -67,6 +67,7 @@ coverage.xml
 cover/
 
 # Data files & folders
+app/
 data/
 *.db
 *.sqlite3
