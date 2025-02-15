@@ -30,6 +30,7 @@ from aizk.extractors import (
     ExtractionError,
     # Extractor,
     ExtractorSettings,
+    GitHubExtractor,
     PlaywrightExtractor,
     PlaywrightSettings,
     PostlightExtractor,
@@ -57,28 +58,29 @@ logger.setLevel(logging.DEBUG)
 # %%
 repo = get_repo_path(__file__)
 
-datadir = repo / "data"
-datadir.mkdir(exist_ok=True)
-savedir = datadir / "scrape"
+data_dir = repo / "app" / "archive"
+data_dir.mkdir(exist_ok=True, parents=True)
+# savedir = datadir / "scrape"
 
 # %%
 # SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
-SQLALCHEMY_DATABASE_URL = f"sqlite:///{datadir}/test.db"
+SQLALCHEMY_DATABASE_URL = f"sqlite:///{data_dir}/test.db"
 
 # %%
 # clean prior experiment
-shutil.rmtree(datadir / "scrape", ignore_errors=True)
+shutil.rmtree(data_dir / "scrape", ignore_errors=True)
 Path(SQLALCHEMY_DATABASE_URL.removeprefix("sqlite:///")).unlink(missing_ok=True)
 
 # %%
-arxiv_extractor = ArxivExtractor(out_dir=savedir / "arxiv", ensure_out_dir=True)
-playwright_extractor = PlaywrightExtractor(out_dir=savedir / "playwright", ensure_out_dir=True)
+arxiv_extractor = ArxivExtractor(data_dir=data_dir, ensure_data_dir=True)
+github_extractor = GitHubExtractor(data_dir=data_dir, ensure_data_dir=True)
+playwright_extractor = PlaywrightExtractor(data_dir=data_dir, ensure_data_dir=True)
 singlefile_extractor = SingleFileExtractor(
     chrome_config=ChromeSettings(binary=str(detect_playwright_chromium())),
-    out_dir=savedir / "singlefile",
+    out_dir=data_dir,
     ensure_out_dir=True,
 )
-staticfile_extractor = StaticFileExtractor(out_dir=savedir / "staticfile", ensure_out_dir=True)
+staticfile_extractor = StaticFileExtractor(data_dir=data_dir, ensure_data_dir=True)
 
 
 # %%
@@ -151,6 +153,7 @@ urls = [
     "https://www.jdsupra.com/legalnews/utah-passes-artificial-intelligence-1386840/",
     "https://knowingmachines.org/models-all-the-way",
     "https://arxiv.org/abs/2403.16977",
+    "https://github.com/ahgraber/homelab-gitops-k3s",
 ]
 add_urls_to_backlog(engine, urls)
 

@@ -4,7 +4,7 @@ import logging
 import os
 from pathlib import Path
 import typing as t
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from IPython.core.getipython import get_ipython  # NOQA: E402
 from IPython.core.interactiveshell import InteractiveShell  # NOQA: E402
@@ -18,6 +18,7 @@ from aizk.extractors import (
     ChromeSettings,
     ExtractionError,
     ExtractorSettings,
+    GitHubExtractor,
     PlaywrightExtractor,
     PlaywrightSettings,
     PostlightExtractor,
@@ -63,10 +64,11 @@ demodir = Path(__file__).parent / "demo"
 alimiter = AsyncTimeWindowRateLimiter(5, 7)
 
 # %%
-# url = "https://www.bloomberg.com/graphics/2023-generative-ai-bias/"
-uuid = UUID("b046e81f-1928-4c00-ba93-89bd7e933891")
-url = "https://aimlbling-about.ninerealmlabs.com/blog/for-some-definition-of-open/"
-source = Source(uuid=uuid, url=url)
+sources = [
+    Source(uuid=uuid4(), url="https://aimlbling-about.ninerealmlabs.com/blog/for-some-definition-of-open/"),
+    Source(uuid=uuid4(), url="https://github.com/ahgraber/homelab-gitops-k3s/tree/main"),
+    Source(uuid=uuid4(), url="https://arxiv.org/abs/2501.00656"),
+]
 
 # %% [markdown]
 # ## ArXiv
@@ -75,8 +77,8 @@ source = Source(uuid=uuid, url=url)
 arxive_settings = ArxivSettings()
 arxiv_extractor = ArxivExtractor(
     config=arxive_settings,
-    out_dir=demodir / "arxiv",
-    ensure_out_dir=True,
+    data_dir=demodir / "arxiv",
+    ensure_data_dir=True,
 )
 
 
@@ -86,14 +88,29 @@ async def rate_limited_arxiv_extractor(*args, **kwargs):
 
 
 # %% [markdown]
+# ## gitingest
+
+# %%
+github_extractor = GitHubExtractor(
+    data_dir=demodir / "gitingest",
+    ensure_data_dir=True,
+)
+
+
+@alimiter
+async def rate_limited_github_extractor(*args, **kwargs):
+    return await github_extractor(*args, **kwargs)
+
+
+# %% [markdown]
 # ## Postlight-parser
 
 # %%
 postlight_settings = PostlightSettings()
 postlight_extractor = PostlightExtractor(
     config=postlight_settings,
-    out_dir=demodir / "postlight-parser",
-    ensure_out_dir=True,
+    data_dir=demodir / "postlight-parser",
+    ensure_data_dir=True,
 )
 
 
@@ -103,27 +120,10 @@ async def rate_limited_postlight_extractor(*args, **kwargs):
 
 
 # %% [markdown]
-# ## Chrome
-
-# %%
-chrome_profile = os.environ["CHROME_USER_DATA"]  # './chromium-profile'
-chrome_settings = ChromeSettings(binary=str(detect_playwright_chromium()))
-chrome_extractor = ChromeExtractor(
-    config=chrome_settings,
-    out_dir=demodir / "chrome",
-    ensure_out_dir=True,
-)
-
-
-@alimiter
-async def rate_limited_chrome_extractor(*args, **kwargs):
-    return await chrome_extractor(*args, **kwargs)
-
-
-# %% [markdown]
 # ## SingleFile
 
 # %%
+chrome_settings = ChromeSettings(binary=str(detect_playwright_chromium()))
 singlefile_settings = SingleFileSettings()
 singlefile_extractor = SingleFileExtractor(
     config=singlefile_settings,
@@ -145,8 +145,8 @@ async def rate_limited_singlefile_extractor(*args, **kwargs):
 playwright_settings = PlaywrightSettings()
 playwright_extractor = PlaywrightExtractor(
     config=playwright_settings,
-    out_dir=demodir / "playwright",
-    ensure_out_dir=True,
+    data_dir=demodir / "playwright",
+    ensure_data_dir=True,
 )
 
 
@@ -160,19 +160,19 @@ async def rate_limited_playwright_extractor(*args, **kwargs):
 
 # %%
 # await rate_limited_postlight_extractor(source)
-synchronize(rate_limited_postlight_extractor, source)
+synchronize(rate_limited_postlight_extractor, sources[0])
 # NOTE: requires captcha / bot detection
 
 # %%
 # await rate_limited_chrome_extractor(source)
-synchronize(rate_limited_chrome_extractor, source)
+# synchronize(rate_limited_chrome_extractor, sources[0])
 
 # %%
 # await rate_limited_singlefile_extractor(source)
-synchronize(rate_limited_singlefile_extractor, source)
+synchronize(rate_limited_singlefile_extractor, sources[0])
 
 # %%
 # await rate_limited_playwright_extractor(source)
-synchronize(rate_limited_playwright_extractor, source)
+synchronize(rate_limited_playwright_extractor, sources[0])
 
 # %%

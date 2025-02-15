@@ -9,6 +9,7 @@ from .chrome import (
     ChromeExtractor,
     ChromeSettings,
 )
+from .gitingest import GitHubExtractor
 from .playwright import PlaywrightExtractor, PlaywrightSettings
 from .postlight_parser import PostlightExtractor, PostlightSettings
 from .singlefile import SingleFileExtractor, SingleFileSettings
@@ -22,6 +23,7 @@ __all__ = [
     "StaticFileExtractor",
     "ChromeExtractor",
     "ChromeSettings",
+    "GitHubExtractor",
     "PlaywrightExtractor",
     "PlaywrightSettings",
     "PostlightExtractor",

@@ -1,9 +1,9 @@
 # Scrape Configuration
 
-NOTES
+TODO
 
-Sign in with cookiebox
-
-- linkedin
-- wapo
-- nyt
+- GitIngest for repos
+- Sign in with cookiebox or try archive.org / archive.is
+  - linkedin
+  - wapo
+  - nyt

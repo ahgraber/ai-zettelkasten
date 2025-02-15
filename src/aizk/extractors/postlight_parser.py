@@ -38,14 +38,14 @@ class PostlightExtractor(Extractor):
     """@postlight/parser extractor."""
 
     name: str = "postlight-parser"
-    default_filename: str = "content.html"
+    default_filename: str = "postlight"
     config: PostlightSettings
 
     def __init__(
         self,
         config: PostlightSettings | dict[str, Any] | None = None,
-        out_dir: Path | str | None = None,
-        ensure_out_dir: bool = False,
+        data_dir: Path | str | None = None,
+        ensure_data_dir: bool = False,
     ):
         config = self.validate_config(config or {})
         binary = config.binary or find_binary_abspath(self.name, add_node_bindir_to_syspath())
@@ -53,8 +53,8 @@ class PostlightExtractor(Extractor):
         super().__init__(
             config=config,
             binary=binary,
-            out_dir=out_dir or Path.cwd() / "data" / self.name,
-            ensure_out_dir=ensure_out_dir,
+            data_dir=data_dir,
+            ensure_data_dir=ensure_data_dir,
         )
 
     @override
@@ -112,10 +112,10 @@ class PostlightExtractor(Extractor):
         content = article_json.pop("content")
 
         with AtomicWriter(file_path) as f:
-            json.dump(content, f)
+            f.write(content)
 
         out_dir_path = file_path.parent
-        with AtomicWriter(out_dir_path / "metadata.json") as f:
+        with AtomicWriter(out_dir_path / "postlight-metadata.json") as f:
             json.dump(article_json, f)
 
     # @override

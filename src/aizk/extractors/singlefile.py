@@ -76,8 +76,8 @@ class SingleFileExtractor(Extractor):
         super().__init__(
             config=config,
             binary=binary,
-            out_dir=out_dir or Path.cwd() / "data" / self.name,
-            ensure_out_dir=ensure_out_dir,
+            data_dir=out_dir or Path.cwd() / "data" / self.name,
+            ensure_data_dir=ensure_out_dir,
         )
 
         self.chrome_config = ChromeSettings.model_validate(chrome_config or {})

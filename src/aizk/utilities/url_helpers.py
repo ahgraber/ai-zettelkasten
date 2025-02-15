@@ -8,6 +8,7 @@ from typing import Any, Callable, List, Optional
 from urllib.parse import parse_qs, unquote, unquote_plus, urlencode, urljoin, urlparse, urlunparse
 
 from pydantic import HttpUrl, ValidationError
+
 import requests
 
 from aizk.utilities.parse import check_matched_pairs
@@ -168,7 +169,7 @@ def follow_redirects(url: str, timeout: int = 5) -> str:
             return response.url
 
     except requests.exceptions.RequestException:
-        logger.exception(f"Failed to fetch the original URL {url}")
+        logger.debug(f"Failed to follow redirects from original URL {url}")
         # raise
         return url
 
@@ -200,15 +201,72 @@ def standardize_arxiv(url: str) -> str:
         return url
 
 
+def standardize_github(url: str) -> str:
+    """Point to repository root if possible.
+
+    This attempts to retain any branch and/or file specification that exists, but may fail if commit links are given.
+    """
+    if not any(domain in url for domain in ["githubusercontent.com", "github.com"]):
+        return url
+
+    pattern = re.compile(
+        r"/(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+)(?:/(?:refs/heads|blob|tree)/(?P<branch>[\w./-]+))?",
+        re.IGNORECASE,
+    )
+
+    parsed = urlparse(url)
+    match = pattern.match(parsed.path)
+
+    if not match or not match.group("owner") or not match.group("repo"):
+        return url
+
+    if parsed.netloc == "gist.github.com":
+        return urlunparse(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                f"{match.group('owner')}/{match.group('repo')}",
+                None,  # params
+                None,  # query
+                None,  # fragment
+            )
+        )
+    elif parsed.netloc == "raw.githubusercontent.com":
+        return urlunparse(
+            (
+                parsed.scheme,
+                "github.com",
+                f"{match.group('owner')}/{match.group('repo')}"
+                + (f"/tree/{match.group('branch')}" if match.group("branch") else ""),
+                None,  # params
+                None,  # query
+                None,  # fragment
+            )
+        )
+    elif parsed.netloc == "github.com":
+        return urlunparse(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                f"{match.group('owner')}/{match.group('repo')}"
+                + (f"/tree/{match.group('branch')}" if match.group("branch") else ""),
+                None,  # params
+                None,  # query
+                None,  # fragment
+            )
+        )
+
+
 processors = [
     fix_url_from_markdown,
     # clean_md_artifacts,
     safelink_to_url,
-    follow_redirects,
+    # follow_redirects,
     strip_utm_params,
     emergentmind_to_arxiv,
     huggingface_to_arxiv,
     standardize_arxiv,
+    standardize_github,
 ]
 
 
@@ -250,3 +308,13 @@ def is_social_url(url: str) -> bool:
     socials = {"linkedin.com", "twitter.com", "x.com", "bsky.app", "facebook.com", "instagram.com", "threads.net"}
 
     return urlparse(url).netloc in socials
+
+
+def is_github_url(url: str) -> bool:
+    """Determine whether url is a github property.
+
+    This is for use with the gitingest parser; github.io links are treated as normal webpages.
+    """
+    github = {"github.com", "gist.github.com", "raw.githubusercontent.com"}
+
+    return urlparse(url).netloc in github

@@ -2,6 +2,7 @@ from unittest.mock import Mock, patch
 
 from pydantic import ValidationError
 import pytest
+
 import requests
 import responses  # For mocking HTTP requests
 
@@ -17,6 +18,7 @@ from aizk.utilities.url_helpers import (
     huggingface_to_arxiv,
     safelink_to_url,
     standardize_arxiv,
+    standardize_github,
     strip_utm_params,
     validate_url,
 )
@@ -249,6 +251,11 @@ class TestFixURLFromMarkdown:
         url = "https://wikipedia.org/en/article_(Topic1)_(Topic2).html?param=value)"
         assert fix_url_from_markdown(url) == "https://wikipedia.org/en/article_(Topic1)_(Topic2).html?param=value"
 
+    def test_partial_md_link(self):
+        """Case if url regex detects a markdown link in the format [url](url)"""
+        url = "https://openai.com/index/hello-gpt-4o/](https://openai.com/index/hello-gpt-4o/)"
+        assert fix_url_from_markdown(url) == "https://openai.com/index/hello-gpt-4o/"
+
 
 class TestCleanMDArtifacts:
     def test_basic_url(self):
@@ -412,3 +419,104 @@ class TestStandardizeArxiv:
 
     def test_empty_string(self):
         assert standardize_arxiv("") == ""
+
+
+class TestStandardizeGithub:
+    @pytest.mark.parametrize(
+        "input_url,expected",
+        [
+            # Non-GitHub URLs should remain unchanged
+            ("https://example.com/path", "https://example.com/path"),
+            # GitHub main site URLs
+            ("https://github.com/owner/repo", "https://github.com/owner/repo"),
+            # Various branches
+            (
+                "https://github.com/owner/repo/tree/main",
+                "https://github.com/owner/repo/tree/main",
+            ),
+            (
+                "https://github.com/owner/repo/tree/feature-1234",
+                "https://github.com/owner/repo/tree/feature-1234",
+            ),
+            (
+                "https://github.com/owner/repo/tree/feature/item-1234",
+                "https://github.com/owner/repo/tree/feature/item-1234",
+            ),
+            (
+                "https://github.com/owner/repo/tree/v1.2.34",
+                "https://github.com/owner/repo/tree/v1.2.34",
+            ),
+            # Specific files
+            (
+                "https://github.com/owner/repo/blob/main/file.py",
+                "https://github.com/owner/repo/tree/main/file.py",
+            ),
+            (
+                "https://github.com/owner/repo/blob/feature-1234/file.py",
+                "https://github.com/owner/repo/tree/feature-1234/file.py",
+            ),
+            # Raw URLs should convert to github.com
+            (
+                "https://raw.githubusercontent.com/owner/repo/refs/heads/main/README.md",
+                "https://github.com/owner/repo/tree/main/README.md",
+            ),
+            (
+                "https://raw.githubusercontent.com/owner/repo/refs/heads/main/file.py",
+                "https://github.com/owner/repo/tree/main/file.py",
+            ),
+            (
+                "https://raw.githubusercontent.com/owner/repo/refs/heads/master/path/file.txt",
+                "https://github.com/owner/repo/tree/master/path/file.txt",
+            ),
+            # Gist URLs
+            ("https://gist.github.com/owner/12345", "https://gist.github.com/owner/12345"),
+            # Edge cases
+            ("", ""),  # Empty URL
+            ("https://github.com", "https://github.com"),  # No path
+            ("https://github.com/owner/repo/main", "https://github.com/owner/repo"),  # false branch
+            ("https://github.com/invalid@user/repo", "https://github.com/invalid@user/repo"),  # Invalid characters
+        ],
+    )
+    def test_standardize_github(self, input_url: str, expected: str):
+        assert standardize_github(input_url) == expected
+
+    def test_different_schemes(self):
+        # Test with different URL schemes
+        assert standardize_github("http://github.com/owner/repo") == "http://github.com/owner/repo"
+        assert standardize_github("git://github.com/owner/repo") == "git://github.com/owner/repo"
+
+    def test_with_query_params(self):
+        # URLs with query parameters should have them removed
+        input_url = "https://github.com/owner/repo?ref=main"
+        expected = "https://github.com/owner/repo"
+        assert standardize_github(input_url) == expected
+
+    def test_with_fragments(self):
+        # URLs with fragments should have them removed
+        input_url = "https://github.com/owner/repo#readme"
+        expected = "https://github.com/owner/repo"
+        assert standardize_github(input_url) == expected
+
+    def test_malformed_urls(self):
+        # Test handling of malformed URLs
+        malformed_urls = [
+            "not_a_url",
+            "github.com/no/scheme",
+            "https://github.com/only-owner",
+        ]
+        for url in malformed_urls:
+            assert standardize_github(url) == url  # Should return unchanged
+
+    @pytest.mark.parametrize(
+        "input_url",
+        [
+            "https://github.com/owner/repo/refs/heads/feature",
+            "https://raw.githubusercontent.com/owner/repo/refs/heads/feature/file.txt",
+            "https://gist.github.com/owner/repo/refs/heads/feature",
+        ],
+    )
+    def test_refs_heads_urls(self, input_url):
+        # Test URLs containing refs/heads pattern
+        result = standardize_github(input_url)
+        assert "refs/heads" not in result
+        assert "/owner/repo" in result

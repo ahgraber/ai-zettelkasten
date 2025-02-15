@@ -59,18 +59,18 @@ class Extractor:
         self,
         config: BaseSettings | dict[str, Any] | None = None,
         binary: Path | str | None = None,
-        out_dir: Path | str | None = None,
-        ensure_out_dir: bool = False,
+        data_dir: Path | str | None = None,
+        ensure_data_dir: bool = False,
     ):
         self.config = self.validate_config(config or {})  # calls setter
 
         self.binary = binary or "not specified"  # calls setter
 
-        out_dir = out_dir or Path.cwd().expanduser() / "data"
-        if ensure_out_dir:
-            self._ensure_out_dir(out_dir)
+        data_dir = data_dir or Path.cwd().expanduser() / "app" / "archive"
+        if ensure_data_dir:
+            self._ensure_data_dir(data_dir)
 
-        self.out_dir = out_dir  # calls setter
+        self.data_dir = data_dir  # calls setter
 
     @property
     def config(self):  # NOQA:D102
@@ -92,26 +92,26 @@ class Extractor:
     def binary(self, binary: Path | str):
         self._binary = binary
 
-    def _ensure_out_dir(self, out_dir):
-        """Ensure save location exists."""
-        p = path_is_valid(out_dir)
+    def _ensure_data_dir(self, data_dir):
+        """Ensure parent data dir exists."""
+        p = path_is_valid(data_dir)
         if not p.is_dir():
-            logging.info(f"Creating save location {p}")
+            logging.info(f"Creating data directory {p}")
             p.mkdir(parents=True, exist_ok=True)
 
     @property
-    def out_dir(self) -> Path:  # NOQA:D102
-        return self._out_dir
+    def data_dir(self) -> Path:  # NOQA:D102
+        return self._data_dir
 
-    @out_dir.setter
-    def out_dir(self, out_dir: Path | str):
-        self._out_dir = path_is_dir(out_dir)
+    @data_dir.setter
+    def data_dir(self, data_dir: Path | str):
+        self._data_dir = path_is_dir(data_dir)
 
     def cleanup(self):
         """Clean up state if needed."""
         pass
 
-    async def run(self, url: str, out_dir: Path):
+    async def run(self, url: str):
         """Run the extraction."""
         raise NotImplementedError
 
@@ -158,19 +158,19 @@ class Extractor:
         """Execute extraction pipeline."""
         src = source.model_copy()
 
-        out_dir_uuid = self.out_dir / str(src.uuid)
-        out_dir_uuid.mkdir(exist_ok=True)
+        uuid_dir = self.data_dir / str(src.uuid)
+        uuid_dir.mkdir(exist_ok=True)
 
         src.scraped_at = datetime.datetime.now(datetime.timezone.utc)
 
         try:
-            logger.info(f"Extracting from {src.url} with Extractor")
-            extract = await self.run(src.url, out_dir_uuid)
+            logger.debug(f"Extracting from {src.url} with {self.__class__}")
+            extract = await self.run(src.url)
         except Exception as e:
             src.scrape_status = ScrapeStatus.ERROR
             src.error_message = str(e)
 
-            with (out_dir_uuid / "errors.txt").open("a") as f:
+            with (uuid_dir / "errors.txt").open("a") as f:
                 lines = [
                     str(src.scraped_at),
                     f"Failed to extract url {src.url}",
@@ -190,7 +190,7 @@ class Extractor:
             src.scrape_status = ScrapeStatus.ERROR
             src.error_message = str(e)
 
-            with (out_dir_uuid / "errors.txt").open("a") as f:
+            with (uuid_dir / "errors.txt").open("a") as f:
                 lines = [
                     str(src.scraped_at),
                     f"Failed to validate extraction from url {src.url}",
@@ -202,7 +202,7 @@ class Extractor:
             return src
 
         try:
-            out_file_path = out_dir_uuid / self.default_filename
+            out_file_path = uuid_dir / self.default_filename
 
             logger.debug(f"Saving to file {str(out_file_path)}...")
             self.save(extract, out_file_path)
@@ -215,7 +215,7 @@ class Extractor:
             src.scrape_status = ScrapeStatus.ERROR
             src.error_message = str(e)
 
-            with (out_dir_uuid / "errors.txt").open("a") as f:
+            with (uuid_dir / "errors.txt").open("a") as f:
                 lines = [
                     str(src.scraped_at),
                     f"Failed to extract url {src.url}",
@@ -235,52 +235,51 @@ class Extractor:
 class StaticFileExtractor(Extractor):
     """Static file extractor (i.e., pdf, txt, ...)."""
 
-    name: str = "staticfile"
-    default_filename: str = ""
+    default_filename: str = "staticfile"
 
     def __init__(
         self,
         config: ExtractorSettings | dict[str, Any] | None = None,
-        out_dir: Path | str | None = None,
-        ensure_out_dir: bool = False,
+        data_dir: Path | str | None = None,
+        ensure_data_dir: bool = False,
     ):
         super().__init__(
             config=config or ExtractorSettings(),
-            out_dir=out_dir or Path.cwd() / "data" / self.name,
-            ensure_out_dir=ensure_out_dir,
+            data_dir=data_dir,
+            ensure_data_dir=ensure_data_dir,
         )
 
     @override
     async def run(self, url: str, out_dir: Path, filename: str):
         """Run the extraction."""
-        download_file(url, out_dir / filename, timeout=self.config.timeout)
+        download_file(url, file_path=out_dir / filename, timeout=self.config.timeout)
 
     @override
     async def __call__(self, source: Source) -> Source:
         """Execute extraction pipeline."""
         src = source.model_copy()
 
-        out_dir_uuid = self.out_dir / str(src.uuid)
-        out_dir_uuid.mkdir(exist_ok=True)
+        uuid_dir = self.data_dir / str(src.uuid)
+        uuid_dir.mkdir(exist_ok=True)
         src.scraped_at = datetime.datetime.now(datetime.timezone.utc)
 
         try:
             pagename = urlparse(src.url).path.rsplit("/", 1)[-1]  # rightmost part of the path
 
             # this is different from standard (no extract text to validate and save)
-            await self.run(src.url, out_dir=out_dir_uuid, filename=pagename)
-            if self.validate_file(out_dir_uuid / pagename):
+            await self.run(src.url, out_dir=uuid_dir, filename=pagename)
+            if self.validate_file(uuid_dir / pagename):
                 status = ScrapeStatus.COMPLETE
 
             src.scrape_status = status
-            src.content_hash = self.hash(out_dir_uuid / pagename)
-            src.file = str(out_dir_uuid / pagename)
+            src.content_hash = self.hash(uuid_dir / pagename)
+            src.file = str(uuid_dir / pagename)
 
         except Exception as e:
             src.scrape_status = ScrapeStatus.ERROR
             src.error_message = str(e)
 
-            with (out_dir_uuid / "errors.txt").open("a") as f:
+            with (uuid_dir / "errors.txt").open("a") as f:
                 lines = [str(src.scraped_at), f"Failed to extract url {src.url}", f"Error: {str(e)}"]
                 f.writelines(line + os.linesep for line in lines)
 

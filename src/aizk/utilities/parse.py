@@ -21,17 +21,41 @@ def detect_encoding(rawdata: bytes) -> str:
     return encoding["encoding"] or "utf-8"
 
 
-def check_matched_pairs(string: str, open_char="(", close_char=")"):
-    """Check that all parentheses in a string are balanced and nested properly."""
-    count = 0
-    for c in string:
-        if c == open_char:
-            count += 1
-        elif c == close_char:
-            count -= 1
-        if count < 0:
-            return False
-    return count == 0
+# def check_matched_pairs(string: str, open_char="(", close_char=")"):
+#     """Check that all parentheses in a string are balanced and nested properly."""
+#     count = 0
+#     for c in string:
+#         if c == open_char:
+#             count += 1
+#         elif c == close_char:
+#             count -= 1
+#         if count < 0:
+#             return False
+#     return count == 0
+
+
+def check_matched_pairs(string: str) -> bool:
+    """Check that all brackets ((), [], {}, <>) in a string are balanced and nested properly."""
+    # Define matching pairs
+    brackets = {"(": ")", "[": "]", "{": "}", "<": ">"}
+
+    stack = []
+    for char in string:
+        if char in brackets:  # Opening bracket
+            stack.append(char)
+        elif char in brackets.values():  # Closing bracket
+            if not stack:  # Stack is empty but we found a closing bracket
+                return False
+
+            # Get the last opening bracket
+            last_opening = stack.pop()
+
+            # Check if the closing bracket matches the last opening bracket
+            if brackets[last_opening] != char:
+                return False
+
+    # Return True if all brackets are matched (stack is empty)
+    return len(stack) == 0
 
 
 def extract_json(text: str) -> str:

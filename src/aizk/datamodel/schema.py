@@ -48,6 +48,7 @@ class ScrapeStatus(Enum):  # NOQA:D101
     COMPLETE = "COMPLETE"
     ERROR = "ERROR"
     # RETRY = "RETRY"
+    UNSUPPORTED = "UNSUPPORTED"
 
 
 # %%

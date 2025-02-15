@@ -313,14 +313,14 @@ class ChromeExtractor(Extractor):
     """Chrome extractor."""
 
     name: str = "chrome"
-    default_filename: str = "content.html"
+    # default_filename: str = "chrome"
     config: ChromeSettings
 
     def __init__(
         self,
         config: ChromeSettings | dict[str, Any] | None = None,
-        out_dir: Path | str | None = None,
-        ensure_out_dir: bool = False,
+        data_dir: Path | str | None = None,
+        ensure_data_dir: bool = False,
     ):
         warnings.warn(
             (
@@ -337,8 +337,8 @@ class ChromeExtractor(Extractor):
         super().__init__(
             config=config,
             binary=binary,
-            out_dir=out_dir or Path.cwd() / "data" / self.name,
-            ensure_out_dir=ensure_out_dir,
+            data_dir=data_dir,
+            ensure_data_dir=ensure_data_dir,
         )
 
         self.cleanup()
@@ -400,7 +400,7 @@ class ChromeExtractor(Extractor):
             if not self.config.save_dom:
                 raise te
 
-            logger.info(
+            logger.debug(
                 "This may raise a TimeoutExpired error; this is a result of the Chrome process remaining alive once the CLI command has completed and can (generally) be ignored."
             )
             content = te.stdout
@@ -414,19 +414,19 @@ class ChromeExtractor(Extractor):
         """Execute extraction pipeline."""
         src = source.model_copy()
 
-        out_dir_uuid = self.out_dir / str(src.uuid)
-        out_dir_uuid.mkdir(exist_ok=True)
+        uuid_dir = self.data_dir / str(src.uuid)
+        uuid_dir.mkdir(exist_ok=True)
 
         src.scraped_at = datetime.datetime.now(datetime.timezone.utc)
 
         try:
-            logger.info(f"Extracting from {src.url} with ChromeExtractor")
-            extract = await self.run(src.url, out_dir_uuid)
+            logger.debug(f"Extracting from {src.url} with {self.__class__}")
+            extract = await self.run(src.url, uuid_dir)
         except Exception as e:
             src.scrape_status = ScrapeStatus.ERROR
             src.error_message = str(e)
 
-            with (out_dir_uuid / "errors.txt").open("a") as f:
+            with (uuid_dir / "errors.txt").open("a") as f:
                 lines = [
                     str(src.scraped_at),
                     f"Failed to extract url {src.url}",
@@ -444,14 +444,14 @@ class ChromeExtractor(Extractor):
             # 'html' is preferred; evaluated last
             scrapes = []
             if self.config.save_png:
-                file_path = out_dir_uuid / "screenshot.png"
+                file_path = uuid_dir / "chrome.png"
                 if self.validate_file(file_path):
                     scrapes.append(file_path)
                 else:
                     logger.error(f"Error during png validation for {src.url}")
 
             if self.config.save_pdf:
-                file_path = out_dir_uuid / "output.pdf"
+                file_path = uuid_dir / "chrome.pdf"
                 if self.validate_file(file_path):
                     scrapes.append(file_path)
                 else:
@@ -462,7 +462,7 @@ class ChromeExtractor(Extractor):
                 if self.validate_extract(extract):
                     logger.debug("Extraction validation successful!")
 
-                file_path = out_dir_uuid / "content.html"
+                file_path = uuid_dir / "chrome.html"
                 logger.debug(f"Saving to file {str(file_path)}...")
                 self.save(extract, file_path)
 
@@ -482,7 +482,7 @@ class ChromeExtractor(Extractor):
             src.scrape_status = ScrapeStatus.ERROR
             src.error_message = str(e)
 
-            with (out_dir_uuid / "errors.txt").open("a") as f:
+            with (uuid_dir / "errors.txt").open("a") as f:
                 lines = [str(src.scraped_at), f"Failed to extract url {src.url}", f"Error: {str(e)}"]
                 f.writelines(line + os.linesep for line in lines)
 
