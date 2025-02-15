@@ -47,8 +47,9 @@ def get_write_mode(data):
 
 def download_file(url: str, file_path: Path, timeout: int = 600):
     """Download a file."""
-    import requests
     from tqdm.auto import tqdm
+
+    import requests
 
     try:
         # First, send a HEAD request to get file size
@@ -75,7 +76,7 @@ def download_file(url: str, file_path: Path, timeout: int = 600):
                     size = f.write(chunk)
                     progress_bar.update(size)
 
-        logger.info(f"File downloaded successfully: {file_path}")
+        logger.debug(f"File downloaded successfully: {file_path}")
 
     except requests.exceptions.RequestException:
         logger.exception("Download failed")

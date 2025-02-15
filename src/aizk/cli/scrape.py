@@ -33,6 +33,7 @@ from aizk.extractors import (
     ExtractionError,
     # Extractor,
     ExtractorSettings,
+    GitHubExtractor,
     PlaywrightExtractor,
     PlaywrightSettings,
     PostlightExtractor,
@@ -103,6 +104,16 @@ async def scrape(source: Source):
     """Scrape logic."""
     url = source.url
 
+    if "youtube.com" in url:
+        logger.info("YouTube Extraction not yet implemented.")
+        return source
+
+    if is_social_url(url):
+        logger.info(
+            f"Extraction from social media is not supported.  Review {url} and submit referenced content as distinct sources."
+        )
+        return source
+
     if is_static_file(url):
         logger.info(f"StaticFileExtractor({url})")
         result = await staticfile_extractor(source)
@@ -114,16 +125,6 @@ async def scrape(source: Source):
         result = await arxiv_extractor(source)
         if result.scrape_status == ScrapeStatus.COMPLETE:
             return result
-
-    if "youtube.com" in url:
-        logger.info("YouTube Extraction not yet implemented.")
-        return source
-
-    if is_social_url(url):
-        logger.info(
-            f"Extraction from social media is not supported.  Review {url} and submit referenced content as distinct sources."
-        )
-        return source
 
     logger.info(f"SingleFileExtractor({url})")
     result = await singlefile_extractor(source)
@@ -141,7 +142,17 @@ async def run(pending: t.Sequence[Source], limiter: AsyncTimeWindowRateLimiter) 
     results = []
 
     with process_manager("chromium"), process_manager("zsh"):
-        results = await tqdm.gather(*[scrape_with_limiter(source) for source in pending], position=1, leave=False)
+        results = await tqdm.gather(
+            *[scrape_with_limiter(source) for source in pending],
+            position=1,
+            leave=False,
+        )
+        # results = [
+        #     await coro
+        #     for coro in tqdm.as_completed(
+        #         [scrape_with_limiter(source) for source in pending], total=len(pending), position=1, leave=False
+        #     )
+        # ]
 
     return results
 
@@ -154,44 +165,37 @@ if __name__ == "__main__":
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
-    basic_log_config(logging.DEBUG if args.verbose else logging.INFO)
+    logger.setLevel(logging.DEBUG if args.verbose else logging.INFO)
 
     config = dotenv.dotenv_values(args.env)
 
     # configure via .env
-    sourcedir = Path(config["SOURCE_DIR"])
+    source_dir = Path(config["SOURCE_DIR"])
     try:
-        sourcedir = path_is_dir(config["SOURCE_DIR"])
+        source_dir = path_is_dir(config["SOURCE_DIR"])
     except FileNotFoundError:
-        logger.info(f"Source directory {sourcedir} not found, creating...")
-        sourcedir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Source directory {source_dir} not found")  # , creating...")
+        # source_dir.mkdir(parents=True, exist_ok=True)
 
-    dbdir = Path(config["DB_DIR"])
+    app_dir = Path(config["APP_DIR"])
     try:
-        dbdir = path_is_dir(config["DB_DIR"])
+        app_dir = path_is_dir(config["APP_DIR"])
     except FileNotFoundError:
-        logger.info(f"DB directory {dbdir} not found, creating...")
-        dbdir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"DB directory {app_dir} not found, creating...")
+        app_dir.mkdir(parents=True, exist_ok=True)
 
-    SQLALCHEMY_DATABASE_URL = f"sqlite:///{dbdir}/aizk.db"
+    archive_dir = app_dir / "archive"
+    archive_dir.mkdir(parents=True, exist_ok=True)
 
-    arxiv_extractor = ArxivExtractor(
-        out_dir=dbdir / "arxiv",
-        ensure_out_dir=True,
-    )
-    playwright_extractor = PlaywrightExtractor(
-        out_dir=dbdir / "playwright",
-        ensure_out_dir=True,
-    )
+    SQLALCHEMY_DATABASE_URL = f"sqlite:///{app_dir}/aizk.db"
+
+    arxiv_extractor = ArxivExtractor(data_dir=archive_dir)
+    gh_extractor = GitHubExtractor(data_dir=archive_dir)
+    playwright_extractor = PlaywrightExtractor(data_dir=archive_dir)
     singlefile_extractor = SingleFileExtractor(
-        chrome_config=ChromeSettings(binary=str(detect_playwright_chromium())),
-        out_dir=dbdir / "singlefile",
-        ensure_out_dir=True,
+        chrome_config=ChromeSettings(binary=str(detect_playwright_chromium())), data_dir=archive_dir
     )
-    staticfile_extractor = StaticFileExtractor(
-        out_dir=dbdir / "staticfile",
-        ensure_out_dir=True,
-    )
+    staticfile_extractor = StaticFileExtractor(data_dir=archive_dir)
 
     alimiter = AsyncTimeWindowRateLimiter(
         int(config.get("LIMITER_REQUESTS", 5)),
@@ -207,7 +211,7 @@ if __name__ == "__main__":
     initialize_database(engine)
 
     logger.info("Identifying new sources...")
-    urls = load_urls_from_recent(sourcedir, args.last)
+    urls = load_urls_from_recent(source_dir, args.last)
     add_urls_to_backlog(engine, urls)
 
     logger.info("Scraping sources...")

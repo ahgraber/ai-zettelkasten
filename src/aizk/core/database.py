@@ -13,6 +13,7 @@ from sqlmodel import Session, SQLModel, create_engine, delete, select
 
 from aizk.datamodel.schema import ScrapeStatus, Source, SourceLink, ValidatedURL
 from aizk.utilities import path_is_dir
+from aizk.utilities.url_helpers import is_social_url
 
 logger = logging.getLogger(__file__)
 
@@ -28,6 +29,21 @@ def initialize_database(engine: Engine):
     SQLModel.metadata.create_all(engine)
 
 
+def is_supported_site(url: str) -> bool:
+    """Determine whether website is supported."""
+    if "youtube.com" in url:
+        logger.info("YouTube Extraction not yet implemented.")
+        return False
+
+    if is_social_url(url):
+        logger.info(
+            f"Extraction from social media is not supported.  Review {url} and submit referenced content as distinct sources."
+        )
+        return False
+
+    return True
+
+
 # TODO: is it expensive to init a new session each time?
 def add_urls_to_backlog(engine: Engine, urls: t.List[str]):
     """Add source to database if it does not exist, marked as pending."""
@@ -39,7 +55,12 @@ def add_urls_to_backlog(engine: Engine, urls: t.List[str]):
                 logger.debug(f"URL {url} already exists in DB, skipping")
                 continue
             # else:
-            record = Source(url=url)
+
+            if is_supported_site(url):
+                record = Source(url=url)
+            else:
+                record = Source(url=url, scrape_status=ScrapeStatus.UNSUPPORTED)
+
             try:
                 session.add(record)
             except IntegrityError:

@@ -23,6 +23,7 @@ Self-hosted:
 - [microsoft/markitdown: Python tool for converting files and office documents to Markdown.](https://github.com/microsoft/markitdown)
   (doesn't do pdf tables very well)
 - [Jina reader-lm-1.5b - Search Foundation Models](https://jina.ai/models/reader-lm-1.5b)
+- [databridge-org/databridge-core: Multi-modal modular data ingestion and retrieval](https://github.com/databridge-org/databridge-core)
 
 Service:
 

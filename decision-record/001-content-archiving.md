@@ -38,12 +38,7 @@ the project, I will reconsider and try to integrate existing tools.
 
 ### Alternative Considered
 
-#### Option 1: BeautifulSoup
-
-Pros: Scraping with BeautifulSoup is easy to implement in Python Cons: Really only works for pure-HTML pages, which are
-rare.
-
-### Option 2: [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox/tree/dev)
+### Option 1: [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox/tree/dev)
 
 Pros:
 
@@ -62,7 +57,7 @@ Reason for not selecting:
 - I want to try it myself (ArchiveBox will be a good source for inspiration / comparison)
 - Trying to minimize this project's dependencies
 
-### Option 3: [Firecrawl](https://www.firecrawl.dev/)
+### Option 2: [Firecrawl](https://www.firecrawl.dev/)
 
 Pros:
 
@@ -75,6 +70,38 @@ Cons:
 
 - Service costs $ (though it seems reasonable), given the goal is to scrape (not crawl) a limited set of pages
 - Self-hosted version does not handle bot detection or captchas
+
+### Option 3: [Jina Reader](https://jina.ai/reader/)
+
+Pros:
+
+- Service and [self-hosted](https://github.com/jina-ai/reader)
+  - service supposedly handles captchas and bot detection
+- All-in-one does scraping and extracts text content as markdown
+- Free and paid
+
+Cons:
+
+- Free version is rate-limited
+- This is an extractor more than an archiver. If the idea is to archive the exact content, then parse (so as parsing
+  improves I don't have to re-scrape), Jina Reader (and services like it) do not fit the archiving requirement.
+
+### Option 4: [Exa Contents API](https://docs.exa.ai/reference/get-contents)
+
+Pros:
+
+- Service
+  - service supposedly handles captchas and bot detection
+- All-in-one does scraping and extracts text content
+- Available summarizer integration
+- Can crawl subpages
+
+Cons:
+
+- Personal version is rate-limited (5 RPS / 12 RPM)
+- No free / selfhosted version; [not inexpensive](https://exa.ai/pricing)
+- Like Jina, this is an extractor more than an archiver. If the idea is to archive the exact content, then parse (so as
+  parsing improves I don't have to re-scrape), Jina Reader (and services like it) do not fit the archiving requirement.
 
 ## Additional Notes
 
@@ -89,4 +116,6 @@ scope of this project
 - [Y2Z/monolith: ⬛️ CLI tool for saving complete web pages as a single HTML file](https://github.com/Y2Z/monolith)
 - [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox)
 - [cyclotruc/gitingest: Replace 'hub' with 'ingest' in any github url to get a prompt-friendly extract of a codebase](https://github.com/cyclotruc/gitingest/tree/main)
-- [Jina Reader API](https://jina.ai/reader/)
+- [databridge-org/databridge-core: Multi-modal modular data ingestion and retrieval](https://github.com/databridge-org/databridge-core)
+- [hoarder-app/hoarder: A self-hostable bookmark-everything app (links, notes and images) with AI-based automatic tagging and full text search](https://github.com/hoarder-app/hoarder) -
+  uses monolith for archiving

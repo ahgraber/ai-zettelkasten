@@ -2,6 +2,9 @@
 
 [Introduction to the Zettelkasten Method- Zettelkasten Method](https://zettelkasten.de/introduction/)
 
+[From Vector Search to Entity Processing: Evolving Zettelgarden's Connection Engine - Zettelgarden](https://zettelgarden.com/blog/entities)
+and [HN Discussion](https://news.ycombinator.com/item?id=42577387)
+
 ## ingest
 
 - [ArchiveBox | 🗃 Open source self-hosted web archiving. Takes URLs/browser history/bookmarks/Pocket/Pinboard/etc., saves HTML, JS, PDFs, media, and more…](https://archivebox.io/)
@@ -54,6 +57,14 @@ deconstruct text blobs into propositions (complete factoids)
 - [Introducing the Semantic Graph](https://neuml.hashnode.dev/introducing-the-semantic-graph)
 - [TrustGraph | TrustGraph](https://trustgraph.ai/docs/TrustGraph)
 
+### wiki
+
+If building a concept graph, it would be useful to be able to use it as a human in addition to have it be searchable
+for RAG.
+
+- [Logseq: A privacy-first, open-source knowledge base](https://logseq.com/)
+- [Obsidian - Sharpen your thinking](https://obsidian.md/)
+
 ### retrievers
 
 - bm25
@@ -87,7 +98,11 @@ See also
 - [ucbepic/docetl: A system for agentic LLM-powered data processing and ETL](https://github.com/ucbepic/docetl)
 - [NirDiamant/Controllable-RAG-Agent: This repository provides an advanced Retrieval-Augmented Generation (RAG) solution for complex question answering. It uses sophisticated graph based algorithm to handle the tasks.](https://github.com/NirDiamant/Controllable-RAG-Agent)
 
-annotation tools
+## plugins
+
+- [theJayTea/WritingTools: The world's smartest system-wide grammar assistant; a better version of the Apple Intelligence Writing Tools. Works on Windows, Linux, & macOS, with the free Gemini API, local LLMs, & more.](https://github.com/theJayTea/WritingTools)
+
+## annotation tools
 
 - [HumanSignal/label-studio: Label Studio is a multi-type data labeling and annotation tool with standardized output format](https://github.com/HumanSignal/label-studio)
 - [doccano/doccano: Open source annotation tool for machine learning practitioners.](https://github.com/doccano/doccano)

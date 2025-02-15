@@ -24,13 +24,13 @@ class TestParensAreMatched:
         testcases = ["abc", "[abc]", "a[b]c", "a[b]c[d]e", "[][][]", "[[[]]]"]
 
         for test in testcases:
-            assert check_matched_pairs(test, "[", "]")
+            assert check_matched_pairs(test)  # , "[", "]")
 
     def test_braces(self):
         testcases = ["abc", "{abc}", "a{b}c", "a{b}c{d}e", "{}{}{}", "{{{}}}"]
 
         for test in testcases:
-            assert check_matched_pairs(test, "{", "}")
+            assert check_matched_pairs(test)  # , "{", "}")
 
 
 class TestExtractJson:

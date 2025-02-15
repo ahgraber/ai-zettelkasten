@@ -12,6 +12,7 @@ from subprocess import PIPE, CalledProcessError, CompletedProcess, Popen, Timeou
 import sys
 import time
 from typing import Any, Optional, Sequence, Union
+from uuid import UUID, uuid4
 
 import psutil
 
@@ -43,32 +44,34 @@ def process_manager(name: str):
 class BatchHandler:
     """Create and manage batch processing of OpenAI API calls.
 
-    Example (context manager):
+    Example (chat, with context manager):
 
     ```python
     import openai
-    from aizk.utilities.process import BatchHandler
+    from assistant.utilities.process import BatchHandler
 
     client = openai.Client()
     model = "gpt-4o-mini"
+    endpoint = "/v1/chat/completions"
     batch_dir = Path("batches")
     filename_prefix = "batch"
 
-    with BatchHandler(client, model, batch_dir, filename_prefix) as bh:
+    with BatchHandler(client, model, endpoint, batch_dir, filename_prefix) as bh:
         messages = [{"role": "system", "content": "What is the capital of the United States?"}]
-        bh.make_batch(messages)
+        bh.make_chat_batch(messages)
         bh.upload_batch()
         bh.submit_batch()
         bh.wait_for_batch_completion()  # this will tie up the process until all batches are completed
         bh.save_batch_results()
     ```
 
-    Example (without context manager):
+    Example (embeddings, without context manager):
 
     ```python
     ...
-    bh = BatchHandler(client, model, batch_dir, filename_prefix)
-    bh.make_batch(messages)
+    bh = BatchHandler(client, model, endpoint, batch_dir, filename_prefix)
+    embeddings = ["this text will be vectorized"]
+    bh.make_embeddings_batch(embeddings)
     bh.upload_batch()
     bh.submit_batch()
 
@@ -76,6 +79,7 @@ class BatchHandler:
     if bh.check_batch_completion():
         bh.save_batch_results()
 
+    # cleanup is important!  BatchHandler assumes
     bh.cleanup()
     ```
     """
@@ -85,13 +89,33 @@ class BatchHandler:
     bytes_to_size: int = 1024 * 1024
     endpoint_paths: set[str] = {"/v1/chat/completions", "/v1/embeddings"}
 
-    def __init__(self, client: openai.OpenAI, model: str, batch_dir: Path, filename_prefix: str):
+    def __init__(
+        self,
+        client: openai.OpenAI,
+        model: str,
+        endpoint: str = "/v1/chat/completions",
+        batch_dir: Path = Path("./.batches"),  # this will create a
+        filename_prefix: str = "batch",
+        mkdir: bool = False,
+    ):
         self.client = client
         self.model = model
-        self.batch_dir = path_is_dir(batch_dir)
-        self.filename_prefix = filename_prefix
 
+        if endpoint in self.endpoint_paths:
+            self.endpoint = endpoint
+        else:
+            raise ValueError(f"Endpoint must be in {self.endpoint_paths}. Received: {endpoint}")
+
+        if mkdir:
+            Path(batch_dir).mkdir(exist_ok=True, parents=True)
+        if Path(batch_dir).is_dir():
+            self.batch_dir = Path(batch_dir)
+        else:
+            raise NotADirectoryError(f"Path is not a directory: {batch_dir}")
+
+        self.filename_prefix = filename_prefix
         self.batch_infos: list = []
+        self.file_ids: list = []
 
     # use as context manager
     def __enter__(self):  # NOQA: D105
@@ -100,9 +124,10 @@ class BatchHandler:
     def __exit__(self, exc_type, exc_val, exc_tb):  # NOQA: D105
         self.cleanup()
 
-    def _batch_api_calls(self, jsonl: list[dict]):
+    def _batch_api_calls(self, jsonl: list[dict[str, Any]]):
         """Create batches of api calls."""
-        # total_batches = []
+        if (not jsonl) or (len(jsonl) == 0):
+            raise ValueError("No items provided / 'jsonl' is empty.")
 
         batch = []
         batch_size = 0
@@ -110,7 +135,6 @@ class BatchHandler:
             item_size = len(json.dumps(item).encode("utf-8")) / self.bytes_to_size
 
             if (len(batch) >= self.max_batch_records) or (batch_size + item_size >= self.max_batch_size):
-                # total_batches.append(batch)
                 yield batch
                 batch = []
                 batch_size = 0
@@ -119,47 +143,105 @@ class BatchHandler:
             batch_size += item_size
 
         if batch:
-            # total_batches.append(batch)
             yield batch
-        # return total_batches
 
-    def make_batch(
-        self,
-        messages: list[dict],
-        endpoint: str = "/v1/chat/completions",
-        completions_kwargs: dict[str, Any] | None = None,
-    ):
-        """Create batch file(s) for processing."""
-        if endpoint not in self.endpoint_paths:
-            raise ValueError(f"Endpoint must be in {self.endpoint_paths}. Received: {endpoint}")
+    def _save_batch_file(self, api_calls: list[dict[str, str]]):
+        """Save batch to file."""
+        for batch in self._batch_api_calls(api_calls):
+            fname = f"{self.filename_prefix}_{str(uuid4())}"
+            fpath = self.batch_dir / f"{fname}.jsonl"
+            if fpath.exists():
+                raise FileExistsError(f"{str(fpath)} exists. This should not occur!")
 
-        completions_kwargs = completions_kwargs or {}
-        api_calls = [
-            {
-                "custom_id": i,
-                "method": "POST",
-                "url": endpoint,
-                "body": {
-                    "model": self.model,
-                    "messages": message,
-                    **completions_kwargs,
-                },
-            }
-            for i, message in enumerate(messages)
-        ]
-
-        for i, batch in self._batch_api_calls(api_calls):
-            with (self.batch_dir / f"{self.filename_prefix}_{i}.jsonl").open("w") as f:
+            with fpath.open("w") as f:
                 for item in batch:
                     f.write(json.dumps(item) + "\n")
 
-    def upload_batch(self):
+            self.file_ids.append(fname)
+
+    def make_embeddings_batch(
+        self,
+        inputs: list[str],
+        *,
+        custom_ids: list[str | int] | None = None,
+        embeddings_kwargs: dict[str, Any] | None = None,
+    ):
+        """Create batch file(s) for processing."""
+        if "embeddings" not in self.endpoint:
+            raise ValueError("BatchHandler is configured for chat completions, not embeddings.")
+
+        embeddings_kwargs = embeddings_kwargs or {}
+
+        if custom_ids is None:
+            custom_ids = list(range(inputs))
+        else:
+            if len(inputs) != len(custom_ids):
+                raise ValueError("'inputs' and 'custom_ids' must have same length!")
+
+        api_calls = [
+            {
+                "custom_id": str(id_),
+                "method": "POST",
+                "url": self.endpoint,
+                "body": {
+                    "model": self.model,
+                    "input": input_,
+                    **embeddings_kwargs,
+                },
+            }
+            for id_, input_ in zip(custom_ids, inputs)
+        ]
+        self._save_batch_file(api_calls)
+
+    def make_chat_batch(
+        self,
+        conversations: list[list[dict[str, str]]],
+        *,
+        custom_ids: list[str | int] | None = None,
+        completions_kwargs: dict[str, Any] | None = None,
+    ):
+        """Create batch file(s) for processing."""
+        if "embeddings" in self.endpoint:
+            raise ValueError("BatchHandler is configured for embeddings, not chat completions.")
+
+        completions_kwargs = completions_kwargs or {}
+
+        if custom_ids is None:
+            custom_ids = list(range(conversations))
+        else:
+            if len(conversations) != len(custom_ids):
+                raise ValueError("'conversations' and 'custom_ids' must have same length!")
+
+        api_calls = [
+            {
+                "custom_id": str(id_),
+                "method": "POST",
+                "url": self.endpoint,
+                "body": {
+                    "model": self.model,
+                    "messages": messages,
+                    **completions_kwargs,
+                },
+            }
+            for id_, messages in zip(custom_ids, conversations)
+        ]
+        self._save_batch_file(api_calls)
+
+    def upload_batch(self, files: list[str | Path] | None = None):
         """Upload batchfiles."""
         if self.batch_infos:
             raise AttributeError("'batch_infos' is not None; has this object already been used?")
 
-        for file in self.batch_dir.glob(f"{self.filename_prefix}_*.jsonl"):
-            file = path_is_file(file)
+        # if files not provided, collect full paths from file_ids tracked in handler
+        if not files:
+            files = [
+                file
+                for file in self.batch_dir.glob(f"{self.filename_prefix}_*.jsonl")
+                if any(fid in str(file) for fid in self.file_ids)
+            ]
+
+        for file in files:
+            file = Path(file)
             queued = self.client.files.create(file=file.open("rb"), purpose="batch")
             self.batch_infos.append({"batchfile": file.name, "file_id": queued.id})
 
@@ -172,7 +254,7 @@ class BatchHandler:
             for info in self.batch_infos:
                 batch_response = self.client.batches.create(
                     input_file_id=info["file_id"],
-                    endpoint="/v1/chat/completions",
+                    endpoint=self.endpoint,
                     completion_window="24h",  # If you set any other value than 24h your job will fail.
                     # Jobs may take less than 24 hours;
                     # Jobs taking longer than 24 hours will continue to execute until cancelled.
@@ -217,7 +299,7 @@ class BatchHandler:
             return False
         return None
 
-    def wait_for_batch_completion(self):
+    def wait_for_batch_completion(self, sleep: int = 60):
         """Monitor running batch jobs."""
         # for info in self.batch_infos:
         #     info["status"] = "validating"
@@ -229,7 +311,7 @@ class BatchHandler:
                 return result
 
             # Wait for the next cycle
-            time.sleep(60)
+            time.sleep(sleep)
 
     def save_batch_results(self):
         """Retrieve / download processed data."""
@@ -249,7 +331,10 @@ class BatchHandler:
                 with (self.batch_dir / f"processed_{info['filename']}").open("w") as f:
                     f.write(file_response.text)
 
-    def cleanup(self):
+    def cleanup(
+        self,
+        # include_outfiles: bool = False,
+    ):
         """Clean up batch files."""
         for info in self.batch_infos:
             try:
@@ -260,10 +345,19 @@ class BatchHandler:
 
             try:
                 (self.batch_dir / info["batchfile"]).unlink()
-                (self.batch_dir / f"processed_{info['batchfile']}").unlink()
             except Exception:
                 logger.warning(f"Failed to delete file {info['file_id']}")
                 pass
+
+            # if include_outfiles:
+            #     try:
+            #         (self.batch_dir / f"processed_{info['batchfile']}").unlink()
+            #     except Exception:
+            #         logger.warning(f"Failed to delete file processed_{info['file_id']}")
+            #         pass
+
+        self.batch_infos = []
+        self.file_ids = []
 
 
 # %%

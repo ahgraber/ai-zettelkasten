@@ -17,8 +17,9 @@ from pydantic import (
     ValidationError,
 )
 from pydantic_settings import SettingsConfigDict
-import requests
 from typing_extensions import override
+
+import requests
 
 from aizk.datamodel.schema import ScrapeStatus, Source
 from aizk.extractors.base import ExtractionError, Extractor, ExtractorSettings
@@ -44,20 +45,20 @@ class ArxivExtractor(Extractor):
     """Download file from arXiv.org."""
 
     name: str = "arxiv"
-    # default_filename: str = ""
+    # default_filename: str = "arxiv"
 
     def __init__(
         self,
         config: ArxivSettings | dict[str, Any] | None = None,
-        out_dir: Path | str | None = None,
-        ensure_out_dir: bool = False,
+        data_dir: Path | str | None = None,
+        ensure_data_dir: bool = False,
     ):
         config = self.validate_config(config or {})
 
         super().__init__(
             config=config,
-            out_dir=out_dir or Path.cwd() / "data" / self.name,
-            ensure_out_dir=ensure_out_dir,
+            data_dir=data_dir,
+            ensure_data_dir=ensure_data_dir,
         )
 
     @override
@@ -97,7 +98,7 @@ class ArxivExtractor(Extractor):
         if match:
             return match[0]
         else:
-            raise ValueError("Could not find arXiv ID in URL.")
+            raise ValueError(f"Could not find arXiv ID in {url}.")
 
     @classmethod
     def to_abs_url(cls, arxiv_id: str) -> str:
@@ -149,7 +150,7 @@ class ArxivExtractor(Extractor):
             "abstract": paper_abstract.strip(),
         }
 
-        with AtomicWriter(out_dir / "metadata.json", binary_mode=False) as f:
+        with AtomicWriter(out_dir / "arxiv-metadata.json", binary_mode=False) as f:
             json.dump(metadata, f)
 
     def get_html_content(self, arxiv_id: str, out_dir: Path):
@@ -159,7 +160,7 @@ class ArxivExtractor(Extractor):
         # suppress exceptions and logs temporarily, some arxive.org/html/... pages don't exist and this is ok
         try:
             with suppress_logs(logging.getLogger("aizk.extractors.utils")):
-                download_file(url, out_dir / f"{arxiv_id}.html", timeout=self.config.timeout)
+                download_file(url, file_path=out_dir / f"{arxiv_id}.html", timeout=self.config.timeout)
         except requests.exceptions.RequestException:
             logger.info(f"Could not download HTML content from {url}, check if page exists.")
             pass
@@ -167,7 +168,7 @@ class ArxivExtractor(Extractor):
     def get_pdf_file(self, arxiv_id: str, out_dir: Path):
         """Download PDF file from arXiv."""
         url = self.to_pdf_url(arxiv_id)
-        download_file(url, out_dir / f"{arxiv_id}.pdf", timeout=self.config.timeout)
+        download_file(url, file_path=out_dir / f"{arxiv_id}.pdf", timeout=self.config.timeout)
 
     @override
     async def run(self, url: str, out_dir: Path):
@@ -191,23 +192,23 @@ class ArxivExtractor(Extractor):
         """Execute extraction pipeline."""
         src = source.model_copy()
 
-        out_dir_uuid = self.out_dir / str(src.uuid)
-        out_dir_uuid.mkdir(exist_ok=True)
+        uuid_dir = self.data_dir / str(src.uuid)
+        uuid_dir.mkdir(exist_ok=True)
         src.scraped_at = datetime.datetime.now(datetime.timezone.utc)
         arxiv_id = self.get_arxiv_id(src.url)
 
         try:
-            logger.info(f"Extracting from {src.url} with ArxivExtractor")
-            await self.run(src.url, out_dir_uuid)
+            logger.debug(f"Extracting from {src.url} with {self.__class__}")
+            await self.run(src.url, uuid_dir)
 
             file_validations = []
             if self.config.with_metadata:
-                file_validations.append(self.validate_file(out_dir_uuid / "metadata.json"))
+                file_validations.append(self.validate_file(uuid_dir / "metadata.json"))
             if self.config.with_pdf:
-                file_validations.append(self.validate_file(out_dir_uuid / f"{arxiv_id}.pdf"))
-            if self.config.with_html and (out_dir_uuid / f"{arxiv_id}.html").exists():
+                file_validations.append(self.validate_file(uuid_dir / f"{arxiv_id}.pdf"))
+            if self.config.with_html and (uuid_dir / f"{arxiv_id}.html").exists():
                 # if file doesn't exist, then html page may not exist (which is sometimes expected)
-                file_validations.append(self.validate_file(out_dir_uuid / f"{arxiv_id}.html"))
+                file_validations.append(self.validate_file(uuid_dir / f"{arxiv_id}.html"))
 
             if all(file_validations):
                 src.scrape_status = ScrapeStatus.COMPLETE
@@ -215,11 +216,11 @@ class ArxivExtractor(Extractor):
                 raise ExtractionError("Not all files were downloaded successfully")  # NOQA: TRY301
 
             priority_file = (
-                out_dir_uuid / f"{arxiv_id}.pdf"
-                if (out_dir_uuid / f"{arxiv_id}.pdf").exists()
-                else (out_dir_uuid / f"{arxiv_id}.html")
-                if (out_dir_uuid / f"{arxiv_id}.html").exists()
-                else out_dir_uuid / "metadata.json"
+                uuid_dir / f"{arxiv_id}.pdf"
+                if (uuid_dir / f"{arxiv_id}.pdf").exists()
+                else (uuid_dir / f"{arxiv_id}.html")
+                if (uuid_dir / f"{arxiv_id}.html").exists()
+                else uuid_dir / "metadata.json"
             )
             src.content_hash = self.hash(priority_file)
             src.file = str(priority_file)
@@ -228,7 +229,7 @@ class ArxivExtractor(Extractor):
             src.scrape_status = ScrapeStatus.ERROR
             src.error_message = str(e)
 
-            with (out_dir_uuid / "errors.txt").open("a") as f:
+            with (uuid_dir / "errors.txt").open("a") as f:
                 lines = [str(src.scraped_at), f"Failed to extract url {src.url}", f"Error: {str(e)}"]
                 f.writelines(line + os.linesep for line in lines)
 

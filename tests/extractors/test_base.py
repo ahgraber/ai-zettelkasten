@@ -8,36 +8,36 @@ from aizk.extractors.base import ExtractionError, Extractor, ExtractorSettings, 
 
 class TestExtractor:
     def test_init__name(self, tmp_path):
-        extractor = Extractor(out_dir=tmp_path)
+        extractor = Extractor(data_dir=tmp_path)
         assert extractor.name == "", "Unexpected Extractor().name"
 
     def test_init__config_default(self, tmp_path):
-        extractor = Extractor(out_dir=tmp_path)
+        extractor = Extractor(data_dir=tmp_path)
         assert extractor.config == ExtractorSettings(), "Unexpected Extractor().config"
 
     def test_init__config_custom(self, tmp_path):
         settings = ExtractorSettings(timeout=999)
-        extractor = Extractor(config=settings, out_dir=tmp_path)
+        extractor = Extractor(config=settings, data_dir=tmp_path)
         assert extractor.config == settings, "Unexpected Extractor().config"
 
     def test_init__out_dir_default(self, tmp_path):
-        extractor = Extractor(out_dir=tmp_path)
+        extractor = Extractor(data_dir=tmp_path)
 
         expected = tmp_path
-        assert extractor.out_dir == expected, f"Expected {expected}, got {extractor.out_dir}"
+        assert extractor.data_dir == expected, f"Expected {expected}, got {extractor.data_dir}"
 
     def test_init__out_dir_custom(self, tmp_path):
-        extractor = Extractor(out_dir=tmp_path)
-        assert extractor.out_dir == tmp_path, f"Expected {tmp_path}, got {extractor.out_dir}"
+        extractor = Extractor(data_dir=tmp_path)
+        assert extractor.data_dir == tmp_path, f"Expected {tmp_path}, got {extractor.data_dir}"
 
     def test_cleanup(self):
         pass  # noop / not implemented
 
     @pytest.mark.asyncio
-    async def test_run(self, tmp_path):
+    async def test_run(self):
         extractor = Extractor()
         with pytest.raises(NotImplementedError):
-            await extractor.run("http://this.is/a/test", out_dir=tmp_path)
+            await extractor.run("http://this.is/a/test")
 
     def test_transform_extract(self):
         extractor = Extractor()
@@ -52,7 +52,7 @@ class TestExtractor:
         assert extractor.validate_extract(extract) == expected
 
     def test_save(self, tmp_path):
-        extractor = Extractor(out_dir=tmp_path)
+        extractor = Extractor(data_dir=tmp_path)
         file_path = tmp_path / "test.txt"
         content = "this is only a test"
 

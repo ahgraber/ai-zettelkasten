@@ -10,11 +10,11 @@ from aizk.extractors.postlight_parser import PostlightExtractor, PostlightSettin
 
 class TestExtractor:
     def test_init__name(self, tmp_path):
-        extractor = PostlightExtractor(out_dir=tmp_path)
+        extractor = PostlightExtractor(data_dir=tmp_path)
         assert extractor.name == "postlight-parser", "Unexpected PostlightExtractor().name"
 
     def test_init__config(self, tmp_path):
-        extractor = PostlightExtractor(out_dir=tmp_path)
+        extractor = PostlightExtractor(data_dir=tmp_path)
         assert extractor.config == PostlightSettings(), "Unexpected PostlightExtractor().config"
 
     def test_init__out_dir(self, tmp_path):
@@ -40,7 +40,7 @@ class TestExtractor:
         pass
 
     def test_validate_extract(self, tmp_path):
-        extractor = PostlightExtractor(out_dir=tmp_path)
+        extractor = PostlightExtractor(data_dir=tmp_path)
 
         assert (
             actual := extractor.validate_extract(json.dumps({"content": "this a test"}))

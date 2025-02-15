@@ -128,14 +128,14 @@ class PlaywrightExtractor(Extractor):
     """Playwright / Chromium extractor."""
 
     name: str = "playwright"
-    default_filename: str = "content.html"
+    # default_filename: str = "playwright"
     config: PlaywrightSettings
 
     def __init__(
         self,
         config: PlaywrightSettings | dict[str, Any] | None = None,
-        out_dir: Path | str | None = None,
-        ensure_out_dir: bool = False,
+        data_dir: Path | str | None = None,
+        ensure_data_dir: bool = False,
     ):
         config = self.validate_config(config or {})
         binary = config.binary or detect_playwright_chromium()
@@ -143,8 +143,8 @@ class PlaywrightExtractor(Extractor):
         super().__init__(
             config=config,
             binary=binary,
-            out_dir=out_dir or Path.cwd() / "data" / self.name,
-            ensure_out_dir=ensure_out_dir,
+            data_dir=data_dir,
+            ensure_data_dir=ensure_data_dir,
         )
 
         self.cleanup()
@@ -173,6 +173,7 @@ class PlaywrightExtractor(Extractor):
 
     @override
     async def run(self, url: ValidatedURL | str, out_dir: Path):
+        # TODO: stealth does not yet support launchPersistentContext
         async with Stealth().use_async(async_playwright()) as pw:
             browser = await pw.chromium.launch(
                 channel="chromium",  # use "new" headless mode to enable headless extensions
@@ -197,19 +198,21 @@ class PlaywrightExtractor(Extractor):
                 html_content = await page.content()
 
                 async with AtomicWriter(
-                    out_dir / "content.html", binary_mode=get_write_mode(html_content) == "wb"
+                    out_dir / "playwright.html", binary_mode=get_write_mode(html_content) == "wb"
                 ) as f:
                     await f.write(html_content)
 
             # Save PDF - returns bytes if no path provided
             if self.config.save_pdf:
                 pdf_content = await page.pdf(
-                    # path="./content.pdf",
+                    # path="./playwright.pdf",
                     format="Letter",
                     display_header_footer=False,
                 )
 
-                async with AtomicWriter(out_dir / "content.pdf", binary_mode=get_write_mode(pdf_content) == "wb") as f:
+                async with AtomicWriter(
+                    out_dir / "playwright.pdf", binary_mode=get_write_mode(pdf_content) == "wb"
+                ) as f:
                     await f.write(pdf_content)
 
             # Save screenshot - returns bytes if no path provided
@@ -217,12 +220,14 @@ class PlaywrightExtractor(Extractor):
                 await page.emulate_media(media="screen", color_scheme="light")
                 await page.reload(wait_until="load", timeout=self.config.pageload_timeout * 1000)
                 img_content = await page.screenshot(
-                    # path="./content.png",
+                    # path="./playwright.png",
                     full_page=True,
                     scale="device",
                 )
 
-                async with AtomicWriter(out_dir / "content.png", binary_mode=get_write_mode(img_content) == "wb") as f:
+                async with AtomicWriter(
+                    out_dir / "playwright.png", binary_mode=get_write_mode(img_content) == "wb"
+                ) as f:
                     await f.write(img_content)
 
             await context.close()
@@ -232,13 +237,13 @@ class PlaywrightExtractor(Extractor):
         """Execute extraction pipeline."""
         src = source.model_copy()
 
-        out_dir_uuid = self.out_dir / str(src.uuid)
+        out_dir_uuid = self.data_dir / str(src.uuid)
         out_dir_uuid.mkdir(exist_ok=True)
 
         src.scraped_at = datetime.datetime.now(datetime.timezone.utc)
 
         try:
-            logger.info(f"Extracting from {src.url} with PlaywrightExtractor")
+            logger.debug(f"Extracting from {src.url} with {self.__class__}")
             await self.run(src.url, out_dir_uuid)
 
         except Exception as e:
@@ -263,21 +268,21 @@ class PlaywrightExtractor(Extractor):
             # 'html' is preferred; evaluated last
             scrapes = []
             if self.config.save_png:
-                file_path = out_dir_uuid / "content.png"
+                file_path = out_dir_uuid / "playwright.png"
                 if self.validate_file(file_path):
                     scrapes.append(file_path)
                 else:
                     logger.error(f"Error during png validation for {src.url}")
 
             if self.config.save_pdf:
-                file_path = out_dir_uuid / "content.pdf"
+                file_path = out_dir_uuid / "playwright.pdf"
                 if self.validate_file(file_path):
                     scrapes.append(file_path)
                 else:
                     logger.error(f"Error during pdf validation for {src.url}")
 
             if self.config.save_dom:
-                file_path = out_dir_uuid / "content.html"
+                file_path = out_dir_uuid / "playwright.html"
                 if self.validate_file(file_path):
                     scrapes.append(file_path)
                 else:
