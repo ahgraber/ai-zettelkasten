@@ -5,16 +5,16 @@ preview = false  # do not use unstable rules/fixes
 
 # file selection
 extend-exclude = [
-  '.ci',
-  '.pytest_cache',
-  'docs',
-  '*.egg-info',
-  '.ipynb_checkpoints',
-  '.env',
-  '.envrc',
-  '.git',
-  '.nox',
-  '.tox',
+  ".ci",
+  ".pytest_cache",
+  "docs",
+  "*.egg-info",
+  ".ipynb_checkpoints",
+  ".env",
+  ".envrc",
+  ".git",
+  ".nox",
+  ".tox",
 ]
 extend-include = ["*.ipynb"]
 
@@ -44,22 +44,23 @@ docstring-code-format = true
 exclude = ["*.pyi"]
 
 select = [
-  'A', # flake8 builtins
-  'B', # flake8 bugbear
-  'C4', # flake8 comprehensions
-  'C90', # mccabe
-  'D', # pydocstyle
-  'E', # pycodestyle
-  'F', # pyflakes
-  'I', # isort
-  'N', # pep8-naming
-  # 'PTH', # flake8-use-pathlib
-  'Q',  # flake8-quotes
-  'S',  # bandit
-  'SIM',  # flake8-simplify
-  'TRY',  # tryceratops
-  'W', # pycodestyle
-  # 'T20', # flake8 print
+  "A", # flake8 builtins
+  "B", # flake8 bugbear
+  "C4", # flake8 comprehensions
+  "C90", # mccabe
+  "D", # pydocstyle
+  "E", # pycodestyle
+  "F", # pyflakes
+  "I", # isort
+  "N", # pep8-naming
+  "NPY201", # numpy2.0 migration
+  # "PTH", # flake8-use-pathlib
+  "Q",  # flake8-quotes
+  "S",  # bandit
+  "SIM",  # flake8-simplify
+  "TRY",  # tryceratops
+  "W", # pycodestyle
+  # "T20", # flake8 print
 ]
 
 ignore = [
@@ -87,6 +88,7 @@ ignore = [
   "Q003",  # redundant w formatter
   # "S101",  # assert
   "S311",  # allow psuedorandom generators (we use for stats)
+  "S607",  # allow partial paths ("git" rather than "/usr/bin/git")
   "SIM105",  # allow except: pass
   "TRY003",  # Avoid specifying messages outside exception class; overly strict, especially for ValueError
   "TRY201",  # Allow raise without exception name (align with Sonarlint)
@@ -135,9 +137,10 @@ section-order = ["future", "standard-library", "third-party", "torch", "llm", "w
 "sci" = ["numpy", "pandas", "scipy", "sklearn", "statsmodels"]
 "nlp" = ["nltk", "spacy", "langcodes"]
 "torch" = ["datasets", "lightning", "torch", "torch*", "tokenizers", "transformers", "sentence_transformers"]
-"llm" = ["aisuite", "langchain*", "llama_index*", "semantic_kernel", "openai", "ragas", "tiktoken"]
+"llm" = ["aisuite", "langchain*", "llama_index*", "openai", "semantic_kernel", "ragas", "tiktoken"]
 "plot" = ["cmcrameri", "matplotlib", "mizani", "plotly", "plotnine", "seaborn"]
-"web" = ["fastapi", "reflex", "requests", "responses", "tenacity"]
+"web" = ["fastapi", "reflex*", "requests", "responses", "tenacity"]
+
 [lint.mccabe]
 max-complexity = 18
 
