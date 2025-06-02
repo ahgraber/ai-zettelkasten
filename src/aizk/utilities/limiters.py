@@ -8,6 +8,9 @@ import time
 
 logger = logging.getLogger(__name__)
 
+# NOTE: see also
+# https://github.com/mjpieters/aiolimiter
+
 
 class TimeWindowRateLimiter:
     """Rate limiter that allows a maximum number of actions over sliding time window (seconds).
