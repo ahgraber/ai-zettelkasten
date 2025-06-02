@@ -4,7 +4,10 @@ An AI-driven [Zettelkasten](https://zettelkasten.de/introduction/)-style mindmap
 
 ## Design
 
+### What is a Zettelkasten?
+
 [Introduction to the Zettelkasten Method • Zettelkasten Method](https://zettelkasten.de/introduction/)
+[Forget Forgetting. Build a Zettelkasten.](https://every.to/superorganizers/forget-forgetting-build-a-zettelkasten-299960)
 
 ### Ingest
 

@@ -90,6 +90,7 @@ alimiter = AsyncTimeWindowRateLimiter(5, 20)  # 5 requests every 20 seconds
 def is_static_file(url: str) -> bool:
     """Determine whether file is static or requires rendering."""
     # TODO: the proper way is with MIME type detection + ext, not only extension
+    # see: https://github.com/mikeckennedy/content-types?featured_on=pythonbytes
     pagename = urlparse(url).path.rsplit("/", 1)[-1]
     extension = Path(pagename).suffix.replace(".", "")
     return extension.lower() in STATICFILE_EXTENSIONS

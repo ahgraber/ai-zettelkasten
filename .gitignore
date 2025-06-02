@@ -1,9 +1,13 @@
+# gitignore
+
 # Editors
 .ipynb_checkpoints/
 .profile
 .ruff_cache/
 .vscode/
 *.profraw
+profile_default/
+ipython_config.py
 
 # Trash
 .DS_Store
@@ -27,6 +31,9 @@ Thumbs.db
 bin/
 node_modules/
 venv/
+
+# direnv
+.direnv/*
 
 # Extras
 *pytest*
@@ -86,7 +93,11 @@ TODO.md
 chromium-profile
 chrome-profile
 
-
 # retain files
 !.gitkeep
 !.gitignore
+!.devcontainer
+!.github
+!.taskfiles
+!*.sops.*
+!.env.sample

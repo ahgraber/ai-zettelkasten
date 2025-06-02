@@ -95,6 +95,7 @@ def load_urls_from_recent(source_dir: Path, days: int | None) -> list[str]:
 def is_static_file(url: str) -> bool:
     """Determine whether file is static or requires rendering."""
     # TODO: the proper way is with MIME type detection + ext, not only extension
+    # see: https://github.com/mikeckennedy/content-types?featured_on=pythonbytes
     pagename = urlparse(url).path.rsplit("/", 1)[-1]
     extension = Path(pagename).suffix.replace(".", "")
     return extension.lower() in STATICFILE_EXTENSIONS
