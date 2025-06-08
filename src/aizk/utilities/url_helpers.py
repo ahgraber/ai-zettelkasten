@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 import typing as t
 from typing import Any, Callable, List, Optional
-from urllib.parse import parse_qs, unquote, unquote_plus, urlencode, urljoin, urlparse, urlunparse
+from urllib.parse import parse_qs, quote, unquote, unquote_plus, urlencode, urljoin, urlparse, urlunparse
 
 from pydantic import HttpUrl, ValidationError
 
@@ -25,20 +25,66 @@ URL_REGEX = (
     # r"(?:[/?#]\S+?)?"  # path  uses +? to match as few as possible
 )
 
+# Compiled regex patterns for performance
+URL_PATTERN = re.compile(URL_REGEX, re.IGNORECASE | re.UNICODE)
+ARXIV_PATTERN = re.compile(r"(?:arxiv.org/[a-z]+?/)(\d+\.\d+)", re.IGNORECASE)
+EMERGENTMIND_PATTERN = re.compile(r"(?:emergentmind.com/papers/)(\d+\.\d+)", re.IGNORECASE)
+HUGGINGFACE_PATTERN = re.compile(r"(?:huggingface.co/papers/)(\d+\.\d+)", re.IGNORECASE)
+GITHUB_PATTERN = re.compile(
+    r"/(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+)(?:/(?:refs/heads|blob|tree)/(?P<branch>[\w./-]+))?",
+    re.IGNORECASE,
+)
+SAFELINKS_PATTERN = re.compile(r"safelinks\.protection\.outlook\.com/\?url=(.*?)&data=")
+MD_ARTIFACTS_PATTERN = re.compile(r"\)\[[^\]\(]+?\]\(", re.IGNORECASE)
+
+# Domain constants
+SOCIAL_MEDIA_DOMAINS = frozenset(
+    {"linkedin.com", "twitter.com", "x.com", "bsky.app", "facebook.com", "instagram.com", "threads.net"}
+)
+
+GITHUB_DOMAINS = frozenset({"github.com", "gist.github.com", "raw.githubusercontent.com"})
+
 
 def extract_url(text: str) -> list[str]:
-    """Identify urls (url-like strings) from text."""
-    pattern = re.compile(URL_REGEX, re.IGNORECASE | re.UNICODE)
-    matches = re.findall(pattern, text)
+    """Identify urls (url-like strings) from text.
+
+    Args:
+        text: Input text to search for URLs
+
+    Returns:
+        List of URLs found in the text
+
+    Examples:
+        >>> extract_url("Visit https://example.com for more info")
+        ['https://example.com']
+    """
+    if not text:
+        return []
+
+    matches = URL_PATTERN.findall(text)
     return matches
 
 
 def validate_url(url: str) -> str:
-    """Validate a URL."""
+    """Validate a URL.
+
+    Args:
+        url: URL string to validate
+
+    Returns:
+        Validated URL string
+
+    Raises:
+        ValidationError: If URL is invalid
+        ValueError: If URL is empty or None
+    """
+    if not url or not url.strip():
+        raise ValueError("URL cannot be empty or None")
+
     try:
-        _url = HttpUrl(url)
+        _url = HttpUrl(url.strip())
     except ValidationError:
-        logger.exception(f"Invalid URL: {url}")
+        logger.exception("Invalid URL: %s", url)
         raise
 
     return str(_url)
@@ -105,15 +151,27 @@ def fix_url_from_markdown(url_str: str) -> str:
 
 
 def clean_md_artifacts(url: str) -> str:
-    """Clean url after identification."""
-    # sometimes urls have weird markdown-like artifacts
-    # "...)[–](...,    ...)[—](...,    ...)['](...,    ...)['](...,    ...)[\\](...,    ...)[�](..."
-    # _split = re.split(r"\)\[[^\w\d]+?\]\(", url, flags=re.IGNORECASE)
-    _split = re.split(r"\)\[[^\]\(]+?\]\(", url, flags=re.IGNORECASE)
-    if _split:
-        return _split[0]
-    else:
+    """Clean url after identification.
+
+    Removes markdown-like artifacts from URLs that may have been introduced during parsing.
+
+    Args:
+        url: URL that may contain markdown artifacts
+
+    Returns:
+        Cleaned URL with artifacts removed
+
+    Examples:
+        >>> clean_md_artifacts("https://example.com)[–](other_url")
+        "https://example.com"
+    """
+    if not url:
         return url
+
+    # Sometimes urls have weird markdown-like artifacts
+    # "...)[–](...,    ...)[—](...,    ...)['](...,    ...)['](...,    ...)[\\](...,    ...)[�](..."
+    split_parts = MD_ARTIFACTS_PATTERN.split(url)
+    return split_parts[0] if split_parts else url
 
 
 def strip_utm_params(url: str) -> str:
@@ -140,82 +198,135 @@ def strip_utm_params(url: str) -> str:
 
 
 def safelink_to_url(url: str) -> str:
-    """Convert safelinks to original url."""
+    """Convert safelinks to original url.
+
+    Args:
+        url: URL that may be a safelink
+
+    Returns:
+        Decoded original URL or original URL if not a safelink
+
+    Raises:
+        ValueError: If safelink pattern is detected but URL cannot be extracted
+    """
     safelinks_str = "safelinks.protection.outlook.com"  # typos:disable
     if safelinks_str not in url:
         return url
-    else:
-        # Try unquote first (for general URL decoding)
-        try:
-            decoded = unquote(url)
-        except ValueError:
-            # If unquote fails, try unquote_plus (for '+' encoding)
-            decoded = unquote_plus(url)
 
-        pattern = re.compile(f"{safelinks_str}\\/\\?url=(.*?)&data=")
-        matches = re.findall(pattern, decoded)
-
-        if matches:
-            return matches[0]
-        else:
-            raise ValueError(f"Could not find safelinks url in {decoded}")
-
-
-def follow_redirects(url: str, timeout: int = 5) -> str:
-    """Get the original URL after following redirections."""
+    # Try unquote first (for general URL decoding)
     try:
-        with requests.get(url, timeout=timeout, allow_redirects=True) as response:
+        decoded = unquote(url)
+    except ValueError:
+        # If unquote fails, try unquote_plus (for '+' encoding)
+        try:
+            decoded = unquote_plus(url)
+        except ValueError:
+            logger.warning(f"Failed to decode safelink URL: {url}")
+            return url
+
+    matches = SAFELINKS_PATTERN.findall(decoded)
+    if matches:
+        return matches[0]
+    else:
+        raise ValueError(f"Could not find safelinks url in {decoded}")
+
+
+def follow_redirects(url: str, timeout: int = 5, max_redirects: int = 10) -> str:
+    """Get the original URL after following redirections.
+
+    Args:
+        url: URL to follow redirects for
+        timeout: Request timeout in seconds
+        max_redirects: Maximum number of redirects to follow
+
+    Returns:
+        Final URL after following redirects, or original URL if failed
+
+    Note:
+        This function should be used carefully to avoid SSRF attacks.
+        Consider validating the final URL domain before use.
+    """
+    try:
+        # Validate URL scheme to prevent SSRF
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            logger.warning(f"Potentially unsafe URL scheme: {parsed.scheme}")
+            return url
+
+        # Use a session with custom adapter for better control
+        session = requests.Session()
+        session.max_redirects = max_redirects
+
+        with session.get(
+            url, timeout=timeout, allow_redirects=True, headers={"User-Agent": "AIZK URL Helper/1.0"}
+        ) as response:
             response.raise_for_status()
             return response.url
 
-    except requests.exceptions.RequestException:
-        logger.debug(f"Failed to follow redirects from original URL {url}")
-        # raise
+    except requests.exceptions.RequestException as e:
+        logger.debug(f"Failed to follow redirects from original URL {url}: {e}")
         return url
 
 
 def emergentmind_to_arxiv(url: str) -> str:
-    """Convert emergentmind links to arxiv.org."""
-    pattern = re.compile(r"(?:emergentmind.com/papers/)(\d+\.\d+)", re.IGNORECASE)
-    if matches := re.findall(pattern, url):
+    """Convert emergentmind links to arxiv.org.
+
+    Args:
+        url: URL to potentially convert
+
+    Returns:
+        Converted arXiv URL or original URL if no conversion needed
+    """
+    if matches := EMERGENTMIND_PATTERN.findall(url):
         return f"https://arxiv.org/abs/{matches[0]}"
-    else:
-        return url
+    return url
 
 
 def huggingface_to_arxiv(url: str) -> str:
-    """Convert huggingface papers links to arxiv.org."""
-    pattern = re.compile(r"(?:huggingface.co/papers/)(\d+\.\d+)", re.IGNORECASE)
-    if matches := re.findall(pattern, url):
+    """Convert huggingface papers links to arxiv.org.
+
+    Args:
+        url: URL to potentially convert
+
+    Returns:
+        Converted arXiv URL or original URL if no conversion needed
+    """
+    if matches := HUGGINGFACE_PATTERN.findall(url):
         return f"https://arxiv.org/abs/{matches[0]}"
-    else:
-        return url
+    return url
 
 
 def standardize_arxiv(url: str) -> str:
-    """Point to standard arxiv abstract pages."""
-    pattern = re.compile(r"(?:arxiv.org/[a-z]+?/)(\d+\.\d+)", re.IGNORECASE)
-    if matches := re.findall(pattern, url):
+    """Point to standard arxiv abstract pages.
+
+    Args:
+        url: URL to potentially standardize
+
+    Returns:
+        Standardized arXiv URL or original URL if no conversion needed
+    """
+    if matches := ARXIV_PATTERN.findall(url):
         return f"https://arxiv.org/abs/{matches[0]}"
-    else:
-        return url
+    return url
 
 
 def standardize_github(url: str) -> str:
     """Point to repository root if possible.
 
-    This attempts to retain any branch and/or file specification that exists, but may fail if commit links are given.
+    This attempts to retain any branch and/or file specification that exists,
+    but may fail if commit links are given.
+
+    Args:
+        url: GitHub URL to standardize
+
+    Returns:
+        Standardized GitHub URL or original URL if no conversion needed
     """
     if not any(domain in url for domain in ["githubusercontent.com", "github.com"]):
         return url
 
-    pattern = re.compile(
-        r"/(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+)(?:/(?:refs/heads|blob|tree)/(?P<branch>[\w./-]+))?",
-        re.IGNORECASE,
-    )
-
     parsed = urlparse(url)
-    match = pattern.match(parsed.path)
+    match = GITHUB_PATTERN.match(parsed.path)
 
     if not match or not match.group("owner") or not match.group("repo"):
         return url
@@ -255,66 +366,103 @@ def standardize_github(url: str) -> str:
                 None,  # fragment
             )
         )
+    else:
+        # Return original URL if no specific handling is needed
+        return url
 
 
-processors = [
-    fix_url_from_markdown,
-    # clean_md_artifacts,
-    safelink_to_url,
-    # follow_redirects,
-    strip_utm_params,
-    emergentmind_to_arxiv,
-    huggingface_to_arxiv,
-    standardize_arxiv,
-    standardize_github,
-]
+def _process_url(url: str, processors: Optional[List[Callable[[str], str]]] = None) -> str:
+    """Apply a list of processors to a URL.
 
+    Args:
+        url: The URL to process
+        processors: List of processor functions to apply. Defaults to standard processors.
 
-def _process_url(url: str, processors: List[Callable[[str], str]] = processors) -> str:
-    """Apply a list of processors to a URL."""
+    Returns:
+        The processed URL
+    """
+    if processors is None:
+        processors = [
+            fix_url_from_markdown,
+            safelink_to_url,
+            strip_utm_params,
+            emergentmind_to_arxiv,
+            huggingface_to_arxiv,
+            standardize_arxiv,
+            standardize_github,
+        ]
+
     for processor in processors:
         url = processor(url)
     return url
 
 
-def find_all_urls(urls_str: str):
-    """Find all urls in text blob."""
+def find_all_urls(urls_str: str) -> t.Generator[str, None, None]:
+    """Find all urls in text blob.
+
+    Args:
+        urls_str: Text string to search for URLs
+
+    Yields:
+        Processed URLs found in the text
+
+    Examples:
+        >>> list(find_all_urls("Check out https://example.com and http://test.org"))
+        ['https://example.com', 'http://test.org']
+    """
+    if not urls_str:
+        return
+
     for url in extract_url(urls_str):
-        yield _process_url(url)
-
-
-# def validate_arxiv_url(url: str) -> str:
-#     """Validate arXiv URL."""
-#     if "arxiv.org" not in url:
-#         raise ValueError("URL must be from arXiv.org")
-
-#     try:
-#         _url = HttpUrl(url)
-#     except ValidationError:
-#         logger.exception(f"Invalid URL: {url}")
-#         raise
-
-#     if not (_url.path.startswith("/pdf") or _url.path.startswith("/abs") or _url.path.startswith("/html")):
-#         raise ValueError("URL must be to PDF, abstract, or HTML page")
-#     else:
-#         return str(_url)
+        try:
+            processed_url = _process_url(url)
+            if processed_url:  # Only yield non-empty URLs
+                yield processed_url
+        except Exception as e:
+            logger.warning("Failed to process URL '%s': %s", url, e)
+            # Yield original URL if processing fails
+            yield url
 
 
 def is_social_url(url: str) -> bool:
     """Determine whether the url is social media.
 
     Most social media requires login; it is insecure to have AIZK use personal logins.
-    """
-    socials = {"linkedin.com", "twitter.com", "x.com", "bsky.app", "facebook.com", "instagram.com", "threads.net"}
 
-    return urlparse(url).netloc in socials
+    Args:
+        url: URL to check
+
+    Returns:
+        True if URL is from a social media domain, False otherwise
+    """
+    if not url:
+        return False
+
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    else:
+        return parsed.netloc in SOCIAL_MEDIA_DOMAINS
 
 
 def is_github_url(url: str) -> bool:
     """Determine whether url is a github property.
 
     This is for use with the gitingest parser; github.io links are treated as normal webpages.
-    """
-    github = {"github.com", "gist.github.com", "raw.githubusercontent.com"}
 
-    return urlparse(url).netloc in github
+    Args:
+        url: URL to check
+
+    Returns:
+        True if URL is from a GitHub domain, False otherwise
+    """
+    if not url:
+        return False
+
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    else:
+        return parsed.netloc in GITHUB_DOMAINS
