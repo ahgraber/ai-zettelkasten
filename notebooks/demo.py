@@ -40,8 +40,7 @@ from aizk.extractors import (
     StaticFileExtractor,
 )
 from aizk.extractors.chrome import detect_playwright_chromium
-from aizk.utilities import AsyncTimeWindowRateLimiter, TimeWindowRateLimiter, basic_log_config, get_repo_path
-from aizk.utilities.async_helpers import synchronize
+from aizk.utilities import SlidingWindowRateLimiter, basic_log_config, get_repo_path
 
 # %%
 ipython: InteractiveShell | None = get_ipython()
@@ -84,7 +83,7 @@ staticfile_extractor = StaticFileExtractor(data_dir=data_dir, ensure_data_dir=Tr
 
 
 # %%
-alimiter = AsyncTimeWindowRateLimiter(5, 20)  # 5 requests every 20 seconds
+alimiter = SlidingWindowRateLimiter(5, 20)  # 5 requests every 20 seconds
 
 
 def is_static_file(url: str) -> bool:
@@ -163,8 +162,7 @@ add_urls_to_backlog(engine, urls)
 pending = get_pending_sources(engine)
 results = []
 for source in pending:
-    # await scrape(source)
-    results.append(synchronize(scrape, source))
+    results.append(await scrape(source))
 
 # %%
 update_scraped_sources(engine, results)

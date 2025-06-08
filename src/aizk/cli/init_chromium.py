@@ -44,14 +44,13 @@ from aizk.extractors import (
 from aizk.extractors.chrome import detect_playwright_chromium
 from aizk.utilities import (
     LOG_FMT,
-    AsyncTimeWindowRateLimiter,
+    SlidingWindowRateLimiter,
     basic_log_config,
     # logging_redirect_tqdm,
     path_is_dir,
     path_is_file,
     process_manager,
 )
-from aizk.utilities.async_helpers import synchronize
 from aizk.utilities.url_helpers import find_all_urls, is_social_url
 
 chromium = detect_playwright_chromium()

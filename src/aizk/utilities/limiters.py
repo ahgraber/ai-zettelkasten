@@ -1,182 +1,389 @@
-# ruff: NOQA: E731
 import asyncio
 from collections import deque
 from functools import wraps
-import logging
-from threading import Lock
+import inspect
 import time
+from typing import Any, Callable, Dict, Optional
 
-logger = logging.getLogger(__name__)
-
-# NOTE: see also
-# https://github.com/mjpieters/aiolimiter
+from aizk.utilities.async_helpers import run_async_in_sync
 
 
-class TimeWindowRateLimiter:
-    """Rate limiter that allows a maximum number of actions over sliding time window (seconds).
+def _create_sync_async_wrapper(rate_limit_func: Callable, original_func: Callable) -> Callable:
+    """Create a wrapper that handles both sync and async functions with rate limiting.
 
-    If the maximum number of actions occurs in the time window, the rate limiter will block until a slot becomes available.
-    This is not an async limiter; it assumes that actions are synchronous and blocking.
-    Therefore, if an action takes a long time to complete, it will block subsequent actions from starting until it completes _even if it exceeds the window period_.
+    Args:
+        rate_limit_func: The async rate limiting function to call before execution
+        original_func: The original function being wrapped
+
+    Returns:
+        Appropriately wrapped sync or async function
+    """
+    if inspect.iscoroutinefunction(original_func):
+
+        @wraps(original_func)
+        async def async_wrapper(*args, **kwargs) -> Any:
+            await rate_limit_func()
+            return await original_func(*args, **kwargs)
+
+        return async_wrapper
+    else:
+
+        @wraps(original_func)
+        def sync_wrapper(*args, **kwargs) -> Any:
+            run_async_in_sync(rate_limit_func)
+            return original_func(*args, **kwargs)
+
+        return sync_wrapper
+
+
+class SlidingWindowRateLimiter:
+    """A sliding time-window rate limiter for both sync and async functions.
+
+    This rate limiter maintains a sliding window of request timestamps
+    and blocks new requests when the maximum number of requests in the
+    time window has been reached.
+
+    Args:
+        max_requests: Maximum number of requests allowed in the time window.
+        window_seconds: Time window duration in seconds.
+
+    Raises:
+        ValueError: If requests or window_seconds are not positive.
+
+    Example:
+        >>> @SlidingWindowRateLimiter(max_requests=5, window_seconds=60)
+        >>> async def async_api_call():
+        ...     return await some_api()
+
+        >>> @SlidingWindowRateLimiter(max_requests=5, window_seconds=60)
+        >>> def sync_api_call():
+        ...     return requests.get("https://api.example.com")
     """
 
-    def __init__(self, max_actions: int, window_seconds: int, min_interval: float = 0.1):
-        if max_actions <= 0:
-            raise ValueError("max_actions must be > 0")
-        if window_seconds <= 0:
-            raise ValueError("window_seconds must be > 0")
-        if min_interval < 0:
-            raise ValueError("min_interval must be >= 0")
+    def __init__(self, max_requests: int, window_seconds: float):
+        if max_requests <= 0 or window_seconds <= 0:
+            raise ValueError("requests and window_seconds must be positive")
 
-        self.max_actions = max_actions
+        self.max_requests = max_requests
         self.window_seconds = window_seconds
-        self.min_interval = min_interval
-        self.start_times = deque()
-        self.n_active = 0
-        # self.last = time.monotonic()
+        self._window = deque()
+        self._lock = asyncio.Lock()
 
-        self.lock = Lock()
+    def __call__(self, func: Callable) -> Callable:
+        """Apply rate limiting to a function.
 
-    def _update(self):
-        """Remove actions should no longer be blocking the queue.
+        Args:
+            func: The function to be rate limited (sync or async).
 
-        An action may take longer to execute than the time period we track.
-        This action counts against the limit until its start time exits the window.
-        Once its start time exits the window, its slot becomes available for new operations, while the action itself continues running to completion.
+        Returns:
+            The wrapped function with rate limiting applied.
         """
-        window_start = time.monotonic() - self.window_seconds
+        return _create_sync_async_wrapper(self._check_rate_limit, func)
 
-        while self.start_times and self.start_times[0] < window_start:
-            self.start_times.popleft()
-            if self.n_active > 0:
-                logging.debug("Sliding window freed a slot")
-                self.n_active -= 1
+    async def _check_rate_limit(self) -> None:
+        """Check if request is within rate limit, block if necessary."""
+        async with self._lock:
+            current_time = time.time()
 
-    def _wait(self):
-        """Wait until a slot is available."""
-        while True:
-            with self.lock:
-                self._update()
-                if len(self.start_times) < self.max_actions:
-                    self.start_times.append(time.monotonic())
-                    self.n_active += 1
-                    return
+            # Remove expired timestamps
+            while self._window and self._window[0] <= current_time - self.window_seconds:
+                self._window.popleft()
 
-                if self.start_times:
-                    wait_time = max(
-                        self.min_interval,
-                        self.start_times[0] + self.window_seconds - time.monotonic(),
-                    )
-                else:
-                    wait_time = self.min_interval
+            # Check if we can proceed immediately
+            if len(self._window) < self.max_requests:
+                self._window.append(current_time)
+                return
 
-            # Release lock during sleep
-            if wait_time > 0:
-                logging.debug(f"Waiting {wait_time:.2f} seconds")
-                time.sleep(wait_time)
+            # Calculate wait time until oldest request expires
+            oldest_request = self._window[0]
+            wait_time = self.window_seconds - (current_time - oldest_request)
 
-    def _complete(self):
-        """Remove completed action from active count."""
-        logging.debug("Completing action")
-        with self.lock:
-            if self.n_active > 0:
-                self.n_active -= 1
+        # Wait outside the lock
+        if wait_time > 0:
+            await asyncio.sleep(wait_time)
 
-    def __call__(self, func):
-        """Apply rate limiting to a function as a decorator."""
+        # After waiting, add the request
+        async with self._lock:
+            current_time = time.time()
+            # Remove expired timestamps again
+            while self._window and self._window[0] <= current_time - self.window_seconds:
+                self._window.popleft()
+            self._window.append(current_time)
 
-        # TODO: add support for async functions?
-        @wraps(func)
-        def wrapped(*args, **kwargs):
-            self._wait()
-            try:
-                return func(*args, **kwargs)
-            finally:
-                self._complete()
+    def reset(self) -> None:
+        """Reset the rate limiter window."""
 
-        return wrapped
+        # Use run_async_in_sync instead of asyncio.Runner to avoid deadlocks
+        async def _reset():
+            async with self._lock:
+                self._window.clear()
+
+        run_async_in_sync(_reset)
+
+    def __enter__(self) -> "SlidingWindowRateLimiter":
+        """Enter the sync context manager, applying rate limiting."""
+        run_async_in_sync(self._check_rate_limit)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit the sync context manager."""
+        pass
+
+    async def __aenter__(self) -> "SlidingWindowRateLimiter":
+        """Enter the async context manager, applying rate limiting."""
+        await self._check_rate_limit()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit the async context manager."""
+        pass
 
 
-class AsyncTimeWindowRateLimiter:
-    """Async rate limiter that allows a maximum number of actions over sliding time window (seconds).
+class LeakyBucketRateLimiter:
+    """A leaky bucket rate limiter for both sync and async functions.
 
-    If the maximum number of actions occurs in the time window, the rate limiter will block until a slot becomes available.
+    The bucket fills with each request and leaks at a constant rate.
+    Requests are blocked when the bucket would overflow.
+
+    Args:
+        max_requests: Maximum number of requests allowed in the time window.
+        window_seconds: Time window duration in seconds.
+        max_burst: Maximum burst capacity. If None, defaults to max_requests.
+                  This allows for temporary bursts above the sustained rate.
+
+    Raises:
+        ValueError: If requests, window_seconds, or max_burst are not positive.
+
+    Example:
+        >>> # Standard rate limiting: 10 requests per 5 seconds, burst = 10
+        >>> @LeakyBucketRateLimiter(max_requests=10, window_seconds=5)
+        >>> async def async_api_call():
+        ...     return await some_api()
+
+        >>> # Higher burst capacity: 10 req/5sec sustained, 20 burst
+        >>> @LeakyBucketRateLimiter(max_requests=10, window_seconds=5, max_burst=20)
+        >>> def sync_api_call():
+        ...     return requests.get("https://api.example.com")
     """
 
-    def __init__(self, max_actions: int, window_seconds: int, min_interval: float = 0.1):
-        if max_actions <= 0:
-            raise ValueError("max_actions must be > 0")
-        if window_seconds <= 0:
-            raise ValueError("window_seconds must be > 0")
-        if min_interval < 0:
-            raise ValueError("min_interval must be >= 0")
+    def __init__(self, max_requests: int, window_seconds: float, max_burst: Optional[int] = None):
+        if max_requests <= 0 or window_seconds <= 0:
+            raise ValueError("requests and window_seconds must be positive")
 
-        self.max_actions = max_actions
+        if max_burst is not None and max_burst <= 0:
+            raise ValueError("max_burst must be positive")
+
+        self.max_requests = max_requests
         self.window_seconds = window_seconds
-        self.min_interval = min_interval
-        self.start_times = deque()
-        self.n_active = 0
-        # self.last = time.monotonic()
+        self.max_burst = max_burst if max_burst is not None else max_requests
 
-        self.lock = asyncio.Lock()
+        # Calculate bucket parameters from rate constraints
+        self.capacity = float(self.max_burst)  # Burst capacity
+        self.leak_rate = max_requests / window_seconds  # Requests per second (sustained rate)
+        self._level = 0.0
+        self._last_leak_time = time.time()
+        self._lock = asyncio.Lock()
 
-    def _update(self):
-        """Remove actions should no longer be blocking the queue.
+    def __call__(self, func: Callable) -> Callable:
+        """Apply rate limiting to a function.
 
-        An action may take longer to execute than the time period we track.
-        This action counts against the limit until its start time exits the window.
-        Once its start time exits the window, its slot becomes available for new operations, while the action itself continues running to completion.
+        Args:
+            func: The function to be rate limited (sync or async).
+
+        Returns:
+            The wrapped function with rate limiting applied.
         """
-        window_start = time.monotonic() - self.window_seconds
+        return _create_sync_async_wrapper(self._acquire, func)
 
-        while self.start_times and self.start_times[0] < window_start:
-            self.start_times.popleft()
-            if self.n_active > 0:
-                logging.debug("Sliding window freed a slot")
-                self.n_active -= 1
+    async def _acquire(self) -> None:
+        """Acquire capacity from the bucket, waiting if necessary."""
+        async with self._lock:
+            current_time = time.time()
 
-    async def _wait(self):
-        """Wait until a slot is available."""
-        while True:
-            async with self.lock:
-                self._update()
-                if len(self.start_times) < self.max_actions:
-                    self.start_times.append(time.monotonic())
-                    self.n_active += 1
-                    return
+            # Leak tokens based on elapsed time
+            time_elapsed = current_time - self._last_leak_time
+            leaked_amount = time_elapsed * self.leak_rate
+            self._level = max(0.0, self._level - leaked_amount)
+            self._last_leak_time = current_time
 
-                if self.start_times:
-                    wait_time = max(
-                        self.min_interval,
-                        self.start_times[0] + self.window_seconds - time.monotonic(),
-                    )
-                else:
-                    wait_time = self.min_interval
+            # Check if we can proceed immediately
+            if self._level + 1.0 <= self.capacity:
+                self._level += 1.0
+                return
 
-            # Release lock during sleep
-            if wait_time > 0:
-                logging.debug(f"Waiting {wait_time:.2f} seconds")
+            # Calculate wait time for bucket to leak enough
+            excess = (self._level + 1.0) - self.capacity
+            wait_time = excess / self.leak_rate
+
+        # Wait outside the lock
+        if wait_time > 0:
+            await asyncio.sleep(wait_time)
+
+        # After waiting, acquire the token
+        async with self._lock:
+            current_time = time.time()
+            time_elapsed = current_time - self._last_leak_time
+            leaked_amount = time_elapsed * self.leak_rate
+            self._level = max(0.0, self._level - leaked_amount)
+            self._last_leak_time = current_time
+            self._level += 1.0
+
+    def status(self) -> Dict[str, float]:
+        """Get current bucket status for debugging/monitoring.
+
+        Returns:
+            Dictionary containing current bucket state information.
+        """
+        current_time = time.time()
+        time_elapsed = current_time - self._last_leak_time
+        leaked_amount = time_elapsed * self.leak_rate
+        current_level = max(0.0, self._level - leaked_amount)
+
+        return {
+            "level": current_level,
+            "capacity": self.capacity,
+            "leak_rate": self.leak_rate,
+            "utilization": current_level / self.capacity,
+        }
+
+    def reset(self) -> None:
+        """Reset the bucket state."""
+
+        # Use run_async_in_sync instead of asyncio.Runner to avoid deadlocks
+        async def _reset():
+            async with self._lock:
+                self._level = 0.0
+                self._last_leak_time = time.time()
+
+        run_async_in_sync(_reset)
+
+    def __enter__(self) -> "LeakyBucketRateLimiter":
+        """Enter the sync context manager, applying rate limiting."""
+        run_async_in_sync(self._acquire)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit the sync context manager."""
+        pass
+
+    async def __aenter__(self) -> "LeakyBucketRateLimiter":
+        """Enter the async context manager, applying rate limiting."""
+        await self._acquire()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit the async context manager."""
+        pass
+
+
+class GCRARateLimiter:
+    """Generic Cell Rate Algorithm (GCRA) rate limiter for async operations.
+
+    Can be used as both a decorator and async context manager.
+
+    Args:
+        max_requests: Maximum number of requests allowed in the time window.
+        window_seconds: Time window duration in seconds.
+
+    Raises:
+        ValueError: If max_requests or window_seconds are not positive.
+
+    Example:
+        >>> @GCRARateLimiter(max_requests=10, window_seconds=2)
+        >>> async def async_api_call():
+        ...     return await some_api()
+    """
+
+    def __init__(self, max_requests: int, window_seconds: float):
+        """Initialize the GCRA rate limiter.
+
+        Args:
+            max_requests: Maximum number of requests allowed in the time window.
+            window_seconds: Time window duration in seconds.
+        """
+        if max_requests <= 0 or window_seconds <= 0:
+            raise ValueError("requests and window_seconds must be positive")
+
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.requests_per_second = max_requests / window_seconds
+        self.increment = 1.0 / self.requests_per_second  # Time between requests (T)
+        self.burst_size = max_requests  # Allow full burst capacity
+        self.limit = self.burst_size * self.increment  # Maximum bucket level (L)
+
+        # GCRA state
+        self._tat = 0.0  # Theoretical Arrival Time
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        """Acquire permission to make a request.
+
+        Blocks until a token is available according to GCRA.
+        """
+        async with self._lock:
+            now = time.time()
+
+            # GCRA algorithm:
+            # TAT' = max(TAT, now) + T
+            # If TAT' - now <= L, allow the request and set TAT = TAT'
+            # Otherwise, wait until TAT' - L
+
+            new_tat = max(self._tat, now) + self.increment
+
+            if new_tat - now <= self.limit:
+                # Request can proceed immediately
+                self._tat = new_tat
+            else:
+                # Need to wait
+                wait_time = new_tat - now - self.limit
                 await asyncio.sleep(wait_time)
+                self._tat = new_tat
 
-    async def _complete(self):
-        """Remove completed action from active count."""
-        logging.debug("Completing action")
-        async with self.lock:
-            if self.n_active > 0:
-                self.n_active -= 1
+    def __call__(self, func: Callable) -> Callable:
+        """Apply rate limiting to a function.
 
-    def __call__(self, func):
-        """Apply rate limiting to a function as a decorator."""
-        if asyncio.iscoroutinefunction(func):
+        Args:
+            func: The function to be rate limited (sync or async).
 
-            @wraps(func)
-            async def async_wrapped(*args, **kwargs):
-                await self._wait()
-                try:
-                    return await func(*args, **kwargs)
-                finally:
-                    await self._complete()
+        Returns:
+            The wrapped function with rate limiting applied.
 
-            return async_wrapped
-        else:
-            raise TypeError("Only async functions can be decorated with async rate limiter")
+        Usage:
+            @limiter
+            async def my_async_function():
+                # your code here
+
+            @limiter
+            def my_sync_function():
+                # your code here
+        """
+        return _create_sync_async_wrapper(self.acquire, func)
+
+    async def __aenter__(self):
+        """Async context manager entry.
+
+        Usage:
+            async with limiter:
+                # your code here
+        """
+        await self.acquire()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        # Nothing to clean up
+        pass
+
+    def reset(self) -> None:
+        """Reset the limiter state (useful for testing)."""
+        self._tat = 0.0
+
+    @property
+    def estimated_wait_time(self) -> float:
+        """Estimate how long the next request would need to wait.
+
+        Note: This is approximate and may change by the time acquire() is called.
+        """
+        now = time.time()
+        new_tat = max(self._tat, now) + self.increment
+        return max(0, new_tat - now - self.limit)

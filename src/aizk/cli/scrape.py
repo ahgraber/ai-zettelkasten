@@ -45,14 +45,13 @@ from aizk.extractors import (
 from aizk.extractors.chrome import detect_playwright_chromium
 from aizk.utilities import (
     LOG_FMT,
-    AsyncTimeWindowRateLimiter,
+    SlidingWindowRateLimiter,
     basic_log_config,
     # logging_redirect_tqdm,
     path_is_dir,
     path_is_file,
     process_manager,
 )
-from aizk.utilities.async_helpers import synchronize
 from aizk.utilities.url_helpers import find_all_urls, is_social_url
 
 logger = logging.getLogger()
@@ -137,7 +136,7 @@ async def scrape(source: Source):
     return result
 
 
-async def run(pending: t.Sequence[Source], limiter: AsyncTimeWindowRateLimiter) -> list[Source]:
+async def run(pending: t.Sequence[Source], limiter: SlidingWindowRateLimiter) -> list[Source]:
     """Run scraping tasks."""
     scrape_with_limiter = limiter(scrape)
     results = []
@@ -198,7 +197,7 @@ if __name__ == "__main__":
     )
     staticfile_extractor = StaticFileExtractor(data_dir=archive_dir)
 
-    alimiter = AsyncTimeWindowRateLimiter(
+    alimiter = SlidingWindowRateLimiter(
         int(config.get("LIMITER_REQUESTS", 5)),
         int(config.get("LIMITER_SECONDS", 20)),
     )  # 5 requests every 20 seconds
@@ -218,8 +217,6 @@ if __name__ == "__main__":
     logger.info("Scraping sources...")
     pending = get_pending_sources(engine)
 
-    # alimited_scrape = alimiter(scrape)
-    # results = [synchronize(alimited_scrape, source) for source in pending]
     with logging_redirect_tqdm():
         for batch in batched(tqdm(pending, position=0, leave=True), 100):
             results = asyncio.run(run(batch, alimiter))

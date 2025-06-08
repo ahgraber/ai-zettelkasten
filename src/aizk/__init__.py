@@ -1,12 +1,15 @@
 import logging
 from pathlib import Path
 
+# Package initialization for aizk
+
 # assumes:
 # ai-zettelkasten
 # ├ src/
 # | └ aizk
 # |   └ __init__.py - (this file)
 # └ VERSION
+
 with open(Path(__file__).parent.parent / "VERSION", "r") as f:
     __version__ = f.readline().strip()
 

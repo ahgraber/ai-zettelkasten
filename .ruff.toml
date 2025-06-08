@@ -110,7 +110,8 @@ unfixable = ["B"]
 # "path/to/file.py" = ["E402"]
 ".ci/*" = ["D"]
 "docs/*" = ["D"]
-"notebooks/*" = ["B018", "D", "S"]
+"notebooks/*" = ["B018", "D", "S", "F704"
+]
 "**/tests/*" = ["D", "S101", "S301"]
 
 # --- ruff plugins --------------------
