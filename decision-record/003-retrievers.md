@@ -3,6 +3,7 @@
 ## Status
 
 <!-- Date -->
+
 <!-- Proposed/Accepted/Deprecated/Superseded -->
 
 ## Context
@@ -23,7 +24,9 @@ Why does this decision matter? -->
 - [[2401.18059] RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval](https://arxiv.org/abs/2401.18059)
 - [[2312.06648] Dense X Retrieval: What Retrieval Granularity Should We Use?](https://arxiv.org/abs/2312.06648) -
   deconstruct text blobs into propositions (complete factoids)
-- [Introducing Contextual Retrieval \ Anthropic](https://www.anthropic.com/news/contextual-retrieval)
+- [Introducing Contextual Retrieval \\ Anthropic](https://www.anthropic.com/news/contextual-retrieval)
+- [Claimify: Extracting high-quality claims from language model outputs - Microsoft Research](https://www.microsoft.com/en-us/research/video/claimify-extracting-high-quality-claims-from-language-model-outputs/)
+- [[2409.04701] Late Chunking: Contextual Chunk Embeddings Using Long-Context Embedding Models](https://arxiv.org/abs/2409.04701)
 
 ## Decision
 
