@@ -5,7 +5,7 @@ import inspect
 import time
 from typing import Any, Callable, Dict, Optional
 
-from aizk.utilities.async_helpers import run_async_in_sync
+from aizk.utilities.async_utils import run_async_in_sync
 
 
 def _create_sync_async_wrapper(rate_limit_func: Callable, original_func: Callable) -> Callable:
@@ -67,6 +67,7 @@ class SlidingWindowRateLimiter:
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self._window = deque()
+        self._pending_requests = 0  # Track pending requests to prevent race conditions
         self._lock = asyncio.Lock()
 
     def __call__(self, func: Callable) -> Callable:
@@ -95,8 +96,14 @@ class SlidingWindowRateLimiter:
                 return
 
             # Calculate wait time until oldest request expires
+            # Account for pending requests to ensure proper queuing
             oldest_request = self._window[0]
-            wait_time = self.window_seconds - (current_time - oldest_request)
+            base_wait_time = self.window_seconds - (current_time - oldest_request)
+
+            # Add additional wait time for pending requests to ensure proper ordering
+            additional_wait = self._pending_requests * (self.window_seconds / self.max_requests)
+            wait_time = base_wait_time + additional_wait
+            self._pending_requests += 1
 
         # Wait outside the lock
         if wait_time > 0:
@@ -109,6 +116,7 @@ class SlidingWindowRateLimiter:
             while self._window and self._window[0] <= current_time - self.window_seconds:
                 self._window.popleft()
             self._window.append(current_time)
+            self._pending_requests = max(0, self._pending_requests - 1)
 
     def reset(self) -> None:
         """Reset the rate limiter window."""
@@ -117,6 +125,7 @@ class SlidingWindowRateLimiter:
         async def _reset():
             async with self._lock:
                 self._window.clear()
+                self._pending_requests = 0
 
         run_async_in_sync(_reset)
 
@@ -182,6 +191,7 @@ class LeakyBucketRateLimiter:
         self.leak_rate = max_requests / window_seconds  # Requests per second (sustained rate)
         self._level = 0.0
         self._last_leak_time = time.time()
+        self._pending_requests = 0  # Track pending requests to prevent race conditions
         self._lock = asyncio.Lock()
 
     def __call__(self, func: Callable) -> Callable:
@@ -212,8 +222,11 @@ class LeakyBucketRateLimiter:
                 return
 
             # Calculate wait time for bucket to leak enough
-            excess = (self._level + 1.0) - self.capacity
+            # Account for pending requests to ensure proper queuing
+            effective_level = self._level + self._pending_requests
+            excess = (effective_level + 1.0) - self.capacity
             wait_time = excess / self.leak_rate
+            self._pending_requests += 1
 
         # Wait outside the lock
         if wait_time > 0:
@@ -227,6 +240,7 @@ class LeakyBucketRateLimiter:
             self._level = max(0.0, self._level - leaked_amount)
             self._last_leak_time = current_time
             self._level += 1.0
+            self._pending_requests = max(0, self._pending_requests - 1)
 
     def status(self) -> Dict[str, float]:
         """Get current bucket status for debugging/monitoring.
@@ -244,6 +258,7 @@ class LeakyBucketRateLimiter:
             "capacity": self.capacity,
             "leak_rate": self.leak_rate,
             "utilization": current_level / self.capacity,
+            "pending_requests": self._pending_requests,
         }
 
     def reset(self) -> None:
@@ -254,6 +269,7 @@ class LeakyBucketRateLimiter:
             async with self._lock:
                 self._level = 0.0
                 self._last_leak_time = time.time()
+                self._pending_requests = 0
 
         run_async_in_sync(_reset)
 

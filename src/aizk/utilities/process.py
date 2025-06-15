@@ -18,9 +18,23 @@ import psutil
 
 import openai
 
-from aizk.utilities import path_is_dir, path_is_file
+from aizk.utilities.path_utils import path_is_dir, path_is_file
 
 logger = logging.getLogger(__name__)
+
+
+@contextlib.contextmanager
+def temp_env_var(key, value):
+    """Context manager to temporarily set an environment variable."""
+    original_value = os.getenv(key)
+    os.environ[key] = value
+    try:
+        yield
+    finally:
+        if original_value is not None:
+            os.environ[key] = original_value
+        else:
+            del os.environ[key]
 
 
 @contextlib.contextmanager

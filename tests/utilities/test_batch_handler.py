@@ -8,7 +8,7 @@ import pytest
 
 import openai
 
-from aizk.utilities.batch_handler import (
+from aizk.utilities.batch_utils import (
     BatchHandler,
     BatchProcessingError,
     BatchValidationError,

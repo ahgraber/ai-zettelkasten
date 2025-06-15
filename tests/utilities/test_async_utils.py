@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from aizk.utilities.async_helpers import (
+from aizk.utilities.async_utils import (
     is_event_loop_running,
     run_async_in_sync,
     run_async_tasks,

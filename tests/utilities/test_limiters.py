@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from aizk.utilities.async_helpers import run_async_in_sync
+from aizk.utilities.async_utils import run_async_in_sync
 from aizk.utilities.limiters import (
     GCRARateLimiter,
     LeakyBucketRateLimiter,
@@ -403,6 +403,66 @@ class TestLeakyBucketRateLimiter:
 
         assert len(results) == min(expected_burst, 5)
         assert batch_time < window_seconds / 2
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_concurrent_access_race_condition_fix(self):
+        """Test concurrent access to verify race condition fix with pending requests tracking."""
+        # Use a small capacity and slow leak rate to make race conditions more likely
+        limiter = LeakyBucketRateLimiter(max_requests=2, window_seconds=1, max_burst=2)
+
+        @limiter
+        async def test_func():
+            await asyncio.sleep(0.01)  # Small delay to simulate work
+            return 1
+
+        # Launch many concurrent requests that would cause race conditions
+        tasks = [test_func() for _ in range(8)]
+        start = time.monotonic()
+        results = await asyncio.gather(*tasks)
+        total_time = time.monotonic() - start
+
+        assert len(results) == 8
+        assert all(result == 1 for result in results)
+
+        # With proper queuing, this should take time proportional to the excess requests
+        # Since we have capacity for 2 immediate requests and leak rate of 2/sec,
+        # the remaining 6 requests should be properly queued
+        assert total_time >= 2.5  # Should take at least 2.5 seconds due to proper rate limiting
+
+        # Verify status shows no pending requests after completion
+        status = limiter.status()
+        assert status["pending_requests"] == 0
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_pending_requests_tracking(self):
+        """Test that pending requests are tracked correctly."""
+        limiter = LeakyBucketRateLimiter(max_requests=1, window_seconds=2, max_burst=1)
+
+        # Create a task that will need to wait
+        async def slow_task():
+            async with limiter:
+                await asyncio.sleep(0.1)
+                return 1
+
+        # Start first task (should proceed immediately)
+        task1 = asyncio.create_task(slow_task())
+        await asyncio.sleep(0.05)  # Let first task start
+
+        # Start second task (should be pending)
+        task2 = asyncio.create_task(slow_task())
+        await asyncio.sleep(0.05)  # Let second task register as pending
+
+        # Check that pending requests are tracked
+        status = limiter.status()
+        assert status["pending_requests"] >= 1
+
+        # Wait for both tasks to complete
+        results = await asyncio.gather(task1, task2)
+        assert len(results) == 2
+
+        # Check that pending requests are cleared
+        status = limiter.status()
+        assert status["pending_requests"] == 0
 
 
 class TestGCRARateLimiter:
