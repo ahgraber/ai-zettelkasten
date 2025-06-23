@@ -84,8 +84,10 @@ for RAG.
 ## serve
 
 - [Cinnamon/kotaemon: An open-source RAG-based tool for chatting with your documents.](https://github.com/Cinnamon/kotaemon)
+- [Chainlit/chainlit: Build Conversational AI in minutes ⚡️](https://github.com/Chainlit/chainlit)
 - [CopilotKit/CopilotKit: React UI + elegant infrastructure for AI Copilots, in-app AI agents, AI chatbots, and AI-powered Textareas 🪁](https://github.com/CopilotKit/CopilotKit)
 - [AnswerDotAI/fasthtml: The fastest way to create an HTML app](https://github.com/AnswerDotAI/fasthtml)
+  - [MonsterUI: Bringing Beautiful UI to FastHTML – Answer.AI](https://www.answer.ai/posts/2025-01-15-monsterui.html)
 - [reflex-dev/reflex: 🕸️ Web apps in pure Python 🐍](https://github.com/reflex-dev/reflex)
 
 See also
@@ -112,6 +114,8 @@ See also
 - [NirDiamant/Controllable-RAG-Agent: This repository provides an advanced Retrieval-Augmented Generation (RAG) solution for complex question answering. It uses sophisticated graph based algorithm to handle the tasks.](https://github.com/NirDiamant/Controllable-RAG-Agent)
 
 - [superlinear-ai/raglite: 🥤 RAGLite is a Python toolkit for Retrieval-Augmented Generation (RAG) with PostgreSQL or SQLite](https://github.com/superlinear-ai/raglite)
+
+- [foambubble/foam: A personal knowledge management and sharing system for VSCode](https://github.com/foambubble/foam)
 
 ## plugins
 
