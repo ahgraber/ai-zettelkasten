@@ -1,10 +1,10 @@
-# 003 - Retrieval Systems
+# 007 - Indexing, Search, and Retrieval
 
 ## Status
 
 <!-- Date -->
 
-<!-- Proposed/Accepted/Deprecated/Superseded -->
+<!-- Proposed/Accepted/Revised/Deprecated/Superseded -->
 
 ## Context
 
@@ -13,20 +13,34 @@ What are the existing constraints?
 Why does this decision matter? -->
 
 - bm25
+
 - vector embedding
+
 - Learned Sparse Retrieval
+
   - SPLADE
     - [naver/splade: SPLADE: sparse neural search (SIGIR21, SIGIR22)](https://github.com/naver/splade?tab=readme-ov-file)
     - [From grep to SPLADE: a journey through semantic search](https://blog.elicit.com/semantic-search/)
     - [SPLADE for Sparse Vector Search Explained | Pinecone](https://www.pinecone.io/learn/splade/)
   - [[2108.08513] TILDE: Fast Passage Re-ranking with Contextualized Exact Term Matching and Efficient Passage Expansion](https://arxiv.org/abs/2108.08513)
   - [Context-Aware Document Term Weighting for Ad-Hoc Search](https://dl.acm.org/doi/pdf/10.1145/3366423.3380258)
+
 - [[2401.18059] RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval](https://arxiv.org/abs/2401.18059)
+
 - [[2312.06648] Dense X Retrieval: What Retrieval Granularity Should We Use?](https://arxiv.org/abs/2312.06648) -
   deconstruct text blobs into propositions (complete factoids)
+
 - [Introducing Contextual Retrieval \\ Anthropic](https://www.anthropic.com/news/contextual-retrieval)
+
 - [Claimify: Extracting high-quality claims from language model outputs - Microsoft Research](https://www.microsoft.com/en-us/research/video/claimify-extracting-high-quality-claims-from-language-model-outputs/)
+
 - [[2409.04701] Late Chunking: Contextual Chunk Embeddings Using Long-Context Embedding Models](https://arxiv.org/abs/2409.04701)
+
+- [Rerank | Boost Enterprise Search and Retrieval | Cohere](https://cohere.com/rerank) - $2.00 / 1K searches
+
+- [VoyageAI Rerank](https://docs.voyageai.com/docs/pricing#rerankers) - $0.05 / 1M tokens
+
+- [Jina Reranker API](https://jina.ai/reranker/) - $0.05 / 1M tokens; includes _multilingual, multimodal rerank_!
 
 ## Decision
 
@@ -67,7 +81,7 @@ Pros
 Cons
 Reason for not selecting -->
 
-### Option 2: [Alternative Approach Name]
+#### Option 2: [Alternative Approach Name]
 
 <!-- Description
 Pros
@@ -82,6 +96,11 @@ Estimated timeline
 Key implementation steps -->
 
 ## Related ADRs
+
+- [002 - Content Parsing](./002-content-parsing.md)
+- [003 - Database](./003-database.md)
+- [004 - Model Provider (Framework)](./004-model-provider.md)
+- [005 - Chunking](./005-chunking.md)
 
 <!-- Reference numbers of related decisions
 Links to dependent or impacted architectural decisions -->
