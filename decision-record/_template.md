@@ -3,7 +3,8 @@
 ## Status
 
 <!-- Date -->
-<!-- Proposed/Accepted/Deprecated/Superseded -->
+
+<!-- Proposed/Accepted/Revised/Deprecated/Superseded -->
 
 ## Context
 
@@ -50,7 +51,7 @@ Pros
 Cons
 Reason for not selecting -->
 
-### Option 2: [Alternative Approach Name]
+#### Option 2: [Alternative Approach Name]
 
 <!-- Description
 Pros
