@@ -86,6 +86,7 @@ data/
 *.bak
 *.log
 *.zip
+.archive/
 .logs/
 .task/
 .temp*
