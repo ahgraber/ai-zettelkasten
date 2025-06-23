@@ -36,17 +36,17 @@ C_max = Jane Doe plans to speak at conferences other than Youth for Climate and 
 
 USER_TEMPLATE = """
 Question:
-{question}
+{{question}}
 
 Excerpt from response:
-{excerpt}
+{{excerpt}}
 
 Sentence of interest:
-{sentence}
+{{sentence}}
 
 All claims:
-{claims}
+{{claims}}
 
 Claim of interest:
-{claim}
+{{claim}}
 """

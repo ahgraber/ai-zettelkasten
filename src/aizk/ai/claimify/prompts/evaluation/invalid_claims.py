@@ -22,5 +22,5 @@ In isolation, is C a complete, declarative sentence? It's missing a subject and 
 
 USER_TEMPLATE = """
 Claim:
-{claim}
+{{claim}}
 """

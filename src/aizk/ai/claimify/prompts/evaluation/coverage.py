@@ -82,14 +82,14 @@ Element 7: CleanTech demonstrates the power of collaboration
 
 USER_TEMPLATE = """
 Question (context for E):
-{question}
+{{question}}
 
 Excerpt from response (context for E):
-{excerpt}
+{{excerpt}}
 
 Claims (C):
-{claims}
+{{claims}}
 
 Elements (E):
-{elements}
+{{elements}}
 """

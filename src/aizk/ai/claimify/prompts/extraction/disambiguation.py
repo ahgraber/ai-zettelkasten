@@ -37,11 +37,11 @@ First, print "Incomplete Names, Acronyms, Abbreviations:" followed by your step-
 
 USER_TEMPLATE = """
 Question:
-{question}
+{{question}}
 
 Excerpt:
-{excerpt}
+{{excerpt}}
 
 Sentence:
-{sentence}
+{{sentence}}
 """

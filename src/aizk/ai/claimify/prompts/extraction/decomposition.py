@@ -68,11 +68,11 @@ Next, it is EXTREMELY important that you consider that each fact-checker in the 
 
 USER_TEMPLATE = """
 Question:
-{question}
+{{question}}
 
 Excerpt:
-{excerpt}
+{{excerpt}}
 
 Sentence:
-{sentence}
+{{sentence}}
 """

@@ -56,11 +56,11 @@ What are ALL elements of S_restated?
 
 USER_TEMPLATE = """
 Question:
-{question}
+{{question}}
 
 Excerpt from response:
-{excerpt}
+{{excerpt}}
 
 Sentence of interest:
-{sentence}
+{{sentence}}
 """

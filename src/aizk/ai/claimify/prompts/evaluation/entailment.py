@@ -59,16 +59,16 @@ If the Earth Protectors identified that the oil spill caused significant damage 
 
 USER_TEMPLATE = """
 Question:
-{question}
+{{question}}
 
 Excerpt from response:
-{excerpt}
+{{excerpt}}
 
 Sentence of interest:
-{sentence}
+{{sentence}}
 
 Claim:
-{claim}
+{{claim}}
 
 REMEMBER: if the context of S entails C, but S itself does not, you should still conclude that S entails C.
 """

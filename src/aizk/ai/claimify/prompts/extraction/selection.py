@@ -45,11 +45,11 @@ Sentence with only verifiable information:
 
 USER_TEMPLATE = """
 Question:
-{question}
+{{question}}
 
 Excerpt:
-{excerpt}
+{{excerpt}}
 
 Sentence:
-{sentence}
+{{sentence}}
 """

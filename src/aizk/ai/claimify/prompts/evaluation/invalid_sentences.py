@@ -36,11 +36,11 @@ Can S be interpreted as a complete, declarative sentence as is? If not, given it
 
 USER_TEMPLATE = """
 Question:
-{question}
+{{question}}
 
 Excerpt from response:
-{excerpt}
+{{excerpt}}
 
 Sentence of interest:
-{sentence}
+{{sentence}}
 """
