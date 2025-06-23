@@ -8,12 +8,9 @@ import re
 from typing import Generator, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, unquote_plus, urlencode, urljoin, urlparse, urlunparse
 
-import httpx
 from pydantic import HttpUrl, ValidationError as PydanticValidationError
 import validators
 from validators import ValidationError as URLValidatorValidationError
-
-import requests
 
 from aizk.utilities.parse import check_balanced_brackets
 from aizk.utilities.process import temp_env_var
@@ -136,7 +133,7 @@ def validate_url(url: str) -> str:
     # First check if URL matches our regex pattern
     pattern = re.compile(URL_REGEX, re.IGNORECASE | re.UNICODE)
     if not pattern.match(url.strip()):
-        raise ValueError(f"URL {url} does not match expected pattern")
+        raise ValueError(f"URL does not match expected url regex: {url}")
 
     validated = HttpUrl(url)
     url = str(validated)
@@ -222,7 +219,7 @@ def is_github_url(url: str) -> bool:
 
 
 def is_arxiv_url(url: str) -> bool:
-    """Check if URL is from arXiv.org."""
+    """Check if URL is from arxiv.org."""
     validated = validate_url(url)
 
     try:
@@ -233,11 +230,11 @@ def is_arxiv_url(url: str) -> bool:
         return parsed.netloc in ARXIV_DOMAINS
 
 
-# --- arXiv Utilities --------------------------------------------------------
+# --- arxiv Utilities --------------------------------------------------------
 def validate_arxiv_url(url: str) -> str:
-    """Validate arXiv URL."""
+    """Validate arxiv URL."""
     if "arxiv.org" not in url:
-        raise ValueError("URL must be from arXiv.org")
+        raise ValueError(f"URL must be from arxiv.org: {url}")
 
     validated = validate_url(url)
     parsed = urlparse(validated)
@@ -245,56 +242,56 @@ def validate_arxiv_url(url: str) -> str:
     if parsed.path and not (
         parsed.path.startswith("/pdf") or parsed.path.startswith("/abs") or parsed.path.startswith("/html")
     ):
-        raise ValueError("URL must be to PDF, abstract, or HTML page")
+        raise ValueError(f"Arxiv URL must be to PDF, abstract, or HTML page: {url}")
 
     return validated
 
 
 def get_arxiv_id(url: str) -> str:
-    """Extract arXiv ID from URL."""
+    """Extract arxiv ID from URL."""
     url = validate_arxiv_url(url)
     path = urlparse(url).path
 
-    # arXiv ID pattern
+    # arxiv ID pattern
     arxiv_id_regex = re.compile(r"([0-2])([0-9])(0|1)([0-9])\.[0-9]{4,5}(v[0-9]{1,2})?", re.IGNORECASE)
     match = re.search(arxiv_id_regex, path)
     if match:
         return match[0]
     else:
-        raise ValueError(f"Could not find arXiv ID in {url}.")
+        raise ValueError(f"Could not find arxiv ID in {url}.")
 
 
 def arxiv_abs_url(arxiv_id: str, use_export_url: bool = True) -> str:
-    """Convert arXiv ID to abstract URL."""
+    """Convert arxiv ID to abstract URL."""
     base_url = "http://export.arxiv.org/" if use_export_url else "https://arxiv.org/"
     return urljoin(base_url, f"abs/{arxiv_id}")
 
 
 def arxiv_pdf_url(arxiv_id: str, use_export_url: bool = True) -> str:
-    """Convert arXiv ID to PDF URL."""
+    """Convert arxiv ID to PDF URL."""
     base_url = "http://export.arxiv.org/" if use_export_url else "https://arxiv.org/"
     return urljoin(base_url, f"pdf/{arxiv_id}")
 
 
 def arxiv_html_url(arxiv_id: str, use_export_url: bool = True) -> str:
-    """Convert arXiv ID to HTML URL."""
+    """Convert arxiv ID to HTML URL."""
     base_url = "http://export.arxiv.org/" if use_export_url else "https://arxiv.org/"
     return urljoin(base_url, f"html/{arxiv_id}")
 
 
 def to_arxiv_export_url(url: str) -> str:
-    """Convert arXiv URL to export URL."""
+    """Convert arxiv URL to export URL."""
     if not is_arxiv_url(url):
-        raise ValueError("URL must be from arXiv.org")
+        raise ValueError(f"URL must be from arxiv.org: {url}")
 
     return re.sub(r"https?://arxiv\.org", "http://export.arxiv.org", url)
 
 
 async def arxiv_title(arxiv_id: str, timeout: int = 30) -> str:
-    """Extract the title from an arXiv abstract page.
+    """Extract the title from an arxiv abstract page.
 
     Args:
-        arxiv_id: The arXiv paper ID (e.g., "2301.07041")
+        arxiv_id: The arxiv paper ID (e.g., "2301.07041")
         timeout: Request timeout in seconds
 
     Returns:
@@ -306,9 +303,10 @@ async def arxiv_title(arxiv_id: str, timeout: int = 30) -> str:
         RuntimeError: If the title cannot be extracted from the page
     """
     from bs4 import BeautifulSoup
+    import httpx
 
     if not arxiv_id or not arxiv_id.strip():
-        raise ValueError("arXiv ID cannot be empty")
+        raise ValueError("arxiv ID cannot be empty")
 
     url = arxiv_abs_url(arxiv_id)
 
@@ -318,7 +316,7 @@ async def arxiv_title(arxiv_id: str, timeout: int = 30) -> str:
             response = await client.get(url)
             response.raise_for_status()
     except httpx.RequestError:
-        logger.exception("Failed to fetch arXiv page for ID %s", arxiv_id)
+        logger.exception(f"Failed to fetch arxiv page for ID {arxiv_id}")
         raise
 
     soup = BeautifulSoup(response.text, "html.parser")
@@ -326,18 +324,18 @@ async def arxiv_title(arxiv_id: str, timeout: int = 30) -> str:
     # Find the title element
     title_element = soup.find("h1", class_="title mathjax")
     if title_element is None:
-        raise RuntimeError(f"Could not find title element on arXiv page for ID {arxiv_id}")
+        raise RuntimeError(f"Could not find title element on arxiv page for ID {arxiv_id}")
 
     # Extract text content from the element
     title_text = title_element.get_text(strip=True)
     if not title_text:
-        raise RuntimeError(f"Could not extract title text from arXiv page for ID {arxiv_id}")
+        raise RuntimeError(f"Could not extract title text from arxiv page for ID {arxiv_id}")
 
     # Remove common prefixes like "Title:" if present
     title = title_text[6:].strip() if title_text.lower().startswith("title:") else title_text
 
     if not title:
-        raise RuntimeError(f"Extracted title is empty for arXiv ID {arxiv_id}")
+        raise RuntimeError(f"Extracted title is empty for arxiv ID {arxiv_id}")
 
     return title
 
@@ -405,7 +403,7 @@ def _huggingface_to_arxiv(url: str, use_export_url: bool = True) -> str:
 
 
 def convert_paper_urls_to_arxiv(url: str, use_export_url: bool = True) -> str:
-    """Convert paper URLs from various platforms to arXiv."""
+    """Convert paper URLs from various platforms to arxiv."""
     # Hugging Face papers
     url = _emergentmind_to_arxiv(url, use_export_url)
     url = _huggingface_to_arxiv(url, use_export_url)
@@ -413,7 +411,7 @@ def convert_paper_urls_to_arxiv(url: str, use_export_url: bool = True) -> str:
 
 
 def standardize_arxiv(url: str, use_export_url: bool = True) -> str:
-    """Standardize arXiv URLs to abstract pages."""
+    """Standardize arxiv URLs to abstract pages."""
     pattern = re.compile(r"(?:arxiv.org/[a-z]+?/)(\d+\.\d+)", re.IGNORECASE)
     matches = pattern.findall(url)
     if matches:
@@ -538,6 +536,8 @@ def clean_md_artifacts(url: str) -> str:
 
 def follow_redirects(url: str, timeout: int = 5) -> str:
     """Follow HTTP redirects and return the final URL."""
+    import requests
+
     try:
         with requests.get(url, timeout=timeout, allow_redirects=True) as response:
             response.raise_for_status()
