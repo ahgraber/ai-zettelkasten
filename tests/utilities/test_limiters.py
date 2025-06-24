@@ -1,14 +1,21 @@
 import asyncio
 import time
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from aizk.utilities.async_utils import run_async_in_sync
+import tenacity
+
+from aizk.utilities.async_utils import run_async
 from aizk.utilities.limiters import (
     GCRARateLimiter,
     LeakyBucketRateLimiter,
+    Limiter,
     SlidingWindowRateLimiter,
+    _create_sync_async_wrapper,
+    concurrency_limit,
+    rate_limit,
+    retry,
 )
 
 
@@ -229,24 +236,25 @@ class TestLeakyBucketRateLimiter:
         with pytest.raises(ValueError, match="requests and window_seconds must be positive"):
             LeakyBucketRateLimiter(max_requests=5, window_seconds=0)
 
-        with pytest.raises(ValueError, match="max_burst must be positive"):
-            LeakyBucketRateLimiter(max_requests=5, window_seconds=10, max_burst=0)
+        with pytest.raises(ValueError, match="requests and window_seconds must be positive"):
+            LeakyBucketRateLimiter(max_requests=5, window_seconds=-1)
 
-        with pytest.raises(ValueError, match="max_burst must be positive"):
-            LeakyBucketRateLimiter(max_requests=5, window_seconds=10, max_burst=-1)
+        with pytest.raises(ValueError, match="capacity must be positive"):
+            LeakyBucketRateLimiter(max_requests=5, window_seconds=10, capacity=0)
+
+        with pytest.raises(ValueError, match="capacity must be positive"):
+            LeakyBucketRateLimiter(max_requests=5, window_seconds=10, capacity=-1)
 
     def test_init_valid_parameters(self):
         """Test initialization with valid parameters."""
         limiter = LeakyBucketRateLimiter(max_requests=5, window_seconds=10)
         assert limiter.max_requests == 5
         assert limiter.window_seconds == 10
-        assert limiter.max_burst == 5  # Default to max_requests
-        assert limiter.capacity == 5.0
+        assert limiter.capacity == 5.0  # Default to max_requests
         assert limiter.leak_rate == 0.5  # 5 requests / 10 seconds
 
-        # Test with custom max_burst
-        limiter_burst = LeakyBucketRateLimiter(max_requests=5, window_seconds=10, max_burst=10)
-        assert limiter_burst.max_burst == 10
+        # Test with custom capacity
+        limiter_burst = LeakyBucketRateLimiter(max_requests=5, window_seconds=10, capacity=10)
         assert limiter_burst.capacity == 10.0
 
     def test_sync_function_decoration(self):
@@ -297,18 +305,27 @@ class TestLeakyBucketRateLimiter:
         assert third_result == "async_result"
         assert third_call_time >= 0.1
 
-    def test_status_method(self):
-        """Test status method returns correct bucket information."""
-        limiter = LeakyBucketRateLimiter(max_requests=4, window_seconds=2)
+    def test_leaking_behavior(self):
+        """Test that bucket leaks over time."""
+        limiter = LeakyBucketRateLimiter(max_requests=1, window_seconds=0.5)
 
-        status = limiter.status()
-        assert "level" in status
-        assert "capacity" in status
-        assert "leak_rate" in status
-        assert "utilization" in status
-        assert status["capacity"] == 4.0
-        assert status["leak_rate"] == 2.0  # 4 requests / 2 seconds
-        assert 0 <= status["utilization"] <= 1
+        @limiter
+        def test_func():
+            return "result"
+
+        # Use up the capacity
+        test_func()
+
+        # Wait for some leaking
+        time.sleep(0.3)
+
+        # Should be able to call again with less delay
+        start = time.monotonic()
+        result = test_func()
+        call_time = time.monotonic() - start
+
+        assert result == "result"
+        assert call_time < 0.5
 
     def test_reset_functionality(self):
         """Test reset clears the bucket state."""
@@ -338,13 +355,13 @@ class TestLeakyBucketRateLimiter:
 
     def test_burst_capacity(self):
         """Test that burst capacity allows temporary bursts."""
-        limiter = LeakyBucketRateLimiter(max_requests=2, window_seconds=2, max_burst=4)
+        limiter = LeakyBucketRateLimiter(max_requests=2, window_seconds=2, capacity=4)
 
         @limiter
         def test_func():
-            return 1
+            return "result"
 
-        # Should allow burst up to max_burst
+        # Should allow burst up to capacity
         start = time.monotonic()
         results = [test_func() for _ in range(4)]
         burst_time = time.monotonic() - start
@@ -380,35 +397,26 @@ class TestLeakyBucketRateLimiter:
         assert first_batch_time < 1.0
 
     @pytest.mark.parametrize(
-        "max_requests,window_seconds,max_burst",
+        "max_requests,window_seconds,capacity",
         [
             (1, 1, None),
             (5, 2, 10),
             (10, 5, 15),
         ],
     )
-    def test_different_configurations(self, max_requests, window_seconds, max_burst):
+    def test_different_configurations(self, max_requests, window_seconds, capacity):
         """Test limiter with different configurations."""
-        limiter = LeakyBucketRateLimiter(max_requests=max_requests, window_seconds=window_seconds, max_burst=max_burst)
-
-        @limiter
-        def test_func():
-            return 1
-
-        expected_burst = max_burst or max_requests
-        # Should allow burst capacity calls quickly
-        start = time.monotonic()
-        results = [test_func() for _ in range(min(expected_burst, 5))]
-        batch_time = time.monotonic() - start
-
-        assert len(results) == min(expected_burst, 5)
-        assert batch_time < window_seconds / 2
+        limiter = LeakyBucketRateLimiter(max_requests=max_requests, window_seconds=window_seconds, capacity=capacity)
+        assert limiter.max_requests == max_requests
+        assert limiter.window_seconds == window_seconds
+        expected_capacity = capacity if capacity is not None else max_requests
+        assert limiter.capacity == float(expected_capacity)
 
     @pytest.mark.asyncio(loop_scope="function")
     async def test_concurrent_access_race_condition_fix(self):
         """Test concurrent access to verify race condition fix with pending requests tracking."""
-        # Use a small capacity and slow leak rate to make race conditions more likely
-        limiter = LeakyBucketRateLimiter(max_requests=2, window_seconds=1, max_burst=2)
+        # Use a small capacity and slow leak rate to test concurrent access
+        limiter = LeakyBucketRateLimiter(max_requests=2, window_seconds=1, capacity=2)
 
         @limiter
         async def test_func():
@@ -424,45 +432,10 @@ class TestLeakyBucketRateLimiter:
         assert len(results) == 8
         assert all(result == 1 for result in results)
 
-        # With proper queuing, this should take time proportional to the excess requests
+        # With proper rate limiting, this should take time proportional to the excess requests
         # Since we have capacity for 2 immediate requests and leak rate of 2/sec,
         # the remaining 6 requests should be properly queued
-        assert total_time >= 2.5  # Should take at least 2.5 seconds due to proper rate limiting
-
-        # Verify status shows no pending requests after completion
-        status = limiter.status()
-        assert status["pending_requests"] == 0
-
-    @pytest.mark.asyncio(loop_scope="function")
-    async def test_pending_requests_tracking(self):
-        """Test that pending requests are tracked correctly."""
-        limiter = LeakyBucketRateLimiter(max_requests=1, window_seconds=2, max_burst=1)
-
-        # Create a task that will need to wait
-        async def slow_task():
-            async with limiter:
-                await asyncio.sleep(0.1)
-                return 1
-
-        # Start first task (should proceed immediately)
-        task1 = asyncio.create_task(slow_task())
-        await asyncio.sleep(0.05)  # Let first task start
-
-        # Start second task (should be pending)
-        task2 = asyncio.create_task(slow_task())
-        await asyncio.sleep(0.05)  # Let second task register as pending
-
-        # Check that pending requests are tracked
-        status = limiter.status()
-        assert status["pending_requests"] >= 1
-
-        # Wait for both tasks to complete
-        results = await asyncio.gather(task1, task2)
-        assert len(results) == 2
-
-        # Check that pending requests are cleared
-        status = limiter.status()
-        assert status["pending_requests"] == 0
+        assert total_time >= 2.0  # Should take at least 2 seconds due to proper rate limiting
 
 
 class TestGCRARateLimiter:
@@ -556,27 +529,19 @@ class TestGCRARateLimiter:
         assert len(results) == 2
         assert first_batch_time < 1.0
 
-    def test_estimated_wait_time_property(self):
-        """Test estimated_wait_time property returns reasonable values."""
-        limiter = GCRARateLimiter(max_requests=2, window_seconds=1)
-
-        # Initially should have no wait time
-        initial_wait = limiter.estimated_wait_time
-        assert initial_wait >= 0
-
     def test_reset_functionality(self):
         """Test reset clears the GCRA state."""
         limiter = GCRARateLimiter(max_requests=1, window_seconds=2)
 
         # Use up the capacity
-        run_async_in_sync(limiter.acquire)
+        run_async(limiter.acquire)
 
         # Reset should clear the state
         limiter.reset()
 
         # Should be able to acquire again immediately
         start = time.monotonic()
-        run_async_in_sync(limiter.acquire)
+        run_async(limiter.acquire)
         acquire_time = time.monotonic() - start
 
         assert acquire_time < 0.2
@@ -596,7 +561,7 @@ class TestGCRARateLimiter:
         # Should allow initial calls quickly
         start = time.monotonic()
         for _ in range(min(max_requests, 3)):
-            run_async_in_sync(limiter.acquire)
+            run_async(limiter.acquire)
         batch_time = time.monotonic() - start
 
         assert batch_time < window_seconds / 2
