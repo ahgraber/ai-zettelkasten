@@ -2,35 +2,35 @@ from pydantic import ValidationError
 import pytest
 
 from aizk.utilities.parse import (
-    check_matched_pairs,
+    check_balanced_brackets,
     extract_json,
 )
 
 
-class TestParensAreMatched:
+class TestBalancedBrackets:
     def test_balanced(self):
-        testcases = ["abc", "(abc)" "a(b)c", "a(b)c(d)e", "()()()()", "(((())))"]
+        testcases = ["abc", "(abc)a(b)c", "a(b)c(d)e", "()()()()", "(((())))"]
 
         for test in testcases:
-            assert check_matched_pairs(test)
+            assert check_balanced_brackets(test)
 
     def test_unbalanced(self):
         testcases = ["(abc", "a(b)c)", "a(b)c(d)e)", "(()", "())"]
 
         for test in testcases:
-            assert not check_matched_pairs(test)
+            assert not check_balanced_brackets(test)
 
     def test_brackets(self):
         testcases = ["abc", "[abc]", "a[b]c", "a[b]c[d]e", "[][][]", "[[[]]]"]
 
         for test in testcases:
-            assert check_matched_pairs(test)  # , "[", "]")
+            assert check_balanced_brackets(test)  # , "[", "]")
 
     def test_braces(self):
         testcases = ["abc", "{abc}", "a{b}c", "a{b}c{d}e", "{}{}{}", "{{{}}}"]
 
         for test in testcases:
-            assert check_matched_pairs(test)  # , "{", "}")
+            assert check_balanced_brackets(test)  # , "{", "}")
 
 
 class TestExtractJson:

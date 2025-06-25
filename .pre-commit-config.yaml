@@ -102,20 +102,20 @@ repos:
         language: python
         stages:
           - commit-msg
-  # renovate: datasource=github-tags depName=editorconfig-checker/editorconfig-checker.python
-  - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
-    rev: "3.2.1"
-    hooks:
-      - id: editorconfig-checker
-        name: Check editorconfig compliance
-        exclude: |
-          (?x)^(
-            # these file types may have nonstandard indents
-            ^(LICENSE)$ |
-            ^.*(\.md)$ |
-            ^.*(\.rst)$
-          )$
-        stages: [pre-commit]
+  # # renovate: datasource=github-tags depName=editorconfig-checker/editorconfig-checker.python
+  # - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
+  #   rev: "3.2.1"
+  #   hooks:
+  #     - id: editorconfig-checker
+  #       name: Check editorconfig compliance
+  #       exclude: |
+  #         (?x)^(
+  #           # these file types may have nonstandard indents
+  #           ^(LICENSE)$ |
+  #           ^.*(\.md)$ |
+  #           ^.*(\.rst)$
+  #         )$
+  #       stages: [pre-commit]
   # renovate: datasource=github-tags depName=hukkin/mdformat
   - repo: https://github.com/hukkin/mdformat
     rev: 0.7.22

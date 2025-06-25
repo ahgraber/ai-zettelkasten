@@ -28,8 +28,7 @@ from aizk.extractors import (
     StaticFileExtractor,
 )
 from aizk.extractors.chrome import detect_playwright_chromium
-from aizk.utilities import AsyncTimeWindowRateLimiter, TimeWindowRateLimiter, basic_log_config, get_repo_path
-from aizk.utilities.async_helpers import synchronize
+from aizk.utilities import SlidingWindowRateLimiter, basic_log_config, get_repo_path
 
 # %%
 ipython: InteractiveShell | None = get_ipython()
@@ -61,7 +60,7 @@ demodir = Path(__file__).parent / "demo"
 # %%
 # 5 requests every 7 seconds
 # limiter = TimeWindowRateLimiter(5, 7)
-alimiter = AsyncTimeWindowRateLimiter(5, 7)
+alimiter = SlidingWindowRateLimiter(5, 7)
 
 # %%
 sources = [
@@ -159,20 +158,17 @@ async def rate_limited_playwright_extractor(*args, **kwargs):
 # ## Run extractions
 
 # %%
-# await rate_limited_postlight_extractor(source)
-synchronize(rate_limited_postlight_extractor, sources[0])
+source = sources[0]
+await rate_limited_postlight_extractor(source)
 # NOTE: requires captcha / bot detection
 
 # %%
 # await rate_limited_chrome_extractor(source)
-# synchronize(rate_limited_chrome_extractor, sources[0])
 
 # %%
-# await rate_limited_singlefile_extractor(source)
-synchronize(rate_limited_singlefile_extractor, sources[0])
+await rate_limited_singlefile_extractor(source)
 
 # %%
-# await rate_limited_playwright_extractor(source)
-synchronize(rate_limited_playwright_extractor, sources[0])
+await rate_limited_playwright_extractor(source)
 
 # %%
