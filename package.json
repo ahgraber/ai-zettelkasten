@@ -1,8 +1,0 @@
-{
-  "name": "ai-zettelkasten",
-  "dependencies": {
-    "@postlight/parser": "^2.2.3",
-    "readability-extractor": "github:pirate/readability-extractor",
-    "single-file-cli": "^1.1.54"
-  }
-}
