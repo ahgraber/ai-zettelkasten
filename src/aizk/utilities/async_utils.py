@@ -31,6 +31,25 @@ def is_event_loop_running() -> bool:
     return True
 
 
+async def tqdm_gather(*fs, return_exceptions=False, **kwargs):
+    """Asynchronously gather results with tqdm progress bar.
+
+    Workaround. Ref: https://github.com/tqdm/tqdm/issues/1286
+    """
+    from tqdm.asyncio import tqdm_asyncio
+
+    if not return_exceptions:
+        return await tqdm_asyncio.gather(*fs, **kwargs)
+
+    async def wrap(f):
+        try:
+            return await f
+        except Exception as e:
+            return e
+
+    return await tqdm_asyncio.gather(*map(wrap, fs), **kwargs)
+
+
 def run_async(
     coro_or_func: Union[Coroutine[Any, Any, T], Callable[..., Coroutine[Any, Any, T]]], *args, **kwargs
 ) -> T:
