@@ -13,7 +13,6 @@ import asyncio
 import json
 from unittest.mock import AsyncMock, Mock, patch
 
-from datasketch import LeanMinHash, MinHash
 from pydantic import ValidationError
 import pytest
 import xxhash
@@ -24,7 +23,6 @@ from aizk.datamodel.graph import (
     NodeFactory,
     NodeProcessorError,
     Relationship,
-    generate_minhash,
 )
 
 
@@ -43,7 +41,6 @@ class TestNode:
         assert node.embedding == []
         assert node.entities == set()
         assert node.tags == set()
-        assert node.minhash == []
 
     def test_node_creation_with_all_fields(self):
         """Test creating a node with all fields specified."""
@@ -214,37 +211,12 @@ class TestNode:
         assert hash(node1) == hash(node3)
         assert hash(node1) != hash(node2)
 
-    def test_minhash_storage_as_list(self):
-        """Test that minhash is stored as a list of integers."""
-        # Arrange
-        minhash_values = [12345678901234567890, 98765432109876543210, 11111111111111111111]
-
-        # Act
-        node = Node(text="Test", minhash=minhash_values)
-
-        # Assert
-        assert isinstance(node.minhash, list)
-        assert all(isinstance(val, int) for val in node.minhash)
-        assert node.minhash == minhash_values
-
-    def test_minhash_empty_list_default(self):
-        """Test that minhash defaults to empty list."""
-        # Act
-        node = Node(text="Test")
-
-        # Assert
-        assert node.minhash == []
-        assert isinstance(node.minhash, list)
-
     def test_node_json_serialization(self):
         """Test that nodes can be serialized to JSON."""
         # Arrange
-        minhash_values = [12345678901234567890, 98765432109876543210, 55555555555555555555]
-
         node = Node(
             text="Test content",
             metadata={"key": "value"},
-            minhash=minhash_values,
             entities={"entity1", "entity2"},
             tags={"tag1"},
         )
@@ -256,116 +228,114 @@ class TestNode:
         # Assert
         assert parsed["text"] == "Test content"
         assert parsed["metadata"] == {"key": "value"}
-        assert isinstance(parsed["minhash"], list)  # Should be serialized as list
-        assert parsed["minhash"] == minhash_values
         assert set(parsed["entities"]) == {"entity1", "entity2"}
         assert set(parsed["tags"]) == {"tag1"}
 
 
-class TestGenerateMinhash:
-    """Test the generate_minhash async function."""
+# class TestGenerateMinhash:
+#     """Test the generate_minhash async function."""
 
-    @pytest.mark.asyncio
-    async def test_generate_minhash_basic(self):
-        """Test basic minhash generation returns list of uint64 values."""
-        # Arrange
-        text = "This is a test document with some words"
+#     @pytest.mark.asyncio
+#     async def test_generate_minhash_basic(self):
+#         """Test basic minhash generation returns list of uint64 values."""
+#         # Arrange
+#         text = "This is a test document with some words"
 
-        # Act
-        result = await generate_minhash(text)
+#         # Act
+#         result = await generate_minhash(text)
 
-        # Assert
-        assert isinstance(result, list)
-        assert len(result) > 0  # Should have minhash values
-        assert all(isinstance(val, int) for val in result)
-        # Check that values are in uint64 range (0 to 2^64-1)
-        assert all(0 <= val <= 0xFFFFFFFFFFFFFFFF for val in result)
+#         # Assert
+#         assert isinstance(result, list)
+#         assert len(result) > 0  # Should have minhash values
+#         assert all(isinstance(val, int) for val in result)
+#         # Check that values are in uint64 range (0 to 2^64-1)
+#         assert all(0 <= val <= 0xFFFFFFFFFFFFFFFF for val in result)
 
-    @pytest.mark.asyncio
-    async def test_generate_minhash_deterministic(self):
-        """Test that same text produces same minhash list."""
-        # Arrange
-        text = "Consistent test content"
+#     @pytest.mark.asyncio
+#     async def test_generate_minhash_deterministic(self):
+#         """Test that same text produces same minhash list."""
+#         # Arrange
+#         text = "Consistent test content"
 
-        # Act
-        result1 = await generate_minhash(text)
-        result2 = await generate_minhash(text)
+#         # Act
+#         result1 = await generate_minhash(text)
+#         result2 = await generate_minhash(text)
 
-        # Assert
-        assert result1 == result2  # Same text should produce identical lists
+#         # Assert
+#         assert result1 == result2  # Same text should produce identical lists
 
-    @pytest.mark.asyncio
-    async def test_generate_minhash_different_text(self):
-        """Test that different text produces different minhash lists."""
-        # Arrange
-        text1 = "First document content"
-        text2 = "Second document content"
+#     @pytest.mark.asyncio
+#     async def test_generate_minhash_different_text(self):
+#         """Test that different text produces different minhash lists."""
+#         # Arrange
+#         text1 = "First document content"
+#         text2 = "Second document content"
 
-        # Act
-        result1 = await generate_minhash(text1)
-        result2 = await generate_minhash(text2)
+#         # Act
+#         result1 = await generate_minhash(text1)
+#         result2 = await generate_minhash(text2)
 
-        # Assert
-        assert result1 != result2  # Different text should produce different lists
+#         # Assert
+#         assert result1 != result2  # Different text should produce different lists
 
-    @pytest.mark.asyncio
-    async def test_generate_minhash_with_kwargs(self):
-        """Test minhash generation with custom parameters."""
-        # Arrange
-        text = "Test content"
+#     @pytest.mark.asyncio
+#     async def test_generate_minhash_with_kwargs(self):
+#         """Test minhash generation with custom parameters."""
+#         # Arrange
+#         text = "Test content"
 
-        # Act
-        result = await generate_minhash(text, num_perm=64)
+#         # Act
+#         result = await generate_minhash(text, num_perm=64)
 
-        # Assert
-        assert isinstance(result, list)
-        assert len(result) == 64  # Should have num_perm values
-        assert all(isinstance(val, int) for val in result)
-        assert all(0 <= val <= 0xFFFFFFFFFFFFFFFF for val in result)
+#         # Assert
+#         assert isinstance(result, list)
+#         assert len(result) == 64  # Should have num_perm values
+#         assert all(isinstance(val, int) for val in result)
+#         assert all(0 <= val <= 0xFFFFFFFFFFFFFFFF for val in result)
 
-    @pytest.mark.asyncio
-    async def test_generate_minhash_empty_text(self):
-        """Test minhash generation with empty text."""
-        # Arrange
-        text = ""
+#     @pytest.mark.asyncio
+#     async def test_generate_minhash_empty_text(self):
+#         """Test minhash generation with empty text."""
+#         # Arrange
+#         text = ""
 
-        # Act
-        result = await generate_minhash(text)
+#         # Act
+#         result = await generate_minhash(text)
 
-        # Assert
-        assert isinstance(result, list)
-        assert len(result) > 0  # Should still generate minhash values
-        assert all(isinstance(val, int) for val in result)
+#         # Assert
+#         assert isinstance(result, list)
+#         assert len(result) > 0  # Should still generate minhash values
+#         assert all(isinstance(val, int) for val in result)
 
-    @pytest.mark.asyncio
-    async def test_generate_minhash_single_token(self):
-        """Test minhash generation with single token."""
-        # Arrange
-        text = "singleword"
+#     @pytest.mark.asyncio
+#     async def test_generate_minhash_single_token(self):
+#         """Test minhash generation with single token."""
+#         # Arrange
+#         text = "singleword"
 
-        # Act
-        result = await generate_minhash(text)
+#         # Act
+#         result = await generate_minhash(text)
 
-        # Assert
-        assert isinstance(result, list)
-        assert len(result) > 0
-        assert all(isinstance(val, int) for val in result)
+#         # Assert
+#         assert isinstance(result, list)
+#         assert len(result) > 0
+#         assert all(isinstance(val, int) for val in result)
 
-    @pytest.mark.asyncio
-    async def test_generate_minhash_custom_seed(self):
-        """Test minhash generation with custom seed produces different results."""
-        # Arrange
-        text = "Test content for seed comparison"
+#     @pytest.mark.asyncio
+#     async def test_generate_minhash_custom_seed(self):
+#         """Test minhash generation with custom seed produces different results."""
+#         # Arrange
+#         text = "Test content for seed comparison"
 
-        # Act
-        result1 = await generate_minhash(text, seed=42)
-        result2 = await generate_minhash(text, seed=123)
+#         # Act
+#         result1 = await generate_minhash(text, seed=42)
+#         result2 = await generate_minhash(text, seed=123)
 
-        # Assert
-        assert isinstance(result1, list)
-        assert isinstance(result2, list)
-        assert len(result1) == len(result2)
-        assert result1 != result2  # Different seeds should produce different results
+#         # Assert
+#         assert isinstance(result1, list)
+#         assert isinstance(result2, list)
+#         assert len(result1) == len(result2)
+#         assert result1 != result2  # Different seeds should produce different results
 
 
 class TestNodeFactory:
@@ -487,20 +457,6 @@ class TestNodeFactory:
         assert "Processor for test_field failed" in str(exc_info.value)
         assert isinstance(exc_info.value.__cause__, ValueError)
 
-    @pytest.mark.asyncio
-    async def test_create_node_with_default_minhash(self):
-        """Test node creation with default minhash processor."""
-        # Arrange
-        factory = NodeFactory()  # Uses default processors
-
-        # Act
-        node = await factory.create_node("Test content for minhash")
-
-        # Assert
-        assert isinstance(node.minhash, list)
-        assert len(node.minhash) > 0  # Should be a non-empty list of integers
-        assert all(isinstance(val, int) for val in node.minhash)
-
 
 class TestRelationship:
     """Test Relationship model functionality."""
@@ -580,7 +536,7 @@ class TestGraph:
         result = graph.add_node(node)
 
         # Assert
-        assert result is True
+        assert result is node
         assert len(graph) == 1
         assert node.id in graph.nodes
         assert graph.nodes[node.id] == node
@@ -596,8 +552,8 @@ class TestGraph:
         result2 = graph.add_node(node)
 
         # Assert
-        assert result1 is True
-        assert result2 is False
+        assert result1 is node
+        assert result2 is node  # should return the same node
         assert len(graph) == 1
 
     def test_remove_node_success(self):
