@@ -41,7 +41,7 @@ dependencies = [
     "pypandoc>=1.14",
     "python-dateutil>=2.9.0.post0",
     "python-dotenv>=1.0.1",
-    "rensa>=0.2.3",
+    "rensa>=0.2.5",
     "requests>=2.32.3",
     "semhash>=0.3.0",
     "sentence-transformers>=3.3.1",
@@ -68,6 +68,7 @@ dev = [
     "gitingest>=0.1.4",
     "lingua>=4.15.0",
     "trace-opt>=0.1.3.8",
+    "gravis>=0.1.0",
 ]
 lint = [
     "complexipy>=3.0.0",
