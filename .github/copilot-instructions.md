@@ -9,7 +9,7 @@ Do not overreach the request. If the user asks for code, provide only the code r
 - Write clean, readable, and well-documented code.
 - Prioritize simplicity, clarity, and explicitness in code structure and logic.
 - Follow the "Zen of Python" principles and adopt pythonic patterns
-- Focus on modularity and reusability, organizing code into functions, classes, and modules.
+- Focus on modularity and reusability, organizing code into functions, classes, and modules. Favor composition over inheritance.
 - Practice defensive programming, anticipating potential errors and handling them gracefully with appropriate error messages.
 - Optimize for performance and efficiency, avoiding unnecessary computations and using efficient algorithms.
 - Ensure proper error handling and logging for debugging purposes.
@@ -21,3 +21,10 @@ Do not overreach the request. If the user asks for code, provide only the code r
 - Use type hints to improve code readability and enable static analysis.
 - Use f-strings for formatting strings, but %-formatting for logs
 - Use environment variables for configuration management.
+- Do not lint or format code yourself; it will be done automatically during save and commit.
+
+## Python Environment
+
+When running python commands, make sure to activate the virtual environment first.
+
+The python environment is managed by `uv` in the pyproject.toml file. Do not change the python environment or install new packages. If you need a package that is not available, alert the user.
