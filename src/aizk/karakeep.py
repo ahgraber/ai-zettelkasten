@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 from enum import Enum
 import json
 import logging
 import os
-from typing import Any, Dict, List, Literal, Optional, Set, Union
+from typing import Any, Dict, List, Literal, Optional, Set, Union, overload
 from urllib.parse import urljoin
 
 import httpx
@@ -304,7 +303,8 @@ class KarakeepClient:
             except httpx.RequestError as e:
                 raise APIError(f"Request failed for {method} {url}: {e}") from e
 
-    async def get_all_bookmarks(
+    @overload
+    async def get_bookmarks_paged(
         self,
         archived: Optional[bool] = None,
         favourited: Optional[bool] = None,
@@ -312,6 +312,33 @@ class KarakeepClient:
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
         include_content: bool = False,
+        *,
+        disable_response_validation: Literal[False] = False,
+    ) -> PaginatedBookmarks: ...
+
+    @overload
+    async def get_bookmarks_paged(
+        self,
+        archived: Optional[bool] = None,
+        favourited: Optional[bool] = None,
+        sort_order: Optional[Literal["asc", "desc"]] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+        include_content: bool = False,
+        *,
+        disable_response_validation: Literal[True],
+    ) -> Union[Dict[str, Any], List[Any]]: ...
+
+    async def get_bookmarks_paged(
+        self,
+        archived: Optional[bool] = None,
+        favourited: Optional[bool] = None,
+        sort_order: Optional[Literal["asc", "desc"]] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+        include_content: bool = False,
+        *,
+        disable_response_validation: Optional[bool] = None,
     ) -> Union[PaginatedBookmarks, Dict[str, Any], List[Any]]:
         """Get bookmarks, one page at a time. Corresponds to GET /bookmarks.
 
@@ -326,6 +353,7 @@ class KarakeepClient:
             limit: Maximum number of bookmarks to return per page (optional, max 100).
             cursor: Pagination cursor for fetching the next page (optional).
             include_content: If set to true, bookmark's content will be included (default: False).
+            disable_response_validation: Override client setting to skip Pydantic response validation.
 
         Returns:
             PaginatedBookmarks: Paginated list of bookmarks for the current page.
@@ -349,22 +377,41 @@ class KarakeepClient:
 
         response_data = await self._call("GET", "bookmarks", params=params)
 
-        if self.disable_response_validation:
+        should_validate = not (
+            disable_response_validation
+            if disable_response_validation is not None
+            else self.disable_response_validation
+        )
+
+        if not should_validate:
             logger.debug("Skipping response validation as requested.")
             return response_data
         else:
             return PaginatedBookmarks.model_validate(response_data)
 
-    async def get_single_bookmark(
+    @overload
+    async def get_bookmark(
+        self, bookmark_id: str, include_content: bool = True, *, disable_response_validation: Literal[False] = False
+    ) -> Bookmark: ...
+
+    @overload
+    async def get_bookmark(
+        self, bookmark_id: str, include_content: bool = True, *, disable_response_validation: Literal[True]
+    ) -> Union[Dict[str, Any], List[Any]]: ...
+
+    async def get_bookmark(
         self,
         bookmark_id: str,
         include_content: bool = True,
+        *,
+        disable_response_validation: Optional[bool] = None,
     ) -> Union[Bookmark, Dict[str, Any], List[Any]]:
         """Get a single bookmark by its ID. Corresponds to GET /bookmarks/{bookmarkId}.
 
         Args:
             bookmark_id: The ID of the bookmark to retrieve.
             include_content: If set to true, bookmark's content will be included (default: True).
+            disable_response_validation: Override client setting to skip Pydantic response validation.
 
         Returns:
             Bookmark: The requested bookmark.
@@ -377,11 +424,41 @@ class KarakeepClient:
         params = {"includeContent": include_content}
         response_data = await self._call("GET", endpoint, params=params)
 
-        if self.disable_response_validation:
+        should_validate = not (
+            disable_response_validation
+            if disable_response_validation is not None
+            else self.disable_response_validation
+        )
+
+        if not should_validate:
             logger.debug("Skipping response validation as requested.")
             return response_data
         else:
             return Bookmark.model_validate(response_data)
+
+    @overload
+    async def search_bookmarks(
+        self,
+        q: str,
+        sort_order: Optional[Literal["asc", "desc", "relevance"]] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+        include_content: bool = True,
+        *,
+        disable_response_validation: Literal[False] = False,
+    ) -> PaginatedBookmarks: ...
+
+    @overload
+    async def search_bookmarks(
+        self,
+        q: str,
+        sort_order: Optional[Literal["asc", "desc", "relevance"]] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+        include_content: bool = True,
+        *,
+        disable_response_validation: Literal[True],
+    ) -> Union[Dict[str, Any], List[Any]]: ...
 
     async def search_bookmarks(
         self,
@@ -389,38 +466,51 @@ class KarakeepClient:
         sort_order: Optional[Literal["asc", "desc", "relevance"]] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
-        include_content: bool = True,  # Default from spec
+        include_content: bool = True,
+        *,
+        disable_response_validation: Optional[bool] = None,
     ) -> Union[PaginatedBookmarks, Dict[str, Any], List[Any]]:
-        """Search bookmarks. Corresponds to GET /search.
+        """Search for bookmarks. Corresponds to GET /bookmarks/search.
 
         Args:
-            q: The search query string.
-            sort_order: Sort order for results ("asc", "desc", "relevance"). Default from API is "relevance" (optional).
-            limit: Maximum number of bookmarks to return (optional).
-            cursor: Pagination cursor for the next page (optional).
+            q: Search query.
+            sort_order: Sort order for results (optional).
+            limit: Maximum number of bookmarks to return per page (optional, max 100).
+            cursor: Pagination cursor for fetching the next page (optional).
             include_content: If set to true, bookmark's content will be included (default: True).
+            disable_response_validation: Override client setting to skip Pydantic response validation.
 
         Returns:
             PaginatedBookmarks: Paginated list of bookmarks matching the search query.
             If response validation is disabled, returns the raw API response.
 
         Raises:
+            ValueError: If limit exceeds 100.
             APIError: If the API request fails.
         """
+        if limit is not None and limit > 100:
+            raise ValueError("Maximum limit is 100")
+
         params = {
             "q": q,
             "sortOrder": sort_order,
             "limit": limit,
             "cursor": cursor,
-            "includeContent": include_content,  # Use camelCase as per API spec query param
+            "includeContent": include_content,
         }
+
         response_data = await self._call("GET", "bookmarks/search", params=params)
 
-        if self.disable_response_validation:
+        should_validate = not (
+            disable_response_validation
+            if disable_response_validation is not None
+            else self.disable_response_validation
+        )
+
+        if not should_validate:
             logger.debug("Skipping response validation as requested.")
             return response_data
         else:
-            # Response should match PaginatedBookmarks schema
             return PaginatedBookmarks.model_validate(response_data)
 
     async def get_bookmark_id_by_url(self, url: str) -> Optional[str]:
@@ -553,6 +643,7 @@ class KarakeepClient:
 
         return request_body
 
+    @overload
     async def create_bookmark(
         self,
         bookmark_type: Literal["link", "text", "asset"],
@@ -573,6 +664,57 @@ class KarakeepClient:
         asset_type: Optional[Literal["image", "pdf"]] = None,
         asset_id: Optional[str] = None,
         file_name: Optional[str] = None,
+        *,
+        disable_response_validation: Literal[False] = False,
+    ) -> Bookmark: ...
+
+    @overload
+    async def create_bookmark(
+        self,
+        bookmark_type: Literal["link", "text", "asset"],
+        # Common optional fields
+        title: Optional[str] = None,
+        archived: Optional[bool] = None,
+        favourited: Optional[bool] = None,
+        note: Optional[str] = None,
+        summary: Optional[str] = None,
+        created_at: Optional[str] = None,  # ISO 8601 format string
+        # Link specific
+        url: Optional[str] = None,
+        precrawled_archive_id: Optional[str] = None,
+        # Text specific
+        text: Optional[str] = None,
+        source_url: Optional[str] = None,  # Also used by asset
+        # Asset specific
+        asset_type: Optional[Literal["image", "pdf"]] = None,
+        asset_id: Optional[str] = None,
+        file_name: Optional[str] = None,
+        *,
+        disable_response_validation: Literal[True],
+    ) -> Union[Dict[str, Any], List[Any]]: ...
+
+    async def create_bookmark(
+        self,
+        bookmark_type: Literal["link", "text", "asset"],
+        # Common optional fields
+        title: Optional[str] = None,
+        archived: Optional[bool] = None,
+        favourited: Optional[bool] = None,
+        note: Optional[str] = None,
+        summary: Optional[str] = None,
+        created_at: Optional[str] = None,  # ISO 8601 format string
+        # Link specific
+        url: Optional[str] = None,
+        precrawled_archive_id: Optional[str] = None,
+        # Text specific
+        text: Optional[str] = None,
+        source_url: Optional[str] = None,  # Also used by asset
+        # Asset specific
+        asset_type: Optional[Literal["image", "pdf"]] = None,
+        asset_id: Optional[str] = None,
+        file_name: Optional[str] = None,
+        *,
+        disable_response_validation: Optional[bool] = None,
     ) -> Union[Bookmark, Dict[str, Any], List[Any]]:
         """Create a new bookmark. Corresponds to POST /bookmarks.
 
@@ -598,6 +740,7 @@ class KarakeepClient:
             asset_id: The ID of the uploaded asset. Required if bookmark_type='asset'.
             file_name: Optional filename for the asset.
             source_url: Optional source URL where the asset originated.
+            disable_response_validation: Override client setting to skip Pydantic response validation.
 
         Returns:
             Bookmark: The created bookmark.
@@ -630,7 +773,13 @@ class KarakeepClient:
 
         response_data = await self._call("POST", "bookmarks", data=request_body)
 
-        if self.disable_response_validation:
+        should_validate = not (
+            disable_response_validation
+            if disable_response_validation is not None
+            else self.disable_response_validation
+        )
+
+        if not should_validate:
             logger.debug("Skipping response validation as requested.")
             return response_data
         else:
@@ -795,6 +944,7 @@ class KarakeepClient:
         response_data = await self._call("DELETE", endpoint, data=tags_data)
         return response_data
 
+    @overload
     async def attach_bookmark_asset(
         self,
         bookmark_id: str,
@@ -809,6 +959,45 @@ class KarakeepClient:
             "precrawledArchive",
             "unknown",
         ],
+        *,
+        disable_response_validation: Literal[False] = False,
+    ) -> BookmarkAsset: ...
+
+    @overload
+    async def attach_bookmark_asset(
+        self,
+        bookmark_id: str,
+        asset_id: str,
+        asset_type: Literal[
+            "screenshot",
+            "assetScreenshot",
+            "bannerImage",
+            "fullPageArchive",
+            "video",
+            "bookmarkAsset",
+            "precrawledArchive",
+            "unknown",
+        ],
+        *,
+        disable_response_validation: Literal[True],
+    ) -> Union[Dict[str, Any], List[Any]]: ...
+
+    async def attach_bookmark_asset(
+        self,
+        bookmark_id: str,
+        asset_id: str,
+        asset_type: Literal[
+            "screenshot",
+            "assetScreenshot",
+            "bannerImage",
+            "fullPageArchive",
+            "video",
+            "bookmarkAsset",
+            "precrawledArchive",
+            "unknown",
+        ],
+        *,
+        disable_response_validation: Optional[bool] = None,
     ) -> Union[BookmarkAsset, Dict[str, Any], List[Any]]:
         """Attach a new asset to a bookmark. Corresponds to POST /bookmarks/{bookmarkId}/assets.
 
@@ -816,6 +1005,7 @@ class KarakeepClient:
             bookmark_id: The ID of the bookmark.
             asset_id: The ID of the asset to attach.
             asset_type: The type of asset being attached.
+            disable_response_validation: Override client setting to skip Pydantic response validation.
 
         Returns:
             BookmarkAsset: The attached asset object.
@@ -830,7 +1020,13 @@ class KarakeepClient:
         endpoint = f"bookmarks/{bookmark_id}/assets"
         response_data = await self._call("POST", endpoint, data=asset_data)
 
-        if self.disable_response_validation:
+        should_validate = not (
+            disable_response_validation
+            if disable_response_validation is not None
+            else self.disable_response_validation
+        )
+
+        if not should_validate:
             logger.debug("Skipping response validation as requested.")
             return response_data
         else:
@@ -876,11 +1072,33 @@ class KarakeepClient:
         await self._call("DELETE", endpoint)
         return None
 
-    async def upload_new_asset(self, file_path: str) -> Union[Asset, Dict[str, Any], List[Any]]:
+    @overload
+    async def upload_new_asset(
+        self,
+        file_path: str,
+        *,
+        disable_response_validation: Literal[True],
+    ) -> Asset: ...
+
+    @overload
+    async def upload_new_asset(
+        self,
+        file_path: str,
+        *,
+        disable_response_validation: Optional[bool] = None,
+    ) -> Union[Dict[str, Any], List[Any]]: ...
+
+    async def upload_new_asset(
+        self,
+        file_path: str,
+        *,
+        disable_response_validation: Optional[bool] = None,
+    ) -> Union[Asset, Dict[str, Any], List[Any]]:
         """Upload a new asset file. Corresponds to POST /assets.
 
         Args:
             file_path: Path to the file to upload.
+            disable_response_validation: Override client setting to skip Pydantic response validation.
 
         Returns:
             Asset: Details about the uploaded asset.
@@ -911,7 +1129,13 @@ class KarakeepClient:
         except IOError as e:
             raise APIError(f"Failed to read file {file_path}: {e}") from e
 
-        if self.disable_response_validation:
+        should_validate = not (
+            disable_response_validation
+            if disable_response_validation is not None
+            else self.disable_response_validation
+        )
+
+        if not should_validate:
             logger.debug("Skipping response validation as requested.")
             return response_data
         else:
@@ -1003,12 +1227,9 @@ def _extract_url_from_bookmark(
 
 
 async def get_all_urls(
-    cursor: Optional[str] = None,
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
     timeout: float = 30.0,
-    disable_response_validation: bool = False,
-    verbose: bool = False,
 ) -> Set[str]:
     """Get URLs of all bookmarks in Karakeep.
 
@@ -1029,32 +1250,17 @@ async def get_all_urls(
         api_key=api_key,
         base_url=base_url,
         timeout=timeout,
-        disable_response_validation=disable_response_validation,
-        verbose=verbose,
     )
 
     all_urls = set()
-    next_cursor = cursor
+    next_cursor = None
 
     while True:
         try:
-            bookmarks_response = await client.get_all_bookmarks(cursor=next_cursor, limit=100)
+            bookmarks_response = await client.get_bookmarks_paged(cursor=next_cursor, limit=100)
 
-            # Handle response based on validation setting
-            if client.disable_response_validation:
-                if not isinstance(bookmarks_response, dict):
-                    if verbose:
-                        logger.warning("Expected dict response but got %s", type(bookmarks_response))
-                    break
-                bookmarks = bookmarks_response.get("bookmarks", [])
-                next_cursor = bookmarks_response.get("nextCursor")
-            else:
-                if not isinstance(bookmarks_response, PaginatedBookmarks):
-                    if verbose:
-                        logger.warning("Expected PaginatedBookmarks but got %s", type(bookmarks_response))
-                    break
-                bookmarks = bookmarks_response.bookmarks
-                next_cursor = bookmarks_response.next_cursor
+            bookmarks = bookmarks_response.bookmarks
+            next_cursor = bookmarks_response.next_cursor
 
             # Extract URLs from current page
             for bookmark in bookmarks:
@@ -1072,29 +1278,3 @@ async def get_all_urls(
             break
 
     return all_urls
-
-
-# # Legacy functions for backward compatibility
-# async def _get_bookmarks_api(next_cursor: str | None = None, limit: int = 100):
-#     """Retrieve hoarded bookmarks (in chunks).
-
-#     DEPRECATED: Use KarakeepClient.get_all_bookmarks() instead.
-#     """
-#     client = KarakeepClient()
-#     response = await client.get_all_bookmarks(cursor=next_cursor, limit=limit)
-
-#     if isinstance(response, PaginatedBookmarks):
-#         return {
-#             "bookmarks": [bookmark.model_dump(by_alias=True) for bookmark in response.bookmarks],
-#             "nextCursor": response.next_cursor,
-#         }
-#     else:
-#         return response
-
-
-# async def get_all_karakeep_urls(cursor: str | None = None) -> list[str]:
-#     """Get urls of all bookmarks in Karakeep.
-
-#     DEPRECATED: Use get_all_urls() instead.
-#     """
-#     return await get_all_urls(cursor=cursor)
