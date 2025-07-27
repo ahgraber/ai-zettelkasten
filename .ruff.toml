@@ -131,14 +131,15 @@ force-to-top = ["src", "torch"]
 relative-imports-order = "closest-to-furthest"
 known-first-party = ["aizk"]
 known-local-folder = ["src"] # for relative imports
-section-order = ["future", "standard-library", "third-party", "torch", "llm", "web", "sci","plot", "first-party", "local-folder"]
+section-order = ["future", "standard-library", "third-party", "sci", "plot", "web", "docling", "torch", "llm", "first-party", "local-folder"]
 
 [lint.isort.sections]
-"sci" = ["numpy", "pandas", "scipy", "sklearn", "statsmodels"]
-"nlp" = ["nltk", "spacy", "langcodes"]
-"torch" = ["datasets", "lightning", "torch", "torch*", "tokenizers", "transformers", "sentence_transformers"]
 "llm" = ["aisuite", "langchain*", "llama_index*", "openai", "semantic_kernel", "ragas", "tiktoken"]
+"nlp" = ["nltk", "spacy", "langcodes"]
 "plot" = ["cmcrameri", "matplotlib", "mizani", "plotly", "plotnine", "seaborn"]
+"sci" = ["numpy", "pandas", "scipy", "sklearn", "statsmodels"]
+"torch" = ["datasets", "lightning", "torch", "torch*", "tokenizers", "transformers", "sentence_transformers"]
+"docling" = ["docling*"]
 "web" = ["fastapi", "reflex*", "requests", "responses", "tenacity"]
 
 [lint.mccabe]
