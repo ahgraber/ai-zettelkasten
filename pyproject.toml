@@ -1,56 +1,68 @@
 [build-system]
-build-backend = "hatchling.build"
-requires = [ "hatchling" ]
+requires = ["uv_build>=0.8.0,<0.9.0"]
+build-backend = "uv_build"
 
 [project]
 name = "aizk"
-# version = "0.beta"
 description = "AI-driven zettelkasten mindmap"
+version = "0.0.1"
+# dynamic = [ "version" ]
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.15"
 classifiers = [
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
 ]
-dynamic = [ "version" ]
 dependencies = [
     "accelerate>=1.1.1",
     "aiofiles>=24.1",
     "aiohttp>=3.11.11",
     "aiolimiter>=1.2.1",
+    "alembic>=1.17.2",
     "asyncio>=3.4.3",
+    "boto3>=1.42.9",
     "chardet>=5.2",
+    "chonkie[hub,neural,openai,semantic,st,viz]>=1.4",
     "datasets<3",
-    "docling>2",
+    "docling[easyocr,vlm]>=2.75",
     "dspy>=2.6.24",
     "duckdb>=0.10.3",
     "fastapi>=0.115.5",
+    "gitingest>=0.1.4",
     "httpx>=0.28.1",
     "huggingface-hub>=0.23.5",
     "jinja2>=3.1.4",
     "json-repair>=0.30.3",
+    "karakeep-client>=0.3.0",
+    "markitdown[pdf]>=0.1.3",
+    "mlflow>=3.9",
     "nltk>=3.9.1",
-    "numpy>=1.26",
+    "numpy>=2",
     "openai>=1.55",
     "openpyxl>=3.1.5",
+    "pillow>=12.1.1",
     "pydantic>=2.9.2",
-    "pydantic-ai>=0.0.19",
-    "pydantic-settings>=2.6.1",
+    "pydantic-ai-slim[openai,anthropic,huggingface,openrouter,cli,mcp,fastmcp,evals,ag-ui,retries,temporal,ui]",
+    "pydantic-settings>2.10",
+    "pymupdf>=1.26.7",
     "pypandoc>=1.14",
     "python-dateutil>=2.9.0.post0",
     "python-dotenv>=1.0.1",
-    "rensa>=0.2.3",
+    "rensa>=0.2.5",
     "requests>=2.32.3",
     "semhash>=0.3.0",
     "sentence-transformers>=3.3.1",
+    "setproctitle>=1.3.7",
     "spacy>=3.7.5,<4",
     "sqlalchemy>=2",
     "sqlmodel>=0.0.22",
     "tiktoken>=0.8",
-    "torch>=2.2,<3",
+    "torch>=2.7,<3",
     "transformers>=4.46.3",
+    "urllib3>=2.6.3",
     "uvicorn>=0.32.1",
     "uvloop>=0.21.0",
     "validators>=0.35.0",
@@ -59,27 +71,59 @@ dependencies = [
     "zstandard>=0.23.0",
 ]
 
+[project.scripts]
+aizk-conversion = "aizk.conversion.cli:main"
+
+[project.optional-dependencies]
+# for user-facing features;
+# installable with `uv add aizk[feature]`
+eval = [
+    "jiwer>=4.0.0",
+    "ragas>=0.2.15",
+    "rapidfuzz>=3.14.3",
+    "rouge-score>=0.1.2",
+    "sequence-align>=0.3.0",
+]
+nemotron-parse = [
+  "albumentations>=2.0.8",
+  "open-clip-torch>=3.2.0",
+  "opencv-python>=4.10.0.84",
+  "opencv-python-headless>=4.11.0.86",
+  # "pillow>=10.4.0",
+  "timm>=1.0.22",
+  "torchmetrics>=1.8.2",
+]
+
 [dependency-groups]
+# for local development groups;
+# not exposed to user-facing install api
+# e.g., cannot do `uv add aizk[dev]`
 dev = [
-    "pandas>=2.2",
-    "mlflow>=3",
-    "turftopic>=0.17.2",
-    "chonkie>=1.0.10",
-    "gitingest>=0.1.4",
+
+    "gravis>=0.1.0",
     "lingua>=4.15.0",
+    "pandas>=2.2",
+    "playwright>=1.57.0",
     "trace-opt>=0.1.3.8",
+    # "turftopic>=0.17.2",
 ]
 lint = [
     "complexipy>=3.0.0",
     "ruff>=0.12.0",
 ]
 test = [
+    "botocore>=1.42.17",
     "coverage>=7.6.9",
+    "pip-audit>=2.10.0",
+    "pyleak>=0.2.0",
     "pytest>=8.3.4",
     "pytest-asyncio>=0.24",
     "pytest-cov>=6",
     "pytest-dependency~=0.6",
+    "pytest-isolate>=0.0.13",
     "pytest-responses>=0.5.1",
+    "pytest-subprocess>=1.5.3",
+    "pytest-xdist>=3.8.0",
     "responses>=0.25.3",
 ]
 type = [
@@ -103,26 +147,46 @@ plot = [
     "plotly>=5.24",
     "plotnine>=0.14",
     "seaborn>=0.13",
-    "topic-wizard>=1.1.4",
-]
-eval = [
-    "ragas>=0.2.15",
+    # "topic-wizard>=1.1.4",
 ]
 
-[tool.hatch.version]
-path = "./src/VERSION"
-pattern = "^(?P<version>.+?)(\n)"
+[tool.uv]
+package = true
+default-groups = [ "dev", "ipynb", "lint", "test", "type" ]
+python-preference = "managed"
 
-[tool.hatch.build]
-only-include = [ "./src/VERSION", "src/aizk", "tests" ]
-skip-excluded-dirs = true
-sources = [ "src" ]
+[tool.uv.build-backend]
+module-name = "aizk"
+module-root = "src/"
 
-[tool.hatch.build.targets.sdist]
+[tool.uv.pip]
+prerelease = "if-necessary-or-explicit"
 
-[tool.hatch.build.targets.wheel]
-packages = [ "src/aizk" ]
-macos-max-compat = true
+[tool.uv.sources]
+ai-zk = { path = "src/ai-zk", editable = true }
+karakeep-client = { git = "https://github.com/ahgraber/karakeep_client.git" }
+
+torch = [
+  { index = "pytorch-cpu", marker = "sys_platform != 'linux'" },
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux'" },
+]
+torchvision = [
+  { index = "pytorch-cpu", marker = "sys_platform != 'linux'" },
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+
+# [tool.ty]
 
 [tool.pytest.ini_options]
 addopts = '''
@@ -132,6 +196,8 @@ addopts = '''
     --ignore=setup.py
     --ignore=ci
     --ignore=.eggs
+    --ignore-glob=.env*
+    --ignore-glob=.envrc
     --import-mode=importlib
     --tb=short
 '''
@@ -139,6 +205,8 @@ addopts = '''
 # --doctest-glob=\*.rst
 norecursedirs = [
   ".env",
+  ".env.*",
+  ".envrc",
   ".git",
   ".nox",
   ".pytest_cache",
@@ -155,6 +223,10 @@ python_files = [ "test_*.py", "*_test.py", "tests.py" ]
 pythonpath = "src"
 testpaths = [ "tests" ]
 # log_cli = true
+markers = [
+    "isolate: run test in isolated subprocess (requires pytest-isolate)",
+    "integration_lifecycle: worker lifecycle integration tests with real processes",
+]
 
 [tool.coverage.paths]
 source = [ "src", "*/site-packages" ]
@@ -166,18 +238,10 @@ source = [ "src" ]
 [tool.coverage.report]
 show_missing = true
 
-[tool.uv]
-package = true
-default-groups = [ "dev", "ipynb", "lint", "test", "type" ]
-python-preference = "managed"
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[tool.uv.pip]
-prerelease = "if-necessary-or-explicit"
-
-[tool.uv.sources]
-ai-zk = { path = "src/ai-zk", editable = true }
+[tool.uv-ship]
+release-branch = "main"
+tag-prefix = "v"
+allow-dirty = false
+changelog-path = "CHANGELOG"
+changelog-template = "- {message} [{hash}]"
+commit-message = "bump: {old_ver} → {new_ver}"
