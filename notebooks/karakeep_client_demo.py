@@ -38,7 +38,7 @@ client = KarakeepClient(
 # %%
 # Get all bookmarks (or limited subset)
 logger.info("Fetching first page of bookmarks...")
-bookmarks_page = await client.get_bookmarks_page(limit=5)
+bookmarks_page = await client.get_bookmarks_paged(limit=5)
 
 if client.disable_response_validation:
     logger.info("Retrieved %d bookmarks", len(bookmarks_page.get("bookmarks", [])))
@@ -119,7 +119,7 @@ async def demo_bookmark_creation():
 
         # Get the created bookmark
         logger.info("Retrieving the created bookmark...")
-        retrieved_bookmark = await client.get_single_bookmark(bookmark_id)
+        retrieved_bookmark = await client.get_bookmark(bookmark_id)
 
         if client.disable_response_validation:
             logger.info("Retrieved bookmark title: %s", retrieved_bookmark.get("title"))
