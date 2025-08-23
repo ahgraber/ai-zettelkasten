@@ -55,6 +55,7 @@ keypair = "keypair"
 raison = "raison"
 ba = "ba"
 autonymous = "autonymous"
+ser = "ser"
 
 ## Specific rules for lockfiles
 [type.lock]

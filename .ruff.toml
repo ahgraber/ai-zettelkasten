@@ -129,7 +129,7 @@ force-sort-within-sections = true
 force-to-top = ["src", "torch"]
 # forced-separate = ["scipy", "sklearn", "statsmodels", "torch"]
 relative-imports-order = "closest-to-furthest"
-known-first-party = ["aizk"]
+known-first-party = ["aizk", "karakeep_client"]
 known-local-folder = ["src"] # for relative imports
 section-order = ["future", "standard-library", "third-party", "sci", "plot", "web", "docling", "torch", "llm", "first-party", "local-folder"]
 
