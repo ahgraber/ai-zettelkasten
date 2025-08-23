@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'darwin'",
@@ -139,7 +139,6 @@ dependencies = [
     { name = "aiofiles" },
     { name = "aiohttp" },
     { name = "aiolimiter" },
-    { name = "anyio" },
     { name = "asyncio" },
     { name = "chardet" },
     { name = "datasets" },
@@ -152,6 +151,7 @@ dependencies = [
     { name = "huggingface-hub", version = "0.33.4", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
     { name = "jinja2" },
     { name = "json-repair" },
+    { name = "karakeep-client" },
     { name = "nltk" },
     { name = "numpy" },
     { name = "openai" },
@@ -240,7 +240,6 @@ requires-dist = [
     { name = "aiofiles", specifier = ">=24.1" },
     { name = "aiohttp", specifier = ">=3.11.11" },
     { name = "aiolimiter", specifier = ">=1.2.1" },
-    { name = "anyio", specifier = ">=4.7.0" },
     { name = "asyncio", specifier = ">=3.4.3" },
     { name = "chardet", specifier = ">=5.2" },
     { name = "datasets", specifier = "<3" },
@@ -252,6 +251,7 @@ requires-dist = [
     { name = "huggingface-hub", specifier = ">=0.23.5" },
     { name = "jinja2", specifier = ">=3.1.4" },
     { name = "json-repair", specifier = ">=0.30.3" },
+    { name = "karakeep-client", git = "https://github.com/ahgraber/karakeep_client.git" },
     { name = "nltk", specifier = ">=3.9.1" },
     { name = "numpy", specifier = ">=2" },
     { name = "openai", specifier = ">=1.55" },
@@ -2648,6 +2648,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/59/73/fa26bbb747a9ea4fca6b01453aa22990d52ab62dd61384f1ac0dc9d4e7ba/jupyterlab_widgets-3.0.13.tar.gz", hash = "sha256:a2966d385328c1942b683a8cd96b89b8dd82c8b8f81dda902bb2bc06d46f5bed", size = 203556, upload-time = "2024-08-22T12:16:08.6Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a9/93/858e87edc634d628e5d752ba944c2833133a28fa87bb093e6832ced36a3e/jupyterlab_widgets-3.0.13-py3-none-any.whl", hash = "sha256:e3cda2c233ce144192f1e29914ad522b2f4c40e77214b0cc97377ca3d323db54", size = 214392, upload-time = "2024-08-22T12:16:06.537Z" },
+]
+
+[[package]]
+name = "karakeep-client"
+version = "0.0.1"
+source = { git = "https://github.com/ahgraber/karakeep_client.git#06bc2d120e3b349884eedb842cd065686969a9ff" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "python-dateutil" },
+    { name = "python-dotenv" },
+    { name = "tenacity" },
+    { name = "tqdm" },
+    { name = "validators" },
 ]
 
 [[package]]
