@@ -56,6 +56,7 @@ deconstruct text blobs into propositions (complete factoids)
 
 ## index
 
+- [PyLate](https://lightonai.github.io/pylate/)
 - [LlamaIndex - LlamaIndex](https://docs.llamaindex.ai/en/stable/)
 - [Introducing the Semantic Graph](https://neuml.hashnode.dev/introducing-the-semantic-graph)
 - [TrustGraph | TrustGraph](https://trustgraph.ai/docs/TrustGraph)
@@ -117,6 +118,8 @@ See also
 
 - [foambubble/foam: A personal knowledge management and sharing system for VSCode](https://github.com/foambubble/foam)
 
+- [lightonai/pylate: Late Interaction Models Training & Retrieval](https://github.com/lightonai/pylate)
+
 ## plugins
 
 - [theJayTea/WritingTools: The world's smartest system-wide grammar assistant; a better version of the Apple Intelligence Writing Tools. Works on Windows, Linux, & macOS, with the free Gemini API, local LLMs, & more.](https://github.com/theJayTea/WritingTools)
@@ -124,5 +127,15 @@ See also
 ## annotation tools
 
 - [HumanSignal/label-studio: Label Studio is a multi-type data labeling and annotation tool with standardized output format](https://github.com/HumanSignal/label-studio)
+
 - [doccano/doccano: Open source annotation tool for machine learning practitioners.](https://github.com/doccano/doccano)
+
 - [inception-project/inception: INCEpTION provides a semantic annotation platform offering intelligent annotation assistance and knowledge management.](https://github.com/inception-project/inception)
+
+- [Termboard - Knowledge Graphs Made Simple](https://termboard.com/) - ontology designer
+
+## graphrag
+
+[nemegrod/graph_RAG: Simple Graph RAG demo based on Jaguar data](https://github.com/nemegrod/graph_RAG) - graphdb, SPARQL, RDFS/OWL
+[stair-lab/kg-gen: [NeurIPS '25] Knowledge Graph Generation from Any Text](https://github.com/stair-lab/kg-gen)
+[microsoft/graphrag: A modular graph-based Retrieval-Augmented Generation (RAG) system](https://github.com/microsoft/graphrag)

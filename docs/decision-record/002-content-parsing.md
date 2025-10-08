@@ -57,6 +57,12 @@ These are open-source document-parsing pipelines that use document-layout models
 
 Unstructured and LlamaParse are paid services accessible via APIs. I'd like to avoid reliance on external services beyond model providers.
 
+#### Option 4: Nanonets OCR 2 / Docstrange
+
+[Nanonets-OCR2](https://huggingface.co/nanonets/Nanonets-OCR2-3B) is a family of open-weight vision-language models (e.g., 3B, 1.5B) fine-tuned for document understanding and image-to-markdown conversion with semantic tagging. It outputs LLM-ready structured markdown including: HTML tables, LaTeX for equations, descriptive `<img>` tags for figures, and tags for signatures `<signature>`, watermarks `<watermark>`, and page numbers `<page_number>`. It can also handle checkboxes (standardized to Unicode), extract flow/organizational charts as Mermaid, and supports multilingual documents and VQA. See the overview post for details and evaluations: [Nanonets OCR 2](https://nanonets.com/research/nanonets-ocr-2/).
+
+Access options include running locally via Transformers or vLLM using the Hugging Face weights, or using the hosted UI/API via [Docstrange – AI Document Data Extraction by Nanonets](https://docstrange.nanonets.com/). The hosted service advertises a generous free tier for experimentation. Using Docstrange introduces an external dependency; running locally reduces that dependency but requires hosting a VLM (likely GPU for best performance). The models' strong semantic formatting could reduce the need for downstream enrichment steps but may still benefit from a unifying pipeline (e.g., docling) for consistency across sources.
+
 ## Implementation Details
 
 <!-- Technical specifications
@@ -71,6 +77,8 @@ Key implementation steps -->
 - [005 - Chunking](./005-chunking.md)
 
 ## Additional Notes
+
+- [Supercharge your OCR Pipelines with Open Models](https://huggingface.co/blog/ocr-open-models)
 
 Tools:
 
@@ -96,3 +104,4 @@ Benchmarks:
 - [[2501.00321] OCRBench v2: An Improved Benchmark for Evaluating Large Multimodal Models on Visual Text Localization and Reasoning](https://arxiv.org/abs/2501.00321)
 - [Intelligent Document Processing Leaderboard](https://idp-leaderboard.org/)
 - [getomni-ai/benchmark: OCR Benchmark](https://github.com/getomni-ai/benchmark)
+- [olmocr/olmocr/bench at main · allenai/olmocr](https://github.com/allenai/olmocr/tree/main/olmocr/bench)
