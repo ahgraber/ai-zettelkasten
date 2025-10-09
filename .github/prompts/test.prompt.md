@@ -1,7 +1,7 @@
 ---
 mode: agent
 description: Review and improve unit tests
-tools: [changes, codebase, editFiles, fetch, findTestFiles, githubRepo, problems, runCommands, runTasks, search, terminalLastCommand, terminalSelection, testFailure, usages, describe_python_package, lookup_python_doc, search_package_docs, configurePythonEnvironment, getPythonEnvironmentInfo, getPythonExecutableCommand]
+tools: [createFile, createDirectory, editFiles, search, runCommands, runTasks, usages, think, problems, changes, testFailure, fetch, githubRepo, runTests, context7, getPythonEnvironmentInfo, getPythonExecutableCommand, configurePythonEnvironment]
 ---
 
 # Instructions
@@ -43,6 +43,11 @@ DO NOT MAKE CHANGES TO SOURCE CODE. You can only make changes to the unit tests.
 - Mock external dependencies and I/O operations
 - Utilize mocks and stubs to isolate the unit under test and avoid external dependencies when testing.
 - Avoid testing implementation details; focus on behavior and contracts
+
+### Test Clarity & Assertions
+
+- Use test function docstrings to clearly describe the behavior or contract under test (what is expected and why it matters), avoiding implementation details.
+- Provide clear assertion failure messages explaining the intent and why the test failed (e.g., context like input parameters or expected boundary conditions).
 
 ### Test Data & Fixtures
 
