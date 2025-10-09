@@ -59,13 +59,13 @@ from docling_core.types.doc.document import (
 from docling_core.types.doc.page import SegmentedPage
 from docling_core.types.io import DocumentStream
 
+from karakeep_client.karakeep import APIError, AuthenticationError, KarakeepClient, get_all_urls
 from karakeep_client.models import PaginatedBookmarks
 
 # %%
 # Add the src directory to the path so we can import treadmill
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from aizk.karakeep import APIError, AuthenticationError, KarakeepClient, get_all_urls
 
 # %%
 # Set up logging
@@ -73,6 +73,9 @@ logging.basicConfig(level=logging.INFO)
 
 aizk_logger = logging.getLogger("aizk")
 aizk_logger.setLevel(logging.DEBUG)
+
+karakeep_logger = logging.getLogger("karakeep_client")
+karakeep_logger.setLevel(logging.DEBUG)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -92,7 +95,8 @@ client = KarakeepClient(
 # bookmark_id = "y9drx8oxif2uljuzp1ujctv1"  # Attention Is All You Need
 # bookmark_id = "xt2omosp2erha7k4xd6mg9je"  # OpenAI ChatGPT Agent
 # bookmark_id = "rpnt3mzc96g5uhovbv2runu4"  # Sycophancy and the Pepsi Challenge
-bookmark_id = "e8oks8mh930yfvcg2k0yzuvb"  # Treadmill 17 Jan 2025
+# bookmark_id = "e8oks8mh930yfvcg2k0yzuvb"  # Treadmill 17 Jan 2025
+bookmark_id = "w1aiidzcsie8ug40nx21q9ko"  # Illustrated Guide to OAuth
 bookmark = await client.get_bookmark(bookmark_id=bookmark_id, include_content=True)
 
 bookmark.model_dump(exclude={"tags"})
