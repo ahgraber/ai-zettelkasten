@@ -56,6 +56,7 @@ deconstruct text blobs into propositions (complete factoids)
 
 ## index
 
+- [PyLate](https://lightonai.github.io/pylate/)
 - [LlamaIndex - LlamaIndex](https://docs.llamaindex.ai/en/stable/)
 - [Introducing the Semantic Graph](https://neuml.hashnode.dev/introducing-the-semantic-graph)
 - [TrustGraph | TrustGraph](https://trustgraph.ai/docs/TrustGraph)
