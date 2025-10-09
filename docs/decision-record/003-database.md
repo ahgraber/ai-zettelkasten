@@ -3,50 +3,126 @@
 ## Status
 
 21 June 2025 - Proposed
+8 October 2025 – Revised
 
 <!-- Proposed/Accepted/Revised/Deprecated/Superseded -->
 
 ## Context
 
-The AI Zettelkasten requires managing a large volume of data over multiple transformations (documents, chunks, relationships, metadata, etc.); these transformations are computationally expensive, so intermediate and final results must be persisted. While file-based storage (e.g., JSON, pickle) is simple, it becomes limiting as the system grows.
+The AI Zettelkasten manages a large volume of structured data over multiple transformations (documents, chunks, relationships, metadata, embeddings, etc.). These transformations are computationally expensive, so intermediate and final results must be persisted and efficiently retrievable by both primary-key lookups and vector similarity queries.
 
-Database choice should be driven by simple integration, ideally using a shared data model (via SQLModel/SQLAlchemy), for smooth migration between prototype and production use cases.
+Constraints and preferences:
 
-- [DuckDB – An in-process SQL OLAP database management system](https://duckdb.org/)
-- [SQLite Home Page](https://sqlite.org/)
-- [PostgreSQL: The world's most advanced open source database](https://www.postgresql.org/)
-- [microsoft/documentdb: DocumentDB offers a native implementation of document-oriented NoSQL database, enabling seamless CRUD operations on BSON data types within a PostgreSQL framework.](https://github.com/microsoft/documentdb)
-- [MongoDB Community Edition | MongoDB](https://www.mongodb.com/try/download/community)
-- [Deployment options - Neo4j Documentation](https://neo4j.com/docs/deployment-options/)
-- [Memgraph download hub](https://memgraph.com/download)
+- **Local-first**: should run fully offline on developer laptops and CI with minimal services.
+- **Embed-friendly**: embeddable engine preferred over client/server.
+- **Simple integration**: leverage SQLModel/SQLAlchemy where possible.
+- **Vector-native**: support approximate nearest neighbor (ANN) indexes (e.g., HNSW) and common distances (cosine/L2/IP).
+- **Future migration**: ability to move to a networked store later without major model changes.
 
 ## Decision
 
-### Selected Approach: **[DuckDB](https://duckdb.org/)**
+### Selected approach: **SQLite + `sqlite-vec`** (local-first)
 
-### Rationale
+Use **SQLite** as the primary local, embedded OLTP store and add **`sqlite-vec`** as a runtime extension to persist and query embedding vectors. `sqlite-vec` is a no-dependency C extension that works anywhere SQLite runs (Linux/macOS/Windows, WASM, mobile) and exposes a simple SQL interface via virtual tables. This keeps the system maximally portable while providing fast, HNSW-backed ANN search that is "good enough" for local development and small/medium datasets.
 
-[DuckDB](https://duckdb.org/) offers a local, embedded database using a (mostly) postgresql-compliant dialect. DuckDB also has core extensions that support AI-native workflows, including:
+> Why SQLite over DuckDB for the default? SQLite is a general-purpose, transactional store with battle-tested concurrency semantics for application state. DuckDB excels at OLAP and columnar analytics; we still use DuckDB for ad‑hoc analysis, but SQLite fits day‑to‑day app storage, migrations, and packaging better. With `sqlite-vec`, SQLite now covers vector needs as well.
 
-- [Vector Similarity Search Extension](https://duckdb.org/docs/stable/core_extensions/vss.html)
-- [Full-Text Search Extension](https://duckdb.org/docs/stable/core_extensions/full_text_search.html)
-- [httpfs Extension](https://duckdb.org/docs/stable/core_extensions/httpfs/overview) provides [S3 API Support](https://duckdb.org/docs/stable/core_extensions/httpfs/s3api)
+### Alternatives and when to choose them
 
-This supports an "easy" migration to Postgres given the capability overlap, and assuming the data layer is abstracted with SQLModel and/or SQLAlchemy.
+1. **[DuckDB](https://duckdb.org/) + [VSS extension](https://duckdb.org/docs/stable/core_extensions/vss.html)** (analytics‑heavy or columnar workloads)
 
-### Alternative Considered
+   Choose when you primarily run analytical queries, large scans, or want columnar performance. DuckDB's **VSS** extension provides HNSW indexes over fixed-size list columns and integrates cleanly with array functions, joins, and lateral queries. Keep DuckDB for notebooks and batch pipelines; optionally mirror vectors from SQLite for unified retrieval.
 
-#### Option 1: SQLite
+2. **[Turso](https://turso.tech/) (libSQL) with native vector type** (edge sync, hosted)
 
-SQLite is a good choice for an embedded database for simple CRUD operations. However, it has limited extension support for AI-native use cases, especially vector operations. While [asg017/sqlite-vec](https://github.com/asg017/sqlite-vec) does provide this functionality, the current DuckDB extension provides HNSW support.
+   If you need edge replication, serverless endpoints, and built-in vector search in a SQLite‑compatible service, Turso/libSQL's **native vector datatype** is a strong option. This is not strictly local/offline, but is a low‑ops path when you outgrow single‑file SQLite and want transparent sync + vector search. Our schemas remain compatible.
 
-#### Option 2: NoSQL (MongoDB, DocumentDB)
+3. **[Meilisearch](https://www.meilisearch.com/)** (hybrid lexical+vector search engine)
 
-The data requirements for AI Zettelkasten fall more into structured, predefined schema as opposed to requiring evolving metadata fields or shapes. In the even that metadata flexibility is required, a "mullet schema" can be used in a relational database using a JSON-type column to flexibly handle evolving metadata.
+   If the product needs full‑text ranking, typo tolerance, facets, and semantic re‑ranking, stand up **Meilisearch** alongside SQLite. It supports vector/hybrid search with user-provided or provider-generated embeddings. Treat it as a **secondary index** (read‑optimized) fed from SQLite via an indexing job. Not a replacement for the primary DB.
 
-## Implementation Details
+## Rationale
 
-Define tables using SQLModel; this allows changing the database engine without requiring massive codebase updates for the migration.
+- **Portability & simplicity**: SQLite is a single file; `sqlite-vec` is a single C extension, no external dependencies. Works in WASM and on constrained devices.
+- **Performance**: HNSW‑style ANN search is sufficiently fast for local experiments and moderate corpora (10^5–10^6 vectors with tuned parameters). We can shard by collection or project when needed.
+- **Developer UX**: One process, no daemon to install; easy to vendor the extension and migrate with Alembic/SQLModel.
+- **Future‑proofing**: The schema maps cleanly to Postgres+pgvector or to Turso/libSQL's native vector type if we later need multi‑writer, sync, or hosted scale.
+
+## Implementation details
+
+- **ORM**: Continue defining entities with SQLModel/SQLAlchemy. Store embeddings in a dedicated `vec0` virtual table (from `sqlite-vec`) keyed by our primary entity IDs; keep metadata in normal relational tables.
+- **Distances**: Standardize on cosine for text embeddings, with optional L2/IP when required.
+- **Indexes**: Create HNSW indexes via the extension where supported; tune M, efConstruction, and efSearch per collection size.
+- **Migrations**: Package `sqlite-vec` with the app (or load at runtime). Provide `pragma`/`SELECT` health checks to verify the extension is loaded. Migration scripts create virtual tables and seed initial indexes.
+- **Testing**: Fixture to bootstrap a fresh SQLite DB and populate vectors; golden tests for recall@k on known query sets.
+
+### Sketch schema (illustrative)
+
+```sql
+-- Documents and chunks (relational)
+CREATE TABLE document (
+  id TEXT PRIMARY KEY,
+  title TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE chunk (
+  id TEXT PRIMARY KEY,
+  document_id TEXT NOT NULL REFERENCES document(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  token_count INTEGER NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Vector table via sqlite-vec
+CREATE VIRTUAL TABLE chunk_embedding USING vec0(
+  id TEXT PRIMARY KEY,           -- same as chunk.id
+  embedding float[1536],         -- adjust to model dims
+  partition_key TEXT             -- optional for sharding/collections
+);
+
+-- HNSW index (params depend on corpus size)
+CREATE INDEX chunk_embedding_hnsw ON chunk_embedding(embedding)
+  WITH (method = hnsw, M = 32, efConstruction = 200);
+```
+
+### Query examples
+
+```sql
+-- Top‑k semantic neighbors for a query vector
+SELECT c.id, c.document_id, c.content,
+       array_cosine_distance(e.embedding, :q) AS distance
+FROM chunk_embedding e
+JOIN chunk c ON c.id = e.id
+ORDER BY distance
+LIMIT 10;
+
+-- Hybrid: BM25 prefilter + vector rerank (when paired with FTS5)
+WITH candidates AS (
+  SELECT c.id FROM chunk c
+  JOIN chunk_fts ON chunk_fts.rowid = c.rowid
+  WHERE chunk_fts MATCH :lexical
+  ORDER BY bm25(chunk_fts)
+  LIMIT 200
+)
+SELECT c.id, c.content,
+       array_cosine_distance(e.embedding, :q) AS distance
+FROM candidates x
+JOIN chunk_embedding e ON e.id = x.id
+JOIN chunk c ON c.id = x.id
+ORDER BY distance
+LIMIT 10;
+```
+
+## Trade‑offs & risks
+
+- **Write‑heavy vector updates**: HNSW maintenance cost can be noticeable for frequent upserts; batch builds or periodic reindexing may be required for very large corpora.
+- **Multi‑writer**: SQLite is single‑writer; acceptable for local dev and CI, but not for many concurrent writers. For that, graduate to Postgres+pgvector or Turso.
+- **Model churn**: Changing embedding dimensions requires rebuilding indexes; we mitigate via per‑model collections.
+
+## Migration path (if/when needed)
+
+- **Postgres + pgvector**: Map embedding table to `vector` type, recreate HNSW/IVFFlat indexes, keep relational schema nearly identical.
 
 ## Related ADRs
 
