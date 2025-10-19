@@ -25,6 +25,11 @@ Constraints and preferences:
 
 Use **SQLite** as the primary local, embedded OLTP store and add **`sqlite-vec`** as a runtime extension to persist and query embedding vectors. `sqlite-vec` is a no-dependency C extension that works anywhere SQLite runs (Linux/macOS/Windows, WASM, mobile) and exposes a simple SQL interface via virtual tables. This keeps the system maximally portable while providing fast, HNSW-backed ANN search that is "good enough" for local development and small/medium datasets.
 
+SQLite UIs:
+
+- [SQLiteViewer](https://alpha.sqliteviewer.app)
+- [Beekeeper Studio](https://www.beekeeperstudio.io/)
+
 > Why SQLite over DuckDB for the default? SQLite is a general-purpose, transactional store with battle-tested concurrency semantics for application state. DuckDB excels at OLAP and columnar analytics; we still use DuckDB for ad‑hoc analysis, but SQLite fits day‑to‑day app storage, migrations, and packaging better. With `sqlite-vec`, SQLite now covers vector needs as well.
 
 ### Alternatives and when to choose them
@@ -32,6 +37,8 @@ Use **SQLite** as the primary local, embedded OLTP store and add **`sqlite-vec`*
 1. **[DuckDB](https://duckdb.org/) + [VSS extension](https://duckdb.org/docs/stable/core_extensions/vss.html)** (analytics‑heavy or columnar workloads)
 
    Choose when you primarily run analytical queries, large scans, or want columnar performance. DuckDB's **VSS** extension provides HNSW indexes over fixed-size list columns and integrates cleanly with array functions, joins, and lateral queries. Keep DuckDB for notebooks and batch pipelines; optionally mirror vectors from SQLite for unified retrieval.
+
+   [Duck UI](https://demo.duckui.com/) is an open-source UI for DuckDB.
 
 2. **[Turso](https://turso.tech/) (libSQL) with native vector type** (edge sync, hosted)
 
