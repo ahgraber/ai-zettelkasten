@@ -118,6 +118,8 @@ See also
 
 - [foambubble/foam: A personal knowledge management and sharing system for VSCode](https://github.com/foambubble/foam)
 
+- [lightonai/pylate: Late Interaction Models Training & Retrieval](https://github.com/lightonai/pylate)
+
 ## plugins
 
 - [theJayTea/WritingTools: The world's smartest system-wide grammar assistant; a better version of the Apple Intelligence Writing Tools. Works on Windows, Linux, & macOS, with the free Gemini API, local LLMs, & more.](https://github.com/theJayTea/WritingTools)
