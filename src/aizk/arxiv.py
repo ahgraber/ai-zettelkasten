@@ -291,7 +291,7 @@ class AsyncArxivClient:
             raise ValueError("IDs list cannot be empty")
 
         # Apply rate limiting - this will block until we can make the request
-        await _arxiv_rate_limiter._acquire()
+        await _arxiv_rate_limiter.acquire()
 
         client = self._ensure_client()
         id_list = ",".join(ids)
