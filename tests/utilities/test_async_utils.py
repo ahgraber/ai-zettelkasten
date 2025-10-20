@@ -1,180 +1,76 @@
-"""Unit tests for async_utils module.
-
-This module provides comprehensive test coverage for async utility functions,
-including event loop management and async task execution from sync contexts.
-"""
-
 import asyncio
-import logging
-from typing import Any, List
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
 from aizk.utilities.async_utils import (
-    is_event_loop_running,
+    gather_with_concurrency,
+    map_concurrently,
     run_async,
 )
 
 
-@pytest.fixture
-def disable_logging():
-    """Fixture to disable logging during tests to avoid noise."""
-    logging.disable(logging.CRITICAL)
-    yield
-    logging.disable(logging.NOTSET)
+def test_run_async_without_running_loop():
+    async def sample() -> int:
+        return 7
 
-
-class TestIsEventLoopRunning:
-    """Test cases for is_event_loop_running function."""
-
-    def test_no_event_loop_running(self, disable_logging):
-        """Test returns False when no event loop is running."""
-        # Arrange & Act
-        result = is_event_loop_running()
-
-        # Assert
-        assert result is False
-
-    @pytest.mark.asyncio(loop_scope="function")
-    async def test_event_loop_running(self, disable_logging):
-        """Test returns True when event loop is running."""
-        # Arrange & Act
-        result = is_event_loop_running()
-
-        # Assert
-        assert result is True
-
-    def test_runtime_error_handling(self, disable_logging):
-        """Test proper handling when asyncio.get_running_loop raises RuntimeError."""
-        # Arrange
-        with patch("asyncio.get_running_loop", side_effect=RuntimeError("No running loop")):
-            # Act
-            result = is_event_loop_running()
-
-            # Assert
-            assert result is False
-
-
-class TestRunAsync:
-    """Test cases for run_async function."""
-
-    def test_run_coroutine_directly(self, disable_logging):
-        """Test running a coroutine directly."""
-
-        # Arrange
-        async def sample_async_func() -> str:
-            return "test_result"
-
-        coro = sample_async_func()
-
-        # Act
-        result = run_async(coro)
-
-        # Assert
-        assert result == "test_result"
-
-    def test_run_async_function_with_args(self, disable_logging):
-        """Test running async function with positional arguments."""
-
-        # Arrange
-        async def sample_async_func(value: int, multiplier: int = 2) -> int:
-            return value * multiplier
-
-        # Act
-        result = run_async(sample_async_func, 5, 3)
-
-        # Assert
-        assert result == 15
-
-    def test_run_async_function_with_kwargs(self, disable_logging):
-        """Test running async function with keyword arguments."""
-
-        # Arrange
-        async def sample_async_func(base: int, multiplier: int = 2) -> int:
-            return base * multiplier
-
-        # Act
-        result = run_async(sample_async_func, base=10, multiplier=4)
-
-        # Assert
-        assert result == 40
-
-    def test_run_async_propagates_exceptions(self, disable_logging):
-        """Test that exceptions from the coroutine are propagated."""
-
-        # Arrange
-        async def failing_async_func():
-            raise ValueError("Test exception")
-
-        # Act & Assert
-        with pytest.raises(ValueError, match="Test exception"):
-            run_async(failing_async_func)
-
-    @patch("IPython.core.getipython.get_ipython")
-    def test_run_async_in_jupyter_notebook(self, mock_get_ipython, caplog):
-        """Test that a warning is logged in a Jupyter/IPython environment."""
-
-        # Arrange
-        mock_get_ipython.return_value = True  # Simulate being in IPython
-
-        async def sample_async_func():
-            return "done"
-
-        # Act
-        with caplog.at_level(logging.WARNING):
-            run_async(sample_async_func)
-
-        # Assert
-        assert "run_async is not recommended in Jupyter/IPython" in caplog.text
+    assert run_async(sample) == 7
 
 
 @pytest.mark.asyncio(loop_scope="function")
-class TestRunAsyncInAsyncContext:
-    """
-    Tests run_async from a sync function executed in a separate thread,
-    while an event loop is active in the main thread. This simulates
-    calling a sync function that uses run_async from within an async
-    application (e.g., a web server, Jupyter/IPython).
-    """
+async def test_run_async_with_running_loop():
+    async def sample() -> str:
+        await asyncio.sleep(0.01)
+        return "ok"
 
-    async def test_run_async_from_sync_thread_with_active_loop(self, disable_logging):
-        """Tests that run_async works correctly when called from a sync function in a thread."""
+    with pytest.raises(RuntimeError, match="run_async cannot"):
+        run_async(sample)
 
-        # Arrange
-        async def inner_async_func():
-            # This coroutine will be scheduled on the main thread's event loop
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_gather_with_concurrency_limits_parallelism():
+    concurrency_limit = 3
+    in_flight = 0
+    peak = 0
+    lock = asyncio.Lock()
+
+    async def task(identifier: int) -> int:
+        nonlocal in_flight, peak
+        async with lock:
+            in_flight += 1
+            peak = max(peak, in_flight)
+        try:
             await asyncio.sleep(0.01)
-            return "inner_result"
+            return identifier
+        finally:
+            async with lock:
+                in_flight -= 1
 
-        def sync_caller():
-            # This function runs in a separate thread without an active event loop.
-            # It calls run_async, which should detect the loop in the main
-            # thread and schedule the coroutine there.
-            return run_async(inner_async_func)
+    tasks = [task(i) for i in range(6)]
+    results = await gather_with_concurrency(tasks, concurrency_limit)
 
-        # Act
-        # Run the synchronous caller in a separate thread.
-        # await asyncio.to_thread blocks until the thread is complete.
-        result = await asyncio.to_thread(sync_caller)
+    assert results == list(range(6))
+    assert peak <= concurrency_limit
 
-        # Assert
-        # The result from the coroutine should be correctly returned.
-        assert result == "inner_result"
 
-    async def test_run_async_from_sync_thread_with_args(self, disable_logging):
-        """Tests run_async with arguments from a sync thread with an active loop."""
+@pytest.mark.asyncio(loop_scope="function")
+async def test_gather_with_concurrency_return_exceptions():
+    async def task(identifier: int) -> int:
+        if identifier == 2:
+            raise ValueError("boom")
+        return identifier
 
-        # Arrange
-        async def inner_async_func(value: int):
-            await asyncio.sleep(0.01)
-            return value * 2
+    results = await gather_with_concurrency([task(i) for i in range(4)], 2, return_exceptions=True)
 
-        def sync_caller():
-            return run_async(inner_async_func, 10)
+    assert results[0] == 0
+    assert isinstance(results[2], ValueError)
 
-        # Act
-        result = await asyncio.to_thread(sync_caller)
 
-        # Assert
-        assert result == 20
+@pytest.mark.asyncio(loop_scope="function")
+async def test_map_concurrently_preserves_order():
+    async def double(value: int) -> int:
+        await asyncio.sleep(0.005)
+        return value * 2
+
+    results = await map_concurrently(range(5), double, concurrency=2)
+
+    assert results == [0, 2, 4, 6, 8]

@@ -1,18 +1,17 @@
 import asyncio
 import time
+from typing import Awaitable, Callable, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 import tenacity
 
-from aizk.utilities.async_utils import run_async
 from aizk.utilities.limiters import (
     GCRARateLimiter,
     LeakyBucketRateLimiter,
     Limiter,
     SlidingWindowRateLimiter,
-    _create_sync_async_wrapper,
     concurrency_limit,
     rate_limit,
     retry,
@@ -49,30 +48,15 @@ class TestSlidingWindowRateLimiter:
         assert limiter.window_seconds == 10
         assert len(limiter._window) == 0
 
-    def test_sync_function_decoration(self, short_timeout):
-        """Test rate limiting applied to sync functions."""
+    def test_sync_function_decoration_not_supported(self, short_timeout):
+        """Ensure decorating sync functions raises an informative error."""
         limiter = SlidingWindowRateLimiter(max_requests=2, window_seconds=short_timeout)
 
-        @limiter
         def test_func():
             return "result"
 
-        # First 2 calls should pass quickly
-        start = time.monotonic()
-        results = [test_func() for _ in range(2)]
-        first_batch_time = time.monotonic() - start
-
-        assert len(results) == 2
-        assert all(result == "result" for result in results)
-        assert first_batch_time < short_timeout * 2
-
-        # 3rd call should be rate limited (with some tolerance)
-        start = time.monotonic()
-        third_result = test_func()
-        third_call_time = time.monotonic() - start
-
-        assert third_result == "result"
-        assert third_call_time >= short_timeout * 0.25
+        with pytest.raises(TypeError, match="async functions"):
+            limiter(test_func)
 
     @pytest.mark.asyncio(loop_scope="function")
     async def test_async_function_decoration(self, short_timeout):
@@ -100,25 +84,11 @@ class TestSlidingWindowRateLimiter:
         assert third_result == "async_result"
         assert third_call_time >= short_timeout * 0.25
 
-    def test_sync_context_manager(self):
-        """Test using limiter as sync context manager."""
+    def test_sync_context_manager_not_supported(self):
+        """Ensure synchronous context manager usage is disallowed."""
         limiter = SlidingWindowRateLimiter(max_requests=2, window_seconds=0.2)
-
-        start = time.monotonic()
-        with limiter:
+        with pytest.raises(RuntimeError, match="async with"), limiter:
             pass
-        with limiter:
-            pass
-        first_batch_time = time.monotonic() - start
-
-        assert first_batch_time < 0.2
-
-        start = time.monotonic()
-        with limiter:
-            pass
-        third_context_time = time.monotonic() - start
-
-        assert third_context_time >= 0.05
 
     @pytest.mark.asyncio(loop_scope="function")
     async def test_async_context_manager(self):
@@ -141,28 +111,28 @@ class TestSlidingWindowRateLimiter:
 
         assert third_context_time >= 0.05
 
-    def test_reset_functionality(self):
-        """Test reset clears the sliding window."""
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_reset_functionality(self):
+        """Test reset clears the sliding window using a fresh limiter."""
         limiter = SlidingWindowRateLimiter(max_requests=2, window_seconds=1)
 
         @limiter
-        def test_func():
+        async def test_func():
             return "result"
 
         # Use up the limit
-        test_func()
-        test_func()
+        await test_func()
+        await test_func()
 
         # Instead of calling reset(), create a new limiter to test the fresh state
         fresh_limiter = SlidingWindowRateLimiter(max_requests=2, window_seconds=1)
 
         @fresh_limiter
-        def fresh_test_func():
+        async def fresh_test_func():
             return "result"
 
-        # Should be able to call again immediately with fresh limiter
         start = time.monotonic()
-        result = fresh_test_func()
+        result = await fresh_test_func()
         call_time = time.monotonic() - start
 
         assert result == "result"
@@ -176,32 +146,33 @@ class TestSlidingWindowRateLimiter:
             (10, 1),
         ],
     )
-    def test_different_configurations(self, max_requests, window_seconds):
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_different_configurations(self, max_requests, window_seconds):
         """Test limiter with different configurations."""
         limiter = SlidingWindowRateLimiter(max_requests=max_requests, window_seconds=window_seconds)
 
         @limiter
-        def test_func():
+        async def test_func():
             return 1
 
-        # Should allow max_requests calls quickly
         start = time.monotonic()
-        results = [test_func() for _ in range(max_requests)]
+        results = [await test_func() for _ in range(max_requests)]
         batch_time = time.monotonic() - start
 
         assert len(results) == max_requests
         assert batch_time < window_seconds / 2
 
-    def test_function_with_arguments(self):
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_function_with_arguments(self):
         """Test that function arguments are preserved."""
         limiter = SlidingWindowRateLimiter(max_requests=5, window_seconds=1)
 
         @limiter
-        def test_func(x, y=None):
+        async def test_func(x, y=None):
             return x + (y or 0)
 
-        result1 = test_func(1, y=2)
-        result2 = test_func(5)
+        result1 = await test_func(1, y=2)
+        result2 = await test_func(5)
 
         assert result1 == 3
         assert result2 == 5
@@ -239,11 +210,11 @@ class TestLeakyBucketRateLimiter:
         with pytest.raises(ValueError, match="requests and window_seconds must be positive"):
             LeakyBucketRateLimiter(max_requests=5, window_seconds=-1)
 
-        with pytest.raises(ValueError, match="capacity must be positive"):
-            LeakyBucketRateLimiter(max_requests=5, window_seconds=10, capacity=0)
+        with pytest.raises(ValueError, match="max_burst must be positive"):
+            LeakyBucketRateLimiter(max_requests=5, window_seconds=10, max_burst=0)
 
-        with pytest.raises(ValueError, match="capacity must be positive"):
-            LeakyBucketRateLimiter(max_requests=5, window_seconds=10, capacity=-1)
+        with pytest.raises(ValueError, match="max_burst must be positive"):
+            LeakyBucketRateLimiter(max_requests=5, window_seconds=10, max_burst=-2)
 
     def test_init_valid_parameters(self):
         """Test initialization with valid parameters."""
@@ -253,34 +224,19 @@ class TestLeakyBucketRateLimiter:
         assert limiter.capacity == 5.0  # Default to max_requests
         assert limiter.leak_rate == 0.5  # 5 requests / 10 seconds
 
-        # Test with custom capacity
-        limiter_burst = LeakyBucketRateLimiter(max_requests=5, window_seconds=10, capacity=10)
+        # Test with custom burst capacity
+        limiter_burst = LeakyBucketRateLimiter(max_requests=5, window_seconds=10, max_burst=10)
         assert limiter_burst.capacity == 10.0
 
-    def test_sync_function_decoration(self):
-        """Test rate limiting applied to sync functions."""
+    def test_sync_function_decoration_not_supported(self):
+        """Ensure decorating sync functions raises an informative error."""
         limiter = LeakyBucketRateLimiter(max_requests=2, window_seconds=1)
 
-        @limiter
         def test_func():
             return "result"
 
-        # First calls should pass quickly (burst capacity)
-        start = time.monotonic()
-        results = [test_func() for _ in range(2)]
-        first_batch_time = time.monotonic() - start
-
-        assert len(results) == 2
-        assert all(result == "result" for result in results)
-        assert first_batch_time < 1.0
-
-        # Additional calls should be rate limited (with some tolerance)
-        start = time.monotonic()
-        third_result = test_func()
-        third_call_time = time.monotonic() - start
-
-        assert third_result == "result"
-        assert third_call_time >= 0.1
+        with pytest.raises(TypeError, match="async functions"):
+            limiter(test_func)
 
     @pytest.mark.asyncio(loop_scope="function")
     async def test_async_function_decoration(self):
@@ -305,65 +261,60 @@ class TestLeakyBucketRateLimiter:
         assert third_result == "async_result"
         assert third_call_time >= 0.1
 
-    def test_leaking_behavior(self):
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_leaking_behavior(self):
         """Test that bucket leaks over time."""
         limiter = LeakyBucketRateLimiter(max_requests=1, window_seconds=0.5)
 
         @limiter
-        def test_func():
+        async def test_func():
             return "result"
 
-        # Use up the capacity
-        test_func()
+        await test_func()
+        await asyncio.sleep(0.3)
 
-        # Wait for some leaking
-        time.sleep(0.3)
-
-        # Should be able to call again with less delay
         start = time.monotonic()
-        result = test_func()
+        result = await test_func()
         call_time = time.monotonic() - start
 
         assert result == "result"
         assert call_time < 0.5
 
-    def test_reset_functionality(self):
-        """Test reset clears the bucket state."""
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_reset_functionality(self):
+        """Test reset clears the bucket state using a fresh limiter."""
         limiter = LeakyBucketRateLimiter(max_requests=1, window_seconds=2)
 
         @limiter
-        def test_func():
+        async def test_func():
             return "result"
 
-        # Use up the capacity
-        test_func()
+        await test_func()
 
-        # Instead of calling reset(), create a new limiter to test fresh state
         fresh_limiter = LeakyBucketRateLimiter(max_requests=1, window_seconds=2)
 
         @fresh_limiter
-        def fresh_test_func():
+        async def fresh_test_func():
             return "result"
 
-        # Should be able to call again immediately with fresh limiter
         start = time.monotonic()
-        result = fresh_test_func()
+        result = await fresh_test_func()
         call_time = time.monotonic() - start
 
         assert result == "result"
         assert call_time < 1.0
 
-    def test_burst_capacity(self):
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_burst_capacity(self):
         """Test that burst capacity allows temporary bursts."""
-        limiter = LeakyBucketRateLimiter(max_requests=2, window_seconds=2, capacity=4)
+        limiter = LeakyBucketRateLimiter(max_requests=2, window_seconds=2, max_burst=4)
 
         @limiter
-        def test_func():
+        async def test_func():
             return "result"
 
-        # Should allow burst up to capacity
         start = time.monotonic()
-        results = [test_func() for _ in range(4)]
+        results = [await test_func() for _ in range(4)]
         burst_time = time.monotonic() - start
 
         assert len(results) == 4
@@ -383,40 +334,33 @@ class TestLeakyBucketRateLimiter:
 
         assert first_batch_time < 1.0
 
-    def test_sync_context_manager(self):
-        """Test using limiter as sync context manager."""
+    def test_sync_context_manager_not_supported(self):
+        """Ensure synchronous context manager usage is disallowed."""
         limiter = LeakyBucketRateLimiter(max_requests=2, window_seconds=1)
-
-        start = time.monotonic()
-        with limiter:
+        with pytest.raises(RuntimeError, match="async with"), limiter:
             pass
-        with limiter:
-            pass
-        first_batch_time = time.monotonic() - start
-
-        assert first_batch_time < 1.0
 
     @pytest.mark.parametrize(
-        "max_requests,window_seconds,capacity",
+        "max_requests,window_seconds,max_burst",
         [
             (1, 1, None),
             (5, 2, 10),
             (10, 5, 15),
         ],
     )
-    def test_different_configurations(self, max_requests, window_seconds, capacity):
+    def test_different_configurations(self, max_requests, window_seconds, max_burst):
         """Test limiter with different configurations."""
-        limiter = LeakyBucketRateLimiter(max_requests=max_requests, window_seconds=window_seconds, capacity=capacity)
+        limiter = LeakyBucketRateLimiter(max_requests=max_requests, window_seconds=window_seconds, max_burst=max_burst)
         assert limiter.max_requests == max_requests
         assert limiter.window_seconds == window_seconds
-        expected_capacity = capacity if capacity is not None else max_requests
+        expected_capacity = max_burst if max_burst is not None else max_requests
         assert limiter.capacity == float(expected_capacity)
 
     @pytest.mark.asyncio(loop_scope="function")
     async def test_concurrent_access_race_condition_fix(self):
         """Test concurrent access to verify race condition fix with pending requests tracking."""
         # Use a small capacity and slow leak rate to test concurrent access
-        limiter = LeakyBucketRateLimiter(max_requests=2, window_seconds=1, capacity=2)
+        limiter = LeakyBucketRateLimiter(max_requests=2, window_seconds=1, max_burst=2)
 
         @limiter
         async def test_func():
@@ -496,22 +440,15 @@ class TestGCRARateLimiter:
 
         assert first_batch_time < 1.0
 
-    def test_sync_function_decoration(self):
-        """Test rate limiting applied to sync functions."""
+    def test_sync_function_decoration_not_supported(self):
+        """Ensure decorating sync functions raises an informative error."""
         limiter = GCRARateLimiter(max_requests=2, window_seconds=1)
 
-        @limiter
         def test_func():
             return "result"
 
-        # First calls should pass quickly
-        start = time.monotonic()
-        results = [test_func() for _ in range(2)]
-        first_batch_time = time.monotonic() - start
-
-        assert len(results) == 2
-        assert all(result == "result" for result in results)
-        assert first_batch_time < 1.0
+        with pytest.raises(TypeError, match="async functions"):
+            limiter(test_func)
 
     @pytest.mark.asyncio(loop_scope="function")
     async def test_async_function_decoration(self):
@@ -529,19 +466,16 @@ class TestGCRARateLimiter:
         assert len(results) == 2
         assert first_batch_time < 1.0
 
-    def test_reset_functionality(self):
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_reset_functionality(self):
         """Test reset clears the GCRA state."""
         limiter = GCRARateLimiter(max_requests=1, window_seconds=2)
 
-        # Use up the capacity
-        run_async(limiter.acquire)
-
-        # Reset should clear the state
+        await limiter.acquire()
         limiter.reset()
 
-        # Should be able to acquire again immediately
         start = time.monotonic()
-        run_async(limiter.acquire)
+        await limiter.acquire()
         acquire_time = time.monotonic() - start
 
         assert acquire_time < 0.2
@@ -554,14 +488,14 @@ class TestGCRARateLimiter:
             (10, 5),
         ],
     )
-    def test_different_configurations(self, max_requests, window_seconds):
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_different_configurations(self, max_requests, window_seconds):
         """Test GCRA limiter with different configurations."""
         limiter = GCRARateLimiter(max_requests=max_requests, window_seconds=window_seconds)
 
-        # Should allow initial calls quickly
         start = time.monotonic()
         for _ in range(min(max_requests, 3)):
-            run_async(limiter.acquire)
+            await limiter.acquire()
         batch_time = time.monotonic() - start
 
         assert batch_time < window_seconds / 2
@@ -661,16 +595,15 @@ class TestRateLimiterEdgeCases:
         # GCRA should enforce timing
         assert total_time >= 0.3
 
-    def test_function_exception_handling(self):
-        """Test that exceptions in decorated functions are properly propagated."""
+    def test_function_exception_handling_requires_async(self):
+        """Ensure sync functions cannot be decorated and raise informative errors."""
         limiter = SlidingWindowRateLimiter(max_requests=5, window_seconds=1)
 
-        @limiter
         def failing_func():
             raise ValueError("Test exception")
 
-        with pytest.raises(ValueError, match="Test exception"):
-            failing_func()
+        with pytest.raises(TypeError, match="async functions"):
+            limiter(failing_func)
 
     @pytest.mark.asyncio(loop_scope="function")
     async def test_async_function_exception_handling(self):
@@ -684,25 +617,24 @@ class TestRateLimiterEdgeCases:
         with pytest.raises(ValueError, match="Async test exception"):
             await failing_async_func()
 
-    def test_very_short_window(self):
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_very_short_window(self):
         """Test limiter behavior with very short time windows."""
         limiter = SlidingWindowRateLimiter(max_requests=1, window_seconds=0.1)
 
         @limiter
-        def test_func():
+        async def test_func():
             return "result"
 
-        # First call should be immediate
         start = time.monotonic()
-        result1 = test_func()
+        result1 = await test_func()
         first_time = time.monotonic() - start
 
         assert result1 == "result"
         assert first_time < 0.1
 
-        # Second call should wait
         start = time.monotonic()
-        result2 = test_func()
+        result2 = await test_func()
         second_time = time.monotonic() - start
 
         assert result2 == "result"
@@ -731,3 +663,148 @@ class TestRateLimiterEdgeCases:
         if len(calls) >= 2:
             time_diff = calls[1] - calls[0]
             assert time_diff >= 0.4  # Should be close to 0.5 seconds
+
+
+class TestDecorators:
+    """Tests for decorator utilities: rate_limit, concurrency_limit, retry, and stacking."""
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_rate_limit_decorator_behaves_like_limiter(self):
+        """@rate_limit(limiter) should apply the limiter and preserve async behavior."""
+        limiter = SlidingWindowRateLimiter(max_requests=1, window_seconds=0.2)
+
+        @rate_limit(limiter)
+        async def work():
+            return "ok"
+
+        # First call should be fast
+        t0 = time.monotonic()
+        r1 = await work()
+        fast_elapsed = time.monotonic() - t0
+
+        # Second call should be rate limited
+        t1 = time.monotonic()
+        r2 = await work()
+        slow_elapsed = time.monotonic() - t1
+
+        assert r1 == "ok" and r2 == "ok"
+        assert fast_elapsed < 0.15
+        assert slow_elapsed >= 0.15
+
+    def test_rate_limit_preserves_metadata(self):
+        """Wrapped function should preserve __name__ and __doc__ via functools.wraps."""
+        limiter = SlidingWindowRateLimiter(max_requests=2, window_seconds=1)
+
+        @rate_limit(limiter)
+        async def sample():
+            """original-doc"""
+            return 1
+
+        assert sample.__name__ == "sample"
+        assert (sample.__doc__ or "").strip() == "original-doc"
+
+    def test_concurrency_limit_rejects_sync_functions(self):
+        """@concurrency_limit should only accept async functions and raise on sync."""
+        decorator = concurrency_limit(2)
+
+        def sync():
+            return 1
+
+        with pytest.raises(ValueError, match="Function must be async"):
+            decorator(sync)
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_concurrency_limit_enforces_max_parallelism(self):
+        """Ensure peak concurrency does not exceed the semaphore limit."""
+        max_parallel = 2
+        decorator = concurrency_limit(max_parallel)
+
+        current = 0
+        peak = 0
+
+        @decorator
+        async def task():
+            nonlocal current, peak
+            current += 1
+            peak = max(peak, current)
+            await asyncio.sleep(0.05)
+            current -= 1
+            return 1
+
+        # Launch more tasks than the limit
+        results = await asyncio.gather(*(task() for _ in range(8)))
+        assert results == [1] * 8
+        assert peak == max_parallel
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_retry_async_fails_then_succeeds_with_hooks(self):
+        """Async function should be retried and hooks called expected times."""
+        attempts = {"count": 0}
+        before_sleep_calls = []
+        after_attempts = []
+
+        def before_sleep(retry_state):  # noqa: ANN001 - tenacity callback signature
+            before_sleep_calls.append(retry_state)
+
+        def after_call(retry_state):  # noqa: ANN001 - tenacity callback signature
+            # Record a snapshot of attempt numbers; RetryCallState mutates between callbacks
+            after_attempts.append(retry_state.attempt_number)
+
+        dec = retry(
+            stop=tenacity.stop_after_attempt(3),
+            wait=tenacity.wait_fixed(0),
+            before_sleep=before_sleep,
+            after=after_call,
+        )
+
+        async def sometimes_impl() -> str:
+            attempts["count"] += 1
+            if attempts["count"] < 3:
+                raise RuntimeError("try again")
+            return "done"
+
+        sometimes = cast(Callable[[], Awaitable[str]], dec(sometimes_impl))
+
+        result = await sometimes()
+        assert result == "done"
+        assert attempts["count"] == 3
+        # With 2 failures we expect 2 sleeps and 3 after-calls (one per attempt)
+        assert len(before_sleep_calls) == 2
+        # Some tenacity versions call 'after' only for failed attempts; ensure failures were captured
+        assert set(after_attempts) == set(range(1, attempts["count"]))
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_retry_concurrency_rate_limit_stacking(self):
+        """Verify documented stacking: retry(outside) > concurrency_limit > rate_limit.
+
+        With a strict rate limit of 1 per 0.2s and concurrency 2, starting two tasks that
+        each fail once then succeed should take at least ~0.35s overall because retries
+        are also gated by the limiter.
+        """
+        limiter = SlidingWindowRateLimiter(max_requests=1, window_seconds=0.2)
+
+        attempts = {}
+
+        async def flaky_impl(key: int) -> int:
+            cnt = attempts.get(key, 0) + 1
+            attempts[key] = cnt
+            if cnt == 1:
+                raise RuntimeError("first attempt fails")
+            return key
+
+        # Apply decorators in documented order: retry (outer) > concurrency_limit > rate_limit (inner)
+        decorated = rate_limit(limiter)(flaky_impl)
+        decorated = concurrency_limit(2)(decorated)
+        flaky = cast(
+            Callable[[int], Awaitable[int]],
+            retry(stop=tenacity.stop_after_attempt(2), wait=tenacity.wait_fixed(0))(decorated),
+        )
+
+        t0 = time.monotonic()
+        results = await asyncio.gather(flaky(1), flaky(2))
+        elapsed = time.monotonic() - t0
+
+        assert results == [1, 2]
+        assert attempts[1] == 2 and attempts[2] == 2
+        # Expect at least one limiter window to elapse for gating retries
+        assert elapsed >= 0.35

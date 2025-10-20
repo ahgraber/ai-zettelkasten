@@ -111,25 +111,43 @@ eval = [
     "ragas>=0.2.15",
 ]
 
+[tool.uv]
+package = true
+default-groups = [ "dev", "ipynb", "lint", "test", "type" ]
+python-preference = "managed"
+
 [tool.uv.build-backend]
 module-name = "aizk"
 module-root = "src/"
 
+[tool.uv.pip]
+prerelease = "if-necessary-or-explicit"
 
-#[tool.hatch.version]
-#path = "./src/VERSION"
-#pattern = "^(?P<version>.+?)(\n)"
-#
-#[tool.hatch.build]
-#only-include = [ "./src/VERSION", "src/aizk", "tests" ]
-#skip-excluded-dirs = true
-#sources = [ "src" ]
-#
-#[tool.hatch.build.targets.sdist]
-#
-#[tool.hatch.build.targets.wheel]
-#packages = [ "src/aizk" ]
-#macos-max-compat = true
+[tool.uv.sources]
+ai-zk = { path = "src/ai-zk", editable = true }
+karakeep-client = { git = "https://github.com/ahgraber/karakeep_client.git" }
+
+torch = [
+  { index = "pytorch-cpu", marker = "sys_platform != 'linux'" },
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux'" },
+]
+torchvision = [
+  { index = "pytorch-cpu", marker = "sys_platform != 'linux'" },
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+
+# [tool.ty]
 
 [tool.pytest.ini_options]
 addopts = '''
@@ -172,35 +190,3 @@ source = [ "src" ]
 
 [tool.coverage.report]
 show_missing = true
-
-[tool.uv]
-package = true
-default-groups = [ "dev", "ipynb", "lint", "test", "type" ]
-python-preference = "managed"
-
-[tool.uv.pip]
-prerelease = "if-necessary-or-explicit"
-
-
-[tool.uv.sources]
-ai-zk = { path = "src/ai-zk", editable = true }
-karakeep-client = { git = "https://github.com/ahgraber/karakeep_client.git" }
-
-torch = [
-  { index = "pytorch-cpu", marker = "sys_platform != 'linux'" },
-  { index = "pytorch-cu128", marker = "sys_platform == 'linux'" },
-]
-torchvision = [
-  { index = "pytorch-cpu", marker = "sys_platform != 'linux'" },
-  { index = "pytorch-cu128", marker = "sys_platform == 'linux'" },
-]
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
