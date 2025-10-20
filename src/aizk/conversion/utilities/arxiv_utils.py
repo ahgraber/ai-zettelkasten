@@ -6,7 +6,7 @@ import logging
 import re
 import sys
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlencode, urljoin
+from urllib.parse import urlencode, urljoin, urlparse
 from xml.etree.ElementTree import Element
 
 from defusedxml import ElementTree
@@ -15,11 +15,93 @@ import httpx
 import requests
 
 from aizk.utilities.limiters import LeakyBucketRateLimiter
+from aizk.utilities.url_utils import validate_url
 
 logger = logging.getLogger(__name__)
 
 # %%
 ARXIV_API_URL = "http://export.arxiv.org/api/"
+ARXIV_DOMAINS = frozenset({"arxiv.org", "export.arxiv.org"})
+ARXIV_ID_REGEX = re.compile(r"(?:[0-2][0-9][01][0-9]\.[0-9]{4,5})(?:v[0-9]{1,2})?", re.IGNORECASE)
+
+
+def _is_arxiv_domain(netloc: str) -> bool:
+    """Return True when a netloc is within arxiv.org domains."""
+    return netloc in ARXIV_DOMAINS or any(netloc.endswith("." + domain) for domain in ARXIV_DOMAINS)
+
+
+def is_arxiv_url(url: str) -> bool:
+    """Check if URL is from arxiv.org."""
+    validated = validate_url(url)
+
+    try:
+        parsed = urlparse(str(validated))
+    except Exception:
+        return False
+    else:
+        return _is_arxiv_domain(parsed.netloc.lower())
+
+
+def validate_arxiv_url(url: str) -> str:
+    """Validate arxiv URL."""
+    validated = validate_url(url)
+    parsed = urlparse(validated)
+
+    if not _is_arxiv_domain(parsed.netloc.lower()):
+        raise ValueError(f"URL must be from arxiv.org: {url}")
+
+    if parsed.path and not (
+        parsed.path.startswith("/pdf") or parsed.path.startswith("/abs") or parsed.path.startswith("/html")
+    ):
+        raise ValueError(f"Arxiv URL must be to PDF, abstract, or HTML page: {url}")
+
+    return validated
+
+
+def validate_arxiv_id(arxiv_id: str) -> str:
+    """Validate an arXiv identifier string."""
+    if not arxiv_id or not arxiv_id.strip():
+        raise ValueError("arxiv_id cannot be empty")
+
+    candidate = arxiv_id.strip()
+    if not ARXIV_ID_REGEX.fullmatch(candidate):
+        raise ValueError(f"Invalid arxiv ID: {arxiv_id}")
+
+    return candidate
+
+
+def get_arxiv_id(url: str) -> str:
+    """Extract arXiv ID from URL."""
+    url = validate_arxiv_url(url)
+    path = urlparse(url).path
+
+    match = ARXIV_ID_REGEX.search(path)
+    if match:
+        return validate_arxiv_id(match[0])
+    raise ValueError(f"Could not find arxiv ID in {url}.")
+
+
+def _arxiv_base_url(use_export_url: bool) -> str:
+    """Return the base URL for arxiv.org resources."""
+    return "http://export.arxiv.org/" if use_export_url else "https://arxiv.org/"
+
+
+def arxiv_abs_url(arxiv_id: str, use_export_url: bool = True) -> str:
+    """Convert arXiv ID to abstract URL."""
+    validated = validate_arxiv_id(arxiv_id)
+    return urljoin(_arxiv_base_url(use_export_url), f"abs/{validated}")
+
+
+def arxiv_pdf_url(arxiv_id: str, use_export_url: bool = True) -> str:
+    """Convert arXiv ID to PDF URL."""
+    validated = validate_arxiv_id(arxiv_id)
+    return urljoin(_arxiv_base_url(use_export_url), f"pdf/{validated}")
+
+
+def arxiv_html_url(arxiv_id: str, use_export_url: bool = True) -> str:
+    """Convert arXiv ID to HTML URL."""
+    validated = validate_arxiv_id(arxiv_id)
+    return urljoin(_arxiv_base_url(use_export_url), f"html/{validated}")
 
 
 # %%
@@ -166,14 +248,11 @@ def _extract_optional_fields(entry: Element, namespaces: Dict[str, str]) -> Dict
 
     # Extract links
     pdf_url = None
-    html_url = None
     for link in entry.findall("atom:link", namespaces):
         link_type = link.get("type")
         href = link.get("href")
         if link_type == "application/pdf" and href:
             pdf_url = href
-        elif link_type == "text/html" and href:
-            html_url = href
 
     # Extract primary category
     primary_category = None
@@ -183,7 +262,6 @@ def _extract_optional_fields(entry: Element, namespaces: Dict[str, str]) -> Dict
 
     return {
         "pdf_url": pdf_url,
-        "html_url": html_url,
         "categories": categories,
         "primary_category": primary_category,
     }
@@ -207,6 +285,8 @@ def _parse_arxiv_entry(entry: Element, namespaces: Dict[str, str]) -> Dict[str, 
     # Extract required fields
     required_fields, required_errors = _extract_required_fields(entry, namespaces)
     all_errors.extend(required_errors)
+    required_fields["abs_url"] = required_fields.get("id", "")
+    required_fields["id"] = required_fields.get("id", "").split("/")[-1]
 
     # Extract authors
     authors, author_errors = _extract_authors(entry, namespaces)
@@ -228,16 +308,16 @@ def _parse_arxiv_entry(entry: Element, namespaces: Dict[str, str]) -> Dict[str, 
 
 
 # %%
-"""AsyncArxivClient is an httpx client that must use the appropriate limiter to respect the arxiv API limits.  The clients should be able to be used as context managers and client objects."""
-# IMPORTANT: "make no more than one request every three seconds, and limit requests to a single connection at a time.""
+"""ArxivClient is an httpx client that must use the appropriate limiter to respect the arxiv API limits.  The clients should be able to be used as context managers and client objects."""
+# "make no more than one request every N seconds, and limit requests to a single connection at a time.""
 _arxiv_rate_limiter = LeakyBucketRateLimiter(
     max_requests=1,
-    window_seconds=3.0,
+    window_seconds=5.0,
     max_burst=1,
 )
 
 
-class AsyncArxivClient:
+class ArxivClient:
     """Asynchronous arXiv API client with rate limiting.
 
     This client respects arXiv API limits: no more than one request every
@@ -246,17 +326,17 @@ class AsyncArxivClient:
     Can be used as an async context manager to ensure proper resource cleanup.
 
     Example:
-        >>> async with AsyncArxivClient() as client:
-        ...     metadata = await client.get_paper_metadata(["1234.56789"])
+        >>> async with ArxivClient() as client:
+        ...     metadata = await client.get_paper_metadata(["YYMM.56789"])
 
         >>> # Or without context manager
-        >>> client = AsyncArxivClient()
-        >>> metadata = await client.get_paper_metadata(["1234.56789"])
+        >>> client = ArxivClient()
+        >>> metadata = await client.get_paper_metadata(["YYMM.56789"])
         >>> await client.aclose()
     """
 
     def __init__(self, timeout: float = 30.0):
-        """Initialize the AsyncArxivClient.
+        """Initialize the ArxivClient.
 
         Args:
             timeout: Request timeout in seconds (default: 30.0)
@@ -265,18 +345,85 @@ class AsyncArxivClient:
         self._client: Optional[httpx.AsyncClient] = None
 
     def _ensure_client(self) -> httpx.AsyncClient:
-        """Ensure the httpx async client is initialized."""
+        """Create a new httpx async client."""
+        limits = httpx.Limits(max_connections=1, max_keepalive_connections=1)
+        return httpx.AsyncClient(timeout=self.timeout, limits=limits, follow_redirects=True)
+
+    def create(self) -> httpx.AsyncClient:
+        """Create and store the httpx async client for reuse."""
         if self._client is None:
-            # Use limits to ensure single connection
-            limits = httpx.Limits(max_connections=1, max_keepalive_connections=1)
-            self._client = httpx.AsyncClient(timeout=self.timeout, limits=limits, follow_redirects=True)
+            self._client = self._ensure_client()
         return self._client
 
-    async def get_paper_metadata(self, ids: List[str]) -> List[Dict[str, Any]]:
-        """Get arXiv papers by their IDs with rate limiting.
+    async def __aenter__(self) -> "ArxivClient":
+        """Enter async context manager."""
+        self.create()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit async context manager and cleanup resources."""
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        """Close the underlying httpx async client."""
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    def close(self) -> None:
+        """Synchronously close the underlying httpx async client.
+
+        Raises:
+            RuntimeError: If an event loop is already running; use ``await aclose`` in that case.
+        """
+        if self._client is None:
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(self.aclose())
+            return
+
+        if loop.is_running():
+            raise RuntimeError("Cannot call close() while event loop is running; use await aclose().")
+
+        loop.run_until_complete(self.aclose())
+
+    async def _get(self, url: str) -> httpx.Response:
+        """Perform a GET request and return the response object."""
+        client = self._client or self._ensure_client()
+        should_close = self._client is None
+
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code
+            error_msg = f"HTTP {status} error for {url}"
+            if status == 403:
+                logger.critical(error_msg)
+                logger.critical(
+                    "CRITICAL: ArXiv treats repeated requests after 403 as DoS attacks. Stopping to prevent further issues."
+                )
+                raise ArxivAccessDeniedError(error_msg) from e
+            raise httpx.HTTPError(error_msg) from e
+        except httpx.HTTPError as e:
+            raise httpx.HTTPError(f"Request failed for {url}: {e}") from e
+        finally:
+            if should_close:
+                await client.aclose()
+
+        return response
+
+    async def get_paper_metadata(self, ids: List[str], batch_size: int = 10) -> List[Dict[str, Any]]:
+        """Get arXiv papers by their IDs with rate limiting and automatic batching.
+
+        The arXiv API recommends requesting no more than a few papers at once.
 
         Args:
             ids: List of arXiv paper IDs (e.g., ['2506.06395'])
+            batch_size: Maximum number of IDs to fetch per request (default: 10)
 
         Returns:
             List of paper dictionaries containing metadata
@@ -287,103 +434,69 @@ class AsyncArxivClient:
             ArxivAccessDeniedError: If the API returns HTTP 403 (access denied)
             ArxivParsingError: If there are errors parsing the XML response
         """
+        ids = sorted(set(ids))
         if not ids:
             raise ValueError("IDs list cannot be empty")
 
-        # Apply rate limiting - this will block until we can make the request
-        await _arxiv_rate_limiter._acquire()
+        # If more than batch_size IDs, process in batches
+        if len(ids) > batch_size:
+            all_metadata = []
+            for i in range(0, len(ids), batch_size):
+                batch = ids[i : i + batch_size]
+                logger.info(f"Fetching metadata for batch {i // batch_size + 1} ({len(batch)} papers)")
+                metadata = await self.get_paper_metadata(batch, batch_size=batch_size)
+                all_metadata.extend(metadata)
+            logger.info(f"Successfully fetched metadata for {len(all_metadata)} papers total")
+            return all_metadata
 
-        client = self._ensure_client()
+        # Single batch request
+        # Apply rate limiting - this will block until we can make the request
+        await _arxiv_rate_limiter.acquire()
+
         id_list = ",".join(ids)
         query_params = {"id_list": id_list}
         url = urljoin(ARXIV_API_URL, "query?" + urlencode(query_params))
 
-        try:
-            response = await client.get(url)
-            response.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 403:
-                error_msg = f"Access denied to ArXiv API (HTTP 403). This may indicate rate limiting or blocked access. URL: {url}"
-                logger.critical(error_msg)
-                logger.critical(
-                    "CRITICAL: ArXiv treats repeated requests after 403 as DoS attacks. Stopping to prevent further issues."
-                )
-                raise ArxivAccessDeniedError(error_msg) from e
-            else:
-                raise httpx.HTTPError(f"Failed to fetch papers from ArXiv API: {e}") from e
-        except httpx.HTTPError as e:
-            raise httpx.HTTPError(f"Failed to fetch papers from ArXiv API: {e}") from e
-
-        # Parse using existing function logic
+        response = await self._get(url)
         return self._parse_response(response.content)
 
-    async def _get_paper_content(self, url: str) -> str:
-        """Fetch the content of a paper from its URL.
+    async def download_paper_html(self, arxiv_id: str, use_export_url: bool = True) -> str:
+        """Fetch the HTML content of an arXiv paper page.
 
         Args:
-            url: The URL of the paper to fetch
+            arxiv_id: The arXiv identifier (e.g., '2506.06395').
+            use_export_url: Whether to route requests through export.arxiv.org.
 
         Returns:
-            The content of the paper as a string
+            The HTML content of the paper page as a string.
 
         Raises:
-            httpx.HTTPError: If the request fails
-            ArxivAccessDeniedError: If the API returns HTTP 403 (access denied)
+            httpx.HTTPError: If the request fails.
+            ArxivAccessDeniedError: If the API returns HTTP 403 (access denied).
         """
-        client = self._ensure_client()
-        try:
-            response = await client.get(url)
-            response.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 403:
-                error_msg = f"Access denied to ArXiv API (HTTP 403) when fetching paper content. URL: {url}"
-                logger.critical(error_msg)
-                logger.critical(
-                    "CRITICAL: ArXiv treats repeated requests after 403 as DoS attacks. Stopping to prevent further issues."
-                )
-                raise ArxivAccessDeniedError(error_msg) from e
-            else:
-                raise httpx.HTTPError(f"Failed to fetch paper content from {url}: {e}") from e
-        except httpx.HTTPError as e:
-            raise httpx.HTTPError(f"Failed to fetch paper content from {url}: {e}") from e
-        else:
-            return response.text
+        url = arxiv_html_url(arxiv_id, use_export_url=use_export_url)
 
-    async def _get_paper_pdf(self, url: str, use_export_url: bool = True) -> bytes:
-        """Fetch the PDF content of a paper from its URL.
+        response = await self._get(url)
+        return response.text
+
+    async def download_paper_pdf(self, arxiv_id: str, use_export_url: bool = True) -> bytes:
+        """Fetch the PDF content of an arXiv paper.
 
         Args:
-            url: The URL of the paper PDF to fetch
-            use_export_url: If True, replace arxiv.org with export.arxiv.org in the URL
+            arxiv_id: The arXiv identifier (e.g., '2506.06395').
+            use_export_url: Whether to route requests through export.arxiv.org.
 
         Returns:
-            The PDF content as bytes
+            The PDF content as bytes.
 
         Raises:
-            httpx.HTTPError: If the request fails
-            ArxivAccessDeniedError: If the API returns HTTP 403 (access denied)
+            httpx.HTTPError: If the request fails.
+            ArxivAccessDeniedError: If the API returns HTTP 403 (access denied).
         """
-        client = self._ensure_client()
-        if use_export_url:
-            # Replace arxiv.org with export.arxiv.org in the URL
-            url = re.sub(r"https?://arxiv\.org", "http://export.arxiv.org", url)
-        try:
-            response = await client.get(url)
-            response.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 403:
-                error_msg = f"Access denied to ArXiv API (HTTP 403) when fetching paper PDF. URL: {url}"
-                logger.critical(error_msg)
-                logger.critical(
-                    "CRITICAL: ArXiv treats repeated requests after 403 as DoS attacks. Stopping to prevent further issues."
-                )
-                raise ArxivAccessDeniedError(error_msg) from e
-            else:
-                raise httpx.HTTPError(f"Failed to fetch paper PDF from {url}: {e}") from e
-        except httpx.HTTPError as e:
-            raise httpx.HTTPError(f"Failed to fetch paper PDF from {url}: {e}") from e
-        else:
-            return response.content
+        url = arxiv_pdf_url(arxiv_id, use_export_url=use_export_url)
+
+        response = await self._get(url)
+        return response.content
 
     def _parse_response(self, content: bytes) -> List[Dict[str, Any]]:
         """Parse arXiv API XML response."""
@@ -410,87 +523,3 @@ class AsyncArxivClient:
             raise ValueError(f"Failed to parse {len(parsing_errors)} entries: {'; '.join(parsing_errors)}")
 
         return papers
-
-    async def aclose(self) -> None:
-        """Close the underlying httpx async client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
-
-    async def __aenter__(self) -> "AsyncArxivClient":
-        """Enter async context manager."""
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Exit async context manager and cleanup resources."""
-        await self.aclose()
-
-
-# %%
-def get_arxiv_paper_metadata(ids: List[str]) -> List[Dict[str, Any]]:
-    """Get arxiv papers by their IDs.
-
-    Args:
-        ids: List of arxiv paper IDs (e.g., ['2506.06395'])
-
-    Returns:
-        List of paper dictionaries containing metadata
-
-    Raises:
-        ValueError: If IDs list is empty
-        requests.HTTPError: If the API request fails
-        ArxivAccessDeniedError: If the API returns HTTP 403 (access denied)
-        ArxivParsingError: If there are errors parsing the XML response
-    """
-    if not ids:
-        raise ValueError("IDs list cannot be empty")
-
-    id_list = ",".join(ids)
-    query_params = {"id_list": id_list}
-    url = urljoin(ARXIV_API_URL, "query?" + urlencode(query_params))
-
-    try:
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
-    except requests.HTTPError as e:
-        if hasattr(e, "response") and e.response.status_code == 403:
-            error_msg = (
-                f"Access denied to ArXiv API (HTTP 403). This may indicate rate limiting or blocked access. URL: {url}"
-            )
-            logger.critical(error_msg)
-            logger.critical(
-                "CRITICAL: ArXiv treats repeated requests after 403 as DoS attacks. Stopping to prevent further issues."
-            )
-            raise ArxivAccessDeniedError(error_msg) from e
-        else:
-            raise requests.HTTPError(f"Failed to fetch papers from ArXiv API: {e}") from e
-    except requests.RequestException as e:
-        raise requests.HTTPError(f"Failed to fetch papers from ArXiv API: {e}") from e
-
-    # Parse the XML
-    try:
-        root = ElementTree.fromstring(response.content)
-    except ElementTree.ParseError as e:
-        raise ValueError(f"Failed to parse XML response: {e}") from e
-
-    # Define namespaces
-    namespaces = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
-
-    papers = []
-    parsing_errors = []
-
-    for entry in root.findall("atom:entry", namespaces):
-        try:
-            paper = _parse_arxiv_entry(entry, namespaces)
-            papers.append(paper)
-        except ArxivParsingError as e:
-            parsing_errors.append(str(e))
-
-    # Raise collected parsing errors if any occurred
-    if parsing_errors:
-        raise ValueError(f"Failed to parse {len(parsing_errors)} entries: {'; '.join(parsing_errors)}")
-
-    return papers
-
-
-# %%

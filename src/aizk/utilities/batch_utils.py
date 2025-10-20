@@ -10,6 +10,8 @@ from tqdm.auto import tqdm
 
 import openai
 
+from aizk.utilities.mlflow_tracing import trace_model_call
+
 logger = logging.getLogger(__name__)
 
 
@@ -361,7 +363,7 @@ class BatchHandler:
             "file_id": file_id,
             "filepath": filepath,
             "status": "submitted",
-            "created_at": datetime.datetime.now(),
+            "created_at": datetime.datetime.now(datetime.timezone.utc),
         }
 
         logger.info(f"Submitted batch {batch_id}")
@@ -505,15 +507,34 @@ class BatchHandler:
 
         logger.info(f"Processing {len(requests)} requests in {len(chunks)} batch(es)")
 
-        for i, chunk in enumerate(chunks):
-            logger.info(f"Processing chunk {i + 1}/{len(chunks)} ({len(chunk)} requests)")
-            filepath = self._save_batch_file(chunk)
-            batch_id = self._upload_and_submit_batch(filepath)
-            batch_ids.append(batch_id)
+        with trace_model_call(
+            name="llm.chat.completions.batch",
+            span_type="CHAT_MODEL",
+            attributes={
+                "model": self.model,
+                "request_count": len(requests),
+                "chunk_count": len(chunks),
+                "provider_endpoint": self.endpoint,
+            },
+        ):
+            for i, chunk in enumerate(chunks):
+                logger.info(f"Processing chunk {i + 1}/{len(chunks)} ({len(chunk)} requests)")
+                with trace_model_call(
+                    name="llm.chat.completions.batch.chunk",
+                    span_type="CHAIN",
+                    attributes={
+                        "model": self.model,
+                        "chunk_index": i,
+                        "chunk_request_count": len(chunk),
+                    },
+                ):
+                    filepath = self._save_batch_file(chunk)
+                    batch_id = self._upload_and_submit_batch(filepath)
+                    batch_ids.append(batch_id)
 
-        # Wait for completion and download results
-        self._wait_for_completion(batch_ids)
-        return self._download_results(batch_ids)
+            # Wait for completion and download results
+            self._wait_for_completion(batch_ids)
+            return self._download_results(batch_ids)
 
     def process_embeddings_batch(
         self,
@@ -552,15 +573,23 @@ class BatchHandler:
 
         logger.info(f"Processing {len(requests)} requests in {len(chunks)} batch(es)")
 
-        for i, chunk in enumerate(chunks):
-            logger.info(f"Processing chunk {i + 1}/{len(chunks)} ({len(chunk)} requests)")
-            filepath = self._save_batch_file(chunk)
-            batch_id = self._upload_and_submit_batch(filepath)
-            batch_ids.append(batch_id)
+        # Embedding trace payload intentionally minimal: model + status + latency.
+        with trace_model_call(
+            name="embedding.batch",
+            span_type="EMBEDDING",
+            attributes={
+                "model": self.model,
+            },
+        ):
+            for i, chunk in enumerate(chunks):
+                logger.info(f"Processing chunk {i + 1}/{len(chunks)} ({len(chunk)} requests)")
+                filepath = self._save_batch_file(chunk)
+                batch_id = self._upload_and_submit_batch(filepath)
+                batch_ids.append(batch_id)
 
-        # Wait for completion and download results
-        self._wait_for_completion(batch_ids)
-        return self._download_results(batch_ids)
+            # Wait for completion and download results
+            self._wait_for_completion(batch_ids)
+            return self._download_results(batch_ids)
 
     def cleanup(self):
         """Clean up local files and resources."""
