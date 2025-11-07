@@ -166,14 +166,11 @@ def _extract_optional_fields(entry: Element, namespaces: Dict[str, str]) -> Dict
 
     # Extract links
     pdf_url = None
-    html_url = None
     for link in entry.findall("atom:link", namespaces):
         link_type = link.get("type")
         href = link.get("href")
         if link_type == "application/pdf" and href:
             pdf_url = href
-        elif link_type == "text/html" and href:
-            html_url = href
 
     # Extract primary category
     primary_category = None
@@ -183,7 +180,6 @@ def _extract_optional_fields(entry: Element, namespaces: Dict[str, str]) -> Dict
 
     return {
         "pdf_url": pdf_url,
-        "html_url": html_url,
         "categories": categories,
         "primary_category": primary_category,
     }
@@ -207,6 +203,8 @@ def _parse_arxiv_entry(entry: Element, namespaces: Dict[str, str]) -> Dict[str, 
     # Extract required fields
     required_fields, required_errors = _extract_required_fields(entry, namespaces)
     all_errors.extend(required_errors)
+    required_fields["abs_url"] = required_fields.get("id", "")
+    required_fields["id"] = required_fields.get("id", "").split("/")[-1]
 
     # Extract authors
     authors, author_errors = _extract_authors(entry, namespaces)
@@ -272,11 +270,15 @@ class AsyncArxivClient:
             self._client = httpx.AsyncClient(timeout=self.timeout, limits=limits, follow_redirects=True)
         return self._client
 
-    async def get_paper_metadata(self, ids: List[str]) -> List[Dict[str, Any]]:
-        """Get arXiv papers by their IDs with rate limiting.
+    async def get_paper_metadata(self, ids: List[str], batch_size: int = 10) -> List[Dict[str, Any]]:
+        """Get arXiv papers by their IDs with rate limiting and automatic batching.
+
+        The arXiv API recommends requesting no more than a few papers at once.
+        This method automatically batches large requests into chunks.
 
         Args:
             ids: List of arXiv paper IDs (e.g., ['2506.06395'])
+            batch_size: Maximum number of IDs to fetch per request (default: 10)
 
         Returns:
             List of paper dictionaries containing metadata
@@ -290,6 +292,18 @@ class AsyncArxivClient:
         if not ids:
             raise ValueError("IDs list cannot be empty")
 
+        # If more than batch_size IDs, process in batches
+        if len(ids) > batch_size:
+            all_metadata = []
+            for i in range(0, len(ids), batch_size):
+                batch = ids[i : i + batch_size]
+                logger.info(f"Fetching metadata for batch {i // batch_size + 1} ({len(batch)} papers)")
+                metadata = await self.get_paper_metadata(batch, batch_size=batch_size)
+                all_metadata.extend(metadata)
+            logger.info(f"Successfully fetched metadata for {len(all_metadata)} papers total")
+            return all_metadata
+
+        # Single batch request
         # Apply rate limiting - this will block until we can make the request
         await _arxiv_rate_limiter.acquire()
 
@@ -427,11 +441,15 @@ class AsyncArxivClient:
 
 
 # %%
-def get_arxiv_paper_metadata(ids: List[str]) -> List[Dict[str, Any]]:
-    """Get arxiv papers by their IDs.
+def get_arxiv_paper_metadata(ids: List[str], batch_size: int = 10) -> List[Dict[str, Any]]:
+    """Get arxiv papers by their IDs with automatic batching.
+
+    The arXiv API recommends requesting no more than a few papers at once.
+    This function automatically batches large requests into chunks.
 
     Args:
         ids: List of arxiv paper IDs (e.g., ['2506.06395'])
+        batch_size: Maximum number of IDs to fetch per request (default: 10)
 
     Returns:
         List of paper dictionaries containing metadata
@@ -445,6 +463,18 @@ def get_arxiv_paper_metadata(ids: List[str]) -> List[Dict[str, Any]]:
     if not ids:
         raise ValueError("IDs list cannot be empty")
 
+    # If more than batch_size IDs, process in batches
+    if len(ids) > batch_size:
+        all_papers = []
+        for i in range(0, len(ids), batch_size):
+            batch = ids[i : i + batch_size]
+            logger.info(f"Fetching metadata for batch {i // batch_size + 1} ({len(batch)} papers)")
+            papers = get_arxiv_paper_metadata(batch, batch_size=batch_size)
+            all_papers.extend(papers)
+        logger.info(f"Successfully fetched metadata for {len(all_papers)} papers total")
+        return all_papers
+
+    # Single batch request
     id_list = ",".join(ids)
     query_params = {"id_list": id_list}
     url = urljoin(ARXIV_API_URL, "query?" + urlencode(query_params))
@@ -463,9 +493,10 @@ def get_arxiv_paper_metadata(ids: List[str]) -> List[Dict[str, Any]]:
             )
             raise ArxivAccessDeniedError(error_msg) from e
         else:
-            raise requests.HTTPError(f"Failed to fetch papers from ArXiv API: {e}") from e
-    except requests.RequestException as e:
-        raise requests.HTTPError(f"Failed to fetch papers from ArXiv API: {e}") from e
+            raise
+    except requests.RequestException:
+        logger.exception("Failed to fetch papers from ArXiv API")
+        raise
 
     # Parse the XML
     try:
