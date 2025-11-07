@@ -78,6 +78,8 @@ Key implementation steps -->
 
 ## Additional Notes
 
+- [Supercharge your OCR Pipelines with Open Models](https://huggingface.co/blog/ocr-open-models)
+
 Tools:
 
 - [docling-project/docling: Get your documents ready for gen AI](https://github.com/docling-project/docling/tree/main)
@@ -102,3 +104,4 @@ Benchmarks:
 - [[2501.00321] OCRBench v2: An Improved Benchmark for Evaluating Large Multimodal Models on Visual Text Localization and Reasoning](https://arxiv.org/abs/2501.00321)
 - [Intelligent Document Processing Leaderboard](https://idp-leaderboard.org/)
 - [getomni-ai/benchmark: OCR Benchmark](https://github.com/getomni-ai/benchmark)
+- [olmocr/olmocr/bench at main · allenai/olmocr](https://github.com/allenai/olmocr/tree/main/olmocr/bench)
