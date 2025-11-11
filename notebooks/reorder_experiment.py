@@ -363,3 +363,115 @@ time.sleep(10)
 await process_tasks(tasks, save_file_name="docling_ocr.md", interval=3)
 stop = time.monotonic()
 logger.info("Docling OCR/PDF extraction took %.2f minutes.", (stop - start) / 60)
+
+# %%a
+# run pdf-ocr-reorder through gpt-5 family, gemini-2.5-flash-lite to try reordering
+# %% [markdown]
+# ## Evaluation
+# We use ROUGE-L, Kendall's Tau, and Dolma similarity to compare the texts, and report character error rate (CER) and word error rate (WER) for the OCR text for completeness
+#
+# - ROUGE-L F1: captures how much of the content overlaps and in-order subsequences. since ROUGE-L focuses on longest common subsequences, we may need to break by document structure (e.g., headings) to get meaningful results
+# - Kendall's Tau: measures rank correlation of token indices, indicating how well the order of elements in one sequence matches the order in the other
+# - Dolma document_edit_similarity: examines how matched two texts are after optimal alignment (ignoring where mismatches occur)
+# - Dolma paragraph_edit_similarity:
+
+
+# %%
+from chonkie.chef import MarkdownChef  # NOQA: E402
+from jiwer import cer, wer  # NOQA: E402
+from rapidfuzz import fuzz  # NOQA: E402
+
+from aizk.metrics.ocr import kendall_tau_score, rouge_3_score, rouge_l_score, sequence_alignment_score  # NOQA: E402
+
+
+# %%
+@dataclass
+class DocSection:
+    heading: str
+    content: str
+
+
+def parse_md_sections(md_text: str) -> list[DocSection]:
+    """Parse markdown text into sections based on headings."""
+    import re
+
+    sections = []
+    current_section = DocSection(heading="", content="")
+
+    for line in md_text.splitlines():
+        if re.match(r"#{1,6} ", line):
+            # append prior section
+            if current_section.heading:
+                sections.append(current_section)
+                current_section = DocSection(heading="", content="")
+            current_section.heading = line.lstrip("#").strip()
+        else:
+            current_section.content += line + "\n"
+
+    return sections
+
+
+# %%
+# for dir in datadir.iterdir():
+#     if dir.name.startswith("."):
+#         continue
+
+dirs = list(datadir.iterdir())
+dir = dirs[0]  # NOQA: A001
+
+logger.info(f"Evaluating {dir.name}...")
+# ref_file = dir / "markitdown_reference.md"
+ref_file = dir / "docling_reference.md"
+ocr_file = dir / "docling_ocr.md"
+
+with open(ref_file, "r", encoding="utf-8") as f:
+    ref_text = f.read()
+
+with open(ocr_file, "r", encoding="utf-8") as f:
+    ocr_text = f.read()
+
+# ref_sections = parse_md_sections(ref_text)
+# ocr_sections = parse_md_sections(ocr_text)
+# if len(ref_sections) != len(ocr_sections):
+#     logger.warning(f"{dir.name}: Documents have different section counts.")
+#     logger.debug(f"Ref sections: {len(ref_sections)}, OCR sections: {len(ocr_sections)}")
+
+# if {s.heading for s in ref_sections} != {s.heading for s in ocr_sections}:
+#     logger.warning(f"{dir.name}: Section headings do not match.")
+#     logger.debug({s.heading for s in ref_sections} - {s.heading for s in ocr_sections})
+#     logger.debug({s.heading for s in ocr_sections} - {s.heading for s in ref_sections})
+
+# %%
+# lower is better
+cer_vals = cer(ref_text, ocr_text)
+wer_vals = wer(ref_text, ocr_text)
+
+# cer_vals = cer(
+#     [r.content for r in ref_sections],
+#     [o.content for o in ocr_sections],
+# )
+# wer_vals = wer(
+#     [r.content for r in ref_sections],
+#     [o.content for o in ocr_sections],
+# )
+
+# %%
+r3 = rouge_3_score(ref_text, ocr_text)
+rl = rouge_l_score(ref_text, ocr_text)
+
+# %%
+kt = kendall_tau_score(ref_text, ocr_text)
+
+# %%
+align = sequence_alignment_score(ref_text, ocr_text)
+
+# %%
+single = max(0.0, rl) * max(0.0, kt)
+
+# return {
+#     "cer": cer_val,
+#     "wer": wer_val,
+#     "rougeL_f1": rougeL,
+#     "kendall_tau_norm": tau_norm,
+#     "single_score": single,
+# }
