@@ -22,6 +22,7 @@ dependencies = [
     "aiolimiter>=1.2.1",
     "asyncio>=3.4.3",
     "chardet>=5.2",
+    "chonkie[hub,neural,openai,semantic,st,viz]>=1.4",
     "datasets<3",
     "docling[vlm,rapidocr]>=2.40",
     "dspy>=2.6.24",
@@ -67,6 +68,7 @@ eval = [
     "ragas>=0.2.15",
     "rapidfuzz>=3.14.3",
     "rouge-score>=0.1.2",
+    "sequence-align>=0.3.0",
 ]
 
 [dependency-groups]
