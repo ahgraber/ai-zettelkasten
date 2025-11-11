@@ -127,5 +127,13 @@ See also
 ## annotation tools
 
 - [HumanSignal/label-studio: Label Studio is a multi-type data labeling and annotation tool with standardized output format](https://github.com/HumanSignal/label-studio)
+
 - [doccano/doccano: Open source annotation tool for machine learning practitioners.](https://github.com/doccano/doccano)
+
 - [inception-project/inception: INCEpTION provides a semantic annotation platform offering intelligent annotation assistance and knowledge management.](https://github.com/inception-project/inception)
+
+- [Termboard - Knowledge Graphs Made Simple](https://termboard.com/) - ontology designer
+
+## graphrag
+
+[nemegrod/graph_RAG: Simple Graph RAG demo based on Jaguar data](https://github.com/nemegrod/graph_RAG) - graphdb, SPARQL, RDFS/OWL

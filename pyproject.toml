@@ -39,7 +39,7 @@ dependencies = [
     "openai>=1.55",
     "openpyxl>=3.1.5",
     "pydantic>=2.9.2",
-    "pydantic-ai>=0.0.19",
+    "pydantic-ai-slim[openai,anthropic,huggingface,openrouter,cli,mcp,fastmcp,evals,ag-ui,retries,temporal,ui]",
     "pydantic-settings>=2.6.1",
     "pypandoc>=1.14",
     "python-dateutil>=2.9.0.post0",
@@ -74,7 +74,7 @@ eval = [
 [dependency-groups]
 dev = [
     "pandas>=2.2",
-    "mlflow>=3",
+    "mlflow>=3.5",
     "turftopic>=0.17.2",
     "chonkie>=1.0.10",
     "gitingest>=0.1.4",
