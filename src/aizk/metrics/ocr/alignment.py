@@ -1,8 +1,6 @@
 from pydantic import BaseModel
 from sequence_align.pairwise import alignment_score, hirschberg
 
-GAP_TOKEN = "▓"  # NOQA: S105 # use a rare unicode char as gap token
-
 
 class TransitionCosts(BaseModel):
     match_score: float = 1.0
@@ -10,21 +8,45 @@ class TransitionCosts(BaseModel):
     indel_score: float = -1.0
 
 
-default_costs = TransitionCosts()
+DEFAULT_COSTS = TransitionCosts()
 
 
-def sequence_alignment_score(ref_text: str, ocr_text: str, costs: TransitionCosts = default_costs) -> float:
+def sequence_alignment_score(
+    ref_text: str,
+    ocr_text: str,
+    costs: TransitionCosts = DEFAULT_COSTS,
+) -> float:
     """Example usage of alignment_score with Hirschberg alignment."""
-    ref_aligned, ocr_aligned = hirschberg(
-        ref_text,
-        ocr_text,
-        gap=GAP_TOKEN,
-        **costs.model_dump(),
-    )
+    # use a rare unicode char as gap token
+    gap_tokens = ["␣", "▓", "■", "▢", "▣", "▤", "▥", "▦"]  # NOQA: S105
+
+    ref_aligned, ocr_aligned, gap_token = None, None, None
+
+    for gap in gap_tokens:
+        try:
+            ref_aligned, ocr_aligned = hirschberg(
+                ref_text,
+                ocr_text,
+                gap=gap,
+                **costs.model_dump(),
+            )
+            gap_token = gap
+            break
+        except ValueError as e:
+            message = str(e)
+            if "Gap entry" in message and gap in message:
+                continue
+            raise e
+
+    if ref_aligned is None or ocr_aligned is None or gap_token is None:
+        raise ValueError(
+            "All tested gap tokens exist in document. Sanitize document before alignment.",
+        )
+
     score = alignment_score(
         ref_aligned,
         ocr_aligned,
-        gap=GAP_TOKEN,
+        gap=gap_token,
         **costs.model_dump(),
     )
     return score
@@ -33,9 +55,9 @@ def sequence_alignment_score(ref_text: str, ocr_text: str, costs: TransitionCost
 ### Ref: https://github.com/allenai/olmocr/blob/main/scripts/eval/dolma_refine/metrics.py
 # insert, delete, match, subst = 0.0, 0.0, 0.0, 0.0
 # for ref_tok, ocr_tok in zip(ref_aligned, ocr_aligned):
-#     if ref_tok == GAP_TOKEN:
+#     if ref_tok == gap_used:
 #         insert += 1
-#     elif ocr_tok == GAP_TOKEN:
+#     elif ocr_tok == gap_used:
 #         delete += 1
 #     elif ref_tok == ocr_tok:
 #         match += 1

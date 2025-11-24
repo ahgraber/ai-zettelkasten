@@ -25,6 +25,8 @@ Constraints and preferences:
 
 Use **SQLite** as the primary local, embedded OLTP store and add **`sqlite-vec`** as a runtime extension to persist and query embedding vectors. `sqlite-vec` is a no-dependency C extension that works anywhere SQLite runs (Linux/macOS/Windows, WASM, mobile) and exposes a simple SQL interface via virtual tables. This keeps the system maximally portable while providing fast, HNSW-backed ANN search that is "good enough" for local development and small/medium datasets.
 
+Note: see [slaily/aiosqlitepool: 🛡️A resilient, high-performance asynchronous connection pool layer for SQLite, designed for efficient and scalable database operations.](https://github.com/slaily/aiosqlitepool)
+
 SQLite UIs:
 
 - [SQLiteViewer](https://alpha.sqliteviewer.app)

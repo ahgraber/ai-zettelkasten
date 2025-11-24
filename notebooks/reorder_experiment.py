@@ -27,7 +27,10 @@ import sys
 import time
 from typing import Optional
 
+from dotenv import load_dotenv
+import httpx  # NOQA: E402
 from pydantic import BaseModel, Field, ValidationError
+from tqdm.auto import tqdm
 
 # %%
 # Add the src directory to the path so we can import treadmill
@@ -35,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from aizk.arxiv import AsyncArxivClient, get_arxiv_paper_metadata
 from aizk.utilities.file_utils import to_valid_fname
+from aizk.utilities.limiters import SlidingWindowRateLimiter
 from aizk.utilities.url_utils import (
     arxiv_abs_url,
     arxiv_html_url,
@@ -55,8 +59,15 @@ treadmill_logger.setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
+# set httpx logging to warnings and errors only
+httpx_logger = logging.getLogger("httpx")
+httpx_logger.setLevel(logging.WARNING)
+httpx_logger.propagate = False
+
 datadir = Path("./data/reorder_experiment/")
 datadir.mkdir(parents=True, exist_ok=True)
+
+load_dotenv()
 
 # %%
 ids = [
@@ -111,22 +122,26 @@ for id_, metadata in zip(ids, paper_metadata):
     title = to_valid_fname(metadata["title"])
 
     htmlfile = savedir / f"{title}.html"
-    if not htmlfile.exists():
-        print("Saving html...")
+    if htmlfile.exists():
+        logger.info("HTML file for %s already exists, skipping download.", id_)
+    else:
+        logger.debug("Saving html for %s...", id_)
         html = await client._get_paper_content(arxiv_html_url(id_))
         with open(htmlfile, "w", encoding="utf-8") as f:
             f.write(html)
         time.sleep(3)
 
     pdffile = savedir / f"{title}.pdf"
-    if not pdffile.exists():
-        print("Saving PDF...")
+    if pdffile.exists():
+        logger.info("PDF file for %s already exists, skipping download.", id_)
+    else:
+        logger.debug("Saving PDF for %s...", id_)
         pdf = await client._get_paper_pdf(arxiv_pdf_url(id_))
         with open(pdffile, "wb") as f:
             f.write(pdf)
         time.sleep(3)
 
-print("Download complete.")
+logger.info("Download complete.")
 
 
 # %%
@@ -166,24 +181,14 @@ for html in datadir.glob("*/**/*.html"):
         f.write(md)
 
 # %%
-# process with docling, olmocr2
-from dotenv import load_dotenv  # NOQA: E402
-import httpx  # NOQA: E402
-
-load_dotenv()
-
-# set httpx logging to warnings and errors only
-httpx_logger = logging.getLogger("httpx")
-httpx_logger.setLevel(logging.WARNING)
-httpx_logger.propagate = False
-
-# %%
 async_client = httpx.AsyncClient(timeout=90)
 base_url = os.environ.get("DOCLING_BASE_URL", "http://localhost:5001")
 endpoint = base_url + "/v1/convert/file/async"
+overwrite: bool = True
 
 # https://docling-project.github.io/docling/reference/cli/
 # https://github.com/docling-project/docling-serve/blob/main/docs/usage.md
+MARKDOWN_PAGE_BREAK_PLACEHOLDER = "\n\n---PAGE BREAK---\n\n"
 BASE_DOCLING_PARAMS = {
     # "from_formats": ["html", "image", "pdf", "md"],
     "to_formats": ["md"],  # , "html", "doctags"],
@@ -195,6 +200,7 @@ BASE_DOCLING_PARAMS = {
     "pdf_backend": "dlparse_v4",
     "table_mode": "accurate",
     "abort_on_error": False,
+    "md_page_break_placeholder": MARKDOWN_PAGE_BREAK_PLACEHOLDER,
     "do_table_structure": True,
     "do_code_enrichment": False,
     "do_formula_enrichment": True,
@@ -282,32 +288,33 @@ async def fetch_result(task: DoclingTask) -> DoclingResult:
     return result
 
 
-async def process_tasks(tasks: list[DoclingTask | DoclingResult], save_file_name: str, interval: int = 3):
+async def process_docling_tasks(tasks: list[DoclingTask], save_file_name: str, interval: int = 3):
     """Process tasks until all are complete."""
 
     while tasks:
         logger.info("%d tasks remaining...", len(tasks))
-        for i, task in enumerate(tasks):
+        pending_tasks: list[DoclingTask] = []
+        for task in tasks:
             update = await update_status(task)
             if update.status == TaskStatus.FAILURE:
-                logger.error(f"Task {update.task_id} failed.")
-                tasks.remove(task)
+                logger.error("Task %s failed.", update.task_id)
                 continue
 
-            elif update.status == TaskStatus.SUCCESS:
+            if update.status == TaskStatus.SUCCESS:
                 logger.info("Task %s for %s complete, saving result...", update.task_id, update.source_file)
                 result = await fetch_result(update)
                 source_file = Path(result.source_file)
+
                 with open(source_file.parent / save_file_name, "w", encoding="utf-8") as f:
                     f.write(result.document.md_content)
 
-                tasks.remove(task)
                 continue
 
-            else:
-                tasks[i] = update
+            pending_tasks.append(update)
 
-        await asyncio.sleep(interval)
+        tasks = pending_tasks
+        if tasks:
+            await asyncio.sleep(interval)
 
     logger.info("Docling reference extraction complete.")
 
@@ -316,6 +323,12 @@ async def process_tasks(tasks: list[DoclingTask | DoclingResult], save_file_name
 start = time.monotonic()
 tasks = []
 for file in datadir.glob("*/**/*.html"):
+    if not overwrite:
+        mdfile = file.parent / "docling_reference.md"
+        if mdfile.exists():
+            logger.info("Docling reference file for %s exists, skipping.", file)
+            continue
+
     with open(file, "r", encoding="utf-8") as f:
         html_content = f.read()
 
@@ -336,7 +349,7 @@ for file in datadir.glob("*/**/*.html"):
 logger.info("Submitted %d, awaiting completion...", len(tasks))
 time.sleep(10)
 
-await process_tasks(tasks, save_file_name="docling_reference.md", interval=3)
+await process_docling_tasks(tasks, save_file_name="docling_reference.md", interval=3)
 stop = time.monotonic()
 logger.info("Docling reference extraction took %.2f minutes.", (stop - start) / 60)
 
@@ -344,6 +357,12 @@ logger.info("Docling reference extraction took %.2f minutes.", (stop - start) / 
 start = time.monotonic()
 tasks = []
 for file in datadir.glob("*/**/*.pdf"):
+    if not overwrite:
+        mdfile = file.parent / "docling_reference.md"
+        if mdfile.exists():
+            logger.info("Docling reference file for %s exists, skipping.", file)
+            continue
+
     logger.info("Submitting %s to Docling...", file)
     with open(file, "rb") as f:
         files = {"files": (file.name, f, "application/pdf")}
@@ -360,7 +379,7 @@ for file in datadir.glob("*/**/*.pdf"):
 logger.info("Submitted %d, awaiting completion...", len(tasks))
 time.sleep(10)
 
-await process_tasks(tasks, save_file_name="docling_ocr.md", interval=3)
+await process_docling_tasks(tasks, save_file_name="docling_ocr.md", interval=3)
 stop = time.monotonic()
 logger.info("Docling OCR/PDF extraction took %.2f minutes.", (stop - start) / 60)
 
@@ -377,101 +396,354 @@ logger.info("Docling OCR/PDF extraction took %.2f minutes.", (stop - start) / 60
 
 
 # %%
-from chonkie.chef import MarkdownChef  # NOQA: E402
 from jiwer import cer, wer  # NOQA: E402
-from rapidfuzz import fuzz  # NOQA: E402
+
+import pandas as pd  # NOQA: E402
 
 from aizk.metrics.ocr import kendall_tau_score, rouge_3_score, rouge_l_score, sequence_alignment_score  # NOQA: E402
 
+# %%
+ref_name = "docling_reference"
+ocr_name = "docling_ocr"
+
+savefile = datadir / "ocr_evaluation_results.csv"
+if savefile.exists():
+    df = pd.read_csv(savefile)
+else:
+    df = pd.DataFrame(
+        columns=[
+            "arxiv_id",
+            "path",
+            "reference",
+            "comparison",
+            "cer",
+            "wer",
+            "rouge-3",
+            "rouge-l",
+            "kendall-tau",
+            "alignment",
+        ]
+    )
+    df.to_csv(datadir / "ocr_evaluation_results.csv", index=False, header=True)
+
+for dir in tqdm(sorted(datadir.iterdir())):  # NOQA: A001
+    if not dir.is_dir():
+        continue
+    if dir.name.startswith("."):
+        continue
+    if str(dir) in df["path"].tolist():
+        logger.debug(f"Skipping {dir.name}, already evaluated.")
+        continue
+
+    logger.info(f"Evaluating {dir.name}...")
+    start = time.monotonic()
+    # ref_file = dir / "markitdown_reference.md"
+    ref_file = dir / f"{ref_name}.md"
+    ocr_file = dir / f"{ocr_name}.md"
+
+    with open(ref_file, "r", encoding="utf-8") as f:
+        ref_text = f.read()
+
+    with open(ocr_file, "r", encoding="utf-8") as f:
+        ocr_text = f.read()
+
+    # remove markdown page break placeholders
+    ocr_text = ocr_text.replace(MARKDOWN_PAGE_BREAK_PLACEHOLDER, "")
+
+    # lower is better
+    logger.debug("Assessing conversion error rates...")
+    cer_vals = cer(ref_text, ocr_text)
+    wer_vals = wer(ref_text, ocr_text)
+
+    # higher is better
+    logger.debug("Assessing ROUGE scores...")
+    r3 = rouge_3_score(ref_text, ocr_text)
+    rl = rouge_l_score(ref_text, ocr_text)
+    logger.debug("Assessing Kendall's Tau score...")
+    kt = kendall_tau_score(ref_text, ocr_text)
+    logger.debug("Assessing sequence alignment score...")
+    align = sequence_alignment_score(ref_text, ocr_text)
+
+    stop = time.monotonic()
+    logger.info("Evaluation for %s (%d characters) took %.2f minutes.", dir.name, len(ref_text), (stop - start) / 60)
+
+    logger.debug("Saving results to csv...")
+    _df = pd.DataFrame(
+        {
+            "arxiv_id": dir.name,
+            "path": str(dir),
+            "reference": ref_name,
+            "comparison": ocr_name,
+            "cer": cer_vals,
+            "wer": wer_vals,
+            "rouge-3": r3,
+            "rouge-l": rl,
+            "kendall-tau": kt,
+            "alignment": align,
+        },
+        index=[
+            0,
+        ],
+    )
+    _df.to_csv(datadir / "ocr_evaluation_results.csv", index=False, header=False, mode="a")
 
 # %%
-@dataclass
-class DocSection:
-    heading: str
-    content: str
+pd.read_csv(datadir / "ocr_evaluation_results.csv").set_index("arxiv_id")[
+    ["rouge-3", "rouge-l", "kendall-tau", "alignment"]
+].corr()
 
-
-def parse_md_sections(md_text: str) -> list[DocSection]:
-    """Parse markdown text into sections based on headings."""
-    import re
-
-    sections = []
-    current_section = DocSection(heading="", content="")
-
-    for line in md_text.splitlines():
-        if re.match(r"#{1,6} ", line):
-            # append prior section
-            if current_section.heading:
-                sections.append(current_section)
-                current_section = DocSection(heading="", content="")
-            current_section.heading = line.lstrip("#").strip()
-        else:
-            current_section.content += line + "\n"
-
-    return sections
+# %%
+# TODO
+# split by pages
+# use LLM to reorder OCR text
+# re-evaluate reordered text
+# compare results
 
 
 # %%
-# for dir in datadir.iterdir():
-#     if dir.name.startswith("."):
-#         continue
+import mlflow  # NOQA: E402
+from pydantic_ai import Agent  # NOQA: E402
+from pydantic_ai.models.openrouter import OpenRouterModel  # NOQA: E402
+from pydantic_ai.providers.openrouter import OpenRouterProvider  # NOQA: E402
 
-dirs = list(datadir.iterdir())
-dir = dirs[0]  # NOQA: A001
+# TODO: check if mlflow is running; raise exception if not
+# `mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000`
+mlflow.set_tracking_uri(os.environ.get("AIZK_MLFLOW_TRACKING_URI", "http://127.0.0.1:5000"))
+mlflow.set_experiment("reorder_experiment")
+mlflow.pydantic_ai.autolog()
 
-logger.info(f"Evaluating {dir.name}...")
-# ref_file = dir / "markitdown_reference.md"
-ref_file = dir / "docling_reference.md"
-ocr_file = dir / "docling_ocr.md"
+REORDER_FILE_SUFFIX = "_reorder"
 
-with open(ref_file, "r", encoding="utf-8") as f:
-    ref_text = f.read()
 
-with open(ocr_file, "r", encoding="utf-8") as f:
-    ocr_text = f.read()
+class PageReorderResult(BaseModel):
+    """Structured response describing a reordered OCR page."""
 
-# ref_sections = parse_md_sections(ref_text)
-# ocr_sections = parse_md_sections(ocr_text)
-# if len(ref_sections) != len(ocr_sections):
-#     logger.warning(f"{dir.name}: Documents have different section counts.")
-#     logger.debug(f"Ref sections: {len(ref_sections)}, OCR sections: {len(ocr_sections)}")
+    ordered_markdown: str = Field(
+        ...,
+        description="Markdown content for the page once the sentences are restored to a sensible reading order.",
+    )
+    reasoning: str = Field(
+        ...,
+        description="Short summary of the steps taken to repair the reading order.",
+    )
 
-# if {s.heading for s in ref_sections} != {s.heading for s in ocr_sections}:
-#     logger.warning(f"{dir.name}: Section headings do not match.")
-#     logger.debug({s.heading for s in ref_sections} - {s.heading for s in ocr_sections})
-#     logger.debug({s.heading for s in ocr_sections} - {s.heading for s in ref_sections})
+
+reorder_instructions = """
+You are cataloguing OCR'd research papers. Each input is a single page whose sentences, bullet markers, figures, and tables may be shuffled because of OCR errors.
+Reconstruct a coherent reading order in Markdown. Preserve math delimiters, section headings, and code fences. Keep all substantive content, but do not fabricate new information.
+Return content that satisfies the PageReorderResult schema and never include commentary outside the structured fields.""".strip()
+
+reorder_agent = Agent(
+    model=OpenRouterModel(
+        "openai/gpt-5-mini",
+        provider=OpenRouterProvider(api_key=os.environ["_OPENROUTER_API_KEY"]),
+    ),
+    output_type=PageReorderResult,
+    instructions=reorder_instructions,
+)
+
+reorder_rate_limiter = SlidingWindowRateLimiter(
+    max_requests=20,
+    window_seconds=60,
+)
+
+
+async def reorder_page(
+    agent: Agent[None, PageReorderResult],
+    *,
+    page_index: int,
+    total_pages: int,
+    page_text: str,
+) -> str:
+    """Run the Pydantic AI agent on a single OCR page.
+
+    Args:
+        agent: Configured OCR reordering agent.
+        arxiv_id: ArXiv identifier for logging context.
+        page_index: Zero-based page index within the document.
+        total_pages: Total number of pages in the document.
+        page_text: Raw OCR text for the page.
+        source_filename: Name of the source markdown file for provenance.
+
+    Returns:
+        Markdown text reordered into a coherent reading sequence.
+    """
+
+    if not page_text.strip():
+        return ""
+
+    prompt = f"""
+You are repairing OCR output from an ArXiv paper.
+The following text is from page {page_index + 1} of {total_pages}.
+Restore the logical reading order while preserving headings, math, tables, and citations.
+Use Markdown formatting and keep the wording faithful to the provided text."
+
+Raw OCR page content:
+{page_text.strip()}
+""".strip()
+
+    await reorder_rate_limiter.acquire()
+    result = await agent.run(user_prompt=prompt)
+    return result.output.ordered_markdown.strip()
+
+
+def split_markdown_pages(document_text: str) -> list[str]:
+    """Split markdown text into individual pages using the placeholder delimiter."""
+
+    if not document_text:
+        return []
+    return [segment.strip("\n") for segment in document_text.split(MARKDOWN_PAGE_BREAK_PLACEHOLDER)]
+
+
+def join_markdown_pages(pages: list[str]) -> str:
+    """Recombine page segments into a single markdown document with placeholders."""
+
+    if not pages:
+        return ""
+    normalized = [page.rstrip() for page in pages]
+    combined = MARKDOWN_PAGE_BREAK_PLACEHOLDER.join(normalized)
+    return combined.strip() + "\n"
+
 
 # %%
-# lower is better
-cer_vals = cer(ref_text, ocr_text)
-wer_vals = wer(ref_text, ocr_text)
+overwrite = False
+start = time.monotonic()
+tasks = []
+source_filename = "docling_ocr.md"
+for source_file in tqdm(sorted(datadir.glob(f"*/**/{source_filename}"))):
+    outfile = source_file.with_name(f"{source_file.stem}{REORDER_FILE_SUFFIX}{source_file.suffix}")
+    if not overwrite:  # NOQA: SIM102
+        if outfile.exists():
+            logger.info("Reordered Docling OCR file for %s exists, skipping.", source_file)
+            continue
 
-# cer_vals = cer(
-#     [r.content for r in ref_sections],
-#     [o.content for o in ocr_sections],
-# )
-# wer_vals = wer(
-#     [r.content for r in ref_sections],
-#     [o.content for o in ocr_sections],
-# )
+    raw_markdown = source_file.read_text(encoding="utf-8")
+    pages = split_markdown_pages(raw_markdown)
+    total_pages = len(pages)
+    if total_pages == 0:
+        logger.warning("%s: OCR file is empty, skipping LLM reorder.", source_file)
+        continue
+
+    page_tasks = [
+        reorder_page(
+            reorder_agent,
+            page_index=idx,
+            total_pages=total_pages,
+            page_text=page_text,
+        )
+        for idx, page_text in enumerate(pages)
+    ]
+    page_results = await asyncio.gather(*page_tasks, return_exceptions=True)  # type: ignore[misc]
+
+    reordered_pages: list[str] = []
+    for idx, (page_text, result) in enumerate(zip(pages, page_results)):
+        if isinstance(result, ValidationError):  # pragma: no cover - defensive fallback
+            logger.exception("%s: Validation error while reordering page %d", source_file, idx + 1)
+            reordered_pages.append(page_text.strip())
+            continue
+        if isinstance(result, Exception):  # pragma: no cover - defensive fallback
+            logger.exception("%s: Unexpected error while reordering page %d", source_file, idx + 1)
+            reordered_pages.append(page_text.strip())
+            continue
+        assert isinstance(result, str)
+        reordered_pages.append(result)
+
+    combined_markdown = join_markdown_pages(reordered_pages)
+    outfile.write_text(combined_markdown, encoding="utf-8")
+    logger.info("Saved reordered OCR markdown to %s", outfile)
+
+stop = time.monotonic()
+logger.info("OCR reorder took %.2f minutes.", (stop - start) / 60)
+
 
 # %%
-r3 = rouge_3_score(ref_text, ocr_text)
-rl = rouge_l_score(ref_text, ocr_text)
+ref_name = "docling_reference"
+ocr_name = "docling_ocr_reorder"
+
+savefile = datadir / "ocr_reorder_results.csv"
+if savefile.exists():
+    df = pd.read_csv(savefile)
+else:
+    df = pd.DataFrame(
+        columns=[
+            "arxiv_id",
+            "path",
+            "reference",
+            "comparison",
+            "cer",
+            "wer",
+            "rouge-3",
+            "rouge-l",
+            "kendall-tau",
+            "alignment",
+        ]
+    )
+    df.to_csv(datadir / "ocr_reorder_results.csv", index=False, header=True)
+
+for dir in tqdm(sorted(datadir.iterdir())):  # NOQA: A001
+    if not dir.is_dir():
+        continue
+    if dir.name.startswith("."):
+        continue
+    if str(dir) in df["path"].tolist():
+        logger.debug(f"Skipping {dir.name}, already evaluated.")
+        continue
+
+    logger.info(f"Evaluating {dir.name}...")
+    start = time.monotonic()
+    # ref_file = dir / "markitdown_reference.md"
+    ref_file = dir / f"{ref_name}.md"
+    ocr_file = dir / f"{ocr_name}.md"
+
+    with open(ref_file, "r", encoding="utf-8") as f:
+        ref_text = f.read()
+
+    with open(ocr_file, "r", encoding="utf-8") as f:
+        ocr_text = f.read()
+
+    # remove markdown page break placeholders
+    ocr_text = ocr_text.replace(MARKDOWN_PAGE_BREAK_PLACEHOLDER, "")
+
+    # lower is better
+    logger.debug("Assessing conversion error rates...")
+    cer_vals = cer(ref_text, ocr_text)
+    wer_vals = wer(ref_text, ocr_text)
+
+    # higher is better
+    logger.debug("Assessing ROUGE scores...")
+    r3 = rouge_3_score(ref_text, ocr_text)
+    rl = rouge_l_score(ref_text, ocr_text)
+    logger.debug("Assessing Kendall's Tau score...")
+    kt = kendall_tau_score(ref_text, ocr_text)
+    logger.debug("Assessing sequence alignment score...")
+    align = sequence_alignment_score(ref_text, ocr_text)
+
+    stop = time.monotonic()
+    logger.info("Evaluation for %s (%d characters) took %.2f minutes.", dir.name, len(ref_text), (stop - start) / 60)
+
+    logger.debug("Saving results to csv...")
+    _df = pd.DataFrame(
+        {
+            "arxiv_id": dir.name,
+            "path": str(dir),
+            "reference": ref_name,
+            "comparison": ocr_name,
+            "cer": cer_vals,
+            "wer": wer_vals,
+            "rouge-3": r3,
+            "rouge-l": rl,
+            "kendall-tau": kt,
+            "alignment": align,
+        },
+        index=[
+            0,
+        ],
+    )
+    _df.to_csv(datadir / "ocr_reorder_results.csv", index=False, header=False, mode="a")
 
 # %%
-kt = kendall_tau_score(ref_text, ocr_text)
+pd.read_csv(datadir / "ocr_reorder_results.csv").set_index("arxiv_id")[
+    ["rouge-3", "rouge-l", "kendall-tau", "alignment"]
+].corr()
 
 # %%
-align = sequence_alignment_score(ref_text, ocr_text)
-
-# %%
-single = max(0.0, rl) * max(0.0, kt)
-
-# return {
-#     "cer": cer_val,
-#     "wer": wer_val,
-#     "rougeL_f1": rougeL,
-#     "kendall_tau_norm": tau_norm,
-#     "single_score": single,
-# }

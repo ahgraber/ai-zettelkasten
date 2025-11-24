@@ -12,9 +12,9 @@ Note that ROUGE-L does not require consecutive matches, only in-sequence matches
 
 from rouge_score import rouge_scorer
 
-RLSCORER = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=False)
-
 R3SCORER = rouge_scorer.RougeScorer(["rouge3"], use_stemmer=False)
+
+RLSCORER = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=False)
 
 
 def rouge_3_score(ref_text: str, ocr_text: str) -> float:
