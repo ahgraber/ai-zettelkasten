@@ -40,7 +40,7 @@ repos:
         files: \.rej$
   # renovate: datasource=github-tags depName=pre-commit/pre-commit-hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: "v5.0.0"
+    rev: "v6.0.0"
     hooks:
       - id: check-added-large-files
         args: [--maxkb=500000]
@@ -76,7 +76,7 @@ repos:
       #   stages: [pre-commit]
   # renovate: datasource=github-tags depName=sirosen/texthooks
   - repo: https://github.com/sirosen/texthooks
-    rev: "0.6.8"
+    rev: "0.7.1"
     hooks:
       - id: fix-smartquotes
         stages: [pre-commit]
@@ -84,19 +84,19 @@ repos:
         stages: [pre-commit]
   # renovate: datasource=github-tags depName=zricethezav/gitleaks
   - repo: https://github.com/zricethezav/gitleaks
-    rev: "v8.26.0"
+    rev: "v8.30.0"
     hooks:
       - id: gitleaks
   # renovate: datasource=github-tags depName=stefmolin/exif-stripper
   - repo: https://github.com/stefmolin/exif-stripper
-    rev: 0.6.2
+    rev: 1.2.0
     hooks:
       - id: strip-exif
         name: Strip exif metadata from images
         stages: [pre-commit]
   # renovate: datasource=github-tags depName=commitizen-tools/commitizen
   - repo: https://github.com/commitizen-tools/commitizen
-    rev: v4.8.2
+    rev: v4.10.0
     hooks:
       - id: commitizen
         language: python
@@ -126,14 +126,15 @@ repos:
           - mdformat-frontmatter
           - mdformat-footnote
           - mdformat-gfm-alerts
-          - mdformat-tables
+          # - mdformat-tables # now included in mdformat-gfm
           - mdformat-toc
           - mdformat-config
           - mdformat-ruff
           # - mdformat-shfmt # disable until can pass args (ref: https://github.com/hukkin/mdformat-shfmt/issues/7)
+          - mdformat-simple-breaks
   # renovate: datasource=github-tags depName=igorshubovych/markdownlint-cli
   - repo: https://github.com/igorshubovych/markdownlint-cli
-    rev: "v0.45.0"
+    rev: "v0.47.0"
     hooks:
       - id: markdownlint
         name: Lint markdown files
@@ -143,7 +144,7 @@ repos:
         stages: [pre-commit]
   # renovate: datasource=github-tags depName=charliermarsh/ruff-pre-commit
   - repo: https://github.com/charliermarsh/ruff-pre-commit
-    rev: "v0.11.12"
+    rev: "v0.14.9"
     hooks:
       - id: ruff
         name: Lint and Format with Ruff
@@ -151,7 +152,7 @@ repos:
         stages: [pre-commit]
   # renovate: datasource=github-tags depName=kynan/nbstripout
   - repo: https://github.com/kynan/nbstripout
-    rev: 0.8.1
+    rev: 0.8.2
     hooks:
       - id: nbstripout
         name: Strip metadata and outputs from ipynb files
@@ -175,7 +176,7 @@ repos:
         stages: [pre-commit]
   # renovate: datasource=github-tags depName=scop/pre-commit-shfmt versioning=loose
   - repo: https://github.com/scop/pre-commit-shfmt
-    rev: "v3.8.0-1"
+    rev: "v3.12.0-2"
     hooks:
       - id: shfmt
         name: Format shell scripts
@@ -212,7 +213,7 @@ repos:
   ### In this case, comment out this block until ".typos.toml" has been committed successfully
   # renovate: datasource=github-tags depName=crate-ci/typos
   - repo: https://github.com/crate-ci/typos
-    rev: "v1.32.0"
+    rev: "v1.40.0"
     hooks:
       - id: typos
         name: Spellcheck with Typos
