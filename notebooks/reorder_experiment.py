@@ -512,7 +512,7 @@ mlflow.set_tracking_uri(os.environ.get("AIZK_MLFLOW_TRACKING_URI", "http://127.0
 mlflow.set_experiment("reorder_experiment")
 mlflow.pydantic_ai.autolog()
 
-REORDER_FILE_SUFFIX = "_reorder"
+REORDER_FILE_SUFFIX = "reorder_with_prior"
 
 
 class PageReorderResult(BaseModel):
@@ -554,6 +554,7 @@ async def reorder_page(
     page_index: int,
     total_pages: int,
     page_text: str,
+    prior_tail: Optional[str] = None,
 ) -> str:
     """Run the Pydantic AI agent on a single OCR page.
 
@@ -577,7 +578,15 @@ You are repairing OCR output from an ArXiv paper.
 The following text is from page {page_index + 1} of {total_pages}.
 Restore the logical reading order while preserving headings, math, tables, and citations.
 Use Markdown formatting and keep the wording faithful to the provided text."
+""".strip()
 
+    if prior_tail:
+        prompt += f"""
+The prior page ended with:
+{prior_tail.strip()}
+""".strip()
+
+    prompt += f"""
 Raw OCR page content:
 {page_text.strip()}
 """.strip()
@@ -611,7 +620,7 @@ start = time.monotonic()
 tasks = []
 source_filename = "docling_ocr.md"
 for source_file in tqdm(sorted(datadir.glob(f"*/**/{source_filename}"))):
-    outfile = source_file.with_name(f"{source_file.stem}{REORDER_FILE_SUFFIX}{source_file.suffix}")
+    outfile = source_file.with_name(f"{source_file.stem}_{REORDER_FILE_SUFFIX}{source_file.suffix}")
     if not overwrite:  # NOQA: SIM102
         if outfile.exists():
             logger.info("Reordered Docling OCR file for %s exists, skipping.", source_file)
@@ -624,15 +633,21 @@ for source_file in tqdm(sorted(datadir.glob(f"*/**/{source_filename}"))):
         logger.warning("%s: OCR file is empty, skipping LLM reorder.", source_file)
         continue
 
-    page_tasks = [
-        reorder_page(
+    page_tasks = []
+    for idx, page in enumerate(pages):
+        prior_tail_text = None
+        if idx > 0:
+            prior = pages[idx - 1].split("\n")[-5:]  # last 5 lines of prior page
+            prior_tail = "\n".join(prior)
+        task = reorder_page(
             reorder_agent,
             page_index=idx,
             total_pages=total_pages,
-            page_text=page_text,
+            page_text=page,
+            prior_tail=prior_tail_text,
         )
-        for idx, page_text in enumerate(pages)
-    ]
+        page_tasks.append(task)
+
     page_results = await asyncio.gather(*page_tasks, return_exceptions=True)  # type: ignore[misc]
 
     reordered_pages: list[str] = []
@@ -658,9 +673,9 @@ logger.info("OCR reorder took %.2f minutes.", (stop - start) / 60)
 
 # %%
 ref_name = "docling_reference"
-ocr_name = "docling_ocr_reorder"
+ocr_name = f"docling_ocr_{REORDER_FILE_SUFFIX}"
 
-savefile = datadir / "ocr_reorder_results.csv"
+savefile = datadir / "ocr_reorder_results_prior.csv"
 if savefile.exists():
     df = pd.read_csv(savefile)
 else:
@@ -678,7 +693,7 @@ else:
             "alignment",
         ]
     )
-    df.to_csv(datadir / "ocr_reorder_results.csv", index=False, header=True)
+    df.to_csv(datadir / "ocr_reorder_results_prior.csv", index=False, header=True)
 
 for dir in tqdm(sorted(datadir.iterdir())):  # NOQA: A001
     if not dir.is_dir():
@@ -739,11 +754,19 @@ for dir in tqdm(sorted(datadir.iterdir())):  # NOQA: A001
             0,
         ],
     )
-    _df.to_csv(datadir / "ocr_reorder_results.csv", index=False, header=False, mode="a")
+    _df.to_csv(datadir / "ocr_reorder_results_prior.csv", index=False, header=False, mode="a")
 
 # %%
-pd.read_csv(datadir / "ocr_reorder_results.csv").set_index("arxiv_id")[
+pd.read_csv(datadir / "ocr_reorder_results_prior.csv").set_index("arxiv_id")[
+    ["rouge-3", "rouge-l", "kendall-tau", "alignment"]
+].describe()
+
+# %%
+pd.read_csv(datadir / "ocr_reorder_results_prior.csv").set_index("arxiv_id")[
     ["rouge-3", "rouge-l", "kendall-tau", "alignment"]
 ].corr()
 
-# %%
+# %% [markdown]
+# ## Results
+#
+# Default Docling OCR results seem to be of fairly high quality already; using an LLM to reorder the text provides at best marginal improvement but more frequently degrades quality.
