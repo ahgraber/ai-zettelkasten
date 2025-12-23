@@ -137,3 +137,5 @@ See also
 ## graphrag
 
 [nemegrod/graph_RAG: Simple Graph RAG demo based on Jaguar data](https://github.com/nemegrod/graph_RAG) - graphdb, SPARQL, RDFS/OWL
+[stair-lab/kg-gen: [NeurIPS '25] Knowledge Graph Generation from Any Text](https://github.com/stair-lab/kg-gen)
+[microsoft/graphrag: A modular graph-based Retrieval-Augmented Generation (RAG) system](https://github.com/microsoft/graphrag)
