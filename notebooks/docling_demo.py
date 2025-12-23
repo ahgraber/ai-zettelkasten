@@ -63,11 +63,6 @@ from karakeep_client.karakeep import APIError, AuthenticationError, KarakeepClie
 from karakeep_client.models import PaginatedBookmarks
 
 # %%
-# Add the src directory to the path so we can import treadmill
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-
-# %%
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 
@@ -83,6 +78,277 @@ logger.setLevel(logging.DEBUG)
 # %%
 _ = load_dotenv()
 
+
+# %%
+def slugify(text: str, fallback: str) -> str:
+    """Return a filesystem-friendly slug."""
+
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-").lower()
+    return cleaned or fallback
+
+
+def ensure_directory(path: Path) -> Path:
+    """Create ``path`` if needed and return it."""
+
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+# %%
+def resolve_bookmark_source_url(bookmark: Bookmark) -> AnyUrl:
+    """Return the canonical source URL for a Karakeep bookmark."""
+
+    content = bookmark.content
+    if isinstance(content, ContentTypeLink):
+        return AnyUrl(content.url)
+    if isinstance(content, ContentTypeText) and content.source_url:
+        return AnyUrl(content.source_url)
+    if isinstance(content, ContentTypeAsset) and content.source_url:
+        return AnyUrl(content.source_url)
+    raise ValueError(f"Bookmark {bookmark.id} does not expose a source URL")
+
+
+def resolve_bookmark_type(bookmark: Bookmark) -> str:
+    """Return the bookmark's type.
+
+    Prefers the top-level bookmark `type` field (when present), falling back to
+    the embedded content `type`. Returns "unknown" when neither exists.
+    """
+
+    bookmark_type = getattr(bookmark, "type", None)
+    if bookmark_type:
+        return str(bookmark_type)
+
+    content = getattr(bookmark, "content", None)
+    content_type = getattr(content, "type", None)
+    return str(content_type) if content_type else "unknown"
+
+
+BookmarkContentKind = Literal["link", "text", "asset", "unknown"]
+
+
+def resolve_bookmark_content_type(bookmark: Bookmark) -> BookmarkContentKind:
+    """Return a normalized content type for a bookmark."""
+
+    content = getattr(bookmark, "content", None)
+    if isinstance(content, ContentTypeLink):
+        return "link"
+    if isinstance(content, ContentTypeText):
+        return "text"
+    if isinstance(content, ContentTypeAsset):
+        return "asset"
+    return "unknown"
+
+
+def resolve_bookmark_content_text(bookmark: Bookmark) -> Optional[str]:
+    """Return a best-effort textual representation of bookmark content.
+
+    - Link: returns `html_content` when present, otherwise `None`.
+    - Text: returns `text`.
+    - Asset: returns extracted `content` when present (e.g., OCR/PDF text).
+
+    Returns:
+        The extracted text/HTML/URL, or `None` when no usable content exists.
+    """
+
+    content = getattr(bookmark, "content", None)
+    if isinstance(content, ContentTypeLink):
+        return content.html_content
+    if isinstance(content, ContentTypeText):
+        return content.text
+    if isinstance(content, ContentTypeAsset):
+        extracted = getattr(content, "content", None)
+        return extracted
+    return None
+
+
+# %%
+ALT_TEXT_INSTRUCTIONS = """
+Provide a detailed description for this image that captures the main subject, action, and any critical visual information including key components, relationships, and outcomes shown in the image with the goal that someone who reads the description would be able to redraw the image. Prioritize detail over brevity.
+
+- Do not rely on phrases like "shown above" or "as seen"
+- Do not say "image of," "picture of," or "graphic of"
+- Do not describe purely visual styling unless meaningful
+- Do not guess emotions, identities, or intent unless clearly conveyed
+
+Respond ONLY with the image description, no other text.
+""".strip()
+
+
+def build_picture_description_options() -> PictureDescriptionApiOptions:
+    """Configure picture descriptions to use the OpenRouter endpoint."""
+
+    base_url = os.environ["_OPENROUTER_BASE_URL"].rstrip("/")
+    api_key = os.environ["_OPENROUTER_API_KEY"]
+    model_name = os.environ.get("DOCLING_VLM_MODEL", "openai/gpt-5-nano")
+    timeout = float(os.environ.get("DOCLING_PICTURE_TIMEOUT", "180"))
+    return PictureDescriptionApiOptions(
+        url=AnyUrl(f"{base_url}/chat/completions"),
+        params={
+            "model": model_name,
+            "seed": 42,
+            "reasoning_effort": "low",
+            # "max_completion_tokens": 2400,
+        },
+        headers={"Authorization": f"Bearer {api_key}"},
+        prompt=ALT_TEXT_INSTRUCTIONS,
+        timeout=timeout,
+    )
+
+
+def build_html_format_options(
+    picture_description_options: PictureDescriptionApiOptions,
+    source_uri: Optional[AnyUrl | PurePath] = None,
+) -> HTMLFormatOption:
+    """Return HTMLFormatOption for HTML conversions using picture descriptions."""
+
+    pipeline_options = ConvertPipelineOptions()
+    pipeline_options.enable_remote_services = True
+    pipeline_options.do_picture_description = True
+    pipeline_options.picture_description_options = picture_description_options
+
+    html_backend_options = HTMLBackendOptions(
+        kind="html",
+        fetch_images=True,
+        enable_remote_fetch=True,
+        enable_local_fetch=True,
+        source_uri=source_uri if source_uri else None,
+    )
+
+    return HTMLFormatOption(
+        pipeline_options=pipeline_options,
+        backend_options=html_backend_options,
+    )
+
+
+def build_md_format_options(
+    picture_description_options: PictureDescriptionApiOptions,
+    source_uri: Optional[AnyUrl | PurePath] = None,
+) -> MarkdownFormatOption:
+    """Return ConvertPipelineOptions for HTML conversions using picture descriptions."""
+
+    pipeline_options = ConvertPipelineOptions()
+    pipeline_options.enable_remote_services = True
+    pipeline_options.do_picture_description = True
+    pipeline_options.picture_description_options = picture_description_options
+
+    md_backend_options = MarkdownBackendOptions(
+        kind="md",
+        fetch_images=True,
+        enable_remote_fetch=True,
+        enable_local_fetch=True,
+        source_uri=source_uri if source_uri else None,
+    )
+    return MarkdownFormatOption(
+        pipeline_options=pipeline_options,
+        backend_options=md_backend_options,
+    )
+
+
+def build_pdf_format_options(
+    picture_description_options: PictureDescriptionApiOptions,
+) -> PdfFormatOption:
+    """Return the PdfPipelineOptions used for docling conversions."""
+
+    accelerator_options = AcceleratorOptions(
+        num_threads=4,
+        device=AcceleratorDevice.AUTO,
+    )
+    pipeline_options = ThreadedPdfPipelineOptions(
+        ocr_batch_size=4,  # default 4
+        layout_batch_size=4,  # default 4
+        table_batch_size=4,  # currently not using GPU batching
+    )
+    pipeline_options.enable_remote_services = True
+    pipeline_options.accelerator_options = accelerator_options
+    pipeline_options.do_ocr = False
+    pipeline_options.ocr_options.lang = ["en"]
+    pipeline_options.do_code_enrichment = True
+    pipeline_options.do_formula_enrichment = True
+    pipeline_options.generate_page_images = True
+    pipeline_options.do_picture_classification = False
+    pipeline_options.do_picture_description = True
+    pipeline_options.generate_picture_images = True
+    pipeline_options.images_scale = 2
+    pipeline_options.do_table_structure = True
+    pipeline_options.generate_table_images = True
+    pipeline_options.table_structure_options.do_cell_matching = True
+    pipeline_options.picture_description_options = picture_description_options
+
+    return PdfFormatOption(pipeline_options=pipeline_options)
+
+
+def create_docling_converter(
+    picture_description_options: PictureDescriptionApiOptions,
+    *,
+    source_url: Optional[AnyUrl | PurePath] = None,
+) -> DocumentConverter:
+    """Instantiate a fresh DocumentConverter for both PDF and HTML formats."""
+
+    html_options = build_html_format_options(picture_description_options, source_uri=source_url)
+    pdf_options = build_pdf_format_options(picture_description_options)
+    md_options = build_md_format_options(picture_description_options, source_uri=source_url)
+
+    return DocumentConverter(
+        format_options={
+            InputFormat.HTML: html_options,
+            InputFormat.PDF: pdf_options,
+            InputFormat.MD: md_options,
+        }
+    )
+
+
+# %%
+class AnnotationPictureSerializer(MarkdownPictureSerializer):
+    @override
+    def serialize(
+        self,
+        *,
+        item: PictureItem,
+        doc_serializer: BaseDocSerializer,
+        doc: DoclingDocument,
+        separator: Optional[str] = None,
+        **kwargs: Any,
+    ) -> SerializationResult:
+        text_parts: list[str] = []
+
+        # reusing the existing result:
+        parent_res = super().serialize(
+            item=item,
+            doc_serializer=doc_serializer,
+            doc=doc,
+            **kwargs,
+        )
+        text_parts.append(parent_res.text)
+
+        # appending annotations:
+        for annotation in item.annotations:
+            if isinstance(annotation, PictureDescriptionData):
+                text_parts.append(f"<!-- Image Alt Text: {annotation.text} -->")
+
+        text_res = (separator or "\n").join(text_parts)
+        return create_ser_result(text=text_res, span_source=item)
+
+
+def convert_docling_document_to_markdown(doc: DoclingDocument) -> str:
+    """Serialize a docling document to markdown with annotations preserved."""
+
+    serializer = MarkdownDocSerializer(
+        doc=doc,
+        picture_serializer=AnnotationPictureSerializer(),
+        table_serializer=HTMLTableSerializer(),
+        params=MarkdownParams(
+            enable_chart_tables=True,
+            image_mode=ImageRefMode.PLACEHOLDER,
+            image_placeholder="",  # Do not inject image placeholder indicator
+            include_annotations=False,  # or raw annotation text because customize in the AnnotationPictureSerializer
+            mark_meta=True,
+        ),
+    )
+    ser_result = serializer.serialize()
+    return ser_result.text
+
+
 # %%
 # Initialize client
 client = KarakeepClient(
@@ -92,11 +358,16 @@ client = KarakeepClient(
 
 # %%
 # Get bookmark by ID
-# bookmark_id = "y9drx8oxif2uljuzp1ujctv1"  # Attention Is All You Need
+### Asset
+# bookmark_id = "kbleumlsp93mtgx4r8dc6ext"  # Attention Is All You Need
+# bookmark_id = "mt2vc0ziqqt0pz6ptaqbf7yn"  # LLMs for Scientific Idea Generation
+### Link
 # bookmark_id = "xt2omosp2erha7k4xd6mg9je"  # OpenAI ChatGPT Agent
 # bookmark_id = "rpnt3mzc96g5uhovbv2runu4"  # Sycophancy and the Pepsi Challenge
 # bookmark_id = "e8oks8mh930yfvcg2k0yzuvb"  # Treadmill 17 Jan 2025
 bookmark_id = "w1aiidzcsie8ug40nx21q9ko"  # Illustrated Guide to OAuth
+# bookmark_id = "qks067chkb8t1kprtm7rqbxl"  # OpenAI Confessions
+
 bookmark = await client.get_bookmark(bookmark_id=bookmark_id, include_content=True)
 
 bookmark.model_dump(exclude={"tags"})

@@ -2,16 +2,11 @@
 
 This guide describes how to install NVIDIA drivers and enable GPU passthrough in Podman containers on Debian 13 using the NVIDIA Container Toolkit with CDI (Container Device Interface).
 
-______________________________________________________________________
-
 ## ✅ Prerequisites
 
 - An NVIDIA GPU (e.g. RTX 3090)
 - Debian 13 (Trixie)
 - Podman installed (`sudo apt install podman`)
-- NVIDIA drivers installed and working on the host (`nvidia-smi` should return output)
-
-______________________________________________________________________
 
 ## 🔧 Step 1: Install the NVIDIA Driver
 
@@ -45,8 +40,6 @@ You should see your GPU and driver version listed.
 
 Reference: [https://linuxconfig.org/debian-13-nvidia-driver-installation](https://linuxconfig.org/debian-13-nvidia-driver-installation)
 
-______________________________________________________________________
-
 ## 🔧 Step 2: Install NVIDIA Container Toolkit with CDI Support
 
 ### 1. Install NVIDIA GPG Key
@@ -75,18 +68,17 @@ sudo apt install -y nvidia-container-toolkit nvidia-container-toolkit-base
 
 ```bash
 sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+sudo chmod 644 /etc/cdi/nvidia.yaml # allow all users to read
 ```
 
 Reference: [https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
-
-______________________________________________________________________
 
 ## ✅ Step 3: Test GPU Access with Podman
 
 Test with the latest CUDA image from Docker Hub:
 
 ```bash
-sudo podman run --rm --device nvidia.com/gpu=all \
+podman run --rm --device nvidia.com/gpu=all \
   docker.io/nvidia/cuda:12.0.1-base-ubuntu22.04 nvidia-smi
 ```
 
