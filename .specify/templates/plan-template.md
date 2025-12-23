@@ -31,7 +31,14 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+- G1 Data provenance: document sources, required metadata, hashing strategy, and how raw inputs + configs are retained for replay.
+- G2 Reproducibility: list pinned dependencies/configs, seeds, idempotent re-run behavior (no duplicate side effects), and how the plan uses the Nix/uv environment.
+- G3 Test-first: enumerate contract/fixture/integration tests to be added before implementation for each pipeline stage touched.
+- G4 Privacy & safety: note any sensitive data, redaction plans, and external API usage with safeguards.
+- G5 Observability & versioning: planned structured logs/metrics and how datasets or embeddings will be versioned with migration notes.
+- G6 ADRs: list ADRs for external services, internal frameworks, and significant architectural decisions (paths under docs/decision-record/).
+- G7 Governance: confirm Keep a Changelog, Semantic Versioning, and Conventional Commits compliance for this feature/PR.
+- G8 Preconditions: ensure `spec.md` and `plan.md` are defined and approved before implementation starts.
 
 ## Project Structure
 
@@ -48,6 +55,7 @@ specs/[###-feature]/
 ```
 
 ### Source Code (repository root)
+
 <!--
   ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
   for this feature. Delete unused options and expand the chosen structure with
@@ -99,6 +107,6 @@ directories captured above]
 > **Fill ONLY if Constitution Check has violations that must be justified**
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
-|-----------|------------|-------------------------------------|
+| --------- | ---------- | ----------------------------------- |
 | [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
 | [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |
