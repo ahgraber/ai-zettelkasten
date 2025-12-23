@@ -13,7 +13,7 @@ import sys
 # Add the src directory to the path so we can import treadmill
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from aizk.arxiv import AsyncArxivClient, get_arxiv_paper_metadata
+from aizk.utilities.arxiv import AsyncArxivClient, get_arxiv_paper_metadata
 from aizk.utilities.url_utils import arxiv_abs_url, get_arxiv_id, is_arxiv_url, standardize_arxiv, to_arxiv_export_url
 
 # %%
