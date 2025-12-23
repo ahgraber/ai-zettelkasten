@@ -39,7 +39,6 @@ dependencies = [
     "numpy>=2",
     "openai>=1.55",
     "openpyxl>=3.1.5",
-
     "pydantic>=2.9.2",
     "pydantic-ai-slim[openai,anthropic,huggingface,openrouter,cli,mcp,fastmcp,evals,ag-ui,retries,temporal,ui]",
     "pydantic-settings>=2.6.1",
