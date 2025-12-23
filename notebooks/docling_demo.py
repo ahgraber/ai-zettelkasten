@@ -9,6 +9,7 @@ Environment variables such as ``KARAKEEP_API_KEY``, ``KARAKEEP_BASEURL``.
 
 # %%
 import asyncio
+import base64
 from dataclasses import dataclass
 import datetime
 import hashlib
@@ -20,6 +21,8 @@ from pathlib import Path, PurePath
 import re
 import sys
 from typing import Any, Iterable, Literal, Optional, cast
+from urllib.parse import urlparse
+from urllib.request import urlopen
 
 from dotenv import load_dotenv
 from pydantic import AnyUrl
@@ -88,11 +91,11 @@ _ = load_dotenv()
 
 
 # %%
-def slugify(text: str, fallback: str) -> str:
+def slugify(text: str) -> str:
     """Return a filesystem-friendly slug."""
 
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-").lower()
-    return cleaned or fallback
+    return cleaned
 
 
 def ensure_directory(path: Path) -> Path:
@@ -357,6 +360,74 @@ def convert_docling_document_to_markdown(doc: DoclingDocument) -> str:
     return ser_result.text
 
 
+def extract_and_save_images(doc: DoclingDocument, output_dir: Path):
+    """Persist images referenced in a docling document to ``output_dir``.
+
+    Args:
+        doc: The docling document containing picture items.
+        output_dir: Directory where extracted images are written.
+
+    Returns:
+        The number of images saved.
+    """
+    from PIL import Image  # type: ignore
+
+    ensure_directory(output_dir)
+
+    def _load_bytes_from_uri(uri: str) -> bytes:
+        # data URI
+        if uri.startswith("data:"):
+            header, data = uri.split(",", 1)
+            return base64.b64decode(data) if ";base64" in header else data.encode("utf-8")
+
+        # file URI
+        if uri.startswith("file://"):
+            parsed = urlparse(uri)
+            src_path = Path(parsed.path)
+            return src_path.read_bytes()
+
+        # http/https fetch
+        if uri.startswith("http://") or uri.startswith("https://"):
+            with urlopen(uri) as resp:
+                return resp.read()
+
+        # fallback: local path
+        path = Path(uri)
+        return path.read_bytes() if path.exists() else b""
+
+    for i, pic in enumerate(doc.pictures, 1):
+        if not isinstance(pic, PictureItem):
+            continue
+
+        image_ref = getattr(pic, "image", None)
+        if image_ref is None:
+            logger.debug("Picture %s has no image reference", pic.self_ref)
+            continue
+
+        uri_str = str(getattr(image_ref, "uri", ""))
+        if not uri_str:
+            logger.debug("Picture %s has no uri", pic.self_ref)
+            continue
+
+        raw = _load_bytes_from_uri(uri_str)
+        if not raw:
+            continue
+
+        png_name = slugify(f"image-{i}.png")
+        output_path = output_dir / png_name
+
+        # Prefer Pillow conversion to PNG
+        try:
+            img = Image.open(BytesIO(raw))
+            img.load()
+            img.save(output_path, format="PNG")
+            logger.debug("Saved PNG image %s", output_path)
+        except Exception:
+            # Fallback: write raw bytes (may already be PNG)
+            output_path.write_bytes(raw)
+            logger.debug("Saved raw image %s", output_path)
+
+
 # %%
 # Initialize client
 client = KarakeepClient(
@@ -367,13 +438,13 @@ client = KarakeepClient(
 # %%
 # Get bookmark by ID
 ### Asset
-# bookmark_id = "kbleumlsp93mtgx4r8dc6ext"  # Attention Is All You Need
+bookmark_id = "kbleumlsp93mtgx4r8dc6ext"  # Attention Is All You Need
 # bookmark_id = "mt2vc0ziqqt0pz6ptaqbf7yn"  # LLMs for Scientific Idea Generation
 ### Link
 # bookmark_id = "xt2omosp2erha7k4xd6mg9je"  # OpenAI ChatGPT Agent
 # bookmark_id = "rpnt3mzc96g5uhovbv2runu4"  # Sycophancy and the Pepsi Challenge
 # bookmark_id = "e8oks8mh930yfvcg2k0yzuvb"  # Treadmill 17 Jan 2025
-bookmark_id = "w1aiidzcsie8ug40nx21q9ko"  # Illustrated Guide to OAuth
+# bookmark_id = "w1aiidzcsie8ug40nx21q9ko"  # Illustrated Guide to OAuth
 # bookmark_id = "qks067chkb8t1kprtm7rqbxl"  # OpenAI Confessions
 
 bookmark = await client.get_bookmark(bookmark_id=bookmark_id, include_content=True)
@@ -400,6 +471,8 @@ picture_description_options = build_picture_description_options()
 bookmark_type = resolve_bookmark_type(bookmark)
 content_type = resolve_bookmark_content_type(bookmark)
 
+doc: Optional[DoclingDocument] = None
+
 if bookmark_type == "asset" and content_type == "asset":
     content = bookmark.content
     asset_bytes = await client.get_asset(asset_id=content.asset_id)
@@ -420,6 +493,16 @@ if bookmark_type == "link" and content_type == "link":
     conv_result = converter.convert(source)
     doc = conv_result.document
 
+if doc is None:
+    raise ValueError(f"Unsupported bookmark type {bookmark_type!r} with content {content_type!r}")
+
+image_dir_name_base = getattr(bookmark, "title", "") or bookmark.id
+images_output_dir = ensure_directory(Path("../data/extracted_images") / slugify(bookmark.id))
+extract_and_save_images(doc, images_output_dir)
+logger.info("Extracted images to %s", images_output_dir)
+
 # %%
 md = convert_docling_document_to_markdown(doc)
 print(md)
+
+# %%
