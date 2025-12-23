@@ -71,11 +71,6 @@ from karakeep_client.models import (
 )
 
 # %%
-# Add the src directory to the path so we can import treadmill
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-
-# %%
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 
@@ -177,8 +172,7 @@ def resolve_bookmark_content_text(bookmark: Bookmark) -> Optional[str]:
 
 # %%
 ALT_TEXT_INSTRUCTIONS = """
-Provide alt text description for this image. Imagine reading the page aloud to someone who cannot see it.
-What information would they be missing without this description? The description should capture the main subject, action, and any critical visual information including key components, relationships, and outcomes shown in the image. Prioritize understanding over brevity.
+Provide a detailed description for this image that captures the main subject, action, and any critical visual information including key components, relationships, and outcomes shown in the image with the goal that someone who reads the description would be able to redraw the image. Prioritize detail over brevity.
 
 - Do not rely on phrases like "shown above" or "as seen"
 - Do not say "image of," "picture of," or "graphic of"
@@ -373,13 +367,13 @@ client = KarakeepClient(
 # %%
 # Get bookmark by ID
 ### Asset
-bookmark_id = "kbleumlsp93mtgx4r8dc6ext"  # Attention Is All You Need
+# bookmark_id = "kbleumlsp93mtgx4r8dc6ext"  # Attention Is All You Need
 # bookmark_id = "mt2vc0ziqqt0pz6ptaqbf7yn"  # LLMs for Scientific Idea Generation
 ### Link
 # bookmark_id = "xt2omosp2erha7k4xd6mg9je"  # OpenAI ChatGPT Agent
 # bookmark_id = "rpnt3mzc96g5uhovbv2runu4"  # Sycophancy and the Pepsi Challenge
 # bookmark_id = "e8oks8mh930yfvcg2k0yzuvb"  # Treadmill 17 Jan 2025
-# bookmark_id = "w1aiidzcsie8ug40nx21q9ko"  # Illustrated Guide to OAuth
+bookmark_id = "w1aiidzcsie8ug40nx21q9ko"  # Illustrated Guide to OAuth
 # bookmark_id = "qks067chkb8t1kprtm7rqbxl"  # OpenAI Confessions
 
 bookmark = await client.get_bookmark(bookmark_id=bookmark_id, include_content=True)
