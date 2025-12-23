@@ -25,6 +25,26 @@ def get_repo_path(file: str | Path) -> Path:
     return repo
 
 
+def get_project_path(file: str | Path) -> Path:
+    """Return the nearest project root containing ``pyproject.toml``."""
+    start = Path(file).expanduser().resolve()
+    current = start if start.is_dir() else start.parent
+    repo_root = get_repo_path(start)
+
+    while True:
+        candidate = current / "pyproject.toml"
+        if candidate.exists():
+            return current
+
+        if current == repo_root:
+            break
+        if current.parent == current:
+            break
+        current = current.parent
+
+    raise FileNotFoundError(f"No pyproject.toml found within repository {repo_root} starting from: {start}")
+
+
 def path_is_valid(path: Path | str) -> Path:
     """Check whether full path can be resolved."""
     path = Path(path) if isinstance(path, str) else path
