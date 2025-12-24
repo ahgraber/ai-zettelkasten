@@ -289,17 +289,7 @@ pipeline_options = ConversionPipelineOptions(
 
 **Decision**: Conservative normalization for maximum compatibility
 
-```python
-def normalize_filename(title: str) -> str:
-    # Lowercase and replace spaces/special chars with hyphens
-    cleaned = re.sub(r"[^a-z0-9._-]+", "-", title.lower())
-    # Strip leading/trailing dots and dashes
-    cleaned = cleaned.strip(".-")
-    # Truncate to 200 chars (leave room for extension and path)
-    cleaned = cleaned[:200]
-    # Ensure not empty
-    return cleaned or "untitled"
-```
+Use existing aizk.utilities.file_utils.to_valid_fname
 
 **Implementation notes**:
 
