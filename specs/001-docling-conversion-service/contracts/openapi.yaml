@@ -1,0 +1,724 @@
+openapi: 3.1.0
+info:
+  title: Docling Conversion Service API
+  description: |
+    REST API for converting KaraKeep bookmarks to Markdown using Docling.
+
+    Supports HTML, PDF, arXiv, and GitHub sources with durable state tracking,
+    idempotency, retry logic, and S3 artifact storage.
+  version: 1.0.0
+  contact:
+    name: AI-Zettelkasten
+  license:
+    name: Apache 2.0 with Commons Clause
+    url: https://github.com/ahgraber/ai-zettelkasten/blob/main/LICENSE
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+  - url: http://conversion-service:8000
+    description: Docker compose internal network
+
+tags:
+  - name: jobs
+    description: Conversion job submission and management
+  - name: outputs
+    description: Conversion output retrieval
+  - name: ui
+    description: Web UI endpoints (HTML responses)
+
+paths:
+  /v1/jobs:
+    post:
+      tags: [jobs]
+      summary: Submit a new conversion job
+      description: |
+        Create a new bookmark conversion job. Returns existing job if duplicate
+        idempotency_key detected.
+      operationId: submitJob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobSubmission"
+            examples:
+              arxiv:
+                summary: arXiv paper
+                value:
+                  karakeep_id: "bm_arxiv_123"
+                  url: "https://arxiv.org/abs/1706.03762"
+                  title: "Attention Is All You Need"
+                  payload_version: 1
+              github:
+                summary: GitHub repository
+                value:
+                  karakeep_id: "bm_github_456"
+                  url: "https://github.com/microsoft/docling"
+                  title: "Docling - Document Parsing"
+                  payload_version: 1
+              html:
+                summary: HTML webpage
+                value:
+                  karakeep_id: "bm_html_789"
+                  url: "https://example.com/article"
+                  title: "Example Article"
+      responses:
+        "201":
+          description: Job created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobResponse"
+        "200":
+          description: Duplicate job (existing job returned)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobResponse"
+        "400":
+          description: Invalid request (validation errors)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    get:
+      tags: [jobs]
+      summary: List conversion jobs
+      description: |
+        Query conversion jobs with optional filters and pagination.
+      operationId: listJobs
+      parameters:
+        - name: status
+          in: query
+          description: Filter by job status
+          schema:
+            $ref: "#/components/schemas/JobStatus"
+        - name: aizk_uuid
+          in: query
+          description: Filter by bookmark UUID
+          schema:
+            type: string
+            format: uuid
+        - name: karakeep_id
+          in: query
+          description: Filter by KaraKeep bookmark ID
+          schema:
+            type: string
+        - name: created_after
+          in: query
+          description: Filter jobs created after timestamp (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+        - name: created_before
+          in: query
+          description: Filter jobs created before timestamp (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          description: Maximum number of results
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 1000
+        - name: offset
+          in: query
+          description: Number of results to skip (for pagination)
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+      responses:
+        "200":
+          description: List of jobs matching filters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobList"
+        "400":
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/jobs/{job_id}:
+    get:
+      tags: [jobs]
+      summary: Get job details
+      description: |
+        Retrieve detailed information about a specific conversion job.
+      operationId: getJob
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          description: Job ID
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Job details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobResponse"
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/jobs/{job_id}/retry:
+    post:
+      tags: [jobs]
+      summary: Retry a failed or cancelled job
+      description: |
+        Reset job status to QUEUED for retry. Works for FAILED_RETRYABLE,
+        FAILED_PERM, and CANCELLED jobs. Increments attempt counter.
+      operationId: retryJob
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          description: Job ID
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Job queued for retry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobResponse"
+        "400":
+          description: Job cannot be retried (e.g., already RUNNING)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/jobs/{job_id}/cancel:
+    post:
+      tags: [jobs]
+      summary: Cancel a queued or running job
+      description: |
+        Best-effort cancellation of job. QUEUED jobs cancelled immediately.
+        RUNNING jobs marked for cancellation (worker checks periodically).
+      operationId: cancelJob
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          description: Job ID
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Job cancelled or marked for cancellation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobResponse"
+        "400":
+          description: Job cannot be cancelled (e.g., already SUCCEEDED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/jobs/batch:
+    post:
+      tags: [jobs]
+      summary: Submit multiple conversion jobs
+      description: |
+        Batch job submission. Each job processed independently with per-item
+        status. Returns partial success if some jobs fail validation.
+      operationId: submitBatchJobs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                jobs:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/JobSubmission"
+                  minItems: 1
+                  maxItems: 100
+              required: [jobs]
+      responses:
+        "207":
+          description: Multi-status (some succeeded, some failed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchJobResponse"
+        "400":
+          description: Invalid request (e.g., empty array, exceeds max batch size)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/jobs/actions:
+    post:
+      tags: [jobs]
+      summary: Bulk retry or cancel jobs
+      description: |
+        Apply retry or cancel action to multiple jobs atomically.
+      operationId: bulkJobActions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  type: string
+                  enum: [retry, cancel]
+                job_ids:
+                  type: array
+                  items:
+                    type: integer
+                  minItems: 1
+                  maxItems: 100
+              required: [action, job_ids]
+      responses:
+        "200":
+          description: Actions applied successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkActionResponse"
+        "400":
+          description: Invalid action or job IDs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/outputs/{aizk_uuid}:
+    get:
+      tags: [outputs]
+      summary: Get conversion outputs for a bookmark
+      description: |
+        Retrieve all conversion outputs for a bookmark, ordered by creation
+        date descending (newest first). Use ?latest=true to get only most recent.
+      operationId: getOutputs
+      parameters:
+        - name: aizk_uuid
+          in: path
+          required: true
+          description: Bookmark UUID
+          schema:
+            type: string
+            format: uuid
+        - name: latest
+          in: query
+          description: Return only most recent output
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: List of conversion outputs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  aizk_uuid:
+                    type: string
+                    format: uuid
+                  outputs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ConversionOutput"
+                required: [aizk_uuid, outputs]
+        "404":
+          description: Bookmark not found or no outputs available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /ui/jobs:
+    get:
+      tags: [ui]
+      summary: Web UI job list page
+      description: |
+        HTML page displaying all conversion jobs with filters, search, and
+        bulk action controls (retry/cancel).
+      operationId: uiJobList
+      responses:
+        "200":
+          description: HTML page
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Returns service health status
+      responses:
+        "200":
+          description: Service healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy]
+                  version:
+                    type: string
+                  uptime_seconds:
+                    type: integer
+
+components:
+  schemas:
+    JobSubmission:
+      type: object
+      required:
+        - karakeep_id
+        - url
+        - title
+      properties:
+        karakeep_id:
+          type: string
+          description: KaraKeep bookmark identifier
+          maxLength: 255
+        aizk_uuid:
+          type: string
+          format: uuid
+          description: Optional internal UUID (generated if not provided)
+        url:
+          type: string
+          format: uri
+          description: Source URL to convert
+        title:
+          type: string
+          description: Bookmark title
+          maxLength: 500
+        source_type:
+          $ref: "#/components/schemas/SourceType"
+        payload_version:
+          type: integer
+          description: Pipeline version for reprocessing control
+          default: 1
+          minimum: 1
+        idempotency_key:
+          type: string
+          description: Optional explicit idempotency key (computed if not provided)
+          maxLength: 64
+      example:
+        karakeep_id: "bm_123"
+        url: "https://arxiv.org/abs/1706.03762"
+        title: "Attention Is All You Need"
+        source_type: "arxiv"
+        payload_version: 1
+
+    JobResponse:
+      type: object
+      required:
+        - id
+        - aizk_uuid
+        - karakeep_id
+        - url
+        - title
+        - source_type
+        - status
+        - attempts
+        - payload_version
+        - idempotency_key
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          description: Job ID
+        aizk_uuid:
+          type: string
+          format: uuid
+        karakeep_id:
+          type: string
+        url:
+          type: string
+          format: uri
+        title:
+          type: string
+        source_type:
+          $ref: "#/components/schemas/SourceType"
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        attempts:
+          type: integer
+        payload_version:
+          type: integer
+        idempotency_key:
+          type: string
+        error_code:
+          type: string
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        next_attempt_at:
+          type: string
+          format: date-time
+          nullable: true
+        queued_at:
+          type: string
+          format: date-time
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        artifact_summary:
+          $ref: "#/components/schemas/ArtifactSummary"
+
+    JobList:
+      type: object
+      required:
+        - jobs
+        - total
+        - limit
+        - offset
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/JobResponse"
+        total:
+          type: integer
+          description: Total number of jobs matching filters
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    BatchJobResponse:
+      type: object
+      required:
+        - results
+        - summary
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required:
+              - index
+              - status
+            properties:
+              index:
+                type: integer
+                description: Index in submitted batch
+              status:
+                type: string
+                enum: [created, duplicate, error]
+              job:
+                $ref: "#/components/schemas/JobResponse"
+              error:
+                $ref: "#/components/schemas/Error"
+        summary:
+          type: object
+          properties:
+            created:
+              type: integer
+            duplicates:
+              type: integer
+            errors:
+              type: integer
+
+    BulkActionResponse:
+      type: object
+      required:
+        - action
+        - results
+        - summary
+      properties:
+        action:
+          type: string
+          enum: [retry, cancel]
+        results:
+          type: array
+          items:
+            type: object
+            required:
+              - job_id
+              - status
+            properties:
+              job_id:
+                type: integer
+              status:
+                type: string
+                enum: [success, error]
+              error:
+                type: string
+                nullable: true
+        summary:
+          type: object
+          properties:
+            success:
+              type: integer
+            errors:
+              type: integer
+
+    ConversionOutput:
+      type: object
+      required:
+        - id
+        - job_id
+        - aizk_uuid
+        - payload_version
+        - s3_prefix
+        - markdown_key
+        - manifest_key
+        - markdown_hash_xx64
+        - markdown_bytes
+        - figure_count
+        - docling_version
+        - pipeline_name
+        - created_at
+      properties:
+        id:
+          type: integer
+        job_id:
+          type: integer
+        aizk_uuid:
+          type: string
+          format: uuid
+        payload_version:
+          type: integer
+        s3_prefix:
+          type: string
+          description: S3 path prefix for all artifacts
+        markdown_key:
+          type: string
+          description: S3 key for Markdown file
+        manifest_key:
+          type: string
+          description: S3 key for manifest.json
+        markdown_hash_xx64:
+          type: string
+          description: xxHash64 digest of Markdown content
+          pattern: "^[0-9a-f]{16}$"
+        markdown_bytes:
+          type: integer
+        figure_count:
+          type: integer
+        docling_version:
+          type: string
+        pipeline_name:
+          type: string
+          enum: [html, pdf]
+        created_at:
+          type: string
+          format: date-time
+
+    ArtifactSummary:
+      type: object
+      description: Summary of conversion outputs (only present for SUCCEEDED jobs)
+      properties:
+        s3_prefix:
+          type: string
+        markdown_key:
+          type: string
+        manifest_key:
+          type: string
+        markdown_bytes:
+          type: integer
+        figure_count:
+          type: integer
+
+    JobStatus:
+      type: string
+      enum:
+        - NEW
+        - QUEUED
+        - RUNNING
+        - SUCCEEDED
+        - FAILED_RETRYABLE
+        - FAILED_PERM
+        - CANCELLED
+      description: |
+        - NEW: Job created, not yet queued
+        - QUEUED: Waiting for worker pickup
+        - RUNNING: Worker processing
+        - SUCCEEDED: Conversion completed, artifacts in S3
+        - FAILED_RETRYABLE: Transient error, will auto-retry
+        - FAILED_PERM: Permanent error, manual intervention required
+        - CANCELLED: User or system cancelled
+
+    SourceType:
+      type: string
+      enum:
+        - html
+        - pdf
+        - arxiv
+        - github
+      description: |
+        - html: Generic HTML webpage
+        - pdf: PDF document
+        - arxiv: arXiv paper (special handling for HTML/PDF preference)
+        - github: GitHub repository (fetch README)
+
+    Error:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code
+        message:
+          type: string
+          description: Human-readable error message
+        details:
+          type: object
+          description: Optional additional context
+          additionalProperties: true

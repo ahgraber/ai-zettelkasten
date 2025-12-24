@@ -72,9 +72,8 @@ A manager component submits batches of bookmarks to the service and gracefully h
 **Acceptance Scenarios**:
 
 1. **Given** manager has 100 bookmarks to convert, **When** manager submits batch of 20 jobs, **Then** API processes each job independently and returns per-item results indicating which succeeded/failed validation
-2. **Given** service queue is at max capacity, **When** manager submits new batch, **Then** API returns 429 status with Retry-After header
-3. **Given** manager receives 429 response, **When** manager implements exponential backoff, **Then** manager waits configured interval before retrying submission
-4. **Given** batch submission contains mix of valid and invalid jobs, **When** some jobs fail validation, **Then** API creates jobs for valid entries and returns detailed per-item status with error reasons for failed entries
+2. **Given** batch submission contains mix of valid and invalid jobs, **When** some jobs fail validation, **Then** API creates jobs for valid entries and returns detailed per-item status with error reasons for failed entries
+3. **Given** batch submission includes duplicate idempotency_keys, **When** API processes batch, **Then** duplicates return existing job details without creating new records
 
 ## Technical Context & ADRs
 
@@ -132,8 +131,7 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - **FR-023**: System MUST expose GET /v1/outputs/{aizk_uuid} endpoint returning conversion_outputs records ordered by created_at descending; support ?latest=true query parameter to return only most recent output
 - **FR-024**: System MUST render HTML-only Web UI at /ui/jobs displaying job table with columns: Job ID, aizk_uuid, karakeep_id, title, status, attempts, queued_at, started_at, finished_at, error_code
 - **FR-025**: Web UI MUST provide checkboxes for multi-select, Retry and Cancel buttons posting to /v1/jobs/actions, and client-side filters for status and text search
-- **FR-026**: System MUST enforce queue depth limit (configurable, default: 1000) and return 429 Too Many Requests with Retry-After header when exceeded
-- **FR-027**: System MUST process jobs with bounded concurrency (configurable, default: 4 parallel workers) in FIFO order
+- **FR-026**: System MUST process jobs with bounded concurrency (configurable, default: 4 parallel workers) in FIFO order by queued_at timestamp
 - **FR-028**: System MUST use SQLite in WAL mode with synchronous=NORMAL, prepared statements, and single-writer pattern with database lock retry logic
 - **FR-029**: System MUST create indexes: `idx_jobs_status_next_attempt` (conversion_jobs), `idx_bookmarks_normalized_url` (bookmarks), `idx_outputs_aizk_uuid` (conversion_outputs)
 - **FR-030**: System MUST log key processing events with context identifiers (aizk_uuid, job_id, karakeep_id, status) enabling trace reconstruction
@@ -146,7 +144,7 @@ A manager component submits batches of bookmarks to the service and gracefully h
 
 - **Data Provenance**: Store source metadata (url, normalized_url, karakeep_id, source_type) in bookmarks table; record docling_version, pipeline_name, payload_version in conversion_outputs; list all artifacts (figures, source files) in manifest.json
 - **Reproducibility**: Pin Docling version in manifest.json; record fetch timestamps and content hashes (markdown_hash_xx64) for auditing
-- **Privacy**: No user authentication required (internal-only); restrict fetch allowlist to trusted domains (arxiv.org, github.com, KaraKeep asset host); do not log S3 credentials or secrets
+- **Privacy**: No user authentication required (internal-only); content fetched from public internet URLs in bookmarks; do not log S3 credentials or secrets
 - **Observability**: Structured logging with aizk_uuid/job_id trace context; metrics for queue depth, latency, success/failure rates; optional trace_id propagation
 
 ### Key Entities
@@ -172,14 +170,14 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - **SC-011**: System correctly prioritizes arXiv HTML over PDF in 100% of arXiv submissions, with fallback working when HTML unavailable
 - **SC-012**: GitHub README fetching succeeds for 90% of public repositories with standard README naming conventions
 - **SC-013**: Structured logs include aizk_uuid and job_id in 100% of processing events, enabling complete trace reconstruction
-- **SC-014**: Queue backpressure (429 responses) occurs predictably at configured queue depth limit, with manager backoff preventing job loss
+- **SC-014**: Idempotency protection prevents duplicate job creation in 100% of cases when same bookmark submitted multiple times with identical parameters
 - **SC-015**: Markdown filename normalization produces valid cross-OS filenames for common title patterns
 
 ## Assumptions
 
 - KaraKeep bookmark data includes URL, title, and karakeep_id at minimum; other fields may be optional or derived
 - Docling library is available as Python package with stable API for HTML and PDF conversion pipelines
-- S3-compatible storage (AWS S3 or MinIO) is accessible with credentials provided via environment variables
+- S3-compatible storage is accessible with credentials provided via environment variables (supports AWS S3, Backblaze B2, Garage, MinIO, etc.)
 - Internal-only deployment behind private network or localhost; no internet-facing endpoints require authentication
 - Conversion service has sufficient CPU/memory to run 4 concurrent Docling processes (recommend 8GB RAM minimum)
 - Bookmarks represent relatively static content; frequent re-scraping for content updates is out of scope
