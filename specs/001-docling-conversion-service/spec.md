@@ -22,7 +22,7 @@ A user submits a KaraKeep bookmark (HTML or PDF URL) to the conversion service a
 3. **Given** a bookmark with identical idempotency_key already exists, **When** user resubmits same bookmark, **Then** system rejects submission with reason 'duplicate_idempotency_key'
 4. **Given** an arXiv bookmark, **When** user submits arXiv URL, **Then** system extracts arxiv_id, prioritizes HTML version from export.arxiv.org, falls back to PDF if needed
 5. **Given** a GitHub repository bookmark, **When** user submits GitHub URL, **Then** system extracts owner/repo, fetches README (md/rst/txt), converts to Markdown, uploads to S3
-6. **Given** a completed conversion job, **When** system writes to S3, **Then** all artifacts are uploaded completely before job status is marked SUCCEEDED in database
+6. **Given** a completed conversion job, **When** system writes to S3, **Then** all artifacts are verified uploaded (via ETag check) within a single database transaction; job status is marked SUCCEEDED ONLY after S3 verification completes; if S3 upload fails or verification fails, transaction rolls back and job remains QUEUED for retry
 
 ---
 
@@ -34,6 +34,15 @@ A user views all conversion jobs in the Web UI, identifies failed jobs, and retr
 
 **Independent Test**: Can be tested by accessing Web UI at /ui/jobs, viewing job list with status filters, selecting failed jobs via checkboxes, and clicking Retry button. Delivers operational control independent of job submission.
 
+**Job Processing Strategy** (enables efficient retries):
+
+The system uses a two-phase workflow to enable efficient retry of S3 upload failures without re-running expensive conversions:
+
+- **Phase 1 (Conversion)**: Fetch source content and convert to Markdown using Docling. On success, store converted artifacts (Markdown, figures, manifest) in temporary workspace, transition job to UPLOAD_PENDING state, and commit database transaction.
+- **Phase 2 (Upload)**: Upload artifacts to S3 and verify successful upload (via ETag/HEAD check). On success, create conversion_outputs record and mark job SUCCEEDED, then commit.
+
+This separation allows UPLOAD_PENDING jobs to retry Phase 2 only if S3 upload fails (transient network error, quota exceeded). Cached conversion artifacts in temp workspace enable re-uploading without Docling reprocessing. Full retry (FAILED_RETRYABLE → QUEUED) remains available for fetch/conversion errors that require complete reprocessing.
+
 **Acceptance Scenarios**:
 
 1. **Given** user accesses /ui/jobs, **When** page loads, **Then** table displays all jobs with columns: Job ID, aizk_uuid, karakeep_id, title, status, attempts, timestamps, error_code
@@ -41,6 +50,7 @@ A user views all conversion jobs in the Web UI, identifies failed jobs, and retr
 3. **Given** user views jobs with status=RUNNING, **When** user selects jobs and clicks Cancel, **Then** system attempts best-effort cancellation and updates status to CANCELLED
 4. **Given** multiple jobs selected for bulk action, **When** user confirms action, **Then** system applies retry or cancel to all selected jobs and displays result summary
 5. **Given** user filters by status, **When** user enters text search for aizk_uuid/karakeep_id/title, **Then** table updates to show only matching jobs
+6. **Given** a job with status=UPLOAD_PENDING (S3 upload failed after successful conversion), **When** system retries automatically or user clicks Retry, **Then** system replays Phase 2 (S3 upload + verify) from cached conversion artifacts WITHOUT reconverting, improving retry efficiency for transient S3 errors
 
 ---
 
@@ -107,9 +117,9 @@ A manager component submits batches of bookmarks to the service and gracefully h
 
 ### Functional Requirements
 
-- **FR-001**: System MUST accept bookmark submissions via REST API with fields: aizk_uuid, karakeep_id, url, title, source_type, and optional payload_version, idempotency_key
+- **FR-001**: System MUST accept bookmark submissions via REST API with fields: aizk_uuid, karakeep_id, url, title, content_type (optional), source_type (optional), and optional payload_version, idempotency_key. content_type indicates format (html/pdf); source_type indicates origin (arxiv/github/other).
 - **FR-002**: System MUST normalize URLs for deduplication by removing fragments, sorting query parameters, and lowercasing domain
-- **FR-003**: System MUST detect source_type from URL patterns: arxiv.org → 'arxiv', github.com → 'github', .pdf extension → 'pdf', otherwise → 'html'
+- **FR-003**: System MUST detect content_type KaraKeep metadata (query karakeep if not part of the REST submission): .pdf extension or PDF content → 'pdf', otherwise → 'html'. System MUST detect source_type from URL patterns: arxiv.org → 'arxiv', github.com → 'github', otherwise → 'other'
 - **FR-004**: System MUST assign or look up internal aizk_uuid for each bookmark and persist in bookmarks table with karakeep_id as unique key
 - **FR-005**: System MUST create conversion_jobs record with status='NEW', compute idempotency_key from hash of aizk_uuid + payload_version + docling_version + config_hash, and reject submissions with duplicate idempotency_key
 - **FR-006**: System MUST fetch source content with timeout (default: 30s), size cap (default: 50MB for HTML, 100MB for PDF), and retry logic (3 attempts with exponential backoff)
