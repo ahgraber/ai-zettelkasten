@@ -24,6 +24,7 @@ Thumbs.db
 *.env
 .env.*
 .envrc
+!.env.example
 
 # Python and Node dependencies
 .local/
