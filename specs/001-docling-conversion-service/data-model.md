@@ -67,11 +67,7 @@ This document defines the complete data model for the Docling Conversion Service
 
 **Indexes**:
 
-```sql
-CREATE INDEX idx_bookmarks_karakeep_id ON bookmarks(karakeep_id);
-CREATE INDEX idx_bookmarks_aizk_uuid ON bookmarks(aizk_uuid);
-CREATE INDEX idx_bookmarks_normalized_url ON bookmarks(normalized_url);
-```
+- SQLModel defaults with `Field(index=True)` on `karakeep_id`, `aizk_uuid`, `normalized_url`
 
 ---
 
@@ -147,13 +143,7 @@ CREATE INDEX idx_bookmarks_normalized_url ON bookmarks(normalized_url);
 
 **Indexes**:
 
-```sql
-CREATE INDEX idx_jobs_aizk_uuid ON conversion_jobs(aizk_uuid);
-CREATE INDEX idx_jobs_status ON conversion_jobs(status);
-CREATE INDEX idx_jobs_idempotency_key ON conversion_jobs(idempotency_key);
-CREATE INDEX idx_jobs_status_next_attempt ON conversion_jobs(status, next_attempt_at);
-CREATE INDEX idx_jobs_created_at ON conversion_jobs(created_at);
-```
+- SQLModel defaults with `Field(index=True)` on `aizk_uuid`, `status`, `idempotency_key`, `next_attempt_at`, `created_at`
 
 ---
 
@@ -211,12 +201,7 @@ CREATE INDEX idx_jobs_created_at ON conversion_jobs(created_at);
 
 **Indexes**:
 
-```sql
-CREATE INDEX idx_outputs_job_id ON conversion_outputs(job_id);
-CREATE INDEX idx_outputs_aizk_uuid ON conversion_outputs(aizk_uuid);
-CREATE INDEX idx_outputs_markdown_hash ON conversion_outputs(markdown_hash_xx64);
-CREATE INDEX idx_outputs_created_at ON conversion_outputs(created_at);
-```
+- SQLModel defaults with `Field(index=True)` on `job_id`, `aizk_uuid`, `markdown_hash_xx64`, `created_at`
 
 ---
 
