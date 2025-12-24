@@ -17,7 +17,7 @@ Convert KaraKeep bookmarks (HTML/PDF/arXiv/GitHub) to Markdown using Docling wit
 **Testing**: pytest with fixtures for deterministic transforms, contract tests for API, integration tests for S3 uploads\
 **Target Platform**: Linux server (Docker/compose), macOS development (via Nix/uv devshell)\
 **Project Type**: Single backend service (FastAPI REST API + background workers + HTML UI)\
-**Performance Goals**:
+**Performance Goals** (arbitrary, internal expectations):
 
 - Single HTML bookmark (\<5MB): conversion complete within 120 seconds
 - PDF bookmark (20 pages): conversion complete within 5 minutes
@@ -39,8 +39,9 @@ Convert KaraKeep bookmarks (HTML/PDF/arXiv/GitHub) to Markdown using Docling wit
 - Internal-only deployment (no internet-facing auth required)
 - Expected throughput: hundreds of bookmarks per day
 - 4 parallel conversion workers
-- Job history retention: NEEDS CLARIFICATION (archive/purge strategy for old jobs)
-- S3 bucket quota: NEEDS CLARIFICATION (assume unlimited for initial deployment)
+- Job history retention: retain all aside from user-directed archive/purge strategy for old jobs via the HTML webui
+- S3 bucket quota: assume unlimited for initial deployment
+- **Bookmark Metadata**: Bookmarks track two independent dimensions: `content_type` (html/pdf—format of content from KaraKeep) and `source_type` (arxiv/github/other—origin parsed from URL). Enables flexible handling: arXiv bookmarks can be PDF or HTML; GitHub bookmarks are always HTML; generic sources may be either format.
 
 ## Constitution Check
 
@@ -122,19 +123,22 @@ specs/001-docling-conversion-service/
 ├── quickstart.md        # Phase 1 output: developer setup guide
 ├── contracts/           # Phase 1 output: API contracts
 │   └── openapi.yaml     # OpenAPI 3.1 specification
-└── tasks.md             # Phase 2 output (/speckit.tasks command - NOT YET CREATED)
+└── tasks.md             # Phase 2 output (/speckit.tasks command)
 ```
 
 ### Source Code (repository root)
 
 ```text
-src/aizk/conversion/          # New package for conversion service
+src/aizk/datamodel/           # Shared SQLModel database models (used by all features)
+├── __init__.py               # Imports all models to populate SQLModel.metadata
+├── bookmark.py               # Bookmark entity
+├── job.py                    # ConversionJob entity
+└── output.py                 # ConversionOutput entity
+
+src/aizk/db.py                # Shared DB utilities (engine/session/PRAGMAs/create_db)
+
+src/aizk/conversion/          # Conversion service feature package
 ├── __init__.py
-├── models/                   # SQLModel database models
-│   ├── __init__.py
-│   ├── bookmark.py           # Bookmark entity
-│   ├── job.py                # ConversionJob entity
-│   └── output.py             # ConversionOutput entity
 ├── api/                      # FastAPI application
 │   ├── __init__.py
 │   ├── main.py               # FastAPI app setup, lifespan, middleware
@@ -166,9 +170,9 @@ src/aizk/conversion/          # New package for conversion service
 ├── templates/                # Jinja2 HTML templates for Web UI
 │   ├── base.html
 │   └── jobs.html
-├── cli.py                    # CLI entrypoint (db init, serve, test commands)
+├── cli.py                    # CLI entrypoint (db init, serve, worker)
+│   └── README.md
 └── migrations/               # Alembic migrations (future use)
-    └── README.md
 
 tests/conversion/             # Test suite for conversion service
 ├── __init__.py
