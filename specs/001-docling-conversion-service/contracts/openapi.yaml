@@ -680,6 +680,7 @@ components:
         - NEW
         - QUEUED
         - RUNNING
+        - UPLOAD_PENDING
         - SUCCEEDED
         - FAILED_RETRYABLE
         - FAILED_PERM
@@ -687,10 +688,11 @@ components:
       description: |
         - NEW: Job created, not yet queued
         - QUEUED: Waiting for worker pickup
-        - RUNNING: Worker processing
-        - SUCCEEDED: Conversion completed, artifacts in S3
-        - FAILED_RETRYABLE: Transient error, will auto-retry
-        - FAILED_PERM: Permanent error, manual intervention required
+        - RUNNING: Worker processing (fetch/convert phase)
+        - UPLOAD_PENDING: Conversion complete, awaiting S3 upload (allows upload-only retry)
+        - SUCCEEDED: All artifacts uploaded and verified in S3
+        - FAILED_RETRYABLE: Transient error (fetch timeout, S3 quota), eligible for retry
+        - FAILED_PERM: Permanent error or max attempts exceeded
         - CANCELLED: User or system cancelled
 
     SourceType:

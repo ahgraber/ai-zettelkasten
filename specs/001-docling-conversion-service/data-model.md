@@ -28,17 +28,18 @@ This document defines the complete data model for the Docling Conversion Service
 
 **Fields**:
 
-| Field          | Type        | Constraints                         | Description                               |
-| -------------- | ----------- | ----------------------------------- | ----------------------------------------- |
-| id             | Integer     | PRIMARY KEY, AUTOINCREMENT          | Internal database ID                      |
-| karakeep_id    | String(255) | UNIQUE, NOT NULL, INDEXED           | External KaraKeep bookmark identifier     |
-| aizk_uuid      | String(36)  | UNIQUE, NOT NULL, INDEXED           | Internal UUID for this bookmark (UUID4)   |
-| url            | Text        | NOT NULL                            | Original source URL as submitted          |
-| normalized_url | Text        | NOT NULL, INDEXED                   | Normalized URL for deduplication          |
-| title          | Text        | NOT NULL                            | Bookmark title from KaraKeep or extracted |
-| source_type    | String(20)  | NOT NULL                            | Enum: 'html', 'pdf', 'arxiv', 'github'    |
-| created_at     | DateTime    | NOT NULL, DEFAULT CURRENT_TIMESTAMP | Record creation timestamp (UTC)           |
-| updated_at     | DateTime    | NOT NULL, DEFAULT CURRENT_TIMESTAMP | Record update timestamp (UTC)             |
+| Field          | Type        | Constraints                         | Description                                                                      |
+| -------------- | ----------- | ----------------------------------- | -------------------------------------------------------------------------------- |
+| id             | Integer     | PRIMARY KEY, AUTOINCREMENT          | Internal database ID                                                             |
+| karakeep_id    | String(255) | UNIQUE, NOT NULL, INDEXED           | External KaraKeep bookmark identifier                                            |
+| aizk_uuid      | String(36)  | UNIQUE, NOT NULL, INDEXED           | Internal UUID for this bookmark (UUID4)                                          |
+| url            | Text        | NOT NULL                            | Original source URL as submitted                                                 |
+| normalized_url | Text        | NOT NULL, INDEXED                   | Normalized URL for deduplication                                                 |
+| title          | Text        | NOT NULL                            | Bookmark title from KaraKeep or extracted                                        |
+| content_type   | String(10)  | NOT NULL                            | Format of content: 'html' or 'pdf' (from KaraKeep metadata or detected from URL) |
+| source_type    | String(20)  | NOT NULL                            | Origin/source of URL: 'arxiv', 'github', or 'other' (parsed from URL pattern)    |
+| created_at     | DateTime    | NOT NULL, DEFAULT CURRENT_TIMESTAMP | Record creation timestamp (UTC)                                                  |
+| updated_at     | DateTime    | NOT NULL, DEFAULT CURRENT_TIMESTAMP | Record update timestamp (UTC)                                                    |
 
 **Relationships**:
 
@@ -51,19 +52,18 @@ This document defines the complete data model for the Docling Conversion Service
 - `aizk_uuid`: Valid UUID4 format
 - `url`: Valid URL format (validated by pydantic HttpUrl)
 - `normalized_url`: Computed from url via normalization function
-- `source_type`: Must be one of: 'html', 'pdf', 'arxiv', 'github'
+- `content_type`: Must be one of: 'html', 'pdf' (from KaraKeep metadata)
+- `source_type`: Must be one of: 'arxiv', 'github', 'other' (parsed from URL domain/pattern)
 - `title`: Non-empty string, max 500 chars (truncate with ellipsis if needed)
 
 **Business Rules**:
 
 - `karakeep_id` is unique across all bookmarks
-- `aizk_uuid` is generated on first insert if not provided
-- `normalized_url` is computed by: lowercasing domain, sorting query params, removing fragments
-- `source_type` is detected from URL pattern if not provided:
+- `content_type` is typically provided by KaraKeep bookmark metadata; if missing, detect from URL extension (.pdf → 'pdf', otherwise 'html')
+- `source_type` is always parsed from URL pattern regardless of content_type:
   - Contains 'arxiv.org' → 'arxiv'
   - Contains 'github.com' → 'github'
-  - Ends with '.pdf' → 'pdf'
-  - Otherwise → 'html'
+  - Otherwise → 'other'
 
 **Indexes**:
 
@@ -83,23 +83,23 @@ CREATE INDEX idx_bookmarks_normalized_url ON bookmarks(normalized_url);
 
 **Fields**:
 
-| Field           | Type       | Constraints                                          | Description                                                                                   |
-| --------------- | ---------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| id              | Integer    | PRIMARY KEY, AUTOINCREMENT                           | Internal job ID                                                                               |
-| aizk_uuid       | String(36) | FOREIGN KEY → bookmarks.aizk_uuid, NOT NULL, INDEXED | Reference to bookmark                                                                         |
-| payload_version | Integer    | NOT NULL, DEFAULT 1                                  | API/pipeline version for reprocessing                                                         |
-| status          | String(20) | NOT NULL, INDEXED                                    | Enum: 'NEW', 'QUEUED', 'RUNNING', 'SUCCEEDED', 'FAILED_RETRYABLE', 'FAILED_PERM', 'CANCELLED' |
-| attempts        | Integer    | NOT NULL, DEFAULT 0                                  | Number of execution attempts                                                                  |
-| error_code      | String(50) | NULLABLE                                             | Machine-readable error identifier                                                             |
-| error_message   | Text       | NULLABLE                                             | Human-readable error details                                                                  |
-| idempotency_key | String(64) | UNIQUE, NOT NULL, INDEXED                            | Hash for duplicate detection                                                                  |
-| next_attempt_at | DateTime   | NULLABLE, INDEXED                                    | Scheduled retry timestamp (UTC)                                                               |
-| last_error_at   | DateTime   | NULLABLE                                             | Most recent error timestamp (UTC)                                                             |
-| queued_at       | DateTime   | NULLABLE                                             | When job entered QUEUED status                                                                |
-| started_at      | DateTime   | NULLABLE                                             | When job entered RUNNING status                                                               |
-| finished_at     | DateTime   | NULLABLE                                             | When job reached terminal status                                                              |
-| created_at      | DateTime   | NOT NULL, DEFAULT CURRENT_TIMESTAMP                  | Record creation timestamp (UTC)                                                               |
-| updated_at      | DateTime   | NOT NULL, DEFAULT CURRENT_TIMESTAMP                  | Record update timestamp (UTC)                                                                 |
+| Field           | Type       | Constraints                                          | Description                                                                                                     |
+| --------------- | ---------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| id              | Integer    | PRIMARY KEY, AUTOINCREMENT                           | Internal job ID                                                                                                 |
+| aizk_uuid       | String(36) | FOREIGN KEY → bookmarks.aizk_uuid, NOT NULL, INDEXED | Reference to bookmark                                                                                           |
+| payload_version | Integer    | NOT NULL, DEFAULT 1                                  | API/pipeline version for reprocessing                                                                           |
+| status          | String(20) | NOT NULL, INDEXED                                    | Enum: 'NEW', 'QUEUED', 'RUNNING', 'UPLOAD_PENDING', 'SUCCEEDED', 'FAILED_RETRYABLE', 'FAILED_PERM', 'CANCELLED' |
+| attempts        | Integer    | NOT NULL, DEFAULT 0                                  | Number of execution attempts                                                                                    |
+| error_code      | String(50) | NULLABLE                                             | Machine-readable error identifier                                                                               |
+| error_message   | Text       | NULLABLE                                             | Human-readable error details                                                                                    |
+| idempotency_key | String(64) | UNIQUE, NOT NULL, INDEXED                            | Hash for duplicate detection                                                                                    |
+| next_attempt_at | DateTime   | NULLABLE, INDEXED                                    | Scheduled retry timestamp (UTC)                                                                                 |
+| last_error_at   | DateTime   | NULLABLE                                             | Most recent error timestamp (UTC)                                                                               |
+| queued_at       | DateTime   | NULLABLE                                             | When job entered QUEUED status                                                                                  |
+| started_at      | DateTime   | NULLABLE                                             | When job entered RUNNING status                                                                                 |
+| finished_at     | DateTime   | NULLABLE                                             | When job reached terminal status                                                                                |
+| created_at      | DateTime   | NOT NULL, DEFAULT CURRENT_TIMESTAMP                  | Record creation timestamp (UTC)                                                                                 |
+| updated_at      | DateTime   | NOT NULL, DEFAULT CURRENT_TIMESTAMP                  | Record update timestamp (UTC)                                                                                   |
 
 **Relationships**:
 
@@ -121,10 +121,12 @@ CREATE INDEX idx_bookmarks_normalized_url ON bookmarks(normalized_url);
 - Status transitions:
   - NEW → QUEUED (on submission)
   - QUEUED → RUNNING (worker picks up job)
-  - RUNNING → SUCCEEDED (successful completion)
-  - RUNNING → FAILED_RETRYABLE (transient error, attempts < max)
-  - RUNNING → FAILED_PERM (permanent error or max attempts reached)
-  - QUEUED/RUNNING → CANCELLED (user cancellation)
+  - RUNNING → UPLOAD_PENDING (conversion successful, ready for S3 upload)
+  - UPLOAD_PENDING → SUCCEEDED (S3 artifacts verified uploaded)
+  - RUNNING → FAILED_RETRYABLE (fetch or conversion error, can retry full flow)
+  - UPLOAD_PENDING → FAILED_RETRYABLE (S3 upload error, can retry from upload step without reconverting)
+  - RUNNING/UPLOAD_PENDING → FAILED_PERM (permanent error or max attempts reached)
+  - QUEUED/RUNNING/UPLOAD_PENDING → CANCELLED (user cancellation)
   - FAILED_RETRYABLE → QUEUED (manual or automatic retry)
 - `next_attempt_at` computed with exponential backoff: base_delay * (2 \*\* attempts)
 - `queued_at` set when status → QUEUED
