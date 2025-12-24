@@ -21,11 +21,11 @@
 
 **Purpose**: Project initialization and basic structure
 
-- [ ] T001 Create project structure: shared `src/aizk/datamodel/` (bookmark.py, job.py, output.py, \_\_init\_\_.py), shared `src/aizk/db.py` utilities, and feature `src/aizk/conversion/` (api/, workers/, storage/, utilities/, templates/)
-- [ ] T002 Create tests/conversion/ structure with subdirs (unit/, integration/, contract/)
-- [ ] T003 [P] Add pyproject.toml dependencies: fastapi, docling>=2.65.0, sqlmodel, boto3, xxhash, httpx, pydantic-settings, uvicorn
-- [ ] T004 [P] Create .env.example with template environment variables (S3 credentials, database path, worker concurrency)
-- [ ] T005 [P] Ensure .env is in .gitignore; configuration reads from environment variables only
+- [x] T001 Create project structure: shared `src/aizk/datamodel/` (bookmark.py, job.py, output.py, \_\_init\_\_.py), shared `src/aizk/db.py` utilities, and feature `src/aizk/conversion/` (api/, workers/, storage/, utilities/, templates/)
+- [x] T002 Create tests/conversion/ structure with subdirs (unit/, integration/, contract/)
+- [x] T003 [P] Add pyproject.toml dependencies: fastapi, docling>=2.65.0, sqlmodel, boto3, xxhash, httpx, pydantic-settings, uvicorn
+- [x] T004 [P] Create .env.example with template environment variables (S3 credentials, database path, worker concurrency)
+- [x] T005 [P] Ensure .env is in .gitignore; configuration reads from environment variables only
 
 ---
 
