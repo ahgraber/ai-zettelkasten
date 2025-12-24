@@ -35,7 +35,7 @@ dependencies = [
     "huggingface-hub>=0.23.5",
     "jinja2>=3.1.4",
     "json-repair>=0.30.3",
-    "karakeep-client",
+    "karakeep-client>=0.1.0",
     "markitdown[pdf]>=0.1.3",
     "nltk>=3.9.1",
     "numpy>=2",
@@ -216,3 +216,11 @@ source = [ "src" ]
 
 [tool.coverage.report]
 show_missing = true
+
+[tool.uv-ship]
+release-branch = "main"
+tag-prefix = "v"
+allow-dirty = false
+changelog-path = "CHANGELOG"
+changelog-template = "- {message} [{hash}]"
+commit-message = "bump: {old_ver} → {new_ver}"

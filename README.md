@@ -49,3 +49,13 @@ Use node2nix to create `node-env.nix` from `package.json` `node-env.nix` will be
 ```sh
 node2nix -i package.json -o ./nix/node-packages.nix -c ./nix/default.nix -e ./nix/node-env.nix -18
 ```
+
+## Development and Contributing
+
+Contributions and fixes are welcome. Please open issues or pull requests with clear descriptions and tests where appropriate.
+
+Publishing is supported using [floRaths/uv-ship: a CLI-tool for shipping with uv](https://github.com/floRaths/uv-ship)
+
+## License
+
+[AGPL-3.0](https://github.com/ahgraber/karakeep-client/blob/main/LICENSE)
