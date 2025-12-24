@@ -45,7 +45,7 @@
 - [ ] T012a [P] Implement source type detection utility in src/aizk/conversion/utilities/url_utils.py: detect_source_type(url) returns 'arxiv', 'github', or 'other' based on URL domain/pattern (NOT content format)
 - [ ] T013 [P] Implement idempotency key computation in src/aizk/conversion/utilities/hashing.py: compute_idempotency_key(aizk_uuid, payload_version, docling_version, config_hash) returns SHA256 hex digest
 - [ ] T014 [P] Implement markdown hash computation in src/aizk/conversion/utilities/hashing.py: compute_markdown_hash(markdown_text) returns xxHash64 hex digest of normalized markdown (UTF-8, LF line endings, trimmed)
-- [ ] T015 [P] Implement filename normalization in src/aizk/conversion/utilities/filename_utils.py: normalize_filename(title) lowercases, replaces special chars with hyphens, strips leading/trailing dots/dashes, truncates to 200 chars
+- [ ] T015 [P] ~~Implement filename normalization in src/aizk/conversion/utilities/filename_utils.py: normalize_filename(title) lowercases, replaces special chars with hyphens, strips leading/trailing dots/dashes, truncates to 200 chars~~ override: filename normalization already exists in utilities.file_utils
 - [ ] T016 Create configuration management in src/aizk/conversion/utilities/config.py using pydantic-settings: ConversionConfig with fields for S3 credentials, database path, worker concurrency, fetch timeouts, size limits, temp workspace path
 - [ ] T017 Create FastAPI app setup in src/aizk/conversion/api/main.py with lifespan context manager for database initialization and cleanup
 - [ ] T018 [P] Create FastAPI dependency injection in src/aizk/conversion/api/dependencies.py: wire DB session via `aizk.db.get_session()` and provide get_s3_client() dependency
