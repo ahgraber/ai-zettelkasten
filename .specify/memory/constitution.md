@@ -22,6 +22,12 @@ All pipelines (ingest, parse, chunk, embed, index) MUST be deterministic and ide
 
 ### Test-First Evidence
 
+Test-driven development is required unless explicitly overridden for a given task. Overrides must be granular (task and/or module level, not feature level). In test-driven development, it is non-negotiable that no implementation code shall be written before:
+
+1. Unit tests are written
+2. Tests are validated and approved by the user
+3. Tests are confirmed to FAIL (Red phase)
+
 Parsing, chunking, embedding, and indexing changes MUST be covered by automated tests before implementation is merged. Contract or integration tests guard external services; fixture-based tests guard deterministic transforms; regression tests are added for any production defect. Tests must run via the documented dev shell with clear pass/fail signals in CI.
 
 ### Privacy & Safety Guardrails
@@ -71,9 +77,9 @@ Versioning of this constitution follows semantic rules: MAJOR for breaking gover
 
 - Write clean, readable, and well-documented code.
 - Prioritize simplicity, clarity, and explicitness in code structure and logic.
+- Overly defensive programming leads to overcomplication - program for the minimal golden path and expand defense only where unit tests indicate need.
 - Follow the Zen of Python and adopt pythonic patterns.
 - Focus on modularity and reusability, organizing code into functions, classes, and modules; favor composition over inheritance.
-- Practice defensive programming with graceful error handling and informative messages.
 - Optimize for performance and efficiency; avoid unnecessary computations and prefer efficient algorithms.
 - Ensure proper error handling and structured logging for debugging.
 
@@ -84,6 +90,6 @@ Versioning of this constitution follows semantic rules: MAJOR for breaking gover
 - Use type hints to improve readability and enable static analysis.
 - Use f-strings for general formatting, and %-formatting for logs.
 - Use environment variables for configuration management.
-- Do not lint or format code manually; automated tooling runs on save/commit.
+- Do not lint or format code manually; automated tooling runs on save/commit or can be invoked using the `ruff` CLI tool.
 
 **Version**: 1.2.0 | **Ratified**: 2025-12-23 | **Last Amended**: 2025-12-23
