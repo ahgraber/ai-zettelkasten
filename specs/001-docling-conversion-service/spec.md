@@ -149,6 +149,7 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - **FR-032**: System MUST load configuration from environment variables with sensible defaults for local development
 - **FR-033**: System MUST normalize Markdown filenames for cross-OS compatibility: lowercase, replace spaces/special chars with hyphens, strip leading/trailing dots/dashes, truncate to reasonable length
 - **FR-034**: System MUST use payload_version equal to API version; idempotency_key computed as hash of aizk_uuid + payload_version + docling_version + config_hash
+- **FR-035**: Every Python process (API server, workers, CLI entrypoints) MUST set a descriptive process title via setproctitle to distinguish multiple running processes on the host (include role and feature identifier in title)
 
 **Constitution Alignment**:
 
@@ -156,6 +157,7 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - **Reproducibility**: Pin Docling version in manifest.json; record fetch timestamps and content hashes (markdown_hash_xx64) for auditing
 - **Privacy**: No user authentication required (internal-only); content fetched from public internet URLs in bookmarks; do not log S3 credentials or secrets
 - **Observability**: Structured logging with aizk_uuid/job_id trace context; metrics for queue depth, latency, success/failure rates; optional trace_id propagation
+- **Process Identification**: All Python processes set titles via setproctitle so operators can distinguish API vs worker vs CLI processes on hosts
 
 ### Key Entities
 
