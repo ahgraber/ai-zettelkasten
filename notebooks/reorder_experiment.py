@@ -30,13 +30,14 @@ from typing import Optional
 from dotenv import load_dotenv
 import httpx  # NOQA: E402
 from pydantic import BaseModel, Field, ValidationError
+from setproctitle import setproctitle
 from tqdm.auto import tqdm
 
 # %%
 # Add the src directory to the path so we can import treadmill
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from aizk.arxiv import AsyncArxivClient, get_arxiv_paper_metadata
+from aizk.utilities.arxiv import AsyncArxivClient, get_arxiv_paper_metadata
 from aizk.utilities.file_utils import to_valid_fname
 from aizk.utilities.limiters import SlidingWindowRateLimiter
 from aizk.utilities.url_utils import (
@@ -50,6 +51,9 @@ from aizk.utilities.url_utils import (
 )
 
 # %%
+# define python process name
+setproctitle(Path(__file__).stem)
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 

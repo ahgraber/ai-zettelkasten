@@ -22,6 +22,8 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from dotenv import load_dotenv
+from pydantic import AnyUrl
+from setproctitle import setproctitle
 from tqdm.auto import tqdm
 from typing_extensions import override
 import zstandard as zstd
@@ -69,6 +71,9 @@ from karakeep_client.karakeep import APIError, AuthenticationError, KarakeepClie
 from karakeep_client.models import PaginatedBookmarks
 
 # %%
+# define python process name
+setproctitle(Path(__file__).stem)
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 
