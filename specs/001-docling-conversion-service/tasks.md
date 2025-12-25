@@ -42,16 +42,16 @@
 - [ ] T010 Ensure indexes are declared and loaded by metadata in src/aizk/datamodel/\_\_init\_\_.py (imports models to populate SQLModel.metadata)
 - [ ] T011 Implement URL normalization utility in src/aizk/conversion/utilities/url_utils.py: normalize_url(url) lowercases domain, sorts query params, removes fragments
 - [ ] T012 [P] Implement content type detection utility in src/aizk/conversion/utilities/url_utils.py: detect_content_type(url, karakeep_metadata) returns 'html' or 'pdf' based on KaraKeep metadata, querying karakeep based on the bookmark id if necessary.
-- [ ] T012a [P] Implement source type detection utility in src/aizk/conversion/utilities/url_utils.py: detect_source_type(url) returns 'arxiv', 'github', or 'other' based on URL domain/pattern (NOT content format)
-- [ ] T013 [P] Implement idempotency key computation in src/aizk/conversion/utilities/hashing.py: compute_idempotency_key(aizk_uuid, payload_version, docling_version, config_hash) returns SHA256 hex digest
-- [ ] T014 [P] Implement markdown hash computation in src/aizk/conversion/utilities/hashing.py: compute_markdown_hash(markdown_text) returns xxHash64 hex digest of normalized markdown (UTF-8, LF line endings, trimmed)
-- [ ] T015 [P] ~~Implement filename normalization in src/aizk/conversion/utilities/filename_utils.py: normalize_filename(title) lowercases, replaces special chars with hyphens, strips leading/trailing dots/dashes, truncates to 200 chars~~ override: filename normalization already exists in utilities.file_utils
-- [ ] T016 Create configuration management in src/aizk/conversion/utilities/config.py using pydantic-settings: ConversionConfig with fields for S3 credentials, database path, worker concurrency, fetch timeouts, size limits, temp workspace path
-- [ ] T017 Create FastAPI app setup in src/aizk/conversion/api/main.py with lifespan context manager for database initialization and cleanup
-- [ ] T018 [P] Create FastAPI dependency injection in src/aizk/conversion/api/dependencies.py: wire DB session via `aizk.db.get_session()` and provide get_s3_client() dependency
-- [ ] T019 [P] Create structured logging configuration in src/aizk/conversion/utilities/logging.py with context fields (aizk_uuid, job_id, karakeep_id, status)
-- [ ] T020 Create CLI entrypoint in src/aizk/conversion/cli.py with commands: db-init (initialize database via aizk.db.create_db_and_tables), serve (run FastAPI server), worker (run background worker)
-- [ ] T020a [P] Set process titles via setproctitle: API server (uvicorn/ASGI lifespan) sets descriptive name (e.g., docling-api); worker/CLI entrypoints set descriptive names (e.g., docling-worker, docling-cli)
+- [x] T012a [P] Implement source type detection utility in src/aizk/conversion/utilities/url_utils.py: detect_source_type(url) returns 'arxiv', 'github', or 'other' based on URL domain/pattern (NOT content format)
+- [x] T013 [P] Implement idempotency key computation in src/aizk/conversion/utilities/hashing.py: compute_idempotency_key(aizk_uuid, payload_version, docling_version, config_hash) returns SHA256 hex digest
+- [x] T014 [P] Implement markdown hash computation in src/aizk/conversion/utilities/hashing.py: compute_markdown_hash(markdown_text) returns xxHash64 hex digest of normalized markdown (UTF-8, LF line endings, trimmed)
+- [x] T015 [P] ~~Implement filename normalization in src/aizk/conversion/utilities/filename_utils.py: normalize_filename(title) lowercases, replaces special chars with hyphens, strips leading/trailing dots/dashes, truncates to 200 chars~~ override: filename normalization already exists in utilities.file_utils
+- [x] T016 Create configuration management in src/aizk/conversion/utilities/config.py using pydantic-settings: ConversionConfig with fields for S3 credentials, database path, worker concurrency, fetch timeouts, size limits, temp workspace path
+- [x] T017 Create FastAPI app setup in src/aizk/conversion/api/main.py with lifespan context manager for database initialization and cleanup
+- [x] T018 [P] Create FastAPI dependency injection in src/aizk/conversion/api/dependencies.py: wire DB session via `aizk.db.get_session()` and provide get_s3_client() dependency
+- [x] T019 [P] Create structured logging configuration in src/aizk/conversion/utilities/logging.py with context fields (aizk_uuid, job_id, karakeep_id, status)
+- [x] T020 Create CLI entrypoint in src/aizk/conversion/cli.py with commands: db-init (initialize database via aizk.db.create_db_and_tables), serve (run FastAPI server), worker (run background worker)
+- [x] T020a [P] Set process titles via setproctitle: API server (uvicorn/ASGI lifespan) sets descriptive name (e.g., docling-api); worker/CLI entrypoints set descriptive names (e.g., docling-worker, docling-cli)
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 

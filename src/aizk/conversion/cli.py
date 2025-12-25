@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from setproctitle import setproctitle
 import uvicorn
 
 from aizk.conversion.api.main import create_app
@@ -13,11 +14,15 @@ from aizk.db import create_db_and_tables
 
 
 def _cmd_db_init(_args: argparse.Namespace) -> int:
+    """Initialize database tables."""
+    setproctitle("docling-db-init")
     create_db_and_tables()
     return 0
 
 
 def _cmd_serve(_args: argparse.Namespace) -> int:
+    """Run the FastAPI server."""
+    setproctitle("docling-api")
     config = ConversionConfig()
     uvicorn.run(
         create_app(),
@@ -29,6 +34,8 @@ def _cmd_serve(_args: argparse.Namespace) -> int:
 
 
 def _cmd_worker(_args: argparse.Namespace) -> int:
+    """Run the background worker."""
+    setproctitle("docling-worker")
     try:
         from aizk.conversion.workers.worker import run_worker
     except ImportError as exc:
