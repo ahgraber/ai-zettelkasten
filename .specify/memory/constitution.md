@@ -1,10 +1,10 @@
 <!--
 Sync Impact Report
-- Version: 1.1.0 → 1.2.0
-- Modified Principles/Sections: Governance expanded (changelog, semver, commits, ADRs, gating); Workflow updated; Technology section includes stack defaults
-- Added Sections: Engineering Standards (Key Principles + Style Guidelines)
+- Version: 1.2.0 → 1.3.0
+- Modified Principles/Sections: Technology requirements updated with process naming via setproctitle
+- Added Sections: none
 - Removed Sections: none
-- Templates requiring updates: ✅ .specify/templates/plan-template.md | ✅ .specify/templates/spec-template.md | ✅ .specify/templates/tasks-template.md
+- Templates requiring updates: none
 - Follow-up TODOs: none
 -->
 
@@ -20,7 +20,7 @@ Every ingested or generated artifact MUST carry source metadata (origin URL or s
 
 All pipelines (ingest, parse, chunk, embed, index) MUST be deterministic and idempotent: pinned dependencies, versioned configs, fixed seeds, and execution inside the Nix/uv environment defined in the repo. Re-running with the same inputs and configs produces the same outputs without duplicate side effects. Outputs must be regenerable from inputs + config; any non-determinism (remote models/APIs) requires recorded model/version and request parameters plus stable fallback fixtures for tests.
 
-### Test-First Evidence
+### Test-Driven Development
 
 Test-driven development is required unless explicitly overridden for a given task. Overrides must be granular (task and/or module level, not feature level). In test-driven development, it is non-negotiable that no implementation code shall be written before:
 
@@ -47,6 +47,7 @@ Structured logging (timestamps, component, correlation IDs) is required across p
 - Backend defaults: use FastAPI for service endpoints.
 - Data layer defaults: use SQLite via SQLModel; any deviation or external service selection MUST have a recorded ADR.
 - Secret management: Secrets/keys MUST NOT be committed. Store them in a gitignored `.env` file (or a secret manager) and access them via environment variables at runtime.
+- Process identification: Every Python process MUST set a descriptive process title using `setproctitle` so hosts running multiple Python processes can distinguish them.
 
 ## Workflow & Quality Gates
 
@@ -92,4 +93,4 @@ Versioning of this constitution follows semantic rules: MAJOR for breaking gover
 - Use environment variables for configuration management.
 - Do not lint or format code manually; automated tooling runs on save/commit or can be invoked using the `ruff` CLI tool.
 
-**Version**: 1.2.0 | **Ratified**: 2025-12-23 | **Last Amended**: 2025-12-23
+**Version**: 1.3.0 | **Ratified**: 2025-12-23 | **Last Amended**: 2025-12-25
