@@ -21,6 +21,7 @@
 - [x] Edge cases are identified
 - [x] Scope is clearly bounded
 - [x] Dependencies and assumptions identified
+- [x] Process identification requirement captured (setproctitle for each Python process)
 
 ## Feature Readiness
 

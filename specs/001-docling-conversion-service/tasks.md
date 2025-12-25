@@ -51,6 +51,7 @@
 - [ ] T018 [P] Create FastAPI dependency injection in src/aizk/conversion/api/dependencies.py: wire DB session via `aizk.db.get_session()` and provide get_s3_client() dependency
 - [ ] T019 [P] Create structured logging configuration in src/aizk/conversion/utilities/logging.py with context fields (aizk_uuid, job_id, karakeep_id, status)
 - [ ] T020 Create CLI entrypoint in src/aizk/conversion/cli.py with commands: db-init (initialize database via aizk.db.create_db_and_tables), serve (run FastAPI server), worker (run background worker)
+- [ ] T020a [P] Set process titles via setproctitle: API server (uvicorn/ASGI lifespan) sets descriptive name (e.g., docling-api); worker/CLI entrypoints set descriptive names (e.g., docling-worker, docling-cli)
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 

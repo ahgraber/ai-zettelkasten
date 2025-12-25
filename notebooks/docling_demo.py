@@ -26,6 +26,7 @@ from urllib.request import urlopen
 
 from dotenv import load_dotenv
 from pydantic import AnyUrl
+from setproctitle import setproctitle
 from tqdm.auto import tqdm
 from typing_extensions import override
 
@@ -74,6 +75,9 @@ from karakeep_client.models import (
 )
 
 # %%
+# define python process name
+setproctitle(Path(__file__).stem)
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 
