@@ -12,6 +12,8 @@ import os
 from pathlib import Path
 import sys
 
+from setproctitle import setproctitle
+
 # %%
 # Add the src directory to the path so we can import treadmill
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -19,6 +21,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from karakeep_client.karakeep import APIError, AuthenticationError, KarakeepClient, get_all_urls
 
 # %%
+# define python process name
+setproctitle(Path(__file__).stem)
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 
