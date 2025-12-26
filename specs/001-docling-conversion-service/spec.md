@@ -20,9 +20,12 @@ A user submits a KaraKeep bookmark (HTML or PDF URL) to the conversion service a
 1. **Given** a valid HTML bookmark URL, **When** user submits conversion job via API, **Then** system creates job record, fetches HTML, converts to Markdown with Docling, extracts figures, uploads to S3, and marks job as SUCCEEDED
 2. **Given** a valid PDF bookmark URL, **When** user submits conversion job, **Then** system fetches PDF, converts to Markdown, extracts figures, uploads all artifacts to S3 under `bucket/<aizk_uuid>/`
 3. **Given** a bookmark with identical idempotency_key already exists, **When** user resubmits same bookmark, **Then** system rejects submission with reason 'duplicate_idempotency_key'
-4. **Given** an arXiv bookmark, **When** user submits arXiv URL, **Then** system extracts arxiv_id, prioritizes HTML version from export.arxiv.org, falls back to PDF if needed
-5. **Given** a GitHub repository bookmark, **When** user submits GitHub URL, **Then** system extracts owner/repo, fetches README (md/rst/txt), converts to Markdown, uploads to S3
-6. **Given** a completed conversion job, **When** system writes to S3, **Then** all artifacts are verified uploaded (via ETag check) within a single database transaction; job status is marked SUCCEEDED ONLY after S3 verification completes; if S3 upload fails or verification fails, transaction rolls back and job remains QUEUED for retry
+4. **Given** a KaraKeep bookmark without HTML content, text, or PDF asset, **When** user submits conversion job, **Then** system raises validation exception with error_code='missing_content'
+5. **Given** an arXiv bookmark from abstract page (arxiv.org/abs), **When** user submits conversion job, **Then** system downloads PDF from arXiv using aizk.utilities.arxiv client and converts to Markdown
+6. **Given** an arXiv bookmark with PDF asset in KaraKeep, **When** user submits conversion job, **Then** system uses provided PDF bytes or fetches from KaraKeep if not passed, and converts to Markdown
+7. **Given** an arXiv bookmark with HTML content and source URL to PDF, **When** user submits conversion job, **Then** system downloads PDF from `arxiv_pdf_url` metadata field and converts to Markdown
+8. **Given** a GitHub repository bookmark, **When** user submits GitHub URL, **Then** system extracts owner/repo, fetches README (md/rst/txt), converts to Markdown, uploads to S3
+9. **Given** a completed conversion job, **When** system writes to S3, **Then** all artifacts are verified uploaded (via ETag check) within a single database transaction; job status is marked SUCCEEDED ONLY after S3 verification completes; if S3 upload fails or verification fails, transaction rolls back and job remains QUEUED for retry
 
 ---
 
@@ -90,12 +93,18 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - Default backend: FastAPI (services and APIs)
 - Default storage: SQLite via SQLModel (local development/testing)
 - Default Orchestration framework: Prefect - when needed
+- **KaraKeep Integration**: Bookmark submission accepts full KaraKeep bookmark object from karakeep_client package; validates required content (HTML/text/PDF); fetches PDF assets from KaraKeep when not pre-provided
+- **arXiv Handling**: Uses aizk.utilities.arxiv for PDF downloads (abstract page links); uses aizk.utilities.url_utils for URL parsing (arXiv ID extraction, arxiv_pdf_url metadata); leverages karakeep_client datamodel where appropriate
 - **ADR Required**: S3 storage strategy and atomic finalization using database transactions
 - **ADR Required**: Idempotency and payload_version semantics for reprocessing
 - Secrets: Configuration and keys must be read from environment variables. Store them in a gitignored `.env` file locally; no secrets committed to the repo.
 
 ### Edge Cases
 
+- What happens when a KaraKeep bookmark has no HTML content, text, or PDF asset?
+  - System raises validation exception with error_code='missing_content' and marks job as FAILED_PERM
+- What happens when PDF asset bytes are not passed in submission?
+  - System fetches asset from KaraKeep using karakeep_client API
 - What happens when a URL returns 404 or times out?
   - System marks job as FAILED_RETRYABLE, logs URL and HTTP status, schedules automatic retry with backoff
 - What happens when Docling conversion produces empty Markdown?
@@ -117,13 +126,14 @@ A manager component submits batches of bookmarks to the service and gracefully h
 
 ### Functional Requirements
 
-- **FR-001**: System MUST accept bookmark submissions via REST API with fields: aizk_uuid, karakeep_id, url, title, content_type (optional), source_type (optional), and optional payload_version, idempotency_key. content_type indicates format (html/pdf); source_type indicates origin (arxiv/github/other).
+- **FR-001**: System MUST accept bookmark submissions via REST API with KaraKeep bookmark object (containing karakeep_id, url, title, content, text, assets, metadata), optional pdf_asset_bytes for pre-fetched PDF assets, and optional payload_version, idempotency_key. System MUST assign or derive aizk_uuid. content_type is detected from KaraKeep bookmark; source_type indicates origin (arxiv/github/other) parsed from URL.
 - **FR-002**: System MUST normalize URLs for deduplication by removing fragments, sorting query parameters, and lowercasing domain
-- **FR-003**: System MUST detect content_type KaraKeep metadata (query karakeep if not part of the REST submission): .pdf extension or PDF content → 'pdf', otherwise → 'html'. System MUST detect source_type from URL patterns: arxiv.org → 'arxiv', github.com → 'github', otherwise → 'other'
+- **FR-003**: System MUST validate KaraKeep bookmark has HTML content, text, or PDF asset; raise exception with error_code='missing_content' if all are absent. System MUST detect content_type from KaraKeep bookmark structure: PDF asset present → 'pdf', HTML content/text present → 'html'. System MUST detect source_type from URL patterns: arxiv.org → 'arxiv', github.com → 'github', otherwise → 'other'
 - **FR-004**: System MUST assign or look up internal aizk_uuid for each bookmark and persist in bookmarks table with karakeep_id as unique key
 - **FR-005**: System MUST create conversion_jobs record with status='NEW', compute idempotency_key from hash of aizk_uuid + payload_version + docling_version + config_hash, and reject submissions with duplicate idempotency_key
 - **FR-006**: System MUST fetch source content with timeout (default: 30s), size cap (default: 50MB for HTML, 100MB for PDF), and retry logic (3 attempts with exponential backoff)
-- **FR-007**: For arXiv sources, system MUST extract arxiv_id from URL using utilities, attempt HTML fetch from `export.arxiv.org/html/<arxiv_id>`, fall back to `export.arxiv.org/pdf/<arxiv_id>`
+- **FR-006a**: When pdf_asset_bytes not provided in submission for PDF bookmarks, system MUST fetch PDF asset from KaraKeep using karakeep_client API
+- **FR-007**: For arXiv sources with source URL from abstract page (arxiv.org/abs), system MUST download PDF using aizk.utilities.arxiv.download_pdf() and convert to Markdown. For arXiv sources with PDF asset in KaraKeep, system MUST use provided pdf_asset_bytes or fetch from KaraKeep if not passed. For arXiv link bookmarks with HTML content and arxiv_pdf_url metadata field, system MUST download PDF from arxiv_pdf_url. System MUST use aizk.utilities.arxiv for arXiv client operations and aizk.utilities.url_utils for URL parsing/manipulation.
 - **FR-008**: For GitHub sources, system MUST extract owner/repo from URL, fetch raw README content from default branch prioritizing README.md, then README.rst, then README
 - **FR-009**: System MUST execute Docling conversion with appropriate pipeline (HTML or PDF) and extract figures to individual PNG files with sequential naming (figure1.png, figure2.png, ...)
 - **FR-010**: System MUST compute xxhash64 of normalized Markdown content (UTF-8, LF line endings) and store in markdown_hash_xx64 field
@@ -179,7 +189,8 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - **SC-008**: Users can identify and retry failed jobs via Web UI with confirmation displayed within 5 seconds of action
 - **SC-009**: Database transaction atomicity ensures 100% consumer reliability - consumers never receive S3 paths for incomplete conversions
 - **SC-010**: Reprocessing with new payload_version after Docling upgrade detects content changes in 95% of cases via markdown_hash_xx64 comparison
-- **SC-011**: System correctly prioritizes arXiv HTML over PDF in 100% of arXiv submissions, with fallback working when HTML unavailable
+- **SC-011**: System correctly handles arXiv bookmarks from abstract pages by downloading PDFs in 100% of cases, with proper fallback for arXiv link bookmarks with HTML content to fetch from arxiv_pdf_url
+- **SC-011a**: System correctly validates KaraKeep bookmarks have required content (HTML/text/PDF) and rejects invalid bookmarks with appropriate error_code in 100% of cases
 - **SC-012**: GitHub README fetching succeeds for 90% of public repositories with standard README naming conventions
 - **SC-013**: Structured logs include aizk_uuid and job_id in 100% of processing events, enabling complete trace reconstruction
 - **SC-014**: Idempotency protection prevents duplicate job creation in 100% of cases when same bookmark submitted multiple times with identical parameters
@@ -187,6 +198,11 @@ A manager component submits batches of bookmarks to the service and gracefully h
 
 ## Assumptions
 
+- KaraKeep bookmark is the source of truth; submission MUST include full bookmark object from karakeep_client with all metadata
+- KaraKeep bookmarks MUST have at least one of: HTML content, text, or PDF asset to be processable
+- PDF asset bytes MAY be pre-fetched and passed in submission, otherwise fetched from KaraKeep via karakeep_client
+- arXiv bookmarks from abstract pages (arxiv.org/abs) will have PDFs downloaded using aizk.utilities.arxiv client
+- arXiv bookmarks with link type and HTML content provide arxiv_pdf_url in metadata for PDF download
 - KaraKeep bookmark data includes URL, title, and karakeep_id at minimum; other fields may be optional or derived
 - Docling library is available as Python package with stable API for HTML and PDF conversion pipelines
 - S3-compatible storage is accessible with credentials provided via environment variables (supports AWS S3, Backblaze B2, Garage, MinIO, etc.)
@@ -218,6 +234,9 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - httpx or aiohttp for HTTP client with timeout/retry support
 - Pydantic for configuration management and settings validation
 - Python 3.10+ (for Pydantic v2 and async/await support)
+- karakeep_client (from .venv) for KaraKeep bookmark and asset fetching
+- aizk.utilities.arxiv for arXiv client operations (PDF downloads)
+- aizk.utilities.url_utils for URL parsing and manipulation (arXiv ID extraction, URL normalization)
 
 ## Out of Scope
 
