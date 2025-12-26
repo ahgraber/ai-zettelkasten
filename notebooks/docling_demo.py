@@ -175,14 +175,14 @@ def resolve_bookmark_content_text(bookmark: Bookmark) -> Optional[str]:
 
 # %%
 ALT_TEXT_INSTRUCTIONS = """
-Provide a detailed description for this image that captures the main subject, action, and any critical visual information including key components, relationships, and outcomes shown in the image with the goal that someone who reads the description would be able to redraw the image. Prioritize detail over brevity.
+Provide a detailed description for this figure that captures the main subject, action, and any critical visual information including key components, relationships, and outcomes shown with the goal that someone who reads the description would be able to redraw the figure. Prioritize detail over brevity.
 
 - Do not rely on phrases like "shown above" or "as seen"
-- Do not say "image of," "picture of," or "graphic of"
+- Do not say "image of," "picture of," "figure of," or "graphic of"
 - Do not describe purely visual styling unless meaningful
 - Do not guess emotions, identities, or intent unless clearly conveyed
 
-Respond ONLY with the image description, no other text.
+Respond ONLY with the description, no other text.
 """.strip()
 
 
@@ -335,7 +335,13 @@ class AnnotationPictureSerializer(MarkdownPictureSerializer):
         # appending annotations:
         for annotation in item.annotations:
             if isinstance(annotation, PictureDescriptionData):
-                text_parts.append(f"<!-- Image Alt Text: {annotation.text} -->")
+                text_parts.append(
+                    f"""
+<!-- Figure Description -->
+{annotation.text}
+<!-- End Figure Description -->
+""".strip()
+                )
 
         text_res = (separator or "\n").join(text_parts)
         return create_ser_result(text=text_res, span_source=item)
@@ -360,72 +366,52 @@ def convert_docling_document_to_markdown(doc: DoclingDocument) -> str:
     return ser_result.text
 
 
-def extract_and_save_images(doc: DoclingDocument, output_dir: Path):
-    """Persist images referenced in a docling document to ``output_dir``.
+def extract_and_save_figures(doc: DoclingDocument, output_dir: Path) -> int:
+    """Extract and save figures from DoclingDocument using native get_image API.
+
+    This function demonstrates the preferred approach for extracting figures from docling:
+
+    1. Configure pipeline options with `generate_picture_images=True` (already done in
+       build_pdf_format_options and build_html_format_options)
+    2. Use PictureItem.get_image(doc) to retrieve pre-rendered PIL Image objects
+    3. Save directly to PNG without manual URI reconstruction
+
+    This leverages docling's native figure rendering at the configured resolution
+    (images_scale=2 for 144 DPI) rather than trying to reconstruct images from URIs.
 
     Args:
         doc: The docling document containing picture items.
-        output_dir: Directory where extracted images are written.
+        output_dir: Directory where extracted figures are written.
 
     Returns:
-        The number of images saved.
+        The number of figures successfully saved.
     """
-    from PIL import Image  # type: ignore
-
     ensure_directory(output_dir)
-
-    def _load_bytes_from_uri(uri: str) -> bytes:
-        # data URI
-        if uri.startswith("data:"):
-            header, data = uri.split(",", 1)
-            return base64.b64decode(data) if ";base64" in header else data.encode("utf-8")
-
-        # file URI
-        if uri.startswith("file://"):
-            parsed = urlparse(uri)
-            src_path = Path(parsed.path)
-            return src_path.read_bytes()
-
-        # http/https fetch
-        if uri.startswith("http://") or uri.startswith("https://"):
-            with urlopen(uri) as resp:
-                return resp.read()
-
-        # fallback: local path
-        path = Path(uri)
-        return path.read_bytes() if path.exists() else b""
+    saved_count = 0
 
     for i, pic in enumerate(doc.pictures, 1):
         if not isinstance(pic, PictureItem):
             continue
 
-        image_ref = getattr(pic, "image", None)
-        if image_ref is None:
-            logger.debug("Picture %s has no image reference", pic.self_ref)
-            continue
-
-        uri_str = str(getattr(image_ref, "uri", ""))
-        if not uri_str:
-            logger.debug("Picture %s has no uri", pic.self_ref)
-            continue
-
-        raw = _load_bytes_from_uri(uri_str)
-        if not raw:
-            continue
-
-        png_name = slugify(f"image-{i}.png")
-        output_path = output_dir / png_name
-
-        # Prefer Pillow conversion to PNG
         try:
-            img = Image.open(BytesIO(raw))
-            img.load()
-            img.save(output_path, format="PNG")
-            logger.debug("Saved PNG image %s", output_path)
-        except Exception:
-            # Fallback: write raw bytes (may already be PNG)
-            output_path.write_bytes(raw)
-            logger.debug("Saved raw image %s", output_path)
+            # Use docling's native get_image() API to retrieve PIL Image
+            pil_image = pic.get_image(doc)
+            if pil_image is None:
+                logger.debug("Figure %s returned no image", pic.self_ref)
+                continue
+
+            figure_name = slugify(f"figure-{i:03d}.png")
+            output_path = output_dir / figure_name
+
+            pil_image.save(output_path, format="PNG")
+            logger.debug("Saved figure: %s", output_path)
+            saved_count += 1
+
+        except Exception as e:
+            logger.warning("Failed to extract figure %d: %s", i, e)
+            continue
+
+    return saved_count
 
 
 # %%
@@ -740,9 +726,9 @@ if doc is None:
     raise ValueError(f"Unsupported bookmark type {bookmark_type!r} with content {content_type!r}")
 
 image_dir_name_base = getattr(bookmark, "title", "") or bookmark.id
-images_output_dir = ensure_directory(Path("../data/extracted_images") / slugify(bookmark.id))
-extract_and_save_images(doc, images_output_dir)
-logger.info("Extracted images to %s", images_output_dir)
+figures_output_dir = ensure_directory(Path("../data/extracted_images") / slugify(bookmark.id))
+figure_count = extract_and_save_figures(doc, figures_output_dir)
+logger.info("Extracted %d figures to %s", figure_count, figures_output_dir)
 
 # %%
 md = convert_docling_document_to_markdown(doc)
