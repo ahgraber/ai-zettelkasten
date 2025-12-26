@@ -1,5 +1,3 @@
-from unittest.mock import Mock, patch
-
 from pydantic import ValidationError as PydanticValidationError
 import pytest
 from validators import ValidationError as URLValidatorValidationError
@@ -19,11 +17,15 @@ from aizk.utilities.url_utils import (
     extract_urls,
     fix_url_from_markdown,
     follow_redirects,
+    is_arxiv_url,
+    is_github_url,
+    is_social_url,
     process_url,
     safelink_to_url,
     standardize_arxiv,
     standardize_github,
     strip_utm_params,
+    validate_arxiv_id,
     validate_url,
 )
 
@@ -191,7 +193,7 @@ class TestExtractURLs:
                 ["http://例子.测试", "http://مثال.إختبار"],
             ),
             # URLs with parentheses (common in academic citations)
-            ("See paper (https://arxiv.org/abs/1234.5678) for details", ["https://arxiv.org/abs/1234.5678"]),
+            ("See paper (https://arxiv.org/abs/2000.56789) for details", ["https://arxiv.org/abs/2000.56789"]),
             # URLs in code blocks (should still be extracted)
             ("```\nGET https://api.example.com/v1/users\n```", ["https://api.example.com/v1/users"]),
             # Multiple URLs in the same line
@@ -471,22 +473,22 @@ class TestCleanMarkdownTitle:
     @pytest.mark.parametrize(
         "input_text,expected_output",
         [
-            ("[1234.56789] This is an arxiv title", "[1234.56789] This is an arxiv title"),
-            ("\\[1234.56789\\] This is an arxiv title", "[1234.56789] This is an arxiv title"),
-            ("[[1234.56789] This is an arxiv title]", "[1234.56789] This is an arxiv title"),
-            ("[\\[1234.56789\\] This is an arxiv title]", "[1234.56789] This is an arxiv title"),
-            ("\\[\\[1234.56789\\] This is an arxiv title\\]", "[1234.56789] This is an arxiv title"),
+            ("[2000.56789] This is an arxiv title", "[2000.56789] This is an arxiv title"),
+            ("\\[2000.56789\\] This is an arxiv title", "[2000.56789] This is an arxiv title"),
+            ("[[2000.56789] This is an arxiv title]", "[2000.56789] This is an arxiv title"),
+            ("[\\[2000.56789\\] This is an arxiv title]", "[2000.56789] This is an arxiv title"),
+            ("\\[\\[2000.56789\\] This is an arxiv title\\]", "[2000.56789] This is an arxiv title"),
             (
-                "[[1234.56789] This is an arxiv title](https://arxiv.org/abs/1234.56789)",
-                "[[1234.56789] This is an arxiv title](https://arxiv.org/abs/1234.56789)",
+                "[[2000.56789] This is an arxiv title](https://arxiv.org/abs/2000.56789)",
+                "[[2000.56789] This is an arxiv title](https://arxiv.org/abs/2000.56789)",
             ),
             (
-                "[\\[1234.56789\\] This is an arxiv title](https://arxiv.org/abs/1234.56789)",
-                "[[1234.56789] This is an arxiv title](https://arxiv.org/abs/1234.56789)",
+                "[\\[2000.56789\\] This is an arxiv title](https://arxiv.org/abs/2000.56789)",
+                "[[2000.56789] This is an arxiv title](https://arxiv.org/abs/2000.56789)",
             ),
             (
-                "\\[\\[1234.56789\\] This is an arxiv title\\](https://arxiv.org/abs/1234.56789)",
-                "[[1234.56789] This is an arxiv title](https://arxiv.org/abs/1234.56789)",
+                "\\[\\[2000.56789\\] This is an arxiv title\\](https://arxiv.org/abs/2000.56789)",
+                "[[2000.56789] This is an arxiv title](https://arxiv.org/abs/2000.56789)",
             ),
         ],
     )
@@ -882,6 +884,25 @@ class TestStandardizeGithub:
         assert "/owner/repo" in result
 
 
+class TestValidateArxivId:
+    def test_valid_base_id(self):
+        assert validate_arxiv_id("1706.03762") == "1706.03762"
+
+    def test_version_and_whitespace(self):
+        assert validate_arxiv_id(" 2101.00001v2 ") == "2101.00001v2"
+
+    def test_uppercase_version(self):
+        assert validate_arxiv_id("1706.03762V3") == "1706.03762V3"
+
+    @pytest.mark.parametrize(
+        "invalid_id",
+        ["", "   ", "1706.037", "abcd", "2299.12345", "1706.03762vv1", "1706.03762v"],
+    )
+    def test_invalid_ids(self, invalid_id: str):
+        with pytest.raises(ValueError):
+            validate_arxiv_id(invalid_id)
+
+
 class TestArxivAbsUrl:
     def test_export_url_default(self):
         """Test arxiv_abs_url with use_export_url=True (default)."""
@@ -904,6 +925,10 @@ class TestArxivAbsUrl:
         """Test arxiv_abs_url with new format arXiv ID."""
         assert arxiv_abs_url("2101.00001") == "http://export.arxiv.org/abs/2101.00001"
         assert arxiv_abs_url("2101.00001", use_export_url=False) == "https://arxiv.org/abs/2101.00001"
+
+    def test_invalid_id(self):
+        with pytest.raises(ValueError):
+            arxiv_abs_url("not-an-id")
 
 
 class TestArxivPdfUrl:
@@ -929,6 +954,10 @@ class TestArxivPdfUrl:
         assert arxiv_pdf_url("2101.00001") == "http://export.arxiv.org/pdf/2101.00001"
         assert arxiv_pdf_url("2101.00001", use_export_url=False) == "https://arxiv.org/pdf/2101.00001"
 
+    def test_invalid_id(self):
+        with pytest.raises(ValueError):
+            arxiv_pdf_url("invalid")
+
 
 class TestArxivHtmlUrl:
     def test_export_url_default(self):
@@ -952,6 +981,10 @@ class TestArxivHtmlUrl:
         """Test arxiv_html_url with new format arXiv ID."""
         assert arxiv_html_url("2101.00001") == "http://export.arxiv.org/html/2101.00001"
         assert arxiv_html_url("2101.00001", use_export_url=False) == "https://arxiv.org/html/2101.00001"
+
+    def test_invalid_id(self):
+        with pytest.raises(ValueError):
+            arxiv_html_url("invalid")
 
 
 class TestConvertPaperUrlsToArxiv:
@@ -999,3 +1032,159 @@ class TestConvertPaperUrlsToArxiv:
         assert convert_paper_urls_to_arxiv(hf_url) == "http://export.arxiv.org/abs/2101.00001"
         assert convert_paper_urls_to_arxiv(em_url, use_export_url=False) == "https://arxiv.org/abs/1706.03762"
         assert convert_paper_urls_to_arxiv(hf_url, use_export_url=False) == "https://arxiv.org/abs/2101.00001"
+
+
+class TestIsSocialUrl:
+    """Test the is_social_url function for detecting social media URLs."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://linkedin.com/in/someone",
+            "https://twitter.com/user",
+            "https://x.com/user",
+            "https://bsky.app/profile/user",
+            "https://facebook.com/user",
+            "https://instagram.com/user",
+            "https://threads.net/@user",
+        ],
+    )
+    def test_social_urls_exact_domain(self, url):
+        """Test that exact social media domain URLs are detected correctly."""
+        assert is_social_url(url) is True
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://www.linkedin.com/in/someone",
+            "https://www.twitter.com/user",
+            "https://www.x.com/user",
+            "https://www.bsky.app/profile/user",
+            "https://www.facebook.com/user",
+            "https://www.instagram.com/user",
+            "https://www.threads.net/@user",
+            "https://mobile.twitter.com/user",
+            "https://api.twitter.com/user",
+            "https://subdomain.linkedin.com/page",
+        ],
+    )
+    def test_social_urls_with_subdomains(self, url):
+        """Test that social media URLs with subdomains (www, mobile, etc.) are detected correctly."""
+        assert is_social_url(url) is True
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/not-social",
+            "https://www.example.com/not-social",
+            "https://github.com/user/repo",
+            "https://arxiv.org/abs/2000.56789",
+            "https://google.com/search",
+            "https://linkedin.co.uk/in/someone",  # Different TLD
+            "https://twitter.com.br/user",  # Different TLD
+        ],
+    )
+    def test_non_social_urls(self, url):
+        """Test that non-social media URLs are not detected as social."""
+        assert is_social_url(url) is False
+
+    def test_invalid_url(self):
+        """Test that invalid URLs raise appropriate errors."""
+        with pytest.raises((PydanticValidationError, URLValidatorValidationError, ValueError)):
+            is_social_url("not-a-url")
+
+
+class TestIsGithubUrl:
+    """Test the is_github_url function for detecting GitHub URLs."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://github.com/user/repo",
+            "https://gist.github.com/user/123",
+            "https://raw.githubusercontent.com/user/repo/main/file.txt",
+        ],
+    )
+    def test_github_urls_exact_domain(self, url):
+        """Test that exact GitHub domain URLs are detected correctly."""
+        assert is_github_url(url) is True
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://www.github.com/user/repo",
+            "https://api.github.com/repos/user/repo",
+            "https://docs.github.com/en/get-started",
+            "https://mobile.github.com/user/repo",
+            "https://subdomain.gist.github.com/user/123",
+        ],
+    )
+    def test_github_urls_with_subdomains(self, url):
+        """Test that GitHub URLs with subdomains are detected correctly."""
+        assert is_github_url(url) is True
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/user/repo",
+            "https://gitlab.com/user/repo",
+            "https://bitbucket.org/user/repo",
+            "https://linkedin.com/in/someone",
+            "https://github.io/user/repo",  # Different TLD
+        ],
+    )
+    def test_non_github_urls(self, url):
+        """Test that non-GitHub URLs are not detected as GitHub."""
+        assert is_github_url(url) is False
+
+    def test_invalid_url(self):
+        """Test that invalid URLs raise appropriate errors."""
+        with pytest.raises((PydanticValidationError, URLValidatorValidationError, ValueError)):
+            is_github_url("not-a-url")
+
+
+class TestIsArxivUrl:
+    """Test the is_arxiv_url function for detecting arxiv URLs."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://arxiv.org/abs/2000.56789",
+            "https://arxiv.org/pdf/2000.56789.pdf",
+            "https://export.arxiv.org/abs/2000.56789",
+            "https://export.arxiv.org/pdf/2000.56789.pdf",
+        ],
+    )
+    def test_arxiv_urls_exact_domain(self, url):
+        """Test that exact arxiv domain URLs are detected correctly."""
+        assert is_arxiv_url(url) is True
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://www.arxiv.org/abs/2000.56789",
+            "https://subdomain.arxiv.org/abs/2000.56789",
+            "https://www.export.arxiv.org/abs/2000.56789",
+        ],
+    )
+    def test_arxiv_urls_with_subdomains(self, url):
+        """Test that arxiv URLs with subdomains are detected correctly."""
+        assert is_arxiv_url(url) is True
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/abs/2000.56789",
+            "https://github.com/user/repo",
+            "https://linkedin.com/in/someone",
+            "https://arxiv.co.uk/abs/2000.56789",  # Different TLD
+        ],
+    )
+    def test_non_arxiv_urls(self, url):
+        """Test that non-arxiv URLs are not detected as arxiv."""
+        assert is_arxiv_url(url) is False
+
+    def test_invalid_url(self):
+        """Test that invalid URLs raise appropriate errors."""
+        with pytest.raises((PydanticValidationError, URLValidatorValidationError, ValueError)):
+            is_arxiv_url("not-a-url")
