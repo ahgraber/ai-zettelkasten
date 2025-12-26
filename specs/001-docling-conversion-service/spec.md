@@ -88,16 +88,16 @@ A manager component submits batches of bookmarks to the service and gracefully h
 2. **Given** batch submission contains mix of valid and invalid jobs, **When** some jobs fail validation, **Then** API creates jobs for valid entries and returns detailed per-item status with error reasons for failed entries
 3. **Given** batch submission includes duplicate idempotency_keys, **When** API processes batch, **Then** duplicates return existing job details without creating new records
 
-## Technical Context & ADRs
+### Technical Context & Implementation Directives
 
 - Default backend: FastAPI (services and APIs)
 - Default storage: SQLite via SQLModel (local development/testing)
 - Default Orchestration framework: Prefect - when needed
 - **KaraKeep Integration**: Bookmark submission accepts full KaraKeep bookmark object from karakeep_client package; validates required content (HTML/text/PDF); fetches PDF assets from KaraKeep when not pre-provided
-- **arXiv Handling**: Uses aizk.utilities.arxiv for PDF downloads (abstract page links); uses aizk.utilities.url_utils for URL parsing (arXiv ID extraction, arxiv_pdf_url metadata); leverages karakeep_client datamodel where appropriate
-- **ADR Required**: S3 storage strategy and atomic finalization using database transactions
-- **ADR Required**: Idempotency and payload_version semantics for reprocessing
-- Secrets: Configuration and keys must be read from environment variables. Store them in a gitignored `.env` file locally; no secrets committed to the repo.
+- **arXiv Handling**: Implement PDF downloads for abstract page links (arxiv.org/abs); implement URL parsing for arXiv ID extraction and arxiv_pdf_url metadata handling; leverage existing utilities where available
+- **S3 Storage Strategy**: Atomic uploads with verification checksums; failed uploads must not mark jobs SUCCEEDED; implement transaction semantics to ensure consistency between database and S3
+- **Idempotency & Reprocessing**: Compute idempotency_key as hash of aizk_uuid + payload_version + docling_version + config_hash; allow reprocessing via payload_version bumps without overwriting existing artifacts unless markdown_hash changes
+- **Secrets & Configuration**: Configuration and keys must be read from environment variables. Store them in a gitignored `.env` file locally; no secrets committed to the repo.
 
 ### Edge Cases
 
@@ -131,11 +131,11 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - **FR-003**: System MUST validate KaraKeep bookmark has HTML content, text, or PDF asset; raise exception with error_code='missing_content' if all are absent. System MUST detect content_type from KaraKeep bookmark structure: PDF asset present → 'pdf', HTML content/text present → 'html'. System MUST detect source_type from URL patterns: arxiv.org → 'arxiv', github.com → 'github', otherwise → 'other'
 - **FR-004**: System MUST assign or look up internal aizk_uuid for each bookmark and persist in bookmarks table with karakeep_id as unique key
 - **FR-005**: System MUST create conversion_jobs record with status='NEW', compute idempotency_key from hash of aizk_uuid + payload_version + docling_version + config_hash, and reject submissions with duplicate idempotency_key
-- **FR-006**: System MUST fetch source content with timeout (default: 30s), size cap (default: 50MB for HTML, 100MB for PDF), and retry logic (3 attempts with exponential backoff)
+- **FR-006**: System MUST fetch source content from KaraKeep as source of truth using karakeep_client with timeout (default: 30s) and retry logic (3 attempts with exponential backoff)
 - **FR-006a**: When pdf_asset_bytes not provided in submission for PDF bookmarks, system MUST fetch PDF asset from KaraKeep using karakeep_client API
-- **FR-007**: For arXiv sources with source URL from abstract page (arxiv.org/abs), system MUST download PDF using aizk.utilities.arxiv.download_pdf() and convert to Markdown. For arXiv sources with PDF asset in KaraKeep, system MUST use provided pdf_asset_bytes or fetch from KaraKeep if not passed. For arXiv link bookmarks with HTML content and arxiv_pdf_url metadata field, system MUST download PDF from arxiv_pdf_url. System MUST use aizk.utilities.arxiv for arXiv client operations and aizk.utilities.url_utils for URL parsing/manipulation.
+- **FR-007**: For arXiv sources, enforce the following business logic: (1) If the source URL is an abstract page (`arxiv.org/abs/...`), resolve `arxiv_id` and download the PDF via `aizk.utilities.arxiv.AsyncArxivClient.download_paper_pdf(arxiv_id, use_export_url=True)`, then convert to Markdown. (2) If the bookmark is a PDF asset, use the provided `pdf_asset_bytes` (or fetch from KaraKeep when not provided) and convert to Markdown. (3) If the bookmark is a link with HTML content and the source domain is `arxiv.org`, resolve `arxiv_id` (use `arxiv_pdf_url` metadata when present; otherwise derive from the abstract URL) and download via `AsyncArxivClient.download_paper_pdf(arxiv_id, use_export_url=True)`, then convert to Markdown. System MUST use `aizk.utilities.arxiv.AsyncArxivClient` for arXiv client operations and `aizk.utilities.url_utils` for URL parsing/manipulation.
 - **FR-008**: For GitHub sources, system MUST extract owner/repo from URL, fetch raw README content from default branch prioritizing README.md, then README.rst, then README
-- **FR-009**: System MUST execute Docling conversion with appropriate pipeline (HTML or PDF) and extract figures to individual PNG files with sequential naming (figure1.png, figure2.png, ...)
+- **FR-009**: System MUST execute Docling conversion with appropriate pipeline (HTML or PDF) and extract figures to individual PNG files with sequential naming (figure-001.png, figure-002.png, ...)
 - **FR-010**: System MUST compute xxhash64 of normalized Markdown content (UTF-8, LF line endings) and store in markdown_hash_xx64 field
 - **FR-011**: System MUST write conversion outputs to isolated temp workspace at `<tmp_root>/<aizk_uuid>/<run_timestamp>/` including Markdown, figures, and manifest.json
 - **FR-012**: System MUST upload all artifacts to S3 at `s3://<bucket>/<aizk_uuid>/` and verify successful upload before proceeding
@@ -152,14 +152,14 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - **FR-024**: System MUST render HTML-only Web UI at /ui/jobs displaying job table with columns: Job ID, aizk_uuid, karakeep_id, title, status, attempts, queued_at, started_at, finished_at, error_code
 - **FR-025**: Web UI MUST provide checkboxes for multi-select, Retry and Cancel buttons posting to /v1/jobs/actions, and client-side filters for status and text search
 - **FR-026**: System MUST process jobs with bounded concurrency (configurable, default: 4 parallel workers) in FIFO order by queued_at timestamp
-- **FR-028**: System MUST use SQLite in WAL mode with synchronous=NORMAL, prepared statements, and single-writer pattern with database lock retry logic
-- **FR-029**: System MUST create indexes: `idx_jobs_status_next_attempt` (conversion_jobs), `idx_bookmarks_normalized_url` (bookmarks), `idx_outputs_aizk_uuid` (conversion_outputs)
+- **FR-028**: System MUST support concurrent read access from multiple workers with transaction isolation, preventing race conditions during job status updates and artifact writing: SQLite in WAL mode with synchronous=NORMAL, prepared statements, and single-writer pattern with database lock retry logic
+- **FR-029**: System MUST create indexes on: (1) job status and retry scheduling (conversion_jobs), (2) bookmark URL deduplication (bookmarks), (3) output lookup by aizk_uuid (conversion_outputs)
 - **FR-030**: System MUST log key processing events with context identifiers (aizk_uuid, job_id, karakeep_id, status) enabling trace reconstruction
 - **FR-031**: System MUST emit basic metrics: queue depth, job duration, job status counts, fetch latency, S3 upload latency
 - **FR-032**: System MUST load configuration from environment variables with sensible defaults for local development
-- **FR-033**: System MUST normalize Markdown filenames for cross-OS compatibility: lowercase, replace spaces/special chars with hyphens, strip leading/trailing dots/dashes, truncate to reasonable length
+- **FR-033**: System MUST produce Markdown filenames that are valid across operating systems (Windows, macOS, Linux) and safe for file systems without path traversal risks
 - **FR-034**: System MUST use payload_version equal to API version; idempotency_key computed as hash of aizk_uuid + payload_version + docling_version + config_hash
-- **FR-035**: Every Python process (API server, workers, CLI entrypoints) MUST set a descriptive process title via setproctitle to distinguish multiple running processes on the host (include role and feature identifier in title)
+- **FR-035**: Every Python process (API server, workers, CLI entrypoints) MUST expose role identification (API, worker, CLI) to enable operators to distinguish different process types on the host during monitoring (via setproctitle)
 
 **Constitution Alignment**:
 
@@ -231,7 +231,7 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - SQLModel or SQLAlchemy for SQLite ORM
 - boto3 or aioboto3 for S3 client
 - xxhash library for content hashing
-- httpx or aiohttp for HTTP client with timeout/retry support
+- httpx for HTTP client with timeout/retry support
 - Pydantic for configuration management and settings validation
 - Python 3.10+ (for Pydantic v2 and async/await support)
 - karakeep_client (from .venv) for KaraKeep bookmark and asset fetching

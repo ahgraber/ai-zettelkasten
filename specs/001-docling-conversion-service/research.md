@@ -2,11 +2,19 @@
 
 **Feature**: 001-docling-conversion-service
 **Date**: 2025-12-23
+**Updated**: 2025-12-26 (spec compliance review)
 **Purpose**: Resolve technical unknowns and document design decisions for implementation planning
 
 ## Overview
 
 This document resolves NEEDS CLARIFICATION items identified in Technical Context and documents architectural decisions required by the constitution.
+
+**Spec Update Note**: The following ADR decisions have been elevated to spec-level implementation directives in the "Technical Context & Implementation Directives" section:
+
+- S3 Storage Strategy: Atomic uploads with verification checksums
+- Idempotency & Reprocessing: Idempotency_key computation and payload_version semantics
+
+These directives are now normative requirements, not optional architecture recommendations. See spec.md for details.
 
 ## Research Items
 
