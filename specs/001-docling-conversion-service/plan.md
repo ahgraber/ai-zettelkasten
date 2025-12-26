@@ -7,12 +7,12 @@
 
 ## Summary
 
-Convert KaraKeep bookmarks (HTML/PDF/arXiv/GitHub) to Markdown using Docling with durable state tracking, idempotency, and S3 artifact storage. Implement FastAPI REST API with SQLite job queue, 4 parallel Docling workers, exponential backoff retry logic, and HTML-only Web UI for operational monitoring. Support reprocessing with payload versioning and content-based deduplication via markdown hashing.
+Convert KaraKeep bookmarks (HTML/PDF/arXiv/GitHub) to Markdown using Docling with durable state tracking, idempotency, and S3 artifact storage. KaraKeep bookmark is the source of truth; validate bookmarks have required content (HTML/text/PDF). For arXiv sources, handle abstract page links (download PDF via aizk.utilities.arxiv), PDF assets (use provided or fetch from KaraKeep), and link bookmarks with HTML content (download from arxiv_pdf_url). Implement FastAPI REST API with SQLite job queue, 4 parallel Docling workers, exponential backoff retry logic, and HTML-only Web UI for operational monitoring. Support reprocessing with payload versioning and content-based deduplication via markdown hashing.
 
 ## Technical Context
 
 **Language/Version**: Python 3.12+ (managed via uv)\
-**Primary Dependencies**: FastAPI, Docling (v2.65+), SQLModel, boto3 (S3 client), xxhash, httpx, pydantic-settings\
+**Primary Dependencies**: FastAPI, Docling (v2.65+), SQLModel, boto3 (S3 client), xxhash, httpx, pydantic-settings, karakeep_client (from .venv)\
 **Storage**: SQLite with WAL mode via SQLModel; S3-compatible object storage for artifacts\
 **Testing**: pytest with fixtures for deterministic transforms, contract tests for API, integration tests for S3 uploads\
 **Target Platform**: Linux server (Docker/compose), macOS development (via Nix/uv devshell)\
@@ -41,7 +41,7 @@ Convert KaraKeep bookmarks (HTML/PDF/arXiv/GitHub) to Markdown using Docling wit
 - 4 parallel conversion workers
 - Job history retention: retain all aside from user-directed archive/purge strategy for old jobs via the HTML webui
 - S3 bucket quota: assume unlimited for initial deployment
-- **Bookmark Metadata**: Bookmarks track two independent dimensions: `content_type` (html/pdf—format of content from KaraKeep) and `source_type` (arxiv/github/other—origin parsed from URL). Enables flexible handling: arXiv bookmarks can be PDF or HTML; GitHub bookmarks are always HTML; generic sources may be either format.
+- **Bookmark Metadata**: KaraKeep bookmark is source of truth; must contain HTML content, text, or PDF asset. Bookmarks track `content_type` (html/pdf—format detected from KaraKeep structure) and `source_type` (arxiv/github/other—origin parsed from URL). arXiv bookmarks: abstract page links download PDF via aizk.utilities.arxiv; PDF assets use provided bytes or fetch from KaraKeep; link bookmarks with HTML download from arxiv_pdf_url. GitHub bookmarks are always HTML. All other links are expected to be HTML.
 
 ## Constitution Check
 
@@ -49,7 +49,7 @@ Convert KaraKeep bookmarks (HTML/PDF/arXiv/GitHub) to Markdown using Docling wit
 
 - **G1 Data provenance**:
 
-  - Sources: KaraKeep bookmarks (via karakeep_id, url), arXiv (via arxiv_id in URL), GitHub (via owner/repo in URL)
+  - Sources: KaraKeep bookmarks (via karakeep_id, url, content/text/assets—validated for presence), arXiv (via arxiv_id in URL or arxiv_pdf_url in metadata), GitHub (via owner/repo in URL)
   - Metadata: bookmarks table stores karakeep_id, url, normalized_url, source_type, title, aizk_uuid
   - Hashing: xxhash64 of normalized Markdown content (markdown_hash_xx64) for deduplication and change detection
   - Raw inputs: source HTML/PDF retained only temporarily in fetch stage; conversion_outputs.manifest_key references all generated artifacts
@@ -219,6 +219,7 @@ No complexity violations to justify.
 - All NEEDS CLARIFICATION items resolved in research.md
 - Three ADRs documented: S3 storage, idempotency semantics, SQLite WAL mode
 - Best practices researched: Docling configuration, arXiv/GitHub fetching, filename normalization
+- Integration approach clarified: karakeep_client from .venv for bookmark/asset fetching; aizk.utilities.arxiv for arXiv PDF downloads; aizk.utilities.url_utils for URL parsing
 
 **Phase 1 (Design)**: ✅ Complete
 
