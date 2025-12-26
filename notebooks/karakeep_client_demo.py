@@ -45,10 +45,7 @@ client = KarakeepClient(
 logger.info("Fetching first page of bookmarks...")
 bookmarks_page = await client.get_bookmarks_paged(limit=5)
 
-if client.disable_response_validation:
-    logger.info("Retrieved %d bookmarks", len(bookmarks_page.get("bookmarks", [])))
-else:
-    logger.info("Retrieved %d bookmarks", len(bookmarks_page.bookmarks))
+logger.info("Retrieved %d bookmarks", len(bookmarks_page.bookmarks))
 
 # %%
 # Get all URLs
@@ -64,12 +61,9 @@ for i, url in enumerate(all_urls[:5]):
 # %%
 # Search bookmarks
 logger.info("Searching bookmarks for 'example'...")
-search_results = await client.search_bookmarks(q="python uv", limit=3)
+search_results = await client.search_bookmarks(q="attention is all you need", limit=3)
 
-if client.disable_response_validation:
-    search_count = len(search_results.get("bookmarks", []))
-else:
-    search_count = len(search_results.bookmarks)
+search_count = len(search_results.bookmarks)
 logger.info("Found %d bookmarks matching 'example'", search_count)
 
 # %%
@@ -99,12 +93,8 @@ async def demo_bookmark_creation():
             favourited=True,
         )
 
-        if client.disable_response_validation:
-            bookmark_id = link_bookmark["id"]
-            logger.info("Created bookmark with ID: %s", bookmark_id)
-        else:
-            bookmark_id = link_bookmark.id
-            logger.info("Created bookmark with ID: %s", bookmark_id)
+        bookmark_id = link_bookmark.id
+        logger.info("Created bookmark with ID: %s", bookmark_id)
 
         # Create a text bookmark
         logger.info("Creating a text bookmark...")
@@ -115,21 +105,14 @@ async def demo_bookmark_creation():
             summary="A demonstration of text bookmark creation",
         )
 
-        if client.disable_response_validation:
-            text_bookmark_id = text_bookmark["id"]
-            logger.info("Created text bookmark with ID: %s", text_bookmark_id)
-        else:
-            text_bookmark_id = text_bookmark.id
-            logger.info("Created text bookmark with ID: %s", text_bookmark_id)
+        text_bookmark_id = text_bookmark.id
+        logger.info("Created text bookmark with ID: %s", text_bookmark_id)
 
         # Get the created bookmark
         logger.info("Retrieving the created bookmark...")
         retrieved_bookmark = await client.get_bookmark(bookmark_id)
 
-        if client.disable_response_validation:
-            logger.info("Retrieved bookmark title: %s", retrieved_bookmark.get("title"))
-        else:
-            logger.info("Retrieved bookmark title: %s", retrieved_bookmark.title)
+        logger.info("Retrieved bookmark title: %s", retrieved_bookmark.title)
 
         # Update the bookmark
         logger.info("Updating the bookmark...")
@@ -207,12 +190,8 @@ async def demo_asset_operations():
         logger.info("Uploading demo asset...")
         asset = await client.upload_new_asset(str(demo_file))
 
-        if client.disable_response_validation:
-            asset_id = asset["assetId"]
-            logger.info("Uploaded asset with ID: %s", asset_id)
-        else:
-            asset_id = asset.asset_id
-            logger.info("Uploaded asset with ID: %s", asset_id)
+        asset_id = asset.asset_id
+        logger.info("Uploaded asset with ID: %s", asset_id)
 
         # Create an asset bookmark
         logger.info("Creating asset bookmark...")
@@ -224,12 +203,8 @@ async def demo_asset_operations():
             file_name="demo.txt",
         )
 
-        if client.disable_response_validation:
-            asset_bookmark_id = asset_bookmark["id"]
-            logger.info("Created asset bookmark with ID: %s", asset_bookmark_id)
-        else:
-            asset_bookmark_id = asset_bookmark.id
-            logger.info("Created asset bookmark with ID: %s", asset_bookmark_id)
+        asset_bookmark_id = asset_bookmark.id
+        logger.info("Created asset bookmark with ID: %s", asset_bookmark_id)
 
         # Retrieve the asset content
         logger.info("Retrieving asset content...")
