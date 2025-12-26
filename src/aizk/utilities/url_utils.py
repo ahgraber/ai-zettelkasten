@@ -30,12 +30,21 @@ URL_REGEX = (
 
 # Domain constants for URL detection
 SOCIAL_MEDIA_DOMAINS = frozenset(
-    {"linkedin.com", "twitter.com", "x.com", "bsky.app", "facebook.com", "instagram.com", "threads.net"}
+    {
+        "linkedin.com",
+        "twitter.com",
+        "x.com",
+        "bsky.app",
+        "facebook.com",
+        "instagram.com",
+        "threads.net",
+    }
 )
 
 GITHUB_DOMAINS = frozenset({"github.com", "gist.github.com", "raw.githubusercontent.com"})
 
 ARXIV_DOMAINS = frozenset({"arxiv.org", "export.arxiv.org"})
+ARXIV_ID_REGEX = re.compile(r"(?:[0-2][0-9][01][0-9]\.[0-9]{4,5})(?:v[0-9]{1,2})?", re.IGNORECASE)
 
 
 # --- Core URL Extraction ----------------------------------------------------
@@ -203,7 +212,9 @@ def is_social_url(url: str) -> bool:
     except Exception:
         return False
     else:
-        return parsed.netloc in SOCIAL_MEDIA_DOMAINS
+        netloc = parsed.netloc.lower()
+        # Check exact match first, then subdomains
+        return netloc in SOCIAL_MEDIA_DOMAINS or any(netloc.endswith("." + domain) for domain in SOCIAL_MEDIA_DOMAINS)
 
 
 def is_github_url(url: str) -> bool:
@@ -215,7 +226,9 @@ def is_github_url(url: str) -> bool:
     except Exception:
         return False
     else:
-        return parsed.netloc in GITHUB_DOMAINS
+        netloc = parsed.netloc.lower()
+        # Check exact match first, then subdomains
+        return netloc in GITHUB_DOMAINS or any(netloc.endswith("." + domain) for domain in GITHUB_DOMAINS)
 
 
 def is_arxiv_url(url: str) -> bool:
@@ -227,7 +240,9 @@ def is_arxiv_url(url: str) -> bool:
     except Exception:
         return False
     else:
-        return parsed.netloc in ARXIV_DOMAINS
+        netloc = parsed.netloc.lower()
+        # Check exact match first, then subdomains
+        return netloc in ARXIV_DOMAINS or any(netloc.endswith("." + domain) for domain in ARXIV_DOMAINS)
 
 
 # --- arxiv Utilities --------------------------------------------------------
@@ -247,36 +262,50 @@ def validate_arxiv_url(url: str) -> str:
     return validated
 
 
+def validate_arxiv_id(arxiv_id: str) -> str:
+    """Validate an arXiv identifier string."""
+    if not arxiv_id or not arxiv_id.strip():
+        raise ValueError("arxiv_id cannot be empty")
+
+    candidate = arxiv_id.strip()
+    if not ARXIV_ID_REGEX.fullmatch(candidate):
+        raise ValueError(f"Invalid arxiv ID: {arxiv_id}")
+
+    return candidate
+
+
 def get_arxiv_id(url: str) -> str:
     """Extract arxiv ID from URL."""
     url = validate_arxiv_url(url)
     path = urlparse(url).path
 
     # arxiv ID pattern
-    arxiv_id_regex = re.compile(r"([0-2])([0-9])(0|1)([0-9])\.[0-9]{4,5}(v[0-9]{1,2})?", re.IGNORECASE)
-    match = re.search(arxiv_id_regex, path)
+    match = ARXIV_ID_REGEX.search(path)
     if match:
-        return match[0]
+        return validate_arxiv_id(match[0])
     else:
         raise ValueError(f"Could not find arxiv ID in {url}.")
 
 
 def arxiv_abs_url(arxiv_id: str, use_export_url: bool = True) -> str:
     """Convert arxiv ID to abstract URL."""
+    validated = validate_arxiv_id(arxiv_id)
     base_url = "http://export.arxiv.org/" if use_export_url else "https://arxiv.org/"
-    return urljoin(base_url, f"abs/{arxiv_id}")
+    return urljoin(base_url, f"abs/{validated}")
 
 
 def arxiv_pdf_url(arxiv_id: str, use_export_url: bool = True) -> str:
     """Convert arxiv ID to PDF URL."""
+    validated = validate_arxiv_id(arxiv_id)
     base_url = "http://export.arxiv.org/" if use_export_url else "https://arxiv.org/"
-    return urljoin(base_url, f"pdf/{arxiv_id}")
+    return urljoin(base_url, f"pdf/{validated}")
 
 
 def arxiv_html_url(arxiv_id: str, use_export_url: bool = True) -> str:
     """Convert arxiv ID to HTML URL."""
+    validated = validate_arxiv_id(arxiv_id)
     base_url = "http://export.arxiv.org/" if use_export_url else "https://arxiv.org/"
-    return urljoin(base_url, f"html/{arxiv_id}")
+    return urljoin(base_url, f"html/{validated}")
 
 
 def to_arxiv_export_url(url: str) -> str:
@@ -287,7 +316,7 @@ def to_arxiv_export_url(url: str) -> str:
     return re.sub(r"https?://arxiv\.org", "http://export.arxiv.org", url)
 
 
-async def arxiv_title(arxiv_id: str, timeout: int = 30) -> str:
+async def get_arxiv_title(arxiv_id: str, timeout: int = 30) -> str:
     """Extract the title from an arxiv abstract page.
 
     Args:
