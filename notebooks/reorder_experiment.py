@@ -130,7 +130,7 @@ for id_, metadata in zip(ids, paper_metadata):
         logger.info("HTML file for %s already exists, skipping download.", id_)
     else:
         logger.debug("Saving html for %s...", id_)
-        html = await client._get_paper_content(arxiv_html_url(id_))
+        html = await client.download_paper_html(id_, use_export_url=False)
         with open(htmlfile, "w", encoding="utf-8") as f:
             f.write(html)
         time.sleep(3)
@@ -140,7 +140,7 @@ for id_, metadata in zip(ids, paper_metadata):
         logger.info("PDF file for %s already exists, skipping download.", id_)
     else:
         logger.debug("Saving PDF for %s...", id_)
-        pdf = await client._get_paper_pdf(arxiv_pdf_url(id_))
+        pdf = await client.download_paper_pdf(id_)
         with open(pdffile, "wb") as f:
             f.write(pdf)
         time.sleep(3)
