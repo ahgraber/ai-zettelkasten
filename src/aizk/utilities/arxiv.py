@@ -3,7 +3,6 @@
 # %%
 import asyncio
 import logging
-import re
 import sys
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode, urljoin
@@ -14,6 +13,7 @@ import httpx
 
 import requests
 
+from aizk.utilities import url_utils
 from aizk.utilities.limiters import LeakyBucketRateLimiter
 
 logger = logging.getLogger(__name__)
@@ -245,11 +245,11 @@ class AsyncArxivClient:
 
     Example:
         >>> async with AsyncArxivClient() as client:
-        ...     metadata = await client.get_paper_metadata(["1234.56789"])
+        ...     metadata = await client.get_paper_metadata(["YYMM.56789"])
 
         >>> # Or without context manager
         >>> client = AsyncArxivClient()
-        >>> metadata = await client.get_paper_metadata(["1234.56789"])
+        >>> metadata = await client.get_paper_metadata(["YYMM.56789"])
         >>> await client.aclose()
     """
 
@@ -289,6 +289,7 @@ class AsyncArxivClient:
             ArxivAccessDeniedError: If the API returns HTTP 403 (access denied)
             ArxivParsingError: If there are errors parsing the XML response
         """
+        ids = sorted(set(ids))
         if not ids:
             raise ValueError("IDs list cannot be empty")
 
@@ -331,19 +332,21 @@ class AsyncArxivClient:
         # Parse using existing function logic
         return self._parse_response(response.content)
 
-    async def _get_paper_content(self, url: str) -> str:
-        """Fetch the content of a paper from its URL.
+    async def download_paper_html(self, arxiv_id: str, use_export_url: bool = True) -> str:
+        """Fetch the HTML content of an arXiv paper page.
 
         Args:
-            url: The URL of the paper to fetch
+            arxiv_id: The arXiv identifier (e.g., '2506.06395').
+            use_export_url: Whether to route requests through export.arxiv.org.
 
         Returns:
-            The content of the paper as a string
+            The HTML content of the paper page as a string.
 
         Raises:
-            httpx.HTTPError: If the request fails
-            ArxivAccessDeniedError: If the API returns HTTP 403 (access denied)
+            httpx.HTTPError: If the request fails.
+            ArxivAccessDeniedError: If the API returns HTTP 403 (access denied).
         """
+        url = url_utils.arxiv_html_url(arxiv_id, use_export_url=use_export_url)
         client = self._ensure_client()
         try:
             response = await client.get(url)
@@ -356,31 +359,28 @@ class AsyncArxivClient:
                     "CRITICAL: ArXiv treats repeated requests after 403 as DoS attacks. Stopping to prevent further issues."
                 )
                 raise ArxivAccessDeniedError(error_msg) from e
-            else:
-                raise httpx.HTTPError(f"Failed to fetch paper content from {url}: {e}") from e
+            raise httpx.HTTPError(f"Failed to fetch paper content from {url}: {e}") from e
         except httpx.HTTPError as e:
             raise httpx.HTTPError(f"Failed to fetch paper content from {url}: {e}") from e
         else:
             return response.text
 
-    async def _get_paper_pdf(self, url: str, use_export_url: bool = True) -> bytes:
-        """Fetch the PDF content of a paper from its URL.
+    async def download_paper_pdf(self, arxiv_id: str, use_export_url: bool = True) -> bytes:
+        """Fetch the PDF content of an arXiv paper.
 
         Args:
-            url: The URL of the paper PDF to fetch
-            use_export_url: If True, replace arxiv.org with export.arxiv.org in the URL
+            arxiv_id: The arXiv identifier (e.g., '2506.06395').
+            use_export_url: Whether to route requests through export.arxiv.org.
 
         Returns:
-            The PDF content as bytes
+            The PDF content as bytes.
 
         Raises:
-            httpx.HTTPError: If the request fails
-            ArxivAccessDeniedError: If the API returns HTTP 403 (access denied)
+            httpx.HTTPError: If the request fails.
+            ArxivAccessDeniedError: If the API returns HTTP 403 (access denied).
         """
+        url = url_utils.arxiv_pdf_url(arxiv_id, use_export_url=use_export_url)
         client = self._ensure_client()
-        if use_export_url:
-            # Replace arxiv.org with export.arxiv.org in the URL
-            url = re.sub(r"https?://arxiv\.org", "http://export.arxiv.org", url)
         try:
             response = await client.get(url)
             response.raise_for_status()
@@ -392,8 +392,7 @@ class AsyncArxivClient:
                     "CRITICAL: ArXiv treats repeated requests after 403 as DoS attacks. Stopping to prevent further issues."
                 )
                 raise ArxivAccessDeniedError(error_msg) from e
-            else:
-                raise httpx.HTTPError(f"Failed to fetch paper PDF from {url}: {e}") from e
+            raise httpx.HTTPError(f"Failed to fetch paper PDF from {url}: {e}") from e
         except httpx.HTTPError as e:
             raise httpx.HTTPError(f"Failed to fetch paper PDF from {url}: {e}") from e
         else:
