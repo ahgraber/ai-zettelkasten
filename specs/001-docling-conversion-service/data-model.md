@@ -113,7 +113,7 @@ This document defines the complete data model for the Docling Conversion Service
 
 **Business Rules**:
 
-- `idempotency_key` = sha256(aizk_uuid + payload_version + docling_version + config_hash)
+- `idempotency_key` = hash(aizk_uuid + payload_version + docling_version + config_hash). Implementation uses SHA256 for deterministic hex output (see research.md ADR-002).
 - Status transitions:
   - NEW → QUEUED (on submission)
   - QUEUED → RUNNING (worker picks up job)
