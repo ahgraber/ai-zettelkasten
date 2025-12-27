@@ -3,9 +3,10 @@
 # %%
 import asyncio
 import logging
+import re
 import sys
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlencode, urljoin
+from urllib.parse import urlencode, urljoin, urlparse
 from xml.etree.ElementTree import Element
 
 from defusedxml import ElementTree
@@ -13,13 +14,94 @@ import httpx
 
 import requests
 
-from aizk.utilities import url_utils
 from aizk.utilities.limiters import LeakyBucketRateLimiter
+from aizk.utilities.url_utils import validate_url
 
 logger = logging.getLogger(__name__)
 
 # %%
 ARXIV_API_URL = "http://export.arxiv.org/api/"
+ARXIV_DOMAINS = frozenset({"arxiv.org", "export.arxiv.org"})
+ARXIV_ID_REGEX = re.compile(r"(?:[0-2][0-9][01][0-9]\.[0-9]{4,5})(?:v[0-9]{1,2})?", re.IGNORECASE)
+
+
+def _is_arxiv_domain(netloc: str) -> bool:
+    """Return True when a netloc is within arxiv.org domains."""
+    return netloc in ARXIV_DOMAINS or any(netloc.endswith("." + domain) for domain in ARXIV_DOMAINS)
+
+
+def is_arxiv_url(url: str) -> bool:
+    """Check if URL is from arxiv.org."""
+    validated = validate_url(url)
+
+    try:
+        parsed = urlparse(str(validated))
+    except Exception:
+        return False
+    else:
+        return _is_arxiv_domain(parsed.netloc.lower())
+
+
+def validate_arxiv_url(url: str) -> str:
+    """Validate arxiv URL."""
+    validated = validate_url(url)
+    parsed = urlparse(validated)
+
+    if not _is_arxiv_domain(parsed.netloc.lower()):
+        raise ValueError(f"URL must be from arxiv.org: {url}")
+
+    if parsed.path and not (
+        parsed.path.startswith("/pdf") or parsed.path.startswith("/abs") or parsed.path.startswith("/html")
+    ):
+        raise ValueError(f"Arxiv URL must be to PDF, abstract, or HTML page: {url}")
+
+    return validated
+
+
+def validate_arxiv_id(arxiv_id: str) -> str:
+    """Validate an arXiv identifier string."""
+    if not arxiv_id or not arxiv_id.strip():
+        raise ValueError("arxiv_id cannot be empty")
+
+    candidate = arxiv_id.strip()
+    if not ARXIV_ID_REGEX.fullmatch(candidate):
+        raise ValueError(f"Invalid arxiv ID: {arxiv_id}")
+
+    return candidate
+
+
+def get_arxiv_id(url: str) -> str:
+    """Extract arXiv ID from URL."""
+    url = validate_arxiv_url(url)
+    path = urlparse(url).path
+
+    match = ARXIV_ID_REGEX.search(path)
+    if match:
+        return validate_arxiv_id(match[0])
+    raise ValueError(f"Could not find arxiv ID in {url}.")
+
+
+def _arxiv_base_url(use_export_url: bool) -> str:
+    """Return the base URL for arxiv.org resources."""
+    return "http://export.arxiv.org/" if use_export_url else "https://arxiv.org/"
+
+
+def arxiv_abs_url(arxiv_id: str, use_export_url: bool = True) -> str:
+    """Convert arXiv ID to abstract URL."""
+    validated = validate_arxiv_id(arxiv_id)
+    return urljoin(_arxiv_base_url(use_export_url), f"abs/{validated}")
+
+
+def arxiv_pdf_url(arxiv_id: str, use_export_url: bool = True) -> str:
+    """Convert arXiv ID to PDF URL."""
+    validated = validate_arxiv_id(arxiv_id)
+    return urljoin(_arxiv_base_url(use_export_url), f"pdf/{validated}")
+
+
+def arxiv_html_url(arxiv_id: str, use_export_url: bool = True) -> str:
+    """Convert arXiv ID to HTML URL."""
+    validated = validate_arxiv_id(arxiv_id)
+    return urljoin(_arxiv_base_url(use_export_url), f"html/{validated}")
 
 
 # %%
@@ -306,7 +388,7 @@ class AsyncArxivClient:
 
         # Single batch request
         # Apply rate limiting - this will block until we can make the request
-        await _arxiv_rate_limiter._acquire()
+        await _arxiv_rate_limiter.acquire()
 
         client = self._ensure_client()
         id_list = ",".join(ids)
@@ -346,7 +428,7 @@ class AsyncArxivClient:
             httpx.HTTPError: If the request fails.
             ArxivAccessDeniedError: If the API returns HTTP 403 (access denied).
         """
-        url = url_utils.arxiv_html_url(arxiv_id, use_export_url=use_export_url)
+        url = arxiv_html_url(arxiv_id, use_export_url=use_export_url)
         client = self._ensure_client()
         try:
             response = await client.get(url)
@@ -379,7 +461,7 @@ class AsyncArxivClient:
             httpx.HTTPError: If the request fails.
             ArxivAccessDeniedError: If the API returns HTTP 403 (access denied).
         """
-        url = url_utils.arxiv_pdf_url(arxiv_id, use_export_url=use_export_url)
+        url = arxiv_pdf_url(arxiv_id, use_export_url=use_export_url)
         client = self._ensure_client()
         try:
             response = await client.get(url)

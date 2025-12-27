@@ -33,22 +33,17 @@ from pydantic import BaseModel, Field, ValidationError
 from setproctitle import setproctitle
 from tqdm.auto import tqdm
 
-# %%
-# Add the src directory to the path so we can import treadmill
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from aizk.utilities.arxiv import AsyncArxivClient, get_arxiv_paper_metadata
-from aizk.utilities.file_utils import to_valid_fname
-from aizk.utilities.limiters import SlidingWindowRateLimiter
-from aizk.utilities.url_utils import (
+from aizk.utilities.arxiv_utils import (
+    AsyncArxivClient,
     arxiv_abs_url,
     arxiv_html_url,
     arxiv_pdf_url,
     get_arxiv_id,
+    get_arxiv_paper_metadata,
     is_arxiv_url,
-    standardize_arxiv,
-    to_arxiv_export_url,
 )
+from aizk.utilities.file_utils import to_valid_fname
+from aizk.utilities.limiters import SlidingWindowRateLimiter
 
 # %%
 # define python process name
@@ -57,8 +52,8 @@ setproctitle(Path(__file__).stem)
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 
-treadmill_logger = logging.getLogger("treadmill")
-treadmill_logger.setLevel(logging.DEBUG)
+aizk_logger = logging.getLogger("aizk")
+aizk_logger.setLevel(logging.DEBUG)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)

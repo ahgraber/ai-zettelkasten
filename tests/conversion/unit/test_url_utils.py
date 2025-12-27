@@ -2,7 +2,8 @@
 
 import pytest
 
-from aizk.conversion.utilities.url_utils import detect_content_type, detect_source_type, normalize_url
+from aizk.conversion.utilities.bookmark_utils import detect_content_type, detect_source_type
+from aizk.utilities.url_utils import normalize_url
 
 
 def test_normalize_url_sorts_query_and_drops_fragment():

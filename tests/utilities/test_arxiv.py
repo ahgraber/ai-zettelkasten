@@ -5,7 +5,7 @@ import pytest
 
 import requests
 
-from aizk.utilities.arxiv import ArxivAccessDeniedError, AsyncArxivClient, get_arxiv_paper_metadata
+from aizk.utilities.arxiv_utils import ArxivAccessDeniedError, AsyncArxivClient, get_arxiv_paper_metadata
 
 
 class TestArxivAccessDeniedError:
@@ -100,7 +100,7 @@ class TestSyncArxiv403Handling:
         mock_response = Mock()
         mock_response.status_code = 403
 
-        with patch("treadmill.arxiv.requests.get") as mock_get:
+        with patch("aizk.utilities.arxiv_utils.requests.get") as mock_get:
             # Create HTTPError that has a response attribute with 403 status
             http_error = requests.HTTPError("403 Forbidden")
             http_error.response = mock_response
