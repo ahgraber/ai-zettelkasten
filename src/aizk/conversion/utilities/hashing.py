@@ -13,7 +13,6 @@ from aizk.conversion.utilities.config import ConversionConfig
 def compute_idempotency_key(
     aizk_uuid: str,
     payload_version: int,
-    docling_version: str,
     config: ConversionConfig,
 ) -> str:
     """Compute a stable SHA256 idempotency key.
@@ -27,13 +26,15 @@ def compute_idempotency_key(
     Returns:
         Hex-encoded SHA256 digest.
     """
-    config_payload = {
-        key: value
-        for key, value in config.model_dump().items()
-        if key.startswith("docling_")
-    }
+    from importlib.metadata import version
+
+    docling_version = version("docling")
+
+    config_payload = {key: value for key, value in config.model_dump().items() if key.startswith("docling_")}
     config_json = json.dumps(config_payload, sort_keys=True, separators=(",", ":"))
+
     raw = f"{aizk_uuid}:{payload_version}:{docling_version}:{config_json}"
+
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 

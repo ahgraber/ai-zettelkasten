@@ -79,23 +79,24 @@ This document defines the complete data model for the Docling Conversion Service
 
 **Fields**:
 
-| Field           | Type       | Constraints                                          | Description                                                                                                     |
-| --------------- | ---------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| id              | Integer    | PRIMARY KEY, AUTOINCREMENT                           | Internal job ID                                                                                                 |
-| aizk_uuid       | String(36) | FOREIGN KEY → bookmarks.aizk_uuid, NOT NULL, INDEXED | Reference to bookmark                                                                                           |
-| payload_version | Integer    | NOT NULL, DEFAULT 1                                  | API/pipeline version for reprocessing                                                                           |
-| status          | String(20) | NOT NULL, INDEXED                                    | Enum: 'NEW', 'QUEUED', 'RUNNING', 'UPLOAD_PENDING', 'SUCCEEDED', 'FAILED_RETRYABLE', 'FAILED_PERM', 'CANCELLED' |
-| attempts        | Integer    | NOT NULL, DEFAULT 0                                  | Number of execution attempts                                                                                    |
-| error_code      | String(50) | NULLABLE                                             | Machine-readable error identifier                                                                               |
-| error_message   | Text       | NULLABLE                                             | Human-readable error details                                                                                    |
-| idempotency_key | String(64) | UNIQUE, NOT NULL, INDEXED                            | Hash for duplicate detection                                                                                    |
-| next_attempt_at | DateTime   | NULLABLE, INDEXED                                    | Scheduled retry timestamp (UTC)                                                                                 |
-| last_error_at   | DateTime   | NULLABLE                                             | Most recent error timestamp (UTC)                                                                               |
-| queued_at       | DateTime   | NULLABLE                                             | When job entered QUEUED status                                                                                  |
-| started_at      | DateTime   | NULLABLE                                             | When job entered RUNNING status                                                                                 |
-| finished_at     | DateTime   | NULLABLE                                             | When job reached terminal status                                                                                |
-| created_at      | DateTime   | NOT NULL, DEFAULT CURRENT_TIMESTAMP                  | Record creation timestamp (UTC)                                                                                 |
-| updated_at      | DateTime   | NOT NULL, DEFAULT CURRENT_TIMESTAMP                  | Record update timestamp (UTC)                                                                                   |
+| Field                    | Type       | Constraints                                          | Description                                                                                                     |
+| ------------------------ | ---------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| id                       | Integer    | PRIMARY KEY, AUTOINCREMENT                           | Internal job ID                                                                                                 |
+| aizk_uuid                | String(36) | FOREIGN KEY → bookmarks.aizk_uuid, NOT NULL, INDEXED | Reference to bookmark                                                                                           |
+| title                    | Text       | NOT NULL                                             | Bookmark title snapshot at submission                                                                           |
+| payload_version          | Integer    | NOT NULL, DEFAULT 1                                  | API/pipeline version for reprocessing                                                                           |
+| status                   | String(20) | NOT NULL, INDEXED                                    | Enum: 'NEW', 'QUEUED', 'RUNNING', 'UPLOAD_PENDING', 'SUCCEEDED', 'FAILED_RETRYABLE', 'FAILED_PERM', 'CANCELLED' |
+| attempts                 | Integer    | NOT NULL, DEFAULT 0                                  | Number of execution attempts                                                                                    |
+| error_code               | String(50) | NULLABLE                                             | Machine-readable error identifier                                                                               |
+| error_message            | Text       | NULLABLE                                             | Human-readable error details                                                                                    |
+| idempotency_key          | String(64) | UNIQUE, NOT NULL, INDEXED                            | Hash for duplicate detection                                                                                    |
+| earliest_next_attempt_at | DateTime   | NULLABLE, INDEXED                                    | Scheduled retry timestamp (UTC)                                                                                 |
+| last_error_at            | DateTime   | NULLABLE                                             | Most recent error timestamp (UTC)                                                                               |
+| queued_at                | DateTime   | NULLABLE                                             | When job entered QUEUED status                                                                                  |
+| started_at               | DateTime   | NULLABLE                                             | When job entered RUNNING status                                                                                 |
+| finished_at              | DateTime   | NULLABLE                                             | When job reached terminal status                                                                                |
+| created_at               | DateTime   | NOT NULL, DEFAULT CURRENT_TIMESTAMP                  | Record creation timestamp (UTC)                                                                                 |
+| updated_at               | DateTime   | NOT NULL, DEFAULT CURRENT_TIMESTAMP                  | Record update timestamp (UTC)                                                                                   |
 
 **Relationships**:
 
@@ -124,7 +125,7 @@ This document defines the complete data model for the Docling Conversion Service
   - RUNNING/UPLOAD_PENDING → FAILED_PERM (permanent error or max attempts reached)
   - QUEUED/RUNNING/UPLOAD_PENDING → CANCELLED (user cancellation)
   - FAILED_RETRYABLE → QUEUED (manual or automatic retry)
-- `next_attempt_at` computed with exponential backoff: base_delay * (2 \*\* attempts)
+- `earliest_next_attempt_at` computed with exponential backoff: base_delay * (2 \*\* attempts)
 - `queued_at` set when status → QUEUED
 - `started_at` set when status → RUNNING
 - `finished_at` set when status → SUCCEEDED/FAILED_PERM/CANCELLED
@@ -143,7 +144,7 @@ This document defines the complete data model for the Docling Conversion Service
 
 **Indexes**:
 
-- SQLModel defaults with `Field(index=True)` on `aizk_uuid`, `status`, `idempotency_key`, `next_attempt_at`, `created_at`
+- SQLModel defaults with `Field(index=True)` on `aizk_uuid`, `status`, `idempotency_key`, `earliest_next_attempt_at`, `created_at`
 
 ---
 
@@ -160,6 +161,7 @@ This document defines the complete data model for the Docling Conversion Service
 | id                 | Integer    | PRIMARY KEY, AUTOINCREMENT                                  | Internal output ID                    |
 | job_id             | Integer    | FOREIGN KEY → conversion_jobs.id, NOT NULL, UNIQUE, INDEXED | Reference to completed job            |
 | aizk_uuid          | String(36) | FOREIGN KEY → bookmarks.aizk_uuid, NOT NULL, INDEXED        | Reference to bookmark                 |
+| title              | Text       | NOT NULL                                                    | Bookmark title snapshot at conversion |
 | payload_version    | Integer    | NOT NULL                                                    | API/pipeline version used             |
 | s3_prefix          | Text       | NOT NULL                                                    | S3 path prefix: `bucket/<aizk_uuid>/` |
 | markdown_key       | Text       | NOT NULL                                                    | S3 key for Markdown file              |
@@ -181,7 +183,7 @@ This document defines the complete data model for the Docling Conversion Service
 - `aizk_uuid`: Valid UUID4 format, must exist in bookmarks table
 - `payload_version`: Positive integer
 - `s3_prefix`: Non-empty string, format: `s3://bucket/<aizk_uuid>/`
-- `markdown_key`: Non-empty string, format: `<s3_prefix><filename>.md`
+- `markdown_key`: Non-empty string, format: `<s3_prefix>output.md`
 - `manifest_key`: Non-empty string, format: `<s3_prefix>manifest.json`
 - `markdown_hash_xx64`: 16-character hex string (xxHash64 digest)
 - `figure_count`: Non-negative integer
@@ -192,7 +194,7 @@ This document defines the complete data model for the Docling Conversion Service
 
 - `markdown_hash_xx64` computed from normalized Markdown: UTF-8 bytes, LF line endings, trimmed whitespace
 - `s3_prefix` constructed as: `s3://{bucket}/{aizk_uuid}/`
-- `markdown_key` constructed as: `{s3_prefix}{normalized_title}.md`
+- `markdown_key` constructed as: `{s3_prefix}output.md`
 - `manifest_key` constructed as: `{s3_prefix}manifest.json`
 - New output with same `markdown_hash_xx64` as previous output for same `aizk_uuid` reuses existing S3 artifacts (no overwrite)
 - `docling_version` extracted from docling.**version** at runtime
@@ -234,7 +236,7 @@ This document defines the complete data model for the Docling Conversion Service
   },
   "artifacts": {
     "markdown": {
-      "key": "s3://bucket/550e8400-e29b-41d4-a716-446655440000/attention-is-all-you-need.md",
+      "key": "s3://bucket/550e8400-e29b-41d4-a716-446655440000/output.md",
       "hash_xx64": "1234567890abcdef",
       "created_at": "2025-12-23T10:31:15Z"
     },
@@ -271,46 +273,46 @@ This document defines the complete data model for the Docling Conversion Service
 ├─────────────────────┤
 │ id (PK)             │
 │ karakeep_id (UK)    │
-│ aizk_uuid (UK)      │──┐
-│ url                 │  │
-│ normalized_url      │  │
-│ title               │  │
-│ source_type         │  │
-│ created_at          │  │
-│ updated_at          │  │
-└─────────────────────┘  │
-                          │
-                          │ 1:N
-                          │
-                          ▼
-┌─────────────────────┐  │
-│  ConversionJob      │  │
-├─────────────────────┤  │
-│ id (PK)             │  │
-│ aizk_uuid (FK) ─────┘  │
-│ payload_version     │  │
-│ status              │  │
-│ attempts            │  │
-│ error_code          │  │
-│ error_message       │  │
-│ idempotency_key(UK) │  │
-│ next_attempt_at     │  │
-│ queued_at           │  │
-│ started_at          │  │
-│ finished_at         │  │
-│ created_at          │  │
-│ updated_at          │  │
-└─────────────────────┘  │
-           │              │
-           │ 1:1          │
-           │              │
-           ▼              │
-┌─────────────────────┐  │
-│ ConversionOutput    │  │
-├─────────────────────┤  │
-│ id (PK)             │  │
-│ job_id (FK,UK)      │  │
-│ aizk_uuid (FK) ─────┘
+│ aizk_uuid (UK)      │────────┐
+│ url                 │        │
+│ normalized_url      │        │
+│ title               │        │
+│ source_type         │        │
+│ created_at          │        │
+│ updated_at          │        │
+└─────────────────────┘        │
+                               │
+                               │ 1:N
+                               │
+                               ▼
+┌───────────────────────────┐  │
+│  ConversionJob            │  │
+├───────────────────────────┤  │
+│ id (PK)                   │  │
+│ aizk_uuid (FK) ───────────┘ ─┤
+│ payload_version           │  │
+│ status                    │  │
+│ attempts                  │  │
+│ error_code                │  │
+│ error_message             │  │
+│ idempotency_key(UK)       │  │
+│ earliest_next_attempt_at  │  │
+│ queued_at                 │  │
+│ started_at                │  │
+│ finished_at               │  │
+│ created_at                │  │
+│ updated_at                │  │
+└───────────────────────────┘  │
+           │                   │
+           │ 1:1               │
+           │                   │
+           ▼                   │
+┌─────────────────────┐        │
+│ ConversionOutput    │        │
+├─────────────────────┤        │
+│ id (PK)             │        │
+│ job_id (FK,UK)      │        │
+│ aizk_uuid (FK) ─────┘ ───────┘
 │ payload_version     │
 │ s3_prefix           │
 │ markdown_key        │
@@ -490,13 +492,14 @@ class ConversionJob(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     aizk_uuid: str = Field(foreign_key="bookmarks.aizk_uuid", index=True)
+    title: str = Field(max_length=500)
     payload_version: int = Field(default=1)
     status: str = Field(max_length=20, index=True)
     attempts: int = Field(default=0)
     error_code: Optional[str] = Field(default=None, max_length=50)
     error_message: Optional[str] = Field(default=None)
     idempotency_key: str = Field(max_length=64, unique=True, index=True)
-    next_attempt_at: Optional[datetime] = Field(default=None, index=True)
+    earliest_next_attempt_at: Optional[datetime] = Field(default=None, index=True)
     last_error_at: Optional[datetime] = Field(default=None)
     queued_at: Optional[datetime] = Field(default=None)
     started_at: Optional[datetime] = Field(default=None)
@@ -523,6 +526,7 @@ class ConversionOutput(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     job_id: int = Field(foreign_key="conversion_jobs.id", unique=True, index=True)
     aizk_uuid: str = Field(foreign_key="bookmarks.aizk_uuid", index=True)
+    title: str = Field(max_length=500)
     payload_version: int
     s3_prefix: str
     markdown_key: str

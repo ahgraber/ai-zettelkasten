@@ -155,7 +155,7 @@ async def fetch_arxiv(
     raise BookmarkContentUnavailableError(f"Bookmark {bookmark.id} has no usable content")
 
 
-async def fetch_github_readme(github_url: str, config: ConversionConfig) -> bytes:
+async def fetch_github_readme(github_url: str, config: ConversionConfig | None = None) -> bytes:
     """Fetch GitHub README.
 
     Attempts to fetch README from repository, trying common variants across
@@ -183,7 +183,10 @@ async def fetch_github_readme(github_url: str, config: ConversionConfig) -> byte
     readme_variants = ["README.md", "README.MD", "readme.md", "README.rst", "README.txt", "README"]
     branches = ["main", "master"]
 
-    async with httpx.AsyncClient(timeout=config.fetch_timeout_seconds, follow_redirects=True) as client:
+    async with httpx.AsyncClient(
+        timeout=config.fetch_timeout_seconds if config else 30,
+        follow_redirects=True,
+    ) as client:
         for branch in branches:
             for readme in readme_variants:
                 url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{readme}"

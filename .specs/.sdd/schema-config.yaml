@@ -1,0 +1,11 @@
+# .sdd/schema-config.yaml
+# Defines how SDD extracts and tracks schema artifacts for this project.
+
+schemas:
+  conversion-api-openapi:
+    type: openapi
+    generate:
+      command: >-
+        uv run python -c
+        'from aizk.conversion.api.main import create_app;
+        import json; print(json.dumps(create_app().openapi(), indent=2))'

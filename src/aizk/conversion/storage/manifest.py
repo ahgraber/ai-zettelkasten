@@ -106,6 +106,9 @@ def generate_manifest(
     Returns:
         ConversionManifest Pydantic model.
     """
+    if job.id is None:
+        raise ValueError("ConversionJob.id must be set before manifest generation")
+
     started_at = _coerce_datetime(job.started_at, fetched_at)
     finished_at = _coerce_datetime(job.finished_at, fetched_at)
     duration_seconds = max(0, int((finished_at - started_at).total_seconds()))
@@ -127,7 +130,7 @@ def generate_manifest(
             fetched_at=fetched_at,
         ),
         conversion=ManifestConversionMetadata(
-            job_id=job.id or 0,
+            job_id=job.id,
             payload_version=job.payload_version,
             docling_version=docling_version,
             pipeline_name=pipeline_name,
