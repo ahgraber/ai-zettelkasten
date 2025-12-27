@@ -15,7 +15,7 @@ from aizk.conversion.utilities.bookmark_utils import (
     is_pdf_asset,
 )
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.utilities.arxiv_utils import AsyncArxivClient, get_arxiv_id, is_arxiv_url
+from aizk.utilities.arxiv_utils import ArxivClient, get_arxiv_id, is_arxiv_url
 from aizk.utilities.url_utils import standardize_github
 from karakeep_client.karakeep import KarakeepClient
 from karakeep_client.models import Bookmark
@@ -83,7 +83,7 @@ async def fetch_arxiv_pdf(arxiv_id: str, config: ConversionConfig) -> bytes:
     logger.info("Fetching arXiv PDF by id: %s", arxiv_id)
 
     try:
-        async with AsyncArxivClient(timeout=float(config.fetch_timeout_seconds)) as client:
+        async with ArxivClient(timeout=float(config.fetch_timeout_seconds)) as client:
             return await client.download_paper_pdf(arxiv_id, use_export_url=True)
     except Exception as exc:
         raise ArxivPdfFetchError(f"Failed to fetch arXiv PDF for {arxiv_id}: {exc}") from exc

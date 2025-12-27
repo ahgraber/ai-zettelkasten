@@ -33,15 +33,7 @@ from pydantic import BaseModel, Field, ValidationError
 from setproctitle import setproctitle
 from tqdm.auto import tqdm
 
-from aizk.utilities.arxiv_utils import (
-    AsyncArxivClient,
-    arxiv_abs_url,
-    arxiv_html_url,
-    arxiv_pdf_url,
-    get_arxiv_id,
-    get_arxiv_paper_metadata,
-    is_arxiv_url,
-)
+from aizk.utilities.arxiv_utils import ArxivClient
 from aizk.utilities.file_utils import to_valid_fname
 from aizk.utilities.limiters import SlidingWindowRateLimiter
 
@@ -103,7 +95,7 @@ ids = [
 # scrape from arxiv
 # save to ./data/reorder_experiment/{arxiv_id}/
 
-client = AsyncArxivClient()
+client = ArxivClient()
 paper_metadata = await client.get_paper_metadata(ids)
 if len(ids) != len(paper_metadata):
     logger.error("Some paper metadata could not be retrieved.")

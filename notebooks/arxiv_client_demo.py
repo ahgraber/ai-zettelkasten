@@ -12,12 +12,9 @@ import sys
 from setproctitle import setproctitle
 
 from aizk.utilities.arxiv_utils import (
-    AsyncArxivClient,
-    arxiv_abs_url,
+    ArxivClient,
     arxiv_pdf_url,
     get_arxiv_id,
-    get_arxiv_paper_metadata,
-    is_arxiv_url,
 )
 
 # %%
@@ -40,8 +37,8 @@ ids = ["1706.03762", "2501.12948"]
 
 # %%
 # Get arxiv metadata
-client = AsyncArxivClient()
-paper_metadata = await client.get_paper_metadata({"1706.03762", "2501.12948"})
+async with ArxivClient() as client:
+    paper_metadata = await client.get_paper_metadata({"1706.03762", "2501.12948"})
 
 # %%
 print(json.dumps(paper_metadata, indent=2))
