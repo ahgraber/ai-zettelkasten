@@ -20,9 +20,9 @@ A user submits a KaraKeep bookmark (HTML or PDF URL) to the conversion service a
 1. **Given** a valid HTML bookmark URL, **When** user submits conversion job via API, **Then** system creates job record, fetches HTML, converts to Markdown with Docling, extracts figures, uploads to S3, and marks job as SUCCEEDED
 2. **Given** a valid PDF bookmark URL, **When** user submits conversion job, **Then** system fetches PDF, converts to Markdown, extracts figures, uploads all artifacts to S3 under `bucket/<aizk_uuid>/`
 3. **Given** a bookmark with identical idempotency_key already exists, **When** user resubmits same bookmark, **Then** system rejects submission with reason 'duplicate_idempotency_key'
-4. **Given** a KaraKeep bookmark without HTML content, text, or PDF asset, **When** user submits conversion job, **Then** system raises validation exception with error_code='missing_content'
+4. **Given** a KaraKeep bookmark without HTML content, text, or PDF asset, **When** user submits conversion job, **Then** system raises validation exception with error_code='karakeep_bookmark_missing_contents'
 5. **Given** an arXiv bookmark from abstract page (arxiv.org/abs), **When** user submits conversion job, **Then** system downloads PDF from arXiv using aizk.utilities.arxiv client and converts to Markdown
-6. **Given** an arXiv bookmark with PDF asset in KaraKeep, **When** user submits conversion job, **Then** system uses provided PDF bytes or fetches from KaraKeep if not passed, and converts to Markdown
+6. **Given** an arXiv bookmark with PDF asset in KaraKeep, **When** user submits conversion job, **Then** system fetches the PDF from KaraKeep and converts to Markdown
 7. **Given** an arXiv bookmark with HTML content and source URL to PDF, **When** user submits conversion job, **Then** system downloads PDF from `arxiv_pdf_url` metadata field and converts to Markdown
 8. **Given** a GitHub repository bookmark, **When** user submits GitHub URL, **Then** system extracts owner/repo, fetches README (md/rst/txt), converts to Markdown, uploads to S3
 9. **Given** a completed conversion job, **When** system writes to S3, **Then** all artifacts are verified uploaded (via ETag check) within a single database transaction; job status is marked SUCCEEDED ONLY after S3 verification completes; if S3 upload fails or verification fails, transaction rolls back and job remains QUEUED for retry
@@ -49,7 +49,7 @@ This separation allows UPLOAD_PENDING jobs to retry Phase 2 only if S3 upload fa
 **Acceptance Scenarios**:
 
 1. **Given** user accesses /ui/jobs, **When** page loads, **Then** table displays all jobs with columns: Job ID, aizk_uuid, karakeep_id, title, status, attempts, timestamps, error_code
-2. **Given** user views jobs with status=FAILED_RETRYABLE, **When** user selects one or more jobs and clicks Retry, **Then** system resets status to QUEUED, increments attempts, updates next_attempt_at
+2. **Given** user views jobs with status=FAILED_RETRYABLE, **When** user selects one or more jobs and clicks Retry, **Then** system resets status to QUEUED, increments attempts, updates earliest_next_attempt_at
 3. **Given** user views jobs with status=RUNNING, **When** user selects jobs and clicks Cancel, **Then** system attempts best-effort cancellation and updates status to CANCELLED
 4. **Given** multiple jobs selected for bulk action, **When** user confirms action, **Then** system applies retry or cancel to all selected jobs and displays result summary
 5. **Given** user filters by status, **When** user enters text search for aizk_uuid/karakeep_id/title, **Then** table updates to show only matching jobs
@@ -93,7 +93,7 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - Default backend: FastAPI (services and APIs)
 - Default storage: SQLite via SQLModel (local development/testing)
 - Default Orchestration framework: Prefect - when needed
-- **KaraKeep Integration**: Bookmark submission accepts full KaraKeep bookmark object from karakeep_client package; validates required content (HTML/text/PDF); fetches PDF assets from KaraKeep when not pre-provided
+- **KaraKeep Integration**: Bookmark submission records KaraKeep identifiers and the worker fetches the bookmark from KaraKeep; validates required content (HTML/text/PDF); fetches PDF assets from KaraKeep when present
 - **arXiv Handling**: Implement PDF downloads for abstract page links (arxiv.org/abs); implement URL parsing for arXiv ID extraction and arxiv_pdf_url metadata handling; leverage existing utilities where available
 - **S3 Storage Strategy**: Atomic uploads with verification checksums; failed uploads must not mark jobs SUCCEEDED; implement transaction semantics to ensure consistency between database and S3
 - **Idempotency & Reprocessing**: Compute idempotency_key as hash of aizk_uuid + payload_version + docling_version + config_hash; allow reprocessing via payload_version bumps without overwriting existing artifacts unless markdown_hash changes
@@ -102,7 +102,7 @@ A manager component submits batches of bookmarks to the service and gracefully h
 ### Edge Cases
 
 - What happens when a KaraKeep bookmark has no HTML content, text, or PDF asset?
-  - System raises validation exception with error_code='missing_content' and marks job as FAILED_PERM
+  - System raises validation exception with error_code='karakeep_bookmark_missing_contents' and marks job as FAILED_PERM
 - What happens when PDF asset bytes are not passed in submission?
   - System fetches asset from KaraKeep using karakeep_client API
 - What happens when a URL returns 404 or times out?
@@ -126,25 +126,25 @@ A manager component submits batches of bookmarks to the service and gracefully h
 
 ### Functional Requirements
 
-- **FR-001**: System MUST accept bookmark submissions via REST API with KaraKeep bookmark object (containing karakeep_id, url, title, content, text, assets, metadata), optional pdf_asset_bytes for pre-fetched PDF assets, and optional payload_version, idempotency_key. System MUST assign or derive aizk_uuid. content_type is detected from KaraKeep bookmark; source_type indicates origin (arxiv/github/other) parsed from URL.
+- **FR-001**: System MUST accept bookmark submissions via REST API with karakeep_id, url, title, and optional payload_version and idempotency_key. System MUST assign or derive aizk_uuid. content_type is detected from the KaraKeep bookmark fetched by the worker; source_type indicates origin (arxiv/github/other) parsed from URL.
 - **FR-002**: System MUST normalize URLs for deduplication by removing fragments, sorting query parameters, and lowercasing domain
-- **FR-003**: System MUST validate KaraKeep bookmark has HTML content, text, or PDF asset; raise exception with error_code='missing_content' if all are absent. System MUST detect content_type from KaraKeep bookmark structure: PDF asset present → 'pdf', HTML content/text present → 'html'. System MUST detect source_type from URL patterns: arxiv.org → 'arxiv', github.com → 'github', otherwise → 'other'
+- **FR-003**: System MUST fetch the KaraKeep bookmark and validate it has HTML content, text, or PDF asset; raise exception with error_code='karakeep_bookmark_missing_contents' if all are absent. System MUST detect content_type from the KaraKeep bookmark structure: PDF asset present → 'pdf', HTML content/text present → 'html'. System MUST detect source_type from URL patterns: arxiv.org → 'arxiv', github.com → 'github', otherwise → 'other'
 - **FR-004**: System MUST assign or look up internal aizk_uuid for each bookmark and persist in bookmarks table with karakeep_id as unique key
 - **FR-005**: System MUST create conversion_jobs record with status='NEW', compute idempotency_key from hash of aizk_uuid + payload_version + docling_version + config_hash, and reject submissions with duplicate idempotency_key
 - **FR-006**: System MUST fetch source content from KaraKeep as source of truth using karakeep_client with timeout (default: 30s) and retry logic (3 attempts with exponential backoff)
-- **FR-006a**: When pdf_asset_bytes not provided in submission for PDF bookmarks, system MUST fetch PDF asset from KaraKeep using karakeep_client API
-- **FR-007**: For arXiv sources, enforce the following business logic: (1) If the source URL is an abstract page (`arxiv.org/abs/...`), resolve `arxiv_id` and download the PDF via `aizk.utilities.arxiv_utils.AsyncArxivClient.download_paper_pdf(arxiv_id, use_export_url=True)`, then convert to Markdown. (2) If the bookmark is a PDF asset, use the provided `pdf_asset_bytes` (or fetch from KaraKeep when not provided) and convert to Markdown. (3) If the bookmark is a link with HTML content and the source domain is `arxiv.org`, resolve `arxiv_id` (use `arxiv_pdf_url` metadata when present; otherwise derive from the abstract URL) and download via `AsyncArxivClient.download_paper_pdf(arxiv_id, use_export_url=True)`, then convert to Markdown. System MUST use `aizk.utilities.arxiv_utils.AsyncArxivClient` for arXiv client operations, `aizk.utilities.arxiv_utils` for arXiv ID parsing, and `aizk.utilities.url_utils` for URL normalization.
+- **FR-006a**: For PDF asset bookmarks, system MUST fetch the PDF asset from KaraKeep using karakeep_client API
+- **FR-007**: For arXiv sources, enforce the following business logic: (1) If the source URL is an abstract page (`arxiv.org/abs/...`), resolve `arxiv_id` and download the PDF via `aizk.utilities.arxiv_utils.AsyncArxivClient.download_paper_pdf(arxiv_id, use_export_url=True)`, then convert to Markdown. (2) If the bookmark is a PDF asset, fetch the PDF from KaraKeep and convert to Markdown. (3) If the bookmark is a link with HTML content and the source domain is `arxiv.org`, resolve `arxiv_id` (use `arxiv_pdf_url` metadata when present; otherwise derive from the abstract URL) and download via `AsyncArxivClient.download_paper_pdf(arxiv_id, use_export_url=True)`, then convert to Markdown. System MUST use `aizk.utilities.arxiv_utils.AsyncArxivClient` for arXiv client operations, `aizk.utilities.arxiv_utils` for arXiv ID parsing, and `aizk.utilities.url_utils` for URL normalization.
 - **FR-008**: For GitHub sources, system MUST extract owner/repo from URL, fetch raw README content from default branch prioritizing README.md, then README.rst, then README
 - **FR-009**: System MUST execute Docling conversion with appropriate pipeline (HTML or PDF) and extract figures to individual PNG files with sequential naming (figure-001.png, figure-002.png, ...)
 - **FR-010**: System MUST compute xxhash64 of normalized Markdown content (UTF-8, LF line endings) and store in markdown_hash_xx64 field
 - **FR-011**: System MUST write conversion outputs to an ephemeral temporary workspace (e.g., `<tmp_root>/aizk-conversion/<job_id>-*/`) including Markdown, figures, and manifest.json; the workspace is cleaned up automatically when the job finishes.
-- **FR-012**: System MUST upload all artifacts to S3 at `s3://<bucket>/<aizk_uuid>/` and verify successful upload before proceeding
+- **FR-012**: System MUST upload all artifacts to S3 at `s3://<bucket>/<aizk_uuid>/` and verify successful upload (ETag match for single-part uploads, content length check for multipart) before proceeding
 - **FR-013**: System MUST compare new markdown_hash_xx64 with most recent conversion_outputs record; if hashes match, reuse existing S3 location and skip overwrite
-- **FR-014**: System MUST create conversion_outputs record on successful conversion with fields: job_id, aizk_uuid, payload_version, s3_prefix, markdown_key, manifest_key, markdown_hash_xx64, figure_count, docling_version, pipeline_name, created_at
+- **FR-014**: System MUST create conversion_outputs record on successful conversion with fields: job_id, aizk_uuid, title, payload_version, s3_prefix, markdown_key, manifest_key, markdown_hash_xx64, figure_count, docling_version, pipeline_name, created_at
 - **FR-015**: System MUST update conversion_jobs.status to SUCCEEDED in database transaction only after all S3 uploads complete and are verified, or FAILED_RETRYABLE/FAILED_PERM on error with error_code and error_message
 - **FR-017**: System MUST expose GET /v1/jobs/{job_id} endpoint returning job status, timestamps, attempts, error details, and artifact summary if SUCCEEDED
 - **FR-018**: System MUST expose GET /v1/jobs endpoint with filters for status, aizk_uuid, karakeep_id, and pagination support
-- **FR-019**: System MUST expose POST /v1/jobs/{job_id}/retry endpoint that resets status to QUEUED, increments attempts, and clears next_attempt_at for FAILED_RETRYABLE or FAILED_PERM jobs
+- **FR-019**: System MUST expose POST /v1/jobs/{job_id}/retry endpoint that resets status to QUEUED, increments attempts, and clears earliest_next_attempt_at for FAILED_RETRYABLE or FAILED_PERM jobs
 - **FR-020**: System MUST expose POST /v1/jobs/{job_id}/cancel endpoint that marks QUEUED or RUNNING jobs as CANCELLED on best-effort basis
 - **FR-021**: System MUST expose POST /v1/jobs/batch endpoint accepting array of job submissions, processing each independently and returning per-item results with job_id or error details
 - **FR-022**: System MUST expose POST /v1/jobs/actions endpoint accepting bulk retry or cancel operations with array of job IDs
@@ -157,7 +157,7 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - **FR-030**: System MUST log key processing events with context identifiers (aizk_uuid, job_id, karakeep_id, status) enabling trace reconstruction
 - **FR-031**: System MUST emit basic metrics: queue depth, job duration, job status counts, fetch latency, S3 upload latency
 - **FR-032**: System MUST load configuration from environment variables with sensible defaults for local development
-- **FR-033**: System MUST produce Markdown filenames that are valid across operating systems (Windows, macOS, Linux) and safe for file systems without path traversal risks
+- **FR-033**: System MUST store the Markdown artifact as `output.md` for consistent naming across all conversions
 - **FR-034**: System MUST use payload_version equal to API version; idempotency_key computed as hash of aizk_uuid + payload_version + docling_version + config_hash
 - **FR-035**: Every Python process (API server, workers, CLI entrypoints) MUST expose role identification (API, worker, CLI) to enable operators to distinguish different process types on the host during monitoring (via setproctitle)
 
@@ -172,7 +172,7 @@ A manager component submits batches of bookmarks to the service and gracefully h
 ### Key Entities
 
 - **Bookmark**: Represents a KaraKeep bookmark with metadata needed for conversion execution. Attributes: id (PK), karakeep_id (unique), aizk_uuid (unique internal identifier), url (canonical source identifier), title, source_type (html/pdf/arxiv/github), normalized_url (for deduplication), created_at, updated_at. Relationships: one-to-many with conversion_jobs, one-to-many with conversion_outputs. Note: Does not replicate full KaraKeep bookmark; stores only fields required for conversion routing and deduplication. Source-specific identifiers (arxiv_id, github owner/repo) are extracted from URL during processing using utilities.
-- **ConversionJob**: Represents a single conversion attempt. Attributes: id (PK), aizk_uuid (FK to bookmarks), payload_version, status (NEW/QUEUED/RUNNING/SUCCEEDED/FAILED_RETRYABLE/FAILED_PERM/CANCELLED), attempts, error_code, error_message, queued_at, started_at, finished_at, idempotency_key (unique), next_attempt_at (for retry backoff scheduling), last_error_at. Relationships: many-to-one with bookmarks, one-to-one with conversion_outputs (if SUCCEEDED)
+- **ConversionJob**: Represents a single conversion attempt. Attributes: id (PK), aizk_uuid (FK to bookmarks), payload_version, status (NEW/QUEUED/RUNNING/SUCCEEDED/FAILED_RETRYABLE/FAILED_PERM/CANCELLED), attempts, error_code, error_message, queued_at, started_at, finished_at, idempotency_key (unique), earliest_next_attempt_at (for retry backoff scheduling), last_error_at. Relationships: many-to-one with bookmarks, one-to-one with conversion_outputs (if SUCCEEDED)
 - **ConversionOutput**: Represents successful conversion artifact set. Attributes: id (PK), job_id (FK to conversion_jobs), aizk_uuid (FK to bookmarks), payload_version, s3_prefix, markdown_key, manifest_key (contains full artifact listing), markdown_hash_xx64, figure_count, docling_version, pipeline_name, created_at. Relationships: many-to-one with bookmarks, one-to-one with conversion_jobs. Note: Individual figures and artifacts are listed in manifest.json only, not tracked as separate database rows.
 
 ## Success Criteria *(mandatory)*
@@ -194,13 +194,12 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - **SC-012**: GitHub README fetching succeeds for 90% of public repositories with standard README naming conventions
 - **SC-013**: Structured logs include aizk_uuid and job_id in 100% of processing events, enabling complete trace reconstruction
 - **SC-014**: Idempotency protection prevents duplicate job creation in 100% of cases when same bookmark submitted multiple times with identical parameters
-- **SC-015**: Markdown filename normalization produces valid cross-OS filenames for common title patterns
+- **SC-015**: Markdown filename is standardized as `output.md` regardless of title
 
 ## Assumptions
 
-- KaraKeep bookmark is the source of truth; submission MUST include full bookmark object from karakeep_client with all metadata
+- KaraKeep bookmark is the source of truth; submission MUST reference the KaraKeep bookmark by karakeep_id
 - KaraKeep bookmarks MUST have at least one of: HTML content, text, or PDF asset to be processable
-- PDF asset bytes MAY be pre-fetched and passed in submission, otherwise fetched from KaraKeep via karakeep_client
 - arXiv bookmarks from abstract pages (arxiv.org/abs) will have PDFs downloaded using aizk.utilities.arxiv client
 - arXiv bookmarks with link type and HTML content provide arxiv_pdf_url in metadata for PDF download
 - KaraKeep bookmark data includes URL, title, and karakeep_id at minimum; other fields may be optional or derived

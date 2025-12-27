@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__exa__web_search_exa",
+      "mcp__jina__read_url",
+      "mcp__jina__search_web",
+      "Read(~/.claude/skills/**)",
+      "Read(~/.agents/skills/**)",
+      "Read(**/.venv/**)",
+      "Bash(wc -l /Users/mithras/_code/ai-zettelkasten/tests/conversion/unit/*.py)",
+      "Bash(find /Users/mithras/_code/ai-zettelkasten/src -type f -name \"*.py\" -exec ls -lh {})",
+      "Bash(sort -k2)",
+      "Bash(ls:*)",
+      "mcp__claude_ai_Excalidraw__read_me",
+      "mcp__claude_ai_Excalidraw__create_view",
+      "Bash(find /Users/mithras/_code/ai-zettelkasten/.claude -type f -name *.md -o -type f -name *.json)",
+      "WebFetch(domain:docling-project.github.io)",
+      "WebFetch(domain:pypi.org)",
+      "WebFetch(domain:www.sqlite.org)"
+    ]
+  }
+}

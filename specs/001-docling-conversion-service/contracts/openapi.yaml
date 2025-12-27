@@ -494,7 +494,7 @@ components:
         error_message:
           type: string
           nullable: true
-        next_attempt_at:
+        earliest_next_attempt_at:
           type: string
           format: date-time
           nullable: true
