@@ -133,7 +133,7 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - **FR-005**: System MUST create conversion_jobs record with status='NEW', compute idempotency_key from hash of aizk_uuid + payload_version + docling_version + config_hash, and reject submissions with duplicate idempotency_key
 - **FR-006**: System MUST fetch source content from KaraKeep as source of truth using karakeep_client with timeout (default: 30s) and retry logic (3 attempts with exponential backoff)
 - **FR-006a**: When pdf_asset_bytes not provided in submission for PDF bookmarks, system MUST fetch PDF asset from KaraKeep using karakeep_client API
-- **FR-007**: For arXiv sources, enforce the following business logic: (1) If the source URL is an abstract page (`arxiv.org/abs/...`), resolve `arxiv_id` and download the PDF via `aizk.utilities.arxiv.AsyncArxivClient.download_paper_pdf(arxiv_id, use_export_url=True)`, then convert to Markdown. (2) If the bookmark is a PDF asset, use the provided `pdf_asset_bytes` (or fetch from KaraKeep when not provided) and convert to Markdown. (3) If the bookmark is a link with HTML content and the source domain is `arxiv.org`, resolve `arxiv_id` (use `arxiv_pdf_url` metadata when present; otherwise derive from the abstract URL) and download via `AsyncArxivClient.download_paper_pdf(arxiv_id, use_export_url=True)`, then convert to Markdown. System MUST use `aizk.utilities.arxiv.AsyncArxivClient` for arXiv client operations and `aizk.utilities.url_utils` for URL parsing/manipulation.
+- **FR-007**: For arXiv sources, enforce the following business logic: (1) If the source URL is an abstract page (`arxiv.org/abs/...`), resolve `arxiv_id` and download the PDF via `aizk.utilities.arxiv_utils.AsyncArxivClient.download_paper_pdf(arxiv_id, use_export_url=True)`, then convert to Markdown. (2) If the bookmark is a PDF asset, use the provided `pdf_asset_bytes` (or fetch from KaraKeep when not provided) and convert to Markdown. (3) If the bookmark is a link with HTML content and the source domain is `arxiv.org`, resolve `arxiv_id` (use `arxiv_pdf_url` metadata when present; otherwise derive from the abstract URL) and download via `AsyncArxivClient.download_paper_pdf(arxiv_id, use_export_url=True)`, then convert to Markdown. System MUST use `aizk.utilities.arxiv_utils.AsyncArxivClient` for arXiv client operations, `aizk.utilities.arxiv_utils` for arXiv ID parsing, and `aizk.utilities.url_utils` for URL normalization.
 - **FR-008**: For GitHub sources, system MUST extract owner/repo from URL, fetch raw README content from default branch prioritizing README.md, then README.rst, then README
 - **FR-009**: System MUST execute Docling conversion with appropriate pipeline (HTML or PDF) and extract figures to individual PNG files with sequential naming (figure-001.png, figure-002.png, ...)
 - **FR-010**: System MUST compute xxhash64 of normalized Markdown content (UTF-8, LF line endings) and store in markdown_hash_xx64 field
@@ -235,8 +235,8 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - Pydantic for configuration management and settings validation
 - Python 3.10+ (for Pydantic v2 and async/await support)
 - karakeep_client (from .venv) for KaraKeep bookmark and asset fetching
-- aizk.utilities.arxiv for arXiv client operations (PDF downloads)
-- aizk.utilities.url_utils for URL parsing and manipulation (arXiv ID extraction, URL normalization)
+- aizk.utilities.arxiv_utils for arXiv client operations (PDF downloads)
+- aizk.utilities.url_utils for URL parsing and manipulation (URL normalization, GitHub URL normalization)
 
 ## Out of Scope
 

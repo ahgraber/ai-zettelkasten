@@ -163,7 +163,7 @@ src/aizk/conversion/          # Conversion service feature package
 │   └── manifest.py           # Manifest.json generation
 ├── utilities/                # Shared utilities
 │   ├── __init__.py
-│   ├── url_utils.py          # URL normalization, source type detection
+│   ├── bookmark_utils.py     # Bookmark validation, content/source detection
 │   ├── hashing.py            # Idempotency key, Markdown hash computation
 │   ├── filename_utils.py     # Filename normalization
 │   └── config.py             # Configuration loading (pydantic-settings)
@@ -221,7 +221,7 @@ No complexity violations to justify.
   - ADR-002: Idempotency semantics for reprocessing
   - ADR-003: SQLite with WAL mode for deployment
 - Best practices researched: Docling configuration, arXiv/GitHub fetching, filename normalization, process identification
-- Integration approach clarified: karakeep_client from .venv for bookmark/asset fetching; AsyncArxivClient.download_paper_pdf(arxiv_id) for arXiv PDF downloads; aizk.utilities.url_utils for URL parsing
+- Integration approach clarified: karakeep_client from .venv for bookmark/asset fetching; AsyncArxivClient.download_paper_pdf(arxiv_id) for arXiv PDF downloads; aizk.utilities.arxiv_utils and aizk.utilities.url_utils for URL parsing
 
 **Phase 1 (Design)**: ✅ Complete
 

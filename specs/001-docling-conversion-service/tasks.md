@@ -35,23 +35,23 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T006 Create SQLModel database models: Bookmark entity in src/aizk/datamodel/bookmark.py with fields (id, karakeep_id, aizk_uuid, url, normalized_url, title, content_type, source_type, created_at, updated_at)
-- [ ] T007 [P] Create SQLModel database models: ConversionJob entity in src/aizk/datamodel/job.py with fields (id, aizk_uuid, payload_version, status, attempts, error_code, error_message, idempotency_key, next_attempt_at, last_error_at, queued_at, started_at, finished_at, created_at, updated_at) and status enum
-- [ ] T008 [P] Create SQLModel database models: ConversionOutput entity in src/aizk/datamodel/output.py with fields (id, job_id, aizk_uuid, payload_version, s3_prefix, markdown_key, manifest_key, markdown_hash_xx64, markdown_bytes, figure_count, docling_version, pipeline_name, created_at)
-- [ ] T009 Create shared DB utilities in src/aizk/db.py: get_engine() configured to support concurrent read access from multiple workers with transaction isolation (see research.md ADR-003 for specific PRAGMA recommendations), get_session(), create_db_and_tables()
-- [ ] T010 Ensure indexes are declared and loaded by metadata in src/aizk/datamodel/\_\_init\_\_.py (imports models to populate SQLModel.metadata)
-- [ ] T011 Implement URL normalization utility in src/aizk/conversion/utilities/url_utils.py: normalize_url(url) lowercases domain, sorts query params, removes fragments
-- [ ] T012 [P] Implement content type detection utility in src/aizk/conversion/utilities/url_utils.py: detect_content_type(url, karakeep_metadata) returns 'html' or 'pdf' based on KaraKeep metadata, querying karakeep based on the bookmark id if necessary.
-- [ ] T012a [P] Implement source type detection utility in src/aizk/conversion/utilities/url_utils.py: detect_source_type(url) returns 'arxiv', 'github', or 'other' based on URL domain/pattern (NOT content format)
-- [ ] T013 [P] Implement idempotency key computation in src/aizk/conversion/utilities/hashing.py: compute_idempotency_key(aizk_uuid, payload_version, docling_version, config_hash) returns SHA256 hex digest
-- [ ] T014 [P] Implement markdown hash computation in src/aizk/conversion/utilities/hashing.py: compute_markdown_hash(markdown_text) returns xxHash64 hex digest of normalized markdown (UTF-8, LF line endings, trimmed)
-- [ ] T015 [P] ~~Implement filename normalization in src/aizk/conversion/utilities/filename_utils.py: normalize_filename(title) lowercases, replaces special chars with hyphens, strips leading/trailing dots/dashes, truncates to 200 chars~~ override: filename normalization already exists in utilities.file_utils
-- [ ] T016 Create configuration management in src/aizk/conversion/utilities/config.py using pydantic-settings: ConversionConfig with fields for S3 credentials, database path, worker concurrency, fetch timeouts, size limits, temp workspace path
-- [ ] T017 Create FastAPI app setup in src/aizk/conversion/api/main.py with lifespan context manager for database initialization and cleanup
-- [ ] T018 [P] Create FastAPI dependency injection in src/aizk/conversion/api/dependencies.py: wire DB session via `aizk.db.get_session()` and provide get_s3_client() dependency
-- [ ] T019 [P] Create structured logging configuration in src/aizk/conversion/utilities/logging.py with context fields (aizk_uuid, job_id, karakeep_id, status)
-- [ ] T020 Create CLI entrypoint in src/aizk/conversion/cli.py with commands: db-init (initialize database via aizk.db.create_db_and_tables), serve (run FastAPI server), worker (run background worker)
-- [ ] T020a [P] Set process titles via setproctitle: API server (uvicorn/ASGI lifespan) sets descriptive name (e.g., docling-api); worker/CLI entrypoints set descriptive names (e.g., docling-worker, docling-cli)
+- [x] T006 Create SQLModel database models: Bookmark entity in src/aizk/datamodel/bookmark.py with fields (id, karakeep_id, aizk_uuid, url, normalized_url, title, content_type, source_type, created_at, updated_at)
+- [x] T007 [P] Create SQLModel database models: ConversionJob entity in src/aizk/datamodel/job.py with fields (id, aizk_uuid, payload_version, status, attempts, error_code, error_message, idempotency_key, next_attempt_at, last_error_at, queued_at, started_at, finished_at, created_at, updated_at) and status enum
+- [x] T008 [P] Create SQLModel database models: ConversionOutput entity in src/aizk/datamodel/output.py with fields (id, job_id, aizk_uuid, payload_version, s3_prefix, markdown_key, manifest_key, markdown_hash_xx64, markdown_bytes, figure_count, docling_version, pipeline_name, created_at)
+- [x] T009 Create shared DB utilities in src/aizk/db.py: get_engine() configured to support concurrent read access from multiple workers with transaction isolation (see research.md ADR-003 for specific PRAGMA recommendations), get_session(), create_db_and_tables()
+- [x] T010 Ensure indexes are declared and loaded by metadata in src/aizk/datamodel/\_\_init\_\_.py (imports models to populate SQLModel.metadata)
+- [x] T011 Implement URL normalization utility in src/aizk/utilities/url_utils.py: normalize_url(url) lowercases domain, sorts query params, removes fragments
+- [x] T012 [P] Implement bookmark validation utility in src/aizk/conversion/utilities/bookmark_utils.py: validate_bookmark_content(bookmark) validates KaraKeep bookmark has HTML content, text, or PDF asset; raises exception with error_code='missing_content' if all absent. Implement content type detection: detect_content_type(url, karakeep_metadata) returns 'html' or 'pdf' based on metadata or URL suffix.
+- [x] T012a [P] Implement source type detection utility in src/aizk/conversion/utilities/bookmark_utils.py: detect_source_type(url) returns 'arxiv', 'github', or 'other' based on URL domain/pattern (NOT content format)
+- [x] T013 [P] Implement idempotency key computation in src/aizk/conversion/utilities/hashing.py: compute_idempotency_key(aizk_uuid, payload_version, docling_version, config_hash) returns SHA256 hex digest
+- [x] T014 [P] Implement markdown hash computation in src/aizk/conversion/utilities/hashing.py: compute_markdown_hash(markdown_text) returns xxHash64 hex digest of normalized markdown (UTF-8, LF line endings, trimmed)
+- [x] T015 [P] ~~Implement filename normalization in src/aizk/conversion/utilities/filename_utils.py: normalize_filename(title) lowercases, replaces special chars with hyphens, strips leading/trailing dots/dashes, truncates to 200 chars~~ override: filename normalization already exists in utilities.file_utils
+- [x] T016 Create configuration management in src/aizk/conversion/utilities/config.py using pydantic-settings: ConversionConfig with fields for S3 credentials, database path, worker concurrency, fetch timeouts, size limits, temp workspace path
+- [x] T017 Create FastAPI app setup in src/aizk/conversion/api/main.py with lifespan context manager for database initialization and cleanup
+- [x] T018 [P] Create FastAPI dependency injection in src/aizk/conversion/api/dependencies.py: wire DB session via `aizk.db.get_session()` and provide get_s3_client() dependency
+- [x] T019 [P] Create structured logging configuration in src/aizk/conversion/utilities/logging.py with context fields (aizk_uuid, job_id, karakeep_id, status)
+- [x] T020 Create CLI entrypoint in src/aizk/conversion/cli.py with commands: db-init (initialize database via aizk.db.create_db_and_tables), serve (run FastAPI server), worker (run background worker)
+- [x] T020a [P] Implement process role identification (via setproctitle): API server identifies itself as 'api' role; worker processes identify as 'worker' role; CLI entrypoints identify as 'cli' role. Roles must be visible to system operators (e.g., via process title, environment variable, or telemetry).
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 
@@ -67,16 +67,16 @@
 
 - [ ] T021 [P] [US1] Contract test for POST /v1/jobs and GET /v1/jobs in tests/conversion/contract/test_jobs_api.py (validate OpenAPI schema compliance)
 - [ ] T021a [P] [US1] Unit tests for bookmark validation in tests/conversion/unit/test_bookmark_utils.py (validate_bookmark_content, detect_content_type with KaraKeep bookmark objects)
-- [ ] T022 [P] [US1] Unit tests for utilities in tests/conversion/unit/test_url_utils.py (normalize_url, detect_source_type, extract_arxiv_id, extract_github_repo)
+- [ ] T022 [P] [US1] Unit tests for utilities in tests/conversion/unit/test_url_utils.py (normalize_url, detect_source_type, get_arxiv_id, standardize_github)
 - [ ] T023 [P] [US1] Unit tests for hashing and filename utils in tests/conversion/unit/test_hashing_filename.py (compute_idempotency_key, compute_markdown_hash, normalize_filename)
 - [ ] T024 [US1] Integration test for end-to-end conversion in tests/conversion/integration/test_conversion_flow.py (submit job → worker processes → outputs stored in S3-compatible storage)
 
 ### Implementation for User Story 1
 
-- [x] T025 [P] Implement arXiv ID extraction in src/aizk/conversion/utilities/url_utils.py: extract_arxiv_id(url) using regex pattern
-- [x] T026 [P] Implement GitHub owner/repo extraction in src/aizk/conversion/utilities/url_utils.py: extract_github_repo(url) using regex pattern
+- [x] T025 [P] Implement arXiv ID extraction in src/aizk/utilities/arxiv_utils.py: get_arxiv_id(url) using regex pattern
+- [x] T026 [P] Implement GitHub URL normalization in src/aizk/utilities/url_utils.py: standardize_github(url) for repo-root URLs
 - [x] T027 Implement fetch_karakeep_pdf_asset(karakeep_id, asset_id) using karakeep_client to fetch PDF asset bytes when not provided in submission.
-- [ ] T028 Implement arXiv content handler in src/aizk/conversion/workers/fetcher.py: fetch_arxiv_content(bookmark, pdf_asset_bytes=None) handles three cases: (1) if bookmark source URL is from abstract page (arxiv.org/abs), resolve `arxiv_id` using aizk.utilities.url_utils and download PDF using `AsyncArxivClient.download_paper_pdf(arxiv_id)`; (2) if bookmark has PDF asset, use provided pdf_asset_bytes or fetch from KaraKeep if None; (3) if bookmark has HTML content, resolve `arxiv_id` (use `arxiv_pdf_url` when present) and download via client. Returns PDF bytes for conversion.
+- [ ] T028 Implement arXiv content handler in src/aizk/conversion/workers/fetcher.py: fetch_arxiv_content(bookmark, pdf_asset_bytes=None) handles three cases: (1) if bookmark source URL is from abstract page (arxiv.org/abs), resolve `arxiv_id` using aizk.utilities.arxiv_utils and download PDF using `AsyncArxivClient.download_paper_pdf(arxiv_id)`; (2) if bookmark has PDF asset, use provided pdf_asset_bytes or fetch from KaraKeep if None; (3) if bookmark has HTML content, resolve `arxiv_id` (use `arxiv_pdf_url` when present) and download via client. Returns PDF bytes for conversion.
 - [x] T029 [P] Implement GitHub README fetcher in src/aizk/conversion/workers/fetcher.py: fetch_github_readme(owner, repo) tries README.md, README.rst, README.txt, README in main/master branches
 - [x] T030 Implement Docling HTML pipeline in src/aizk/conversion/workers/converter.py: convert_html(html_bytes, temp_dir) returns markdown_text and list of figure paths
 - [x] T031 [P] Implement Docling PDF pipeline in src/aizk/conversion/workers/converter.py: convert_pdf(pdf_bytes, temp_dir) returns markdown_text and list of figure paths
