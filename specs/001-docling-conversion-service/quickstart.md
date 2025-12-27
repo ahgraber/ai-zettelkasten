@@ -60,8 +60,6 @@ S3_REGION=us-east-1
 QUEUE_MAX_DEPTH=1000
 WORKER_CONCURRENCY=4
 FETCH_TIMEOUT_SECONDS=30
-FETCH_MAX_SIZE_HTML=52428800  # 50MB
-FETCH_MAX_SIZE_PDF=104857600  # 100MB
 RETRY_MAX_ATTEMPTS=3
 RETRY_BASE_DELAY_SECONDS=60
 
@@ -216,7 +214,6 @@ curl "http://localhost:8000/v1/outputs/550e8400-e29b-41d4-a716-446655440000?late
       "markdown_key": "s3://aizk-conversions/550e8400-e29b-41d4-a716-446655440000/attention-is-all-you-need.md",
       "manifest_key": "s3://aizk-conversions/550e8400-e29b-41d4-a716-446655440000/manifest.json",
       "markdown_hash_xx64": "1234567890abcdef",
-      "markdown_bytes": 45678,
       "figure_count": 8,
       "docling_version": "2.65.0",
       "pipeline_name": "html",

@@ -618,7 +618,6 @@ components:
         - markdown_key
         - manifest_key
         - markdown_hash_xx64
-        - markdown_bytes
         - figure_count
         - docling_version
         - pipeline_name
@@ -646,8 +645,6 @@ components:
           type: string
           description: xxHash64 digest of Markdown content
           pattern: "^[0-9a-f]{16}$"
-        markdown_bytes:
-          type: integer
         figure_count:
           type: integer
         docling_version:
@@ -669,8 +666,6 @@ components:
           type: string
         manifest_key:
           type: string
-        markdown_bytes:
-          type: integer
         figure_count:
           type: integer
 

@@ -26,12 +26,10 @@ class ConversionConfig(BaseSettings):
     queue_max_depth: int = Field(default=1000, validation_alias="QUEUE_MAX_DEPTH")
     worker_concurrency: int = Field(default=4, validation_alias="WORKER_CONCURRENCY")
     fetch_timeout_seconds: int = Field(default=30, validation_alias="FETCH_TIMEOUT_SECONDS")
-    fetch_max_size_html: int = Field(default=52_428_800, validation_alias="FETCH_MAX_SIZE_HTML")
-    fetch_max_size_pdf: int = Field(default=104_857_600, validation_alias="FETCH_MAX_SIZE_PDF")
     retry_max_attempts: int = Field(default=3, validation_alias="RETRY_MAX_ATTEMPTS")
     retry_base_delay_seconds: int = Field(default=60, validation_alias="RETRY_BASE_DELAY_SECONDS")
 
-    docling_pdf_max_pages: int = Field(default=100, validation_alias="DOCLING_PDF_MAX_PAGES")
+    docling_pdf_max_pages: int = Field(default=250, validation_alias="DOCLING_PDF_MAX_PAGES")
     docling_enable_ocr: bool = Field(default=True, validation_alias="DOCLING_ENABLE_OCR")
     docling_enable_table_structure: bool = Field(
         default=True,

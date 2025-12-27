@@ -155,7 +155,7 @@ src/aizk/conversion/          # Conversion service feature package
 ├── workers/                  # Background conversion workers
 │   ├── __init__.py
 │   ├── worker.py             # Worker main loop, job pickup, status updates
-│   ├── fetcher.py            # URL fetching with retry and size limits
+│   ├── fetcher.py            # URL fetching with retry
 │   └── converter.py          # Docling pipeline execution
 ├── storage/                  # S3 storage operations
 │   ├── __init__.py
