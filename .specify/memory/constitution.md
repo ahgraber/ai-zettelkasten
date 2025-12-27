@@ -14,7 +14,7 @@ Sync Impact Report
 
 ### Data Provenance & Integrity
 
-Every ingested or generated artifact MUST carry source metadata (origin URL or system identifier), hashing for integrity (content hash + optional semantic hash), and a replayable link to the extraction process. Lossy transforms (e.g., OCR, PDF parsing) require stored raw inputs and parsing parameters to allow reprocessing. No orphaned nodes: every note links back to provenance and references.
+Every ingested or generated artifact MUST carry source metadata (origin URL or system identifier), hashing for integrity (content hash + optional semantic hash), and a replayable link to the extraction process. Lossy transforms (e.g., OCR, PDF parsing) require stored raw inputs and parsing parameters to allow reprocessing; raw inputs MAY remain in an authoritative external system if access is stable and a durable reference is recorded. No orphaned nodes: every note links back to provenance and references.
 
 ### Reproducible Pipelines
 
@@ -40,7 +40,7 @@ Structured logging (timestamps, component, correlation IDs) is required across p
 
 ## Technology & Data Handling Requirements
 
-- Python code runs in the uv-managed environment; dependencies are pinned in pyproject.toml and honored by Nix devshells—no ad-hoc global installs.
+- Python code runs in the uv-managed environment; dependencies are pinned via uv/lockfiles (pyproject.toml + uv.lock) and honored by Nix devshells—no ad-hoc global installs.
 - Default runtime targets CPU-only execution; GPU use requires an explicit cost and ops justification.
 - Storage of raw inputs and derived artifacts must permit replay; blob/object storage locations are recorded alongside metadata.
 - Minimal infrastructure bias: compose/k3s-friendly deployments; avoid services that break portability unless justified.
@@ -56,7 +56,7 @@ Structured logging (timestamps, component, correlation IDs) is required across p
 - CI must run automated tests relevant to the touched pipeline stage; failures block merge.
 - Any change to data schemas, embedding parameters, or retrieval scoring requires a migration/test plan and version bump of the affected artifact.
 - Code review checks for reproducibility (pinned deps, seeded operations), privacy adherence, and observability hooks (structured logs + metrics).
-- Techstack/tooling choices for external services or internal frameworks MUST reference an ADR in `docs/decision-record/`.
+- Techstack/tooling choices for external services or internal frameworks MUST reference an ADR in `docs/decision-record/` or be manually overridden with references to other documents.
 - Significant architectural decisions MUST have an ADR.
 
 ## Governance

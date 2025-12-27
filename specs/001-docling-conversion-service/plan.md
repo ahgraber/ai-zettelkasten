@@ -7,12 +7,12 @@
 
 ## Summary
 
-Convert KaraKeep bookmarks (HTML/PDF/arXiv/GitHub) to Markdown using Docling with durable state tracking, idempotency, and S3 artifact storage. KaraKeep bookmark is the source of truth; validate bookmarks have required content (HTML/text/PDF). For arXiv sources, handle abstract page links (resolve `arxiv_id` and download via `AsyncArxivClient.download_paper_pdf(arxiv_id)`), PDF assets (fetch from KaraKeep), and link bookmarks with HTML content (resolve `arxiv_id` and download via client; use `arxiv_pdf_url` when present). Implement FastAPI REST API with SQLite job queue, 4 parallel Docling workers, exponential backoff retry logic, and HTML-only Web UI for operational monitoring. Support reprocessing with payload versioning and content-based deduplication via markdown hashing.
+Convert KaraKeep bookmarks (HTML/PDF/arXiv/GitHub) to Markdown using Docling with durable state tracking, idempotency, and S3 artifact storage. KaraKeep bookmark is the source of truth; validate bookmarks have required content (HTML/text/PDF). For arXiv sources, handle abstract page links (resolve `arxiv_id` and download via `AsyncArxivClient.download_paper_pdf(arxiv_id, use_export_url=True)`), PDF assets (fetch from KaraKeep), and link bookmarks with HTML content (resolve `arxiv_id` and download via client; use `arxiv_pdf_url` when present). Implement FastAPI REST API with SQLite job queue, 4 parallel Docling workers, exponential backoff retry logic, and HTML-only Web UI for operational monitoring. Support reprocessing with payload versioning and content-based deduplication via markdown hashing.
 
 ## Technical Context
 
 **Language/Version**: Python 3.12+ (managed via uv)\
-**Primary Dependencies**: FastAPI, Docling (v2.65+), SQLModel, boto3 (S3 client), xxhash, httpx, pydantic-settings, karakeep_client (from .venv)\
+**Primary Dependencies**: FastAPI, Docling (pinned via uv.lock; target 2.65.0+), SQLModel, boto3 (S3 client), xxhash, httpx, pydantic-settings, karakeep_client (from .venv)\
 **Storage**: SQLite with WAL mode via SQLModel; S3-compatible object storage for artifacts\
 **Testing**: pytest with fixtures for deterministic transforms, contract tests for API, integration tests for S3 uploads\
 **Target Platform**: Linux server (Docker/compose), macOS development (via Nix/uv devshell)\
@@ -24,6 +24,8 @@ Convert KaraKeep bookmarks (HTML/PDF/arXiv/GitHub) to Markdown using Docling wit
 - 4 concurrent conversions without degradation
 - API endpoints: \<100ms response for job submission/query
 - Idempotency check: \<100ms for duplicate detection
+
+**Aspirational Targets**: 90s HTML and 3 minutes PDF are stretch goals tracked separately from Success Criteria.
 
 **Constraints**:
 
@@ -41,7 +43,7 @@ Convert KaraKeep bookmarks (HTML/PDF/arXiv/GitHub) to Markdown using Docling wit
 - 4 parallel conversion workers
 - Job history retention: retain all aside from user-directed archive/purge strategy for old jobs via the HTML webui
 - S3 bucket quota: assume unlimited for initial deployment
-- **Bookmark Metadata**: KaraKeep bookmark is source of truth; must contain HTML content, text, or PDF asset. Bookmarks track `content_type` (html/pdf—format detected from KaraKeep structure) and `source_type` (arxiv/github/other—origin parsed from URL). arXiv bookmarks: abstract page links resolve `arxiv_id` and download via `AsyncArxivClient.download_paper_pdf(arxiv_id)`; PDF assets fetch from KaraKeep; link bookmarks with HTML resolve `arxiv_id` (use `arxiv_pdf_url` when present) and download via client. GitHub bookmarks are always HTML. All other links are expected to be HTML.
+- **Bookmark Metadata**: KaraKeep bookmark is source of truth; must contain HTML content, text, or PDF asset. Bookmarks track `content_type` (html/pdf—format detected from KaraKeep structure) and `source_type` (arxiv/github/other—origin parsed from URL). arXiv bookmarks: abstract page links resolve `arxiv_id` and download via `AsyncArxivClient.download_paper_pdf(arxiv_id, use_export_url=True)`; PDF assets fetch from KaraKeep; link bookmarks with HTML resolve `arxiv_id` (use `arxiv_pdf_url` when present) and download via client. GitHub bookmarks are always HTML. All other links are expected to be HTML.
 
 ## Constitution Check
 
@@ -52,7 +54,7 @@ Convert KaraKeep bookmarks (HTML/PDF/arXiv/GitHub) to Markdown using Docling wit
   - Sources: KaraKeep bookmarks (via karakeep_id, url, content/text/assets—validated for presence), arXiv (via arxiv_id in URL or arxiv_pdf_url in metadata), GitHub (via owner/repo in URL)
   - Metadata: bookmarks table stores karakeep_id, url, normalized_url, source_type, title, aizk_uuid
   - Hashing: xxhash64 of normalized Markdown content (markdown_hash_xx64) for deduplication and change detection
-  - Raw inputs: source HTML/PDF retained only temporarily in fetch stage; conversion_outputs.manifest_key references all generated artifacts
+  - Raw inputs: KaraKeep is the authoritative source of raw inputs; system records durable references (karakeep_id + source URLs) and does not persist raw inputs locally
   - Replay: conversion_outputs records docling_version, pipeline_name, payload_version, config_hash enabling re-conversion with same parameters
   - **Status**: ✅ PASS
 
@@ -70,8 +72,12 @@ Convert KaraKeep bookmarks (HTML/PDF/arXiv/GitHub) to Markdown using Docling wit
   - Contract tests: API endpoint schemas (POST /v1/jobs, GET /v1/jobs/{id}, GET /v1/outputs/{uuid}, POST /v1/jobs/batch, POST /v1/jobs/actions) tested against OpenAPI spec
   - Fixture tests: Deterministic Markdown normalization, URL normalization, idempotency_key computation, markdown_hash_xx64 computation with known inputs/outputs
   - Integration tests: S3 upload verification with local S3-compatible test instance, SQLite transaction isolation, job status transitions, retry logic
-  - Regression tests: Edge cases from spec (404s, empty Markdown, duplicate idempotency_key, S3 failures) covered before merge
-  - **Status**: ✅ PASS (tests to be added during implementation phase per TDD)
+
+- Regression tests: Edge cases from spec (404s, empty Markdown, duplicate idempotency_key, S3 failures) covered before merge
+
+- Gate: Tests must be written, approved by the user, and confirmed to FAIL (red phase) before any implementation tasks start.
+
+- **Status**: ✅ PASS (tests to be added during implementation phase per TDD)
 
 - **G4 Privacy & safety**:
 
@@ -129,7 +135,7 @@ specs/001-docling-conversion-service/
 ### Feature Implementation Artifacts
 
 ```text
-src/aizk/models/conversion/
+src/aizk/datamodel/
 ├── __init__.py               # Imports all models to populate SQLModel.metadata
 ├── bookmark.py               # Bookmark entity
 ├── job.py                    # ConversionJob entity
