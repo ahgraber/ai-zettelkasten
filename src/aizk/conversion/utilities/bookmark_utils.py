@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Literal
 
 from aizk.utilities.arxiv_utils import is_arxiv_url
 from aizk.utilities.url_utils import is_github_url
+from karakeep_client.karakeep import KarakeepClient
 from karakeep_client.models import Bookmark, ContentTypeAsset, ContentTypeLink, ContentTypeText
 
 __all__ = [
@@ -13,6 +16,7 @@ __all__ = [
     "BookmarkContentError",
     "detect_content_type",
     "detect_source_type",
+    "fetch_karakeep_bookmark",
     "get_bookmark_asset_id",
     "get_bookmark_html_content",
     "get_bookmark_source_url",
@@ -23,11 +27,13 @@ __all__ = [
     "validate_bookmark_content",
 ]
 
+logger = logging.getLogger(__name__)
+
 
 class BookmarkContentError(ValueError):
     """Error raised when a KaraKeep bookmark lacks usable content."""
 
-    error_code = "missing_content"
+    error_code = "karakeep_bookmark_missing_contents"
 
     def __init__(self, message: str):
         super().__init__(message)
@@ -47,6 +53,20 @@ def get_bookmark_source_url(bookmark: Bookmark) -> str:
     if isinstance(content, ContentTypeAsset) and content.source_url:
         return content.source_url
     raise BookmarkContentError(f"Bookmark {bookmark.id} has no source URL")
+
+
+def fetch_karakeep_bookmark(karakeep_id: str) -> Bookmark | None:
+    """Fetch bookmark details from KaraKeep."""
+
+    async def _get_bookmark() -> Bookmark | None:
+        async with KarakeepClient() as client:
+            return await client.get_bookmark(karakeep_id)
+
+    try:
+        return asyncio.run(_get_bookmark())
+    except Exception as exc:
+        logger.warning("Failed to fetch KaraKeep bookmark %s: %s", karakeep_id, exc)
+        return None
 
 
 def get_bookmark_html_content(bookmark: Bookmark) -> str | None:
