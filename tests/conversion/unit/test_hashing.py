@@ -2,12 +2,21 @@
 
 import hashlib
 
+from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.hashing import compute_idempotency_key, compute_markdown_hash
 
 
 def test_compute_idempotency_key_matches_sha256():
-    key = compute_idempotency_key("uuid-1", 2, "2.65.0", "cfg")
-    expected = hashlib.sha256("uuid-1:2:2.65.0:cfg".encode("utf-8")).hexdigest()
+    import json
+
+    config = ConversionConfig()
+    config_json = json.dumps(
+        {k: v for k, v in config.model_dump().items() if k.startswith("docling_")},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    key = compute_idempotency_key("uuid-1", 2, "2.65.0", config)
+    expected = hashlib.sha256(f"uuid-1:2:2.65.0:{config_json}".encode("utf-8")).hexdigest()
     assert key == expected
 
 
