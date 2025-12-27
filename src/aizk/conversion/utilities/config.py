@@ -59,8 +59,3 @@ class ConversionConfig(BaseSettings):
     api_host: str = Field(default="0.0.0.0", validation_alias="API_HOST")  # NOQA: S104
     api_port: int = Field(default=8000, validation_alias="API_PORT")
     api_reload: bool = Field(default=True, validation_alias="API_RELOAD")
-
-    temp_workspace_path: Path = Field(
-        default=Path("./data/workspace"),
-        validation_alias="TEMP_WORKSPACE_PATH",
-    )
