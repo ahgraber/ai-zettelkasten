@@ -42,7 +42,6 @@ class ManifestArtifactMarkdown(BaseModel):
     """Markdown artifact metadata."""
 
     key: str = Field(description="Absolute S3 URI (s3://bucket/key)")
-    bytes: int
     hash_xx64: str = Field(description="xxHash64 hex digest")
     created_at: datetime
 
@@ -51,7 +50,6 @@ class ManifestArtifactFigure(BaseModel):
     """Figure artifact metadata."""
 
     key: str = Field(description="Absolute S3 URI (s3://bucket/key)")
-    bytes: int
     created_at: datetime
 
 
@@ -88,10 +86,8 @@ def generate_manifest(
     job: ConversionJob,
     fetched_at: datetime,
     markdown_s3_uri: str,
-    markdown_bytes: int,
     markdown_hash: str,
     figure_s3_uris: list[str],
-    figure_sizes: list[int],
     docling_version: str,
     pipeline_name: Literal["html", "pdf"],
 ) -> ConversionManifest:
@@ -102,10 +98,8 @@ def generate_manifest(
         job: ConversionJob record with timing and job info.
         fetched_at: Timestamp when content was fetched.
         markdown_s3_uri: Absolute S3 URI for markdown (s3://bucket/key).
-        markdown_bytes: Markdown size in bytes.
         markdown_hash: Markdown xxHash64 hex digest.
         figure_s3_uris: List of absolute S3 URIs for figures.
-        figure_sizes: List of figure sizes in bytes (same order as URIs).
         docling_version: Docling version used.
         pipeline_name: Pipeline name (html/pdf).
 
@@ -120,10 +114,7 @@ def generate_manifest(
     if source_type not in {"arxiv", "github", "other"}:
         source_type = "other"
 
-    figures = [
-        ManifestArtifactFigure(key=uri, bytes=size, created_at=finished_at)
-        for uri, size in zip(figure_s3_uris, figure_sizes)
-    ]
+    figures = [ManifestArtifactFigure(key=uri, created_at=finished_at) for uri in figure_s3_uris]
 
     return ConversionManifest(
         aizk_uuid=bookmark.aizk_uuid,
@@ -147,7 +138,6 @@ def generate_manifest(
         artifacts=ManifestArtifacts(
             markdown=ManifestArtifactMarkdown(
                 key=markdown_s3_uri,
-                bytes=markdown_bytes,
                 hash_xx64=markdown_hash,
                 created_at=finished_at,
             ),

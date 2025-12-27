@@ -165,7 +165,6 @@ This document defines the complete data model for the Docling Conversion Service
 | markdown_key       | Text       | NOT NULL                                                    | S3 key for Markdown file              |
 | manifest_key       | Text       | NOT NULL                                                    | S3 key for manifest.json              |
 | markdown_hash_xx64 | String(16) | NOT NULL, INDEXED                                           | xxHash64 of normalized Markdown       |
-| markdown_bytes     | Integer    | NOT NULL                                                    | Markdown file size in bytes           |
 | figure_count       | Integer    | NOT NULL, DEFAULT 0                                         | Number of extracted figures           |
 | docling_version    | String(20) | NOT NULL                                                    | Docling library version used          |
 | pipeline_name      | String(50) | NOT NULL                                                    | Pipeline name: 'html' or 'pdf'        |
@@ -185,7 +184,6 @@ This document defines the complete data model for the Docling Conversion Service
 - `markdown_key`: Non-empty string, format: `<s3_prefix><filename>.md`
 - `manifest_key`: Non-empty string, format: `<s3_prefix>manifest.json`
 - `markdown_hash_xx64`: 16-character hex string (xxHash64 digest)
-- `markdown_bytes`: Positive integer
 - `figure_count`: Non-negative integer
 - `docling_version`: Semantic version string (e.g., '2.65.0')
 - `pipeline_name`: Must be 'html' or 'pdf'
@@ -237,20 +235,17 @@ This document defines the complete data model for the Docling Conversion Service
   "artifacts": {
     "markdown": {
       "key": "s3://bucket/550e8400-e29b-41d4-a716-446655440000/attention-is-all-you-need.md",
-      "bytes": 45678,
       "hash_xx64": "1234567890abcdef",
       "created_at": "2025-12-23T10:31:15Z"
     },
     "figures": [
       {
         "key": "s3://bucket/550e8400-e29b-41d4-a716-446655440000/figure1.png",
-        "bytes": 12345,
         "description": "Transformer model architecture",
         "created_at": "2025-12-23T10:31:16Z"
       },
       {
         "key": "s3://bucket/550e8400-e29b-41d4-a716-446655440000/figure2.png",
-        "bytes": 23456,
         "description": "Attention visualization",
         "created_at": "2025-12-23T10:31:17Z"
       }
@@ -321,7 +316,6 @@ This document defines the complete data model for the Docling Conversion Service
 │ markdown_key        │
 │ manifest_key        │
 │ markdown_hash_xx64  │
-│ markdown_bytes      │
 │ figure_count        │
 │ docling_version     │
 │ pipeline_name       │
@@ -534,7 +528,6 @@ class ConversionOutput(SQLModel, table=True):
     markdown_key: str
     manifest_key: str
     markdown_hash_xx64: str = Field(max_length=16, index=True)
-    markdown_bytes: int
     figure_count: int = Field(default=0)
     docling_version: str = Field(max_length=20)
     pipeline_name: str = Field(max_length=50)

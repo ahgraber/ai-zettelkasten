@@ -200,7 +200,7 @@ The following ADRs must be created in `docs/decision-record/` directory:
 
 **Findings**:
 
-- Use `HTMLBackendOptions` for HTML sources with appropriate timeout and size limits
+- Use `HTMLBackendOptions` for HTML sources with appropriate timeout settings
 - Use `ThreadedPdfPipelineOptions` for PDF sources with page limit configuration
 - Enable EasyOCR for PDF with images containing text
 - Optional: Enable VLM picture description for figure enrichment (adds latency and API cost)

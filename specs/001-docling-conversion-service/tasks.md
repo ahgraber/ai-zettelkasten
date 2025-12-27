@@ -37,7 +37,7 @@
 
 - [x] T006 Create SQLModel database models: Bookmark entity in src/aizk/datamodel/bookmark.py with fields (id, karakeep_id, aizk_uuid, url, normalized_url, title, content_type, source_type, created_at, updated_at)
 - [x] T007 [P] Create SQLModel database models: ConversionJob entity in src/aizk/datamodel/job.py with fields (id, aizk_uuid, payload_version, status, attempts, error_code, error_message, idempotency_key, next_attempt_at, last_error_at, queued_at, started_at, finished_at, created_at, updated_at) and status enum
-- [x] T008 [P] Create SQLModel database models: ConversionOutput entity in src/aizk/datamodel/output.py with fields (id, job_id, aizk_uuid, payload_version, s3_prefix, markdown_key, manifest_key, markdown_hash_xx64, markdown_bytes, figure_count, docling_version, pipeline_name, created_at)
+- [x] T008 [P] Create SQLModel database models: ConversionOutput entity in src/aizk/datamodel/output.py with fields (id, job_id, aizk_uuid, payload_version, s3_prefix, markdown_key, manifest_key, markdown_hash_xx64, figure_count, docling_version, pipeline_name, created_at)
 - [x] T009 Create shared DB utilities in src/aizk/db.py: get_engine() configured to support concurrent read access from multiple workers with transaction isolation (see research.md ADR-003 for specific PRAGMA recommendations), get_session(), create_db_and_tables()
 - [x] T010 Ensure indexes are declared and loaded by metadata in src/aizk/datamodel/\_\_init\_\_.py (imports models to populate SQLModel.metadata)
 - [x] T011 Implement URL normalization utility in src/aizk/utilities/url_utils.py: normalize_url(url) lowercases domain, sorts query params, removes fragments
@@ -46,7 +46,7 @@
 - [x] T013 [P] Implement idempotency key computation in src/aizk/conversion/utilities/hashing.py: compute_idempotency_key(aizk_uuid, payload_version, docling_version, config_hash) returns SHA256 hex digest
 - [x] T014 [P] Implement markdown hash computation in src/aizk/conversion/utilities/hashing.py: compute_markdown_hash(markdown_text) returns xxHash64 hex digest of normalized markdown (UTF-8, LF line endings, trimmed)
 - [x] T015 [P] ~~Implement filename normalization in src/aizk/conversion/utilities/filename_utils.py: normalize_filename(title) lowercases, replaces special chars with hyphens, strips leading/trailing dots/dashes, truncates to 200 chars~~ override: filename normalization already exists in utilities.file_utils
-- [x] T016 Create configuration management in src/aizk/conversion/utilities/config.py using pydantic-settings: ConversionConfig with fields for S3 credentials, database path, worker concurrency, fetch timeouts, size limits, temp workspace path
+- [x] T016 Create configuration management in src/aizk/conversion/utilities/config.py using pydantic-settings: ConversionConfig with fields for S3 credentials, database path, worker concurrency, fetch timeouts, temp workspace path
 - [x] T017 Create FastAPI app setup in src/aizk/conversion/api/main.py with lifespan context manager for database initialization and cleanup
 - [x] T018 [P] Create FastAPI dependency injection in src/aizk/conversion/api/dependencies.py: wire DB session via `aizk.db.get_session()` and provide get_s3_client() dependency
 - [x] T019 [P] Create structured logging configuration in src/aizk/conversion/utilities/logging.py with context fields (aizk_uuid, job_id, karakeep_id, status)
