@@ -41,10 +41,10 @@ A user views all conversion jobs in the Web UI, identifies failed jobs, and retr
 
 The system uses a two-phase workflow to enable efficient retry of S3 upload failures without re-running expensive conversions:
 
-- **Phase 1 (Conversion)**: Fetch source content and convert to Markdown using Docling. On success, store converted artifacts (Markdown, figures, manifest) in temporary workspace, transition job to UPLOAD_PENDING state, and commit database transaction.
+- **Phase 1 (Conversion)**: Fetch source content and convert to Markdown using Docling. On success, store converted artifacts (Markdown, figures, manifest) in ephemeral temporary workspace, transition job to UPLOAD_PENDING state, and commit database transaction.
 - **Phase 2 (Upload)**: Upload artifacts to S3 and verify successful upload (via ETag/HEAD check). On success, create conversion_outputs record and mark job SUCCEEDED, then commit.
 
-This separation allows UPLOAD_PENDING jobs to retry Phase 2 only if S3 upload fails (transient network error, quota exceeded). Cached conversion artifacts in temp workspace enable re-uploading without Docling reprocessing. Full retry (FAILED_RETRYABLE → QUEUED) remains available for fetch/conversion errors that require complete reprocessing.
+This separation allows UPLOAD_PENDING jobs to retry Phase 2 only if S3 upload fails (transient network error, quota exceeded). Cached conversion artifacts live in an ephemeral temporary workspace; upload retries are therefore limited to the lifespan of that workspace. Full retry (FAILED_RETRYABLE → QUEUED) remains available for fetch/conversion errors or when cached artifacts are gone.
 
 **Acceptance Scenarios**:
 
@@ -137,7 +137,7 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - **FR-008**: For GitHub sources, system MUST extract owner/repo from URL, fetch raw README content from default branch prioritizing README.md, then README.rst, then README
 - **FR-009**: System MUST execute Docling conversion with appropriate pipeline (HTML or PDF) and extract figures to individual PNG files with sequential naming (figure-001.png, figure-002.png, ...)
 - **FR-010**: System MUST compute xxhash64 of normalized Markdown content (UTF-8, LF line endings) and store in markdown_hash_xx64 field
-- **FR-011**: System MUST write conversion outputs to isolated temp workspace at `<tmp_root>/<aizk_uuid>/<run_timestamp>/` including Markdown, figures, and manifest.json
+- **FR-011**: System MUST write conversion outputs to an ephemeral temporary workspace (e.g., `<tmp_root>/aizk-conversion/<job_id>-*/`) including Markdown, figures, and manifest.json; the workspace is cleaned up automatically when the job finishes.
 - **FR-012**: System MUST upload all artifacts to S3 at `s3://<bucket>/<aizk_uuid>/` and verify successful upload before proceeding
 - **FR-013**: System MUST compare new markdown_hash_xx64 with most recent conversion_outputs record; if hashes match, reuse existing S3 location and skip overwrite
 - **FR-014**: System MUST create conversion_outputs record on successful conversion with fields: job_id, aizk_uuid, payload_version, s3_prefix, markdown_key, manifest_key, markdown_hash_xx64, figure_count, docling_version, pipeline_name, created_at
