@@ -168,7 +168,7 @@ def test_validate_bookmark_content_rejects_empty_link():
     )
     with pytest.raises(BookmarkContentError, match="missing HTML, text, or PDF content") as exc_info:
         validate_bookmark_content(bookmark)
-    assert exc_info.value.error_code == "missing_content"
+    assert exc_info.value.error_code == "karakeep_bookmark_missing_contents"
     assert resolve_bookmark_content_type(bookmark) == "link"
 
 

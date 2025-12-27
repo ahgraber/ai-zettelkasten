@@ -7,7 +7,7 @@
 
 ## Summary
 
-Convert KaraKeep bookmarks (HTML/PDF/arXiv/GitHub) to Markdown using Docling with durable state tracking, idempotency, and S3 artifact storage. KaraKeep bookmark is the source of truth; validate bookmarks have required content (HTML/text/PDF). For arXiv sources, handle abstract page links (resolve `arxiv_id` and download via `AsyncArxivClient.download_paper_pdf(arxiv_id)`), PDF assets (use provided or fetch from KaraKeep), and link bookmarks with HTML content (resolve `arxiv_id` and download via client; use `arxiv_pdf_url` when present). Implement FastAPI REST API with SQLite job queue, 4 parallel Docling workers, exponential backoff retry logic, and HTML-only Web UI for operational monitoring. Support reprocessing with payload versioning and content-based deduplication via markdown hashing.
+Convert KaraKeep bookmarks (HTML/PDF/arXiv/GitHub) to Markdown using Docling with durable state tracking, idempotency, and S3 artifact storage. KaraKeep bookmark is the source of truth; validate bookmarks have required content (HTML/text/PDF). For arXiv sources, handle abstract page links (resolve `arxiv_id` and download via `AsyncArxivClient.download_paper_pdf(arxiv_id)`), PDF assets (fetch from KaraKeep), and link bookmarks with HTML content (resolve `arxiv_id` and download via client; use `arxiv_pdf_url` when present). Implement FastAPI REST API with SQLite job queue, 4 parallel Docling workers, exponential backoff retry logic, and HTML-only Web UI for operational monitoring. Support reprocessing with payload versioning and content-based deduplication via markdown hashing.
 
 ## Technical Context
 
@@ -41,7 +41,7 @@ Convert KaraKeep bookmarks (HTML/PDF/arXiv/GitHub) to Markdown using Docling wit
 - 4 parallel conversion workers
 - Job history retention: retain all aside from user-directed archive/purge strategy for old jobs via the HTML webui
 - S3 bucket quota: assume unlimited for initial deployment
-- **Bookmark Metadata**: KaraKeep bookmark is source of truth; must contain HTML content, text, or PDF asset. Bookmarks track `content_type` (html/pdf—format detected from KaraKeep structure) and `source_type` (arxiv/github/other—origin parsed from URL). arXiv bookmarks: abstract page links resolve `arxiv_id` and download via `AsyncArxivClient.download_paper_pdf(arxiv_id)`; PDF assets use provided bytes or fetch from KaraKeep; link bookmarks with HTML resolve `arxiv_id` (use `arxiv_pdf_url` when present) and download via client. GitHub bookmarks are always HTML. All other links are expected to be HTML.
+- **Bookmark Metadata**: KaraKeep bookmark is source of truth; must contain HTML content, text, or PDF asset. Bookmarks track `content_type` (html/pdf—format detected from KaraKeep structure) and `source_type` (arxiv/github/other—origin parsed from URL). arXiv bookmarks: abstract page links resolve `arxiv_id` and download via `AsyncArxivClient.download_paper_pdf(arxiv_id)`; PDF assets fetch from KaraKeep; link bookmarks with HTML resolve `arxiv_id` (use `arxiv_pdf_url` when present) and download via client. GitHub bookmarks are always HTML. All other links are expected to be HTML.
 
 ## Constitution Check
 

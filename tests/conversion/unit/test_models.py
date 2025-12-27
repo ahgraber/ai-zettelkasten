@@ -20,7 +20,7 @@ def test_indexed_columns():
     assert job_table.columns["aizk_uuid"].index is True
     assert job_table.columns["status"].index is True
     assert job_table.columns["idempotency_key"].index is True
-    assert job_table.columns["next_attempt_at"].index is True
+    assert job_table.columns["earliest_next_attempt_at"].index is True
     assert job_table.columns["created_at"].index is True
 
     assert output_table.columns["job_id"].index is True

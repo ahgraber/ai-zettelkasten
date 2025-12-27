@@ -18,7 +18,7 @@ class Bookmark(SQLModel, table=True):
     aizk_uuid: str = Field(max_length=36, nullable=False, unique=True, index=True)
     url: str = Field(nullable=False)
     normalized_url: str = Field(nullable=False, index=True)
-    title: str = Field(nullable=False)
+    title: str = Field(max_length=500, nullable=False)
     content_type: str = Field(max_length=10, nullable=False)
     source_type: str = Field(max_length=20, nullable=False)
     created_at: datetime.datetime = Field(

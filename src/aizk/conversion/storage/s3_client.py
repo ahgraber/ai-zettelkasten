@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 from typing import NoReturn, Optional
@@ -69,6 +70,19 @@ class S3Client:
             response = self.client.head_object(Bucket=self.bucket, Key=s3_key)
             if not response:
                 raise S3UploadError(s3_key, "HEAD request failed after upload")  # NOQA: TRY301
+            etag = response.get("ETag")
+            if not etag:
+                raise S3UploadError(s3_key, "ETag missing after upload")  # NOQA: TRY301
+
+            etag_value = str(etag).strip('"')
+            local_md5 = hashlib.md5(local_path.read_bytes()).hexdigest()  # NOQA: S324
+            if "-" not in etag_value and etag_value != local_md5:
+                raise S3UploadError(s3_key, "ETag mismatch after upload")  # NOQA: TRY301
+            if "-" in etag_value:
+                content_length = response.get("ContentLength")
+                local_size = local_path.stat().st_size
+                if content_length != local_size:
+                    raise S3UploadError(s3_key, "Content length mismatch after upload")  # NOQA: TRY301
 
             s3_uri = f"s3://{self.bucket}/{s3_key}"
             logger.info("Uploaded %s to %s", local_path.name, s3_uri)
