@@ -3,7 +3,7 @@
 **Input**: Design documents from `/specs/001-docling-conversion-service/`
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/openapi.yaml
 
-**Tests**: Tests are required; each user story includes contract/integration/unit test tasks to follow TDD.
+**Tests**: Tests are required; each user story includes contract/integration/unit test tasks to follow TDD. Implementation tasks are blocked until tests are written, approved by the user, and confirmed to FAIL (red phase).
 
 **Constitution Alignment**: Tasks include data provenance tracking (manifest.json, conversion metadata), reproducible configs (pinned Docling versions, payload versioning), privacy (no PII, env var secrets), and observability (structured logging, metrics).
 
@@ -70,19 +70,22 @@
 - [x] T022 [P] [US1] Unit tests for utilities in tests/conversion/unit/test_url_utils.py (normalize_url, detect_source_type, get_arxiv_id, standardize_github)
 - [x] T023 [P] [US1] Unit tests for hashing and filename utils in tests/conversion/unit/test_hashing.py and tests/utilities/test_file_utils.py (compute_idempotency_key, compute_markdown_hash, normalize_filename)
 - [x] T024 [US1] Integration test for end-to-end conversion in tests/conversion/integration/test_conversion_flow.py (submit job → worker processes → outputs stored in S3-compatible storage)
+- [ ] T021b [US1] Obtain user approval of US1 tests and confirm red phase before starting implementation tasks
 
 ### Implementation for User Story 1
 
 - [x] T025 [P] Implement arXiv ID extraction in src/aizk/utilities/arxiv_utils.py: get_arxiv_id(url) using regex pattern
 - [x] T026 [P] Implement GitHub URL normalization in src/aizk/utilities/url_utils.py: standardize_github(url) for repo-root URLs
 - [x] T027 Implement fetch_karakeep_asset(asset_id) using karakeep_client to fetch PDF asset bytes when not provided in submission.
-- [x] T028 Implement arXiv content handler in src/aizk/conversion/workers/fetcher.py: fetch_arxiv(bookmark) handles three cases: (1) if bookmark source URL is from abstract page (arxiv.org/abs), resolve `arxiv_id` using aizk.utilities.arxiv_utils and download PDF using `AsyncArxivClient.download_paper_pdf(arxiv_id)`; (2) if bookmark has PDF asset, fetch from KaraKeep; (3) if bookmark has HTML content, resolve `arxiv_id` and download via client. Returns PDF bytes for conversion.
+- [x] T028 Implement arXiv content handler in src/aizk/conversion/workers/fetcher.py: fetch_arxiv(bookmark) handles three cases: (1) if bookmark source URL is from abstract page (arxiv.org/abs), resolve `arxiv_id` using aizk.utilities.arxiv_utils and download PDF using `AsyncArxivClient.download_paper_pdf(arxiv_id, use_export_url=True)`; (2) if bookmark has PDF asset, fetch from KaraKeep; (3) if bookmark has HTML content, resolve `arxiv_id` and download via client. Returns PDF bytes for conversion.
 - [x] T029 [P] Implement GitHub README fetcher in src/aizk/conversion/workers/fetcher.py: fetch_github_readme(owner, repo) tries README.md, README.rst, README.txt, README in main/master branches
 - [x] T030 Implement Docling HTML pipeline in src/aizk/conversion/workers/converter.py: convert_html(html_bytes, temp_dir) returns markdown_text and list of figure paths
 - [x] T031 [P] Implement Docling PDF pipeline in src/aizk/conversion/workers/converter.py: convert_pdf(pdf_bytes, temp_dir) returns markdown_text and list of figure paths
 - [x] T032 Implement S3 upload in src/aizk/conversion/storage/s3_client.py: upload_file(local_path, s3_key) with verification (check ETag or HTTP 200)
 - [x] T033 [P] Implement S3 batch upload in src/aizk/conversion/storage/s3_client.py: upload_artifacts(temp_dir, s3_prefix) uploads markdown, figures, and manifest; returns list of uploaded keys
+- [ ] T033a [P] Implement multipart verification in src/aizk/conversion/storage/s3_client.py: for multipart uploads, verify content-length or ETag format per spec (avoid false positives)
 - [x] T034 [P] Implement manifest generation in src/aizk/conversion/storage/manifest.py: generate_manifest(bookmark, job, artifacts) creates manifest.json dict with version, source, conversion, artifacts sections per data-model.md schema. **Manifest must store absolute S3 URIs** (s3://bucket/aizk_uuid/filename) for all artifact keys (markdown, figures) to ensure durability and portability. ConversionOutput.manifest_key must store full S3 URI or absolute path, not just prefix.
+- [ ] T034a [P] Enforce output naming in src/aizk/conversion/workers/converter.py and src/aizk/conversion/storage/manifest.py: ensure Markdown artifact is stored as `output.md` regardless of title
 - [x] T035 Implement worker main loop in src/aizk/conversion/workers/worker.py: poll_and_process_jobs() queries jobs with status=QUEUED ordered by queued_at, picks up one job, transitions to RUNNING
 - [x] T036 Implement job processing in src/aizk/conversion/workers/worker.py: process_job(job_id) orchestrates fetch → convert → upload → create output record → mark SUCCEEDED with two-phase transaction. **Phase 1 (Conversion)**: Begin transaction, execute fetch & convert, store converted artifacts in temp dir, transition to UPLOAD_PENDING, commit. **Phase 2 (Upload)**: Begin new transaction, execute S3 upload & verify (via ETag/HEAD check), create output record, mark SUCCEEDED, commit. **Resilience**: If Phase 1 succeeds but Phase 2 fails, job remains in UPLOAD_PENDING with artifacts cached; retry queries UPLOAD_PENDING jobs and re-executes Phase 2 only (no reconversion). If Phase 1 fails, transition to FAILED_RETRYABLE for full retry. This enables efficient S3 retry without wasted conversion compute.
 - [x] T037 Implement error handling in src/aizk/conversion/workers/worker.py: handle_job_error(job_id, error) determines FAILED_RETRYABLE vs FAILED_PERM based on error_code, computes earliest_next_attempt_at with exponential backoff, increments attempts
@@ -109,6 +112,7 @@
 - [ ] T044 [P] [US2] Contract test for POST /v1/jobs/{job_id}/retry and /cancel in tests/conversion/contract/test_jobs_retry_cancel.py
 - [ ] T045 [P] [US2] Integration test for bulk actions in tests/conversion/integration/test_jobs_actions.py (retry/cancel flows)
 - [ ] T046 [US2] Integration test for /ui/jobs rendering in tests/conversion/integration/test_ui_jobs.py (table columns, filters, bulk action form)
+- [ ] T046a [US2] Obtain user approval of US2 tests and confirm red phase before starting implementation tasks
 
 ### Implementation for User Story 2
 
@@ -134,6 +138,7 @@
 
 - [ ] T054 [P] [US3] Contract test for GET /v1/outputs/{aizk_uuid} in tests/conversion/contract/test_outputs_api.py
 - [ ] T055 [US3] Integration test for reprocessing flow in tests/conversion/integration/test_reprocess_flow.py (payload_version increment, hash comparison, reuse vs overwrite)
+- [ ] T055a [US3] Obtain user approval of US3 tests and confirm red phase before starting implementation tasks
 
 ### Implementation for User Story 3
 
@@ -157,6 +162,7 @@
 
 - [ ] T061 [P] [US4] Contract test for POST /v1/jobs/batch in tests/conversion/contract/test_jobs_batch.py (per-item status handling)
 - [ ] T062 [US4] Integration test for batch submission in tests/conversion/integration/test_batch_submission.py (mixed valid/invalid jobs, duplicate idempotency_keys reuse existing job)
+- [ ] T062a [US4] Obtain user approval of US4 tests and confirm red phase before starting implementation tasks
 
 ### Implementation for User Story 4
 
@@ -179,7 +185,7 @@
 - [ ] T070 Create Docker Compose configuration in docker-compose.yml: conversion-service container (FastAPI + workers), s3 service container (S3-compatible storage), volume mounts for SQLite (temp workspace uses system temp dir)
 - [ ] T071 [P] Create README documentation in specs/001-docling-conversion-service/: link to quickstart.md, spec.md, and data-model.md
 - [ ] T072 Update CHANGELOG.md per Keep a Changelog format: Add section "## [0.1.0] - 2025-12-23" with "### Added" entries for all user stories, following Conventional Commits with "feat(conversion):" prefix
-- [ ] T073 Bump version in pyproject.toml from 0.0.1 → 0.1.0 per Semantic Versioning (MINOR bump for new feature)
+- [ ] T073 Bump version in pyproject.toml per Semantic Versioning (MINOR bump for new feature)
 
 ---
 
@@ -275,7 +281,7 @@ With multiple developers:
 - [P] tasks can run in parallel (different files, no blocking dependencies)
 - [Story] labels (US1, US2, US3, US4) map to user stories from spec.md
 - Each user story delivers independent value and can be tested separately
-- Tests omitted per feature specification (not explicitly requested); TDD approach during implementation as needed
+- Tests required; implementation is blocked until tests are approved and confirmed failing (red phase) per constitution.
 - Constitution alignment: data provenance (manifest.json), reproducibility (payload versioning), privacy (env vars), observability (structured logging, metrics)
 - Foundational phase (Phase 2) BLOCKS all user story work - must complete first
 - MVP = Phases 1-3 only (Setup + Foundational + User Story 1)

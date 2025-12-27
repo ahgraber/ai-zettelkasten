@@ -25,7 +25,7 @@ A user submits a KaraKeep bookmark (HTML or PDF URL) to the conversion service a
 6. **Given** an arXiv bookmark with PDF asset in KaraKeep, **When** user submits conversion job, **Then** system fetches the PDF from KaraKeep and converts to Markdown
 7. **Given** an arXiv bookmark with HTML content and source URL to PDF, **When** user submits conversion job, **Then** system downloads PDF from `arxiv_pdf_url` metadata field and converts to Markdown
 8. **Given** a GitHub repository bookmark, **When** user submits GitHub URL, **Then** system extracts owner/repo, fetches README (md/rst/txt), converts to Markdown, uploads to S3
-9. **Given** a completed conversion job, **When** system writes to S3, **Then** all artifacts are verified uploaded (via ETag check) within a single database transaction; job status is marked SUCCEEDED ONLY after S3 verification completes; if S3 upload fails or verification fails, transaction rolls back and job remains QUEUED for retry
+9. **Given** a completed conversion job, **When** system writes to S3, **Then** system transitions the job to UPLOAD_PENDING after conversion, performs S3 upload and verification (via ETag/HEAD checks), and marks job SUCCEEDED ONLY after verification completes; if S3 upload fails or verification fails, job remains UPLOAD_PENDING for retry and does not reconvert
 
 ---
 
@@ -94,6 +94,7 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - Default storage: SQLite via SQLModel (local development/testing)
 - Default Orchestration framework: Prefect - when needed
 - **KaraKeep Integration**: Bookmark submission records KaraKeep identifiers and the worker fetches the bookmark from KaraKeep; validates required content (HTML/text/PDF); fetches PDF assets from KaraKeep when present
+- **Raw Input Provenance**: KaraKeep is the authoritative source for raw inputs; the system records durable references (karakeep_id and source URLs) for replay without persisting raw inputs locally.
 - **arXiv Handling**: Implement PDF downloads for abstract page links (arxiv.org/abs); implement URL parsing for arXiv ID extraction and arxiv_pdf_url metadata handling; leverage existing utilities where available
 - **S3 Storage Strategy**: Atomic uploads with verification checksums; failed uploads must not mark jobs SUCCEEDED; implement transaction semantics to ensure consistency between database and S3
 - **Idempotency & Reprocessing**: Compute idempotency_key as hash of aizk_uuid + payload_version + docling_version + config_hash; allow reprocessing via payload_version bumps without overwriting existing artifacts unless markdown_hash changes
@@ -179,8 +180,9 @@ A manager component submits batches of bookmarks to the service and gracefully h
 
 ### Measurable Outcomes
 
-- **SC-001**: Users can submit a single bookmark and receive completed Markdown output in S3 within 90 seconds for HTML sources under 5MB
-- **SC-002**: System processes PDF sources up to 20 pages and delivers Markdown output within 3 minutes with all figures extracted
+- **SC-001**: Users can submit a single bookmark and receive completed Markdown output in S3 within 120 seconds for HTML sources under 5MB
+- **SC-002**: System processes PDF sources up to 20 pages and delivers Markdown output within 5 minutes with all figures extracted
+  - Note: Tighter internal targets (90s HTML, 3 minutes PDF) are aspirational and may be tracked separately.
 - **SC-003**: System handles 4 concurrent conversion jobs without degradation or database lock errors
 - **SC-004**: Duplicate submissions with identical idempotency_key are rejected with appropriate reason within 100ms (no redundant processing)
 - **SC-005**: System maintains 99% idempotency correctness - no duplicate artifacts created for same logical job
