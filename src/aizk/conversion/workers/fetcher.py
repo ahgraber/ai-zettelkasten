@@ -48,7 +48,7 @@ def _is_arxiv_abstract_url(url: str) -> bool:
         return False
 
 
-async def _fetch_karakeep_asset(client: KarakeepClient, asset_id: str) -> bytes:
+async def fetch_karakeep_asset(client: KarakeepClient, asset_id: str) -> bytes:
     """Fetch asset bytes from KaraKeep.
 
     Args:
@@ -67,7 +67,7 @@ async def _fetch_karakeep_asset(client: KarakeepClient, asset_id: str) -> bytes:
         raise FetchError(f"Failed to fetch KaraKeep asset {asset_id}: {exc}") from exc
 
 
-async def _fetch_arxiv_pdf(arxiv_id: str, config: ConversionConfig) -> bytes:
+async def fetch_arxiv_pdf(arxiv_id: str, config: ConversionConfig) -> bytes:
     """Fetch PDF from arXiv.
 
     Args:
@@ -126,7 +126,7 @@ async def fetch_arxiv(
     # Case 1: Abstract page bookmark → download PDF from arXiv
     if source_url and _is_arxiv_abstract_url(source_url):
         logger.info("arXiv abstract bookmark %s; fetching PDF for %s", bookmark.id, arxiv_id)
-        return await _fetch_arxiv_pdf(arxiv_id, config)
+        return await fetch_arxiv_pdf(arxiv_id, config)
 
     # Case 2: PDF asset bookmark → use asset bytes or fetch from KaraKeep
     if is_pdf_asset(bookmark):
@@ -137,15 +137,19 @@ async def fetch_arxiv(
         asset_id = get_bookmark_asset_id(bookmark)
         if asset_id and karakeep_client:
             logger.info("Fetching PDF asset %s from KaraKeep for arXiv %s", asset_id, arxiv_id)
-            return await _fetch_karakeep_asset(karakeep_client, asset_id)
+            return await fetch_karakeep_asset(karakeep_client, asset_id)
 
         raise BookmarkContentUnavailableError(f"Bookmark {bookmark.id} has PDF asset but no way to fetch it")
 
     # Case 3: Link bookmark with html content → download PDF from arXiv
     html_content = get_bookmark_html_content(bookmark)
     if html_content:
+        source_url = get_bookmark_source_url(bookmark)
+        if not is_arxiv_url(source_url):
+            raise BookmarkContentUnavailableError(f"Bookmark {bookmark.id} html content is not from arXiv source URL")
+        arxiv_id = get_arxiv_id(source_url)
         logger.info("Link bookmark %s with html content; fetching PDF for arXiv %s", bookmark.id, arxiv_id)
-        return await _fetch_arxiv_pdf(arxiv_id, config)
+        return await fetch_arxiv_pdf(arxiv_id, config)
 
     # No usable content
     raise BookmarkContentUnavailableError(f"Bookmark {bookmark.id} has no usable content")
