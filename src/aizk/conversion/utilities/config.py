@@ -37,6 +37,23 @@ class ConversionConfig(BaseSettings):
         default=True,
         validation_alias="DOCLING_ENABLE_TABLE_STRUCTURE",
     )
+    docling_vlm_model: str = Field(
+        default="openai/gpt-5-nano",
+        validation_alias="DOCLING_VLM_MODEL",
+    )
+    docling_picture_timeout: float = Field(
+        default=180.0,
+        validation_alias="DOCLING_PICTURE_TIMEOUT",
+    )
+
+    chat_completions_base_url: str = Field(
+        default="",
+        validation_alias="CHAT_COMPLETIONS_BASE_URL",
+    )
+    chat_completions_api_key: str = Field(
+        default="",
+        validation_alias="CHAT_COMPLETIONS_API_KEY",
+    )
 
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
     log_format: str = Field(default="json", validation_alias="LOG_FORMAT")
