@@ -22,7 +22,6 @@ class ConversionOutput(SQLModel, table=True):
     markdown_key: str = Field(sa_column=Column(Text, nullable=False))
     manifest_key: str = Field(sa_column=Column(Text, nullable=False))
     markdown_hash_xx64: str = Field(max_length=16, nullable=False, index=True)
-    markdown_bytes: int = Field(nullable=False)
     figure_count: int = Field(default=0, nullable=False)
     docling_version: str = Field(max_length=20, nullable=False)
     pipeline_name: str = Field(max_length=50, nullable=False)
