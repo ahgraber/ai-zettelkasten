@@ -17,6 +17,7 @@ class ConversionOutput(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     job_id: int = Field(foreign_key="conversion_jobs.id", nullable=False, unique=True, index=True)
     aizk_uuid: str = Field(foreign_key="bookmarks.aizk_uuid", nullable=False, index=True)
+    title: str = Field(max_length=500, nullable=False)
     payload_version: int = Field(nullable=False)
     s3_prefix: str = Field(sa_column=Column(Text, nullable=False))
     markdown_key: str = Field(sa_column=Column(Text, nullable=False))
