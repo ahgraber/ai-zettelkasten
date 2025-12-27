@@ -65,11 +65,11 @@
 
 ### Tests for User Story 1 (write first)
 
-- [ ] T021 [P] [US1] Contract test for POST /v1/jobs and GET /v1/jobs in tests/conversion/contract/test_jobs_api.py (validate OpenAPI schema compliance)
-- [ ] T021a [P] [US1] Unit tests for bookmark validation in tests/conversion/unit/test_bookmark_utils.py (validate_bookmark_content, detect_content_type with KaraKeep bookmark objects)
-- [ ] T022 [P] [US1] Unit tests for utilities in tests/conversion/unit/test_url_utils.py (normalize_url, detect_source_type, get_arxiv_id, standardize_github)
-- [ ] T023 [P] [US1] Unit tests for hashing and filename utils in tests/conversion/unit/test_hashing_filename.py (compute_idempotency_key, compute_markdown_hash, normalize_filename)
-- [ ] T024 [US1] Integration test for end-to-end conversion in tests/conversion/integration/test_conversion_flow.py (submit job → worker processes → outputs stored in S3-compatible storage)
+- [x] T021 [P] [US1] Contract test for POST /v1/jobs and GET /v1/jobs in tests/conversion/contract/test_jobs_api.py (validate OpenAPI schema compliance)
+- [x] T021a [P] [US1] Unit tests for bookmark validation in tests/conversion/unit/test_bookmark_utils.py (validate_bookmark_content, detect_content_type with KaraKeep bookmark objects)
+- [x] T022 [P] [US1] Unit tests for utilities in tests/conversion/unit/test_url_utils.py (normalize_url, detect_source_type, get_arxiv_id, standardize_github)
+- [x] T023 [P] [US1] Unit tests for hashing and filename utils in tests/conversion/unit/test_hashing.py and tests/utilities/test_file_utils.py (compute_idempotency_key, compute_markdown_hash, normalize_filename)
+- [x] T024 [US1] Integration test for end-to-end conversion in tests/conversion/integration/test_conversion_flow.py (submit job → worker processes → outputs stored in S3-compatible storage)
 
 ### Implementation for User Story 1
 

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
+from typing import Literal
 
 from aizk.utilities.arxiv_utils import is_arxiv_url
 from aizk.utilities.url_utils import is_github_url
 from karakeep_client.models import Bookmark, ContentTypeAsset, ContentTypeLink, ContentTypeText
 
 __all__ = [
+    "BookmarkContentKind",
     "BookmarkContentError",
     "detect_content_type",
     "detect_source_type",
@@ -18,6 +18,8 @@ __all__ = [
     "get_bookmark_source_url",
     "get_bookmark_text_content",
     "is_pdf_asset",
+    "resolve_bookmark_content_type",
+    "resolve_bookmark_type",
     "validate_bookmark_content",
 ]
 
@@ -30,6 +32,9 @@ class BookmarkContentError(ValueError):
     def __init__(self, message: str):
         super().__init__(message)
         self.error_code = self.error_code
+
+
+BookmarkContentKind = Literal["link", "text", "asset", "unknown"]
 
 
 def get_bookmark_source_url(bookmark: Bookmark) -> str:
@@ -74,27 +79,44 @@ def is_pdf_asset(bookmark: Bookmark) -> bool:
     return isinstance(content, ContentTypeAsset) and content.asset_type == "pdf"
 
 
-def detect_content_type(url: str, karakeep_metadata: Mapping[str, Any] | None = None) -> str:
-    """Detect content type using metadata or URL patterns.
+def resolve_bookmark_type(bookmark: Bookmark) -> str:
+    """Return the bookmark's type.
+
+    Prefers the top-level bookmark `type` field (when present), falling back to
+    the embedded content `type`. Returns "unknown" when neither exists.
+    """
+    bookmark_type = getattr(bookmark, "type", None)
+    if bookmark_type:
+        return str(bookmark_type)
+
+    content = getattr(bookmark, "content", None)
+    content_type = getattr(content, "type", None)
+    return str(content_type) if content_type else "unknown"
+
+
+def resolve_bookmark_content_type(bookmark: Bookmark) -> BookmarkContentKind:
+    """Return a normalized content type for a bookmark."""
+    content = getattr(bookmark, "content", None)
+    if isinstance(content, ContentTypeLink):
+        return "link"
+    if isinstance(content, ContentTypeText):
+        return "text"
+    if isinstance(content, ContentTypeAsset):
+        return "asset"
+    return "unknown"
+
+
+def detect_content_type(bookmark: Bookmark) -> str:
+    """Detect content type from a KaraKeep bookmark.
 
     Args:
-        url: Source URL.
-        karakeep_metadata: Optional metadata dict from KaraKeep.
+        bookmark: KaraKeep bookmark object.
 
     Returns:
         "pdf" or "html".
     """
-    content_type = ""
-    if karakeep_metadata:
-        content_type = str(
-            karakeep_metadata.get("content_type")
-            or karakeep_metadata.get("mime_type")
-            or karakeep_metadata.get("file_type")
-            or ""
-        ).lower()
-    if "pdf" in content_type:
-        return "pdf"
-    if url.lower().split("?")[0].endswith(".pdf"):
+    content = bookmark.content
+    if isinstance(content, ContentTypeAsset) and content.asset_type == "pdf":
         return "pdf"
     return "html"
 
