@@ -19,20 +19,24 @@ from aizk.datamodel.output import ConversionOutput
 
 
 def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
+    """Exercise API submit + worker processing with stubbed external services."""
     app = create_app()
     if not any(getattr(route, "path", None) == "/v1/jobs" for route in app.router.routes):
         raise AssertionError("Jobs routes not registered in FastAPI app yet.")
 
+    # Stub S3 client to avoid network calls while still verifying upload behavior.
     s3_client = boto3.client("s3", region_name="us-east-1")
     stubber = Stubber(s3_client)
     stubber.activate()
 
     def _init_s3_client(self, config):
+        # Inject the stubbed client into S3Client for deterministic uploads.
         self.config = config
         self.client = s3_client
         self.bucket = config.s3_bucket_name
 
     def _upload_file(self, local_path, s3_key: str) -> str:
+        # Emulate upload + HEAD verification without touching real S3.
         body = local_path.read_bytes()
         stubber.add_response(
             "put_object",
@@ -50,6 +54,7 @@ def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
         self.client.head_object(Bucket=self.bucket, Key=s3_key)
         return f"s3://{self.bucket}/{s3_key}"
 
+    # Avoid KaraKeep network calls; reuse a fixed bookmark payload.
     monkeypatch.setattr(
         "aizk.conversion.api.routes.jobs.fetch_karakeep_bookmark",
         lambda _karakeep_id: html_bookmark,
@@ -62,6 +67,7 @@ def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
         "aizk.conversion.workers.worker.validate_bookmark_content",
         lambda _bookmark: None,
     )
+    # Bypass real conversion to keep the test focused on the flow mechanics.
     monkeypatch.setattr(
         "aizk.conversion.workers.worker._prepare_conversion_input",
         lambda **_kwargs: ConversionInput(
@@ -74,6 +80,7 @@ def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
         "aizk.conversion.workers.worker.convert_html",
         lambda *_args, **_kwargs: ("# Test", []),
     )
+    # Route S3Client behavior through our stubbed implementation.
     monkeypatch.setattr("aizk.conversion.workers.worker.S3Client.__init__", _init_s3_client)
     monkeypatch.setattr("aizk.conversion.workers.worker.S3Client.upload_file", _upload_file)
 

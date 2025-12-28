@@ -41,6 +41,7 @@ from docling_core.types.doc.document import DoclingDocument, PictureItem
 from docling_core.types.io import DocumentStream
 
 from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.paths import figure_dir
 
 logger = logging.getLogger(__name__)
 
@@ -305,7 +306,7 @@ def convert_html(
         logger.exception("HTML conversion failed")
         raise DoclingError(str(e)) from e
     else:
-        figures = _extract_figures(doc, temp_dir / "figures")
+        figures = _extract_figures(doc, figure_dir(temp_dir))
         return markdown, figures
 
 
@@ -342,5 +343,5 @@ def convert_pdf(
         logger.exception("PDF conversion failed")
         raise DoclingError(str(e)) from e
     else:
-        figures = _extract_figures(doc, temp_dir / "figures")
+        figures = _extract_figures(doc, figure_dir(temp_dir))
         return markdown, figures
