@@ -18,7 +18,7 @@ from aizk.datamodel.job import ConversionJob
 from aizk.datamodel.output import ConversionOutput
 
 
-def test_conversion_flow_end_to_end(monkeypatch):
+def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
     app = create_app()
     if not any(getattr(route, "path", None) == "/v1/jobs" for route in app.router.routes):
         raise AssertionError("Jobs routes not registered in FastAPI app yet.")
@@ -52,15 +52,11 @@ def test_conversion_flow_end_to_end(monkeypatch):
 
     monkeypatch.setattr(
         "aizk.conversion.api.routes.jobs.fetch_karakeep_bookmark",
-        lambda _karakeep_id: object(),
-    )
-    monkeypatch.setattr(
-        "aizk.conversion.api.routes.jobs.detect_content_type",
-        lambda _bookmark: "html",
+        lambda _karakeep_id: html_bookmark,
     )
     monkeypatch.setattr(
         "aizk.conversion.workers.worker.fetch_karakeep_bookmark",
-        lambda _karakeep_id: object(),
+        lambda _karakeep_id: html_bookmark,
     )
     monkeypatch.setattr(
         "aizk.conversion.workers.worker.validate_bookmark_content",
@@ -86,8 +82,6 @@ def test_conversion_flow_end_to_end(monkeypatch):
             "/v1/jobs",
             json={
                 "karakeep_id": "bm_test_001",
-                "url": "https://arxiv.org/abs/1706.03762",
-                "title": "Attention Is All You Need",
             },
         )
         assert response.status_code == 201

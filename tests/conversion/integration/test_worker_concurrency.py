@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import threading
+from uuid import UUID
 
 from sqlalchemy.orm import Mapped
 
@@ -17,7 +18,7 @@ def test_poll_and_process_jobs_is_atomic(db_session, monkeypatch):
     """Ensure only one worker claims a queued job when polling concurrently."""
     bookmark = Bookmark(
         karakeep_id="bm_concurrent_001",
-        aizk_uuid="550e8400-e29b-41d4-a716-446655440000",
+        aizk_uuid=UUID("550e8400-e29b-41d4-a716-446655440000"),
         url="https://example.com",
         normalized_url="https://example.com",
         title="Concurrency Test",

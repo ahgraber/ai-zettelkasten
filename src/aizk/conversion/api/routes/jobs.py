@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 from typing import Annotated
-from uuid import uuid4
+from uuid import UUID
 
 from pydantic import AnyUrl
 from sqlmodel import Session, select
@@ -18,6 +18,8 @@ from aizk.conversion.utilities.bookmark_utils import (
     detect_content_type,
     detect_source_type,
     fetch_karakeep_bookmark,
+    get_bookmark_source_url,
+    validate_bookmark_content,
 )
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.hashing import compute_idempotency_key
@@ -90,29 +92,27 @@ def submit_job(
 ) -> JobResponse:
     """Submit a new conversion job."""
     config = ConversionConfig()
-    source_url = submission.url
-    source_type = submission.source_type or detect_source_type(str(source_url))
+    karakeep_bookmark = fetch_karakeep_bookmark(submission.karakeep_id)
+    if not karakeep_bookmark:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": "karakeep_bookmark_not_found",
+                "message": f"KaraKeep bookmark not found for {submission.karakeep_id}",
+            },
+        )
+    validate_bookmark_content(karakeep_bookmark)
+    source_url = get_bookmark_source_url(karakeep_bookmark)
+    source_type = detect_source_type(source_url)
+    content_type = detect_content_type(karakeep_bookmark)
 
     bookmark = session.exec(select(Bookmark).where(Bookmark.karakeep_id == submission.karakeep_id)).first()
     if not bookmark:
-        karakeep_bookmark = fetch_karakeep_bookmark(submission.karakeep_id)
-        if karakeep_bookmark:
-            content_type = detect_content_type(karakeep_bookmark)
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={
-                    "error": "karakeep_bookmark_not_found",
-                    "message": f"KaraKeep bookmark not found for {submission.karakeep_id}",
-                },
-            )
-        aizk_uuid = submission.aizk_uuid or str(uuid4())
         bookmark = Bookmark(
             karakeep_id=submission.karakeep_id,
-            aizk_uuid=aizk_uuid,
-            url=str(source_url),
-            normalized_url=normalize_url(str(source_url)),
-            title=submission.title,
+            url=source_url,
+            normalized_url=normalize_url(source_url),
+            title=karakeep_bookmark.title or source_url,
             content_type=content_type,
             source_type=source_type,
             created_at=_utcnow(),
@@ -174,7 +174,7 @@ def get_job(
 def list_jobs(
     session: Annotated[Session, Depends(get_db_session)],
     status_filter: Annotated[ConversionJobStatus | None, Query(alias="status")] = None,
-    aizk_uuid: Annotated[str | None, Query()] = None,
+    aizk_uuid: Annotated[UUID | None, Query()] = None,
     karakeep_id: Annotated[str | None, Query()] = None,
     created_after: Annotated[dt.datetime | None, Query()] = None,
     created_before: Annotated[dt.datetime | None, Query()] = None,
