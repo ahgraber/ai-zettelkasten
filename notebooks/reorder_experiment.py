@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field, ValidationError
 from setproctitle import setproctitle
 from tqdm.auto import tqdm
 
-from aizk.utilities.arxiv_utils import ArxivClient
+from aizk.conversion.utilities.arxiv_utils import ArxivClient
 from aizk.utilities.file_utils import to_valid_fname
 from aizk.utilities.limiters import SlidingWindowRateLimiter
 
