@@ -24,15 +24,23 @@ def _configure_sqlite_pragmas(engine: Engine) -> None:
         cursor.close()
 
 
+_ENGINE_CACHE: dict[str, Engine] = {}
+
+
 def get_engine(database_url: str | None = None) -> Engine:
     """Create a database engine with SQLite tuning when applicable."""
     if database_url is None:
         config = ConversionConfig()
         database_url = config.database_url
+
+    if engine := _ENGINE_CACHE.get(database_url):
+        return engine
+
     connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
     engine = create_engine(database_url, connect_args=connect_args)
     if database_url.startswith("sqlite"):
         _configure_sqlite_pragmas(engine)
+    _ENGINE_CACHE[database_url] = engine
     return engine
 
 
