@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -66,7 +67,7 @@ class ConversionManifest(BaseModel):
     model_config = ConfigDict(json_encoders={datetime: lambda v: v.isoformat()})
 
     version: str = "1.0"
-    aizk_uuid: str
+    aizk_uuid: UUID
     karakeep_id: str
     source: ManifestSource
     conversion: ManifestConversionMetadata

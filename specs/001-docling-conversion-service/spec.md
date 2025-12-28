@@ -127,7 +127,7 @@ A manager component submits batches of bookmarks to the service and gracefully h
 
 ### Functional Requirements
 
-- **FR-001**: System MUST accept bookmark submissions via REST API with karakeep_id, url, title, and optional payload_version and idempotency_key. System MUST assign or derive aizk_uuid. content_type is detected from the KaraKeep bookmark fetched by the worker; source_type indicates origin (arxiv/github/other) parsed from URL.
+- **FR-001**: System MUST accept bookmark submissions via REST API with karakeep_id and optional payload_version and idempotency_key. System MUST assign or derive aizk_uuid. URL, title, and content_type are extracted from the KaraKeep bookmark; source_type indicates origin (arxiv/github/other) parsed from the bookmark URL.
 - **FR-002**: System MUST normalize URLs for deduplication by removing fragments, sorting query parameters, and lowercasing domain
 - **FR-003**: System MUST fetch the KaraKeep bookmark and validate it has HTML content, text, or PDF asset; raise exception with error_code='karakeep_bookmark_missing_contents' if all are absent. System MUST detect content_type from the KaraKeep bookmark structure: PDF asset present → 'pdf', HTML content/text present → 'html'. System MUST detect source_type from URL patterns: arxiv.org → 'arxiv', github.com → 'github', otherwise → 'other'
 - **FR-004**: System MUST assign or look up internal aizk_uuid for each bookmark and persist in bookmarks table with karakeep_id as unique key

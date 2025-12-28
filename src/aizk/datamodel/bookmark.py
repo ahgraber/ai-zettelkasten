@@ -2,6 +2,7 @@
 
 import datetime
 from typing import TYPE_CHECKING, List
+from uuid import UUID, uuid4
 
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -13,7 +14,12 @@ class Bookmark(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     karakeep_id: str = Field(max_length=255, nullable=False, unique=True, index=True)
-    aizk_uuid: str = Field(max_length=36, nullable=False, unique=True, index=True)
+    aizk_uuid: UUID = Field(
+        default_factory=uuid4,
+        nullable=False,
+        unique=True,
+        index=True,
+    )
     url: str = Field(nullable=False)
     normalized_url: str = Field(nullable=False, index=True)
     title: str = Field(max_length=500, nullable=False)
