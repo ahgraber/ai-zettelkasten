@@ -61,7 +61,7 @@
 
 **Goal**: Users can submit KaraKeep bookmarks via API and receive Markdown documents with extracted figures in S3
 
-**Independent Test**: Submit bookmark URL via POST /v1/jobs, wait for job completion, verify Markdown and figures in S3 with correct structure
+**Independent Test**: Submit KaraKeep bookmark ID via POST /v1/jobs, wait for job completion, verify Markdown and figures in S3 with correct structure
 
 ### Tests for User Story 1 (write first)
 
@@ -90,7 +90,7 @@
 - [x] T036 Implement job processing in src/aizk/conversion/workers/worker.py: process_job(job_id) orchestrates fetch → convert → upload → create output record → mark SUCCEEDED with two-phase transaction. **Phase 1 (Conversion)**: Begin transaction, execute fetch & convert, store converted artifacts in temp dir, transition to UPLOAD_PENDING, commit. **Phase 2 (Upload)**: Begin new transaction, execute S3 upload & verify (via ETag/HEAD check), create output record, mark SUCCEEDED, commit. **Resilience**: If Phase 1 succeeds but Phase 2 fails, job remains in UPLOAD_PENDING with artifacts cached; retry queries UPLOAD_PENDING jobs and re-executes Phase 2 only (no reconversion). If Phase 1 fails, transition to FAILED_RETRYABLE for full retry. This enables efficient S3 retry without wasted conversion compute.
 - [x] T037 Implement error handling in src/aizk/conversion/workers/worker.py: handle_job_error(job_id, error) determines FAILED_RETRYABLE vs FAILED_PERM based on error_code, computes earliest_next_attempt_at with exponential backoff, increments attempts
 - [x] T037a Implement upload retry handler in src/aizk/conversion/workers/worker.py: retry S3 uploads within the same worker run while the temporary workspace exists, and fall back to FAILED_RETRYABLE if artifacts are missing.
-- [x] T038 Implement Pydantic request schema in src/aizk/conversion/api/schemas/jobs.py: JobSubmission with fields (karakeep_id, url, title, payload_version, idempotency_key optional)
+- [x] T038 Implement Pydantic request schema in src/aizk/conversion/api/schemas/jobs.py: JobSubmission with fields (karakeep_id, payload_version, idempotency_key optional)
 - [x] T039 [P] Implement Pydantic response schema in src/aizk/conversion/api/schemas/jobs.py: JobResponse with fields from ConversionJob model
 - [x] T040 Implement POST /v1/jobs endpoint in src/aizk/conversion/api/routes/jobs.py: create or lookup bookmark record, compute idempotency_key, check for duplicate, create ConversionJob with status=NEW→QUEUED, return 201 or 200 with existing job. Worker fetches KaraKeep bookmark and validates required content (HTML/text/PDF).
 - [x] T041 Implement GET /v1/jobs/{job_id} endpoint in src/aizk/conversion/api/routes/jobs.py: query job by ID, return JobResponse or 404

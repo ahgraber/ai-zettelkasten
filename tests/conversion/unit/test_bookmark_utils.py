@@ -1,7 +1,5 @@
 """Unit tests for conversion bookmark utilities."""
 
-import json
-
 import pytest
 
 from aizk.conversion.utilities.bookmark_utils import (
@@ -20,102 +18,9 @@ from aizk.conversion.utilities.bookmark_utils import (
 )
 from karakeep_client.models import Bookmark
 
-_PDF_BOOKMARK = json.loads(
-    """
-    {
-      "id": "kbleumlsp93mtgx4r8dc6ext",
-      "createdAt": "2025-11-07T23:22:10.000Z",
-      "modifiedAt": "2025-11-19T19:07:24.000Z",
-      "title": "Attention Is All You Need",
-      "archived": false,
-      "favourited": false,
-      "taggingStatus": "success",
-      "summarizationStatus": "success",
-      "note": null,
-      "summary": null,
-      "tags": [
-        {
-          "id": "hxnan6kdps1g58myyfv59g3t",
-          "name": "Self-Attention",
-          "attachedBy": "ai"
-        }
-      ],
-      "content": {
-        "type": "asset",
-        "assetType": "pdf",
-        "assetId": "1f9093a8-473c-4d2b-a7a5-28067155c28f",
-        "fileName": "1706.03762",
-        "sourceUrl": "http://export.arxiv.org/pdf/1706.03762",
-        "size": 2215244.0,
-        "content": "PDF content here (truncated for length)"
-      },
-      "assets": [
-        {
-          "id": "1f9093a8-473c-4d2b-a7a5-28067155c28f",
-          "assetType": "bookmarkAsset"
-        }
-      ]
-    }
-    """
-)
 
-_HTML_BOOKMARK = json.loads(
-    """
-    {
-      "id": "rpnt3mzc96g5uhovbv2runu4",
-      "createdAt": "2025-07-08T01:00:00.000Z",
-      "modifiedAt": "2025-07-08T01:00:07.000Z",
-      "title": null,
-      "archived": false,
-      "favourited": false,
-      "taggingStatus": "success",
-      "summarizationStatus": "success",
-      "note": null,
-      "summary": null,
-      "tags": [
-        {
-          "id": "b4bk2x53i0wwxwhx1ubqib2d",
-          "name": "Chatbot Arena",
-          "attachedBy": "ai"
-        }
-      ],
-      "content": {
-        "type": "link",
-        "url": "https://aimlbling-about.ninerealmlabs.com/blog/sycophancy-planning-and-the-pepsi-challenge/",
-        "title": "Sycophancy, Planning, and the Pepsi Challenge",
-        "description": "Sycophancy On April 25th, we [OpenAI] rolled out an update to GPT-4o in ChatGPT that made the model noticeably more sycophantic.",
-        "imageUrl": "https://github.com/ahgraber.png",
-        "imageAssetId": "ac6ac94c-a265-46fa-814a-7430c207fbf3",
-        "screenshotAssetId": "a6b18e96-80a1-4f15-a702-8a630dba0386",
-        "fullPageArchiveAssetId": null,
-        "precrawledArchiveAssetId": null,
-        "videoAssetId": null,
-        "favicon": "https://aimlbling-about.ninerealmlabs.com/apple-touch-icon.png",
-        "htmlContent": "<div class=\\"page\\" id=\\"readability-page-1\\"><div><p>HTML content here (truncated for length)</p></div></div>",
-        "contentAssetId": null,
-        "crawledAt": "2025-07-08T01:00:04.000Z",
-        "author": null,
-        "publisher": null,
-        "datePublished": "2025-07-07T04:00:00.000Z",
-        "dateModified": "2025-07-07T23:19:41.000Z"
-      },
-      "assets": [
-        {
-          "id": "a6b18e96-80a1-4f15-a702-8a630dba0386",
-          "assetType": "screenshot"
-        },
-        {
-          "id": "ac6ac94c-a265-46fa-814a-7430c207fbf3",
-          "assetType": "bannerImage"
-        }
-      ]
-    }
-    """
-)
-
-
-def test_pdf_bookmark_parsing_extracts_expected_fields():
-    bookmark = Bookmark.model_validate(_PDF_BOOKMARK)
+def test_pdf_bookmark_parsing_extracts_expected_fields(pdf_bookmark):
+    bookmark = pdf_bookmark
 
     assert get_bookmark_source_url(bookmark) == "http://export.arxiv.org/pdf/1706.03762"
     assert get_bookmark_html_content(bookmark) is None
@@ -129,8 +34,8 @@ def test_pdf_bookmark_parsing_extracts_expected_fields():
     assert resolve_bookmark_content_type(bookmark) == "asset"
 
 
-def test_html_bookmark_parsing_extracts_expected_fields():
-    bookmark = Bookmark.model_validate(_HTML_BOOKMARK)
+def test_html_bookmark_parsing_extracts_expected_fields(html_bookmark):
+    bookmark = html_bookmark
 
     assert get_bookmark_source_url(bookmark) == (
         "https://aimlbling-about.ninerealmlabs.com/blog/sycophancy-planning-and-the-pepsi-challenge/"

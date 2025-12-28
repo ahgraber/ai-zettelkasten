@@ -32,7 +32,7 @@ This document defines the complete data model for the Docling Conversion Service
 | -------------- | ----------- | ----------------------------------- | -------------------------------------------------------------------------------- |
 | id             | Integer     | PRIMARY KEY, AUTOINCREMENT          | Internal database ID                                                             |
 | karakeep_id    | String(255) | UNIQUE, NOT NULL, INDEXED           | External KaraKeep bookmark identifier                                            |
-| aizk_uuid      | String(36)  | UNIQUE, NOT NULL, INDEXED           | Internal UUID for this bookmark (UUID4)                                          |
+| aizk_uuid      | UUID        | UNIQUE, NOT NULL, INDEXED           | Internal UUID for this bookmark (UUID4)                                          |
 | url            | Text        | NOT NULL                            | Original source URL as submitted                                                 |
 | normalized_url | Text        | NOT NULL, INDEXED                   | Normalized URL for deduplication                                                 |
 | title          | Text        | NOT NULL                            | Bookmark title from KaraKeep or extracted                                        |
@@ -82,7 +82,7 @@ This document defines the complete data model for the Docling Conversion Service
 | Field                    | Type       | Constraints                                          | Description                                                                                                                           |
 | ------------------------ | ---------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | id                       | Integer    | PRIMARY KEY, AUTOINCREMENT                           | Internal job ID                                                                                                                       |
-| aizk_uuid                | String(36) | FOREIGN KEY → bookmarks.aizk_uuid, NOT NULL, INDEXED | Reference to bookmark                                                                                                                 |
+| aizk_uuid                | UUID       | FOREIGN KEY → bookmarks.aizk_uuid, NOT NULL, INDEXED | Reference to bookmark                                                                                                                 |
 | title                    | Text       | NOT NULL                                             | Bookmark title snapshot at submission                                                                                                 |
 | payload_version          | Integer    | NOT NULL, DEFAULT 1                                  | API/pipeline version for reprocessing                                                                                                 |
 | status                   | String(20) | NOT NULL, INDEXED                                    | Enum (ConversionJobStatus): 'NEW', 'QUEUED', 'RUNNING', 'UPLOAD_PENDING', 'SUCCEEDED', 'FAILED_RETRYABLE', 'FAILED_PERM', 'CANCELLED' |
@@ -160,7 +160,7 @@ This document defines the complete data model for the Docling Conversion Service
 | ------------------ | ---------- | ----------------------------------------------------------- | ------------------------------------- |
 | id                 | Integer    | PRIMARY KEY, AUTOINCREMENT                                  | Internal output ID                    |
 | job_id             | Integer    | FOREIGN KEY → conversion_jobs.id, NOT NULL, UNIQUE, INDEXED | Reference to completed job            |
-| aizk_uuid          | String(36) | FOREIGN KEY → bookmarks.aizk_uuid, NOT NULL, INDEXED        | Reference to bookmark                 |
+| aizk_uuid          | UUID       | FOREIGN KEY → bookmarks.aizk_uuid, NOT NULL, INDEXED        | Reference to bookmark                 |
 | title              | Text       | NOT NULL                                                    | Bookmark title snapshot at conversion |
 | payload_version    | Integer    | NOT NULL                                                    | API/pipeline version used             |
 | s3_prefix          | Text       | NOT NULL                                                    | S3 path prefix: `bucket/<aizk_uuid>/` |
@@ -420,7 +420,7 @@ def compute_markdown_hash(markdown: str) -> str:
 import hashlib
 
 
-def compute_idempotency_key(aizk_uuid: str, payload_version: int, docling_version: str, config_hash: str) -> str:
+def compute_idempotency_key(aizk_uuid: UUID, payload_version: int, docling_version: str, config_hash: str) -> str:
     """Compute SHA256 idempotency key.
 
     Args:
@@ -466,7 +466,7 @@ class Bookmark(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     karakeep_id: str = Field(max_length=255, unique=True, index=True)
-    aizk_uuid: str = Field(default_factory=lambda: str(uuid4()), unique=True, index=True)
+    aizk_uuid: UUID = Field(default_factory=uuid4, unique=True, index=True)
     url: str
     normalized_url: str = Field(index=True)
     title: str = Field(max_length=500)
@@ -491,7 +491,7 @@ class ConversionJob(SQLModel, table=True):
     __tablename__ = "conversion_jobs"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    aizk_uuid: str = Field(foreign_key="bookmarks.aizk_uuid", index=True)
+    aizk_uuid: UUID = Field(foreign_key="bookmarks.aizk_uuid", index=True)
     title: str = Field(max_length=500)
     payload_version: int = Field(default=1)
     status: str = Field(max_length=20, index=True)
@@ -525,7 +525,7 @@ class ConversionOutput(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     job_id: int = Field(foreign_key="conversion_jobs.id", unique=True, index=True)
-    aizk_uuid: str = Field(foreign_key="bookmarks.aizk_uuid", index=True)
+    aizk_uuid: UUID = Field(foreign_key="bookmarks.aizk_uuid", index=True)
     title: str = Field(max_length=500)
     payload_version: int
     s3_prefix: str

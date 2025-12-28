@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from uuid import UUID
 
 from pydantic import AnyUrl, BaseModel, Field
 
@@ -14,12 +14,8 @@ class JobSubmission(BaseModel):
     """Request schema for job submission."""
 
     karakeep_id: str = Field(..., max_length=255)
-    url: AnyUrl
-    title: str = Field(..., max_length=500)
     payload_version: int = Field(default=1, ge=1)
     idempotency_key: str | None = Field(default=None, max_length=64)
-    aizk_uuid: str | None = None
-    source_type: Literal["arxiv", "github", "other"] | None = None
 
 
 class ArtifactSummary(BaseModel):
@@ -35,7 +31,7 @@ class JobResponse(BaseModel):
     """Response schema for conversion jobs."""
 
     id: int
-    aizk_uuid: str
+    aizk_uuid: UUID
     karakeep_id: str
     url: AnyUrl
     title: str

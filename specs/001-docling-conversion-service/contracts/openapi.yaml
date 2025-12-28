@@ -47,22 +47,16 @@ paths:
                 summary: arXiv paper
                 value:
                   karakeep_id: "bm_arxiv_123"
-                  url: "https://arxiv.org/abs/1706.03762"
-                  title: "Attention Is All You Need"
                   payload_version: 1
               github:
                 summary: GitHub repository
                 value:
                   karakeep_id: "bm_github_456"
-                  url: "https://github.com/microsoft/docling"
-                  title: "Docling - Document Parsing"
                   payload_version: 1
               html:
                 summary: HTML webpage
                 value:
                   karakeep_id: "bm_html_789"
-                  url: "https://example.com/article"
-                  title: "Example Article"
       responses:
         "201":
           description: Job created successfully
@@ -76,8 +70,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JobResponse"
-        "400":
-          description: Invalid request (validation errors)
+        "404":
+          description: KaraKeep bookmark not found
           content:
             application/json:
               schema:
@@ -412,27 +406,11 @@ components:
       type: object
       required:
         - karakeep_id
-        - url
-        - title
       properties:
         karakeep_id:
           type: string
           description: KaraKeep bookmark identifier
           maxLength: 255
-        aizk_uuid:
-          type: string
-          format: uuid
-          description: Optional internal UUID (generated if not provided)
-        url:
-          type: string
-          format: uri
-          description: Source URL to convert
-        title:
-          type: string
-          description: Bookmark title
-          maxLength: 500
-        source_type:
-          $ref: "#/components/schemas/SourceType"
         payload_version:
           type: integer
           description: Pipeline version for reprocessing control
@@ -444,9 +422,6 @@ components:
           maxLength: 64
       example:
         karakeep_id: "bm_123"
-        url: "https://arxiv.org/abs/1706.03762"
-        title: "Attention Is All You Need"
-        source_type: "arxiv"
         payload_version: 1
 
     JobResponse:
