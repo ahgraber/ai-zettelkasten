@@ -48,11 +48,10 @@ def _is_arxiv_abstract_url(url: str) -> bool:
         return False
 
 
-async def fetch_karakeep_asset(client: KarakeepClient, asset_id: str) -> bytes:
+async def fetch_karakeep_asset(asset_id: str) -> bytes:
     """Fetch asset bytes from KaraKeep.
 
     Args:
-        client: KaraKeep client instance.
         asset_id: Asset identifier.
 
     Returns:
@@ -62,7 +61,8 @@ async def fetch_karakeep_asset(client: KarakeepClient, asset_id: str) -> bytes:
         FetchError: If asset fetch fails.
     """
     try:
-        return await client.get_asset(asset_id=asset_id)
+        async with KarakeepClient() as client:
+            return await client.get_asset(asset_id=asset_id)
     except Exception as exc:
         raise FetchError(f"Failed to fetch KaraKeep asset {asset_id}: {exc}") from exc
 
@@ -94,7 +94,6 @@ async def fetch_arxiv(
     config: ConversionConfig,
     *,
     asset_bytes: bytes | None = None,
-    karakeep_client: KarakeepClient | None = None,
 ) -> bytes:
     """Fetch arXiv paper from KaraKeep bookmark.
 
@@ -136,12 +135,8 @@ async def fetch_arxiv(
 
         asset_id = get_bookmark_asset_id(bookmark)
         if asset_id:
-            if karakeep_client:
-                logger.info("Fetching PDF asset %s from KaraKeep for arXiv %s", asset_id, arxiv_id)
-                return await fetch_karakeep_asset(karakeep_client, asset_id)
-            async with KarakeepClient() as client:
-                logger.info("Fetching PDF asset %s from KaraKeep for arXiv %s", asset_id, arxiv_id)
-                return await fetch_karakeep_asset(client, asset_id)
+            logger.info("Fetching PDF asset %s from KaraKeep for arXiv %s", asset_id, arxiv_id)
+            return await fetch_karakeep_asset(asset_id)
 
         raise BookmarkContentUnavailableError(f"Bookmark {bookmark.id} has PDF asset but no way to fetch it")
 
