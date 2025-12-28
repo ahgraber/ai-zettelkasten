@@ -42,6 +42,6 @@ def test_jobs_schemas_present_in_openapi():
     if not app_spec.get("components"):
         pytest.xfail("API schemas not registered in FastAPI app yet.")
 
-    for schema_name in ("JobSubmission", "JobResponse", "JobStatus"):
+    for schema_name in ("JobSubmission", "JobResponse", "ConversionJobStatus"):
         assert schema_name in spec["components"]["schemas"]
         assert schema_name in app_spec["components"]["schemas"]

@@ -1,7 +1,5 @@
 """SQLModel entity for conversion jobs."""
 
-from __future__ import annotations
-
 import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Optional

@@ -79,24 +79,24 @@ This document defines the complete data model for the Docling Conversion Service
 
 **Fields**:
 
-| Field                    | Type       | Constraints                                          | Description                                                                                                     |
-| ------------------------ | ---------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| id                       | Integer    | PRIMARY KEY, AUTOINCREMENT                           | Internal job ID                                                                                                 |
-| aizk_uuid                | String(36) | FOREIGN KEY → bookmarks.aizk_uuid, NOT NULL, INDEXED | Reference to bookmark                                                                                           |
-| title                    | Text       | NOT NULL                                             | Bookmark title snapshot at submission                                                                           |
-| payload_version          | Integer    | NOT NULL, DEFAULT 1                                  | API/pipeline version for reprocessing                                                                           |
-| status                   | String(20) | NOT NULL, INDEXED                                    | Enum: 'NEW', 'QUEUED', 'RUNNING', 'UPLOAD_PENDING', 'SUCCEEDED', 'FAILED_RETRYABLE', 'FAILED_PERM', 'CANCELLED' |
-| attempts                 | Integer    | NOT NULL, DEFAULT 0                                  | Number of execution attempts                                                                                    |
-| error_code               | String(50) | NULLABLE                                             | Machine-readable error identifier                                                                               |
-| error_message            | Text       | NULLABLE                                             | Human-readable error details                                                                                    |
-| idempotency_key          | String(64) | UNIQUE, NOT NULL, INDEXED                            | Hash for duplicate detection                                                                                    |
-| earliest_next_attempt_at | DateTime   | NULLABLE, INDEXED                                    | Scheduled retry timestamp (UTC)                                                                                 |
-| last_error_at            | DateTime   | NULLABLE                                             | Most recent error timestamp (UTC)                                                                               |
-| queued_at                | DateTime   | NULLABLE                                             | When job entered QUEUED status                                                                                  |
-| started_at               | DateTime   | NULLABLE                                             | When job entered RUNNING status                                                                                 |
-| finished_at              | DateTime   | NULLABLE                                             | When job reached terminal status                                                                                |
-| created_at               | DateTime   | NOT NULL, DEFAULT CURRENT_TIMESTAMP                  | Record creation timestamp (UTC)                                                                                 |
-| updated_at               | DateTime   | NOT NULL, DEFAULT CURRENT_TIMESTAMP                  | Record update timestamp (UTC)                                                                                   |
+| Field                    | Type       | Constraints                                          | Description                                                                                                                           |
+| ------------------------ | ---------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| id                       | Integer    | PRIMARY KEY, AUTOINCREMENT                           | Internal job ID                                                                                                                       |
+| aizk_uuid                | String(36) | FOREIGN KEY → bookmarks.aizk_uuid, NOT NULL, INDEXED | Reference to bookmark                                                                                                                 |
+| title                    | Text       | NOT NULL                                             | Bookmark title snapshot at submission                                                                                                 |
+| payload_version          | Integer    | NOT NULL, DEFAULT 1                                  | API/pipeline version for reprocessing                                                                                                 |
+| status                   | String(20) | NOT NULL, INDEXED                                    | Enum (ConversionJobStatus): 'NEW', 'QUEUED', 'RUNNING', 'UPLOAD_PENDING', 'SUCCEEDED', 'FAILED_RETRYABLE', 'FAILED_PERM', 'CANCELLED' |
+| attempts                 | Integer    | NOT NULL, DEFAULT 0                                  | Number of execution attempts                                                                                                          |
+| error_code               | String(50) | NULLABLE                                             | Machine-readable error identifier                                                                                                     |
+| error_message            | Text       | NULLABLE                                             | Human-readable error details                                                                                                          |
+| idempotency_key          | String(64) | UNIQUE, NOT NULL, INDEXED                            | Hash for duplicate detection                                                                                                          |
+| earliest_next_attempt_at | DateTime   | NULLABLE, INDEXED                                    | Scheduled retry timestamp (UTC)                                                                                                       |
+| last_error_at            | DateTime   | NULLABLE                                             | Most recent error timestamp (UTC)                                                                                                     |
+| queued_at                | DateTime   | NULLABLE                                             | When job entered QUEUED status                                                                                                        |
+| started_at               | DateTime   | NULLABLE                                             | When job entered RUNNING status                                                                                                       |
+| finished_at              | DateTime   | NULLABLE                                             | When job reached terminal status                                                                                                      |
+| created_at               | DateTime   | NOT NULL, DEFAULT CURRENT_TIMESTAMP                  | Record creation timestamp (UTC)                                                                                                       |
+| updated_at               | DateTime   | NOT NULL, DEFAULT CURRENT_TIMESTAMP                  | Record update timestamp (UTC)                                                                                                         |
 
 **Relationships**:
 
