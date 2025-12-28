@@ -100,7 +100,7 @@ paths:
           in: query
           description: Filter by job status
           schema:
-            $ref: "#/components/schemas/JobStatus"
+            $ref: "#/components/schemas/ConversionJobStatus"
         - name: aizk_uuid
           in: query
           description: Filter by bookmark UUID
@@ -481,7 +481,7 @@ components:
         source_type:
           $ref: "#/components/schemas/SourceType"
         status:
-          $ref: "#/components/schemas/JobStatus"
+          $ref: "#/components/schemas/ConversionJobStatus"
         attempts:
           type: integer
         payload_version:
@@ -669,7 +669,7 @@ components:
         figure_count:
           type: integer
 
-    JobStatus:
+    ConversionJobStatus:
       type: string
       enum:
         - NEW

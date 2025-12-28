@@ -118,7 +118,7 @@ class S3Client:
         Returns:
             Dictionary mapping artifact type to S3 URI:
             {
-                "markdown": "s3://bucket/prefix/content.md",
+                "markdown": "s3://bucket/prefix/output.md",
                 "figures": ["s3://bucket/prefix/figures/image-001.png", ...],
                 "manifest": "s3://bucket/prefix/manifest.json",
             }
@@ -129,7 +129,7 @@ class S3Client:
         uploaded: dict[str, str | list[str]] = {}
 
         # Upload markdown
-        markdown_key = f"{s3_prefix}/content.md"
+        markdown_key = f"{s3_prefix}/output.md"
         uploaded["markdown"] = self.upload_file(markdown_path, markdown_key)
 
         # Upload figures
