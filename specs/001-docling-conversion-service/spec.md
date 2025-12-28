@@ -53,7 +53,7 @@ This separation allows UPLOAD_PENDING jobs to retry Phase 2 only if S3 upload fa
 3. **Given** user views jobs with status=RUNNING, **When** user selects jobs and clicks Cancel, **Then** system attempts best-effort cancellation and updates status to CANCELLED
 4. **Given** multiple jobs selected for bulk action, **When** user confirms action, **Then** system applies retry or cancel to all selected jobs and displays result summary
 5. **Given** user filters by status, **When** user enters text search for aizk_uuid/karakeep_id/title, **Then** table updates to show only matching jobs
-6. **Given** a job with status=UPLOAD_PENDING (S3 upload failed after successful conversion), **When** system retries automatically or user clicks Retry, **Then** system replays Phase 2 (S3 upload + verify) from cached conversion artifacts WITHOUT reconverting, improving retry efficiency for transient S3 errors
+6. **Given** a job with status=UPLOAD_PENDING (S3 upload failed after successful conversion), **When** the worker retries upload during the same run, **Then** system replays Phase 2 (S3 upload + verify) from cached conversion artifacts WITHOUT reconverting; if cached artifacts are missing, the job falls back to FAILED_RETRYABLE for full retry
 
 ---
 
@@ -173,7 +173,7 @@ A manager component submits batches of bookmarks to the service and gracefully h
 ### Key Entities
 
 - **Bookmark**: Represents a KaraKeep bookmark with metadata needed for conversion execution. Attributes: id (PK), karakeep_id (unique), aizk_uuid (unique internal identifier), url (canonical source identifier), title, source_type (html/pdf/arxiv/github), normalized_url (for deduplication), created_at, updated_at. Relationships: one-to-many with conversion_jobs, one-to-many with conversion_outputs. Note: Does not replicate full KaraKeep bookmark; stores only fields required for conversion routing and deduplication. Source-specific identifiers (arxiv_id, github owner/repo) are extracted from URL during processing using utilities.
-- **ConversionJob**: Represents a single conversion attempt. Attributes: id (PK), aizk_uuid (FK to bookmarks), payload_version, status (NEW/QUEUED/RUNNING/SUCCEEDED/FAILED_RETRYABLE/FAILED_PERM/CANCELLED), attempts, error_code, error_message, queued_at, started_at, finished_at, idempotency_key (unique), earliest_next_attempt_at (for retry backoff scheduling), last_error_at. Relationships: many-to-one with bookmarks, one-to-one with conversion_outputs (if SUCCEEDED)
+- **ConversionJob**: Represents a single conversion attempt. Attributes: id (PK), aizk_uuid (FK to bookmarks), payload_version, status (ConversionJobStatus: NEW/QUEUED/RUNNING/SUCCEEDED/FAILED_RETRYABLE/FAILED_PERM/CANCELLED), attempts, error_code, error_message, queued_at, started_at, finished_at, idempotency_key (unique), earliest_next_attempt_at (for retry backoff scheduling), last_error_at. Relationships: many-to-one with bookmarks, one-to-one with conversion_outputs (if SUCCEEDED)
 - **ConversionOutput**: Represents successful conversion artifact set. Attributes: id (PK), job_id (FK to conversion_jobs), aizk_uuid (FK to bookmarks), payload_version, s3_prefix, markdown_key, manifest_key (contains full artifact listing), markdown_hash_xx64, figure_count, docling_version, pipeline_name, created_at. Relationships: many-to-one with bookmarks, one-to-one with conversion_jobs. Note: Individual figures and artifacts are listed in manifest.json only, not tracked as separate database rows.
 
 ## Success Criteria *(mandatory)*

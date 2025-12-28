@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
     from aizk.datamodel.bookmark import Bookmark
@@ -63,6 +63,8 @@ class ManifestArtifacts(BaseModel):
 class ConversionManifest(BaseModel):
     """Complete conversion manifest with all metadata."""
 
+    model_config = ConfigDict(json_encoders={datetime: lambda v: v.isoformat()})
+
     version: str = "1.0"
     aizk_uuid: str
     karakeep_id: str
@@ -70,15 +72,13 @@ class ConversionManifest(BaseModel):
     conversion: ManifestConversionMetadata
     artifacts: ManifestArtifacts
 
-    class Config:
-        """Pydantic config."""
-
-        json_encoders = {datetime: lambda v: v.isoformat()}
-
 
 def _coerce_datetime(value: datetime | None, fallback: datetime) -> datetime:
     """Return datetime value or fallback if None."""
-    return value if value is not None else fallback
+    chosen = value if value is not None else fallback
+    if chosen.tzinfo is None:
+        return chosen.replace(tzinfo=timezone.utc)
+    return chosen
 
 
 def generate_manifest(

@@ -36,7 +36,7 @@
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
 - [x] T006 Create SQLModel database models: Bookmark entity in src/aizk/datamodel/bookmark.py with fields (id, karakeep_id, aizk_uuid, url, normalized_url, title, content_type, source_type, created_at, updated_at)
-- [x] T007 [P] Create SQLModel database models: ConversionJob entity in src/aizk/datamodel/job.py with fields (id, aizk_uuid, payload_version, status, attempts, error_code, error_message, idempotency_key, earliest_next_attempt_at, last_error_at, queued_at, started_at, finished_at, created_at, updated_at) and status enum
+- [x] T007 [P] Create SQLModel database models: ConversionJob entity in src/aizk/datamodel/job.py with fields (id, aizk_uuid, payload_version, status, attempts, error_code, error_message, idempotency_key, earliest_next_attempt_at, last_error_at, queued_at, started_at, finished_at, created_at, updated_at) and ConversionJobStatus enum
 - [x] T008 [P] Create SQLModel database models: ConversionOutput entity in src/aizk/datamodel/output.py with fields (id, job_id, aizk_uuid, payload_version, s3_prefix, markdown_key, manifest_key, markdown_hash_xx64, figure_count, docling_version, pipeline_name, created_at)
 - [x] T009 Create shared DB utilities in src/aizk/db.py: get_engine() configured to support concurrent read access from multiple workers with transaction isolation (see research.md ADR-003 for specific PRAGMA recommendations), get_session(), create_db_and_tables()
 - [x] T010 Ensure indexes are declared and loaded by metadata in src/aizk/datamodel/\_\_init\_\_.py (imports models to populate SQLModel.metadata)
@@ -70,7 +70,7 @@
 - [x] T022 [P] [US1] Unit tests for utilities in tests/conversion/unit/test_url_utils.py (normalize_url, detect_source_type, get_arxiv_id, standardize_github)
 - [x] T023 [P] [US1] Unit tests for hashing and filename utils in tests/conversion/unit/test_hashing.py and tests/utilities/test_file_utils.py (compute_idempotency_key, compute_markdown_hash, normalize_filename)
 - [x] T024 [US1] Integration test for end-to-end conversion in tests/conversion/integration/test_conversion_flow.py (submit job → worker processes → outputs stored in S3-compatible storage)
-- [ ] T021b [US1] Obtain user approval of US1 tests and confirm red phase before starting implementation tasks
+- [x] T021b [US1] Obtain user approval of US1 tests and confirm red phase before starting implementation tasks
 
 ### Implementation for User Story 1
 
@@ -83,13 +83,13 @@
 - [x] T031 [P] Implement Docling PDF pipeline in src/aizk/conversion/workers/converter.py: convert_pdf(pdf_bytes, temp_dir) returns markdown_text and list of figure paths
 - [x] T032 Implement S3 upload in src/aizk/conversion/storage/s3_client.py: upload_file(local_path, s3_key) with verification (check ETag or HTTP 200)
 - [x] T033 [P] Implement S3 batch upload in src/aizk/conversion/storage/s3_client.py: upload_artifacts(temp_dir, s3_prefix) uploads markdown, figures, and manifest; returns list of uploaded keys
-- [ ] T033a [P] Implement multipart verification in src/aizk/conversion/storage/s3_client.py: for multipart uploads, verify content-length or ETag format per spec (avoid false positives)
+- [x] T033a [P] Implement multipart verification in src/aizk/conversion/storage/s3_client.py: for multipart uploads, verify content-length or ETag format per spec (avoid false positives)
 - [x] T034 [P] Implement manifest generation in src/aizk/conversion/storage/manifest.py: generate_manifest(bookmark, job, artifacts) creates manifest.json dict with version, source, conversion, artifacts sections per data-model.md schema. **Manifest must store absolute S3 URIs** (s3://bucket/aizk_uuid/filename) for all artifact keys (markdown, figures) to ensure durability and portability. ConversionOutput.manifest_key must store full S3 URI or absolute path, not just prefix.
-- [ ] T034a [P] Enforce output naming in src/aizk/conversion/workers/converter.py and src/aizk/conversion/storage/manifest.py: ensure Markdown artifact is stored as `output.md` regardless of title
+- [x] T034a [P] Enforce output naming in src/aizk/conversion/workers/converter.py and src/aizk/conversion/storage/manifest.py: ensure Markdown artifact is stored as `output.md` regardless of title
 - [x] T035 Implement worker main loop in src/aizk/conversion/workers/worker.py: poll_and_process_jobs() queries jobs with status=QUEUED ordered by queued_at, picks up one job, transitions to RUNNING
 - [x] T036 Implement job processing in src/aizk/conversion/workers/worker.py: process_job(job_id) orchestrates fetch → convert → upload → create output record → mark SUCCEEDED with two-phase transaction. **Phase 1 (Conversion)**: Begin transaction, execute fetch & convert, store converted artifacts in temp dir, transition to UPLOAD_PENDING, commit. **Phase 2 (Upload)**: Begin new transaction, execute S3 upload & verify (via ETag/HEAD check), create output record, mark SUCCEEDED, commit. **Resilience**: If Phase 1 succeeds but Phase 2 fails, job remains in UPLOAD_PENDING with artifacts cached; retry queries UPLOAD_PENDING jobs and re-executes Phase 2 only (no reconversion). If Phase 1 fails, transition to FAILED_RETRYABLE for full retry. This enables efficient S3 retry without wasted conversion compute.
 - [x] T037 Implement error handling in src/aizk/conversion/workers/worker.py: handle_job_error(job_id, error) determines FAILED_RETRYABLE vs FAILED_PERM based on error_code, computes earliest_next_attempt_at with exponential backoff, increments attempts
-- [x] T037a Implement upload retry handler in src/aizk/conversion/workers/worker.py: process_upload_pending_jobs() queries jobs with status=UPLOAD_PENDING ordered by last_error_at, retries upload while the temporary workspace exists, and falls back to full retry (FAILED_RETRYABLE) if artifacts are missing.
+- [x] T037a Implement upload retry handler in src/aizk/conversion/workers/worker.py: retry S3 uploads within the same worker run while the temporary workspace exists, and fall back to FAILED_RETRYABLE if artifacts are missing.
 - [x] T038 Implement Pydantic request schema in src/aizk/conversion/api/schemas/jobs.py: JobSubmission with fields (karakeep_id, url, title, payload_version, idempotency_key optional)
 - [x] T039 [P] Implement Pydantic response schema in src/aizk/conversion/api/schemas/jobs.py: JobResponse with fields from ConversionJob model
 - [x] T040 Implement POST /v1/jobs endpoint in src/aizk/conversion/api/routes/jobs.py: create or lookup bookmark record, compute idempotency_key, check for duplicate, create ConversionJob with status=NEW→QUEUED, return 201 or 200 with existing job. Worker fetches KaraKeep bookmark and validates required content (HTML/text/PDF).
