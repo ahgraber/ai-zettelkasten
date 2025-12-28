@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from aizk.conversion.utilities.arxiv_utils import ArxivClient, get_arxiv_id, is_arxiv_url
 from aizk.conversion.utilities.bookmark_utils import (
     BookmarkContentError,
     get_bookmark_asset_id,
@@ -15,8 +16,7 @@ from aizk.conversion.utilities.bookmark_utils import (
     is_pdf_asset,
 )
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.utilities.arxiv_utils import ArxivClient, get_arxiv_id, is_arxiv_url
-from aizk.utilities.url_utils import standardize_github
+from aizk.utilities.url_utils import is_github_url, standardize_github
 from karakeep_client.karakeep import KarakeepClient
 from karakeep_client.models import Bookmark
 
