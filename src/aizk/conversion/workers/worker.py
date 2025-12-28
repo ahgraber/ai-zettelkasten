@@ -30,6 +30,12 @@ from aizk.conversion.utilities.bookmark_utils import (
 )
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.hashing import compute_markdown_hash
+from aizk.conversion.utilities.paths import (
+    OUTPUT_MARKDOWN_FILENAME,
+    figure_paths,
+    markdown_path,
+    metadata_path,
+)
 from aizk.conversion.workers.converter import ConversionError, convert_html, convert_pdf
 from aizk.conversion.workers.fetcher import (
     BookmarkContentUnavailableError,
@@ -42,11 +48,9 @@ from aizk.datamodel.bookmark import Bookmark as BookmarkRecord
 from aizk.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.datamodel.output import ConversionOutput
 from aizk.db import get_engine
-from karakeep_client.karakeep import KarakeepClient
 from karakeep_client.models import Bookmark as KarakeepBookmark
 
 logger = logging.getLogger(__name__)
-OUTPUT_MARKDOWN_FILENAME = "output.md"
 
 
 @dataclass(frozen=True)
@@ -85,11 +89,6 @@ def _docling_version() -> str:
     from importlib.metadata import version
 
     return version("docling")
-
-
-def _metadata_path(workspace: Path) -> Path:
-    """Return path to metadata.json in workspace."""
-    return workspace / "metadata.json"
 
 
 def _prepare_conversion_input(
@@ -157,8 +156,8 @@ def _run_conversion(
         markdown_text, figure_paths = convert_html(content_bytes, workspace, config, source_url=bookmark.url)
 
     markdown_filename = OUTPUT_MARKDOWN_FILENAME
-    markdown_path = workspace / markdown_filename
-    markdown_path.write_text(markdown_text)
+    markdown_file = markdown_path(workspace, markdown_filename)
+    markdown_file.write_text(markdown_text)
     markdown_hash = compute_markdown_hash(markdown_text)
 
     metadata = {
@@ -169,11 +168,11 @@ def _run_conversion(
         "markdown_hash_xx64": markdown_hash,
         "docling_version": _docling_version(),
     }
-    metadata_path = _metadata_path(workspace)
-    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=False))
+    metadata_file = metadata_path(workspace)
+    metadata_file.write_text(json.dumps(metadata, indent=2, sort_keys=False))
 
     return ConversionArtifacts(
-        markdown_path=markdown_path,
+        markdown_path=markdown_file,
         figure_paths=figure_paths,
         markdown_hash=markdown_hash,
         pipeline_name=pipeline_name,
@@ -186,17 +185,17 @@ def _upload_converted(job_id: int, workspace: Path) -> None:
     """Upload artifacts to S3 and record conversion output."""
     config = ConversionConfig()
     engine = get_engine(config.database_url)
-    metadata_file = _metadata_path(workspace)
+    metadata_file = metadata_path(workspace)
     if not metadata_file.exists():
         raise MissingArtifactsError(f"Missing metadata for job {job_id}")
 
     metadata = json.loads(metadata_file.read_text())
     markdown_filename = metadata["markdown_filename"]
-    markdown_path = workspace / markdown_filename
+    markdown_file = markdown_path(workspace, markdown_filename)
     figure_files = metadata.get("figure_files", [])
-    figure_paths = [workspace / name for name in figure_files]
+    figure_file_paths = figure_paths(workspace, figure_files)
 
-    if not markdown_path.exists():
+    if not markdown_file.exists():
         raise MissingArtifactsError(f"Missing markdown for job {job_id}")
 
     with Session(engine) as session:
@@ -212,10 +211,10 @@ def _upload_converted(job_id: int, workspace: Path) -> None:
         prefix = str(bookmark.aizk_uuid)
         s3_prefix_uri = f"s3://{s3_client.bucket}/{prefix}/"
         markdown_key = f"{prefix}/{markdown_filename}"
-        markdown_uri = s3_client.upload_file(markdown_path, markdown_key)
+        markdown_uri = s3_client.upload_file(markdown_file, markdown_key)
 
         figure_uris: list[str] = []
-        for fig_path in figure_paths:
+        for fig_path in figure_file_paths:
             if not fig_path.exists():
                 continue
             fig_key = f"{prefix}/figures/{fig_path.name}"
