@@ -8,6 +8,8 @@ from typing import Annotated
 from uuid import UUID
 
 from pydantic import AnyUrl
+from sqlalchemy import func
+from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import Session, select
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -201,13 +203,25 @@ def list_jobs(
         query = query.where(ConversionJob.created_at <= created_before)
         count_query = count_query.where(ConversionJob.created_at <= created_before)
 
-    total = len(session.exec(count_query).all())
-    jobs = session.exec(query.order_by(ConversionJob.created_at.desc()).limit(limit).offset(offset)).all()
+    count_stmt = select(func.count()).select_from(count_query.subquery())
+    total = session.exec(count_stmt).one()
+    # N+1 happens when each job triggers its own query for related rows
+    # (1 query for jobs + N queries for relations).
+    # joinedload/selectinload eager-load in bulk to keep the number of queries bounded.
+    jobs = session.exec(
+        query.options(
+            joinedload(ConversionJob.bookmark),
+            selectinload(ConversionJob.output),
+        )
+        .order_by(ConversionJob.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    ).all()
 
     responses = []
     for job in jobs:
-        output = _get_output_summary(session, job.id)
-        bookmark = session.exec(select(Bookmark).where(Bookmark.aizk_uuid == job.aizk_uuid)).one()
-        responses.append(_job_to_response(job, bookmark, output))
+        if job.bookmark is None:
+            raise HTTPException(status_code=500, detail={"error": "bookmark_missing", "message": "Bookmark not found"})
+        responses.append(_job_to_response(job, job.bookmark, job.output))
 
     return JobList(jobs=responses, total=total, limit=limit, offset=offset)
