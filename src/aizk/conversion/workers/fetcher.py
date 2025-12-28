@@ -135,9 +135,13 @@ async def fetch_arxiv(
             return asset_bytes
 
         asset_id = get_bookmark_asset_id(bookmark)
-        if asset_id and karakeep_client:
-            logger.info("Fetching PDF asset %s from KaraKeep for arXiv %s", asset_id, arxiv_id)
-            return await fetch_karakeep_asset(karakeep_client, asset_id)
+        if asset_id:
+            if karakeep_client:
+                logger.info("Fetching PDF asset %s from KaraKeep for arXiv %s", asset_id, arxiv_id)
+                return await fetch_karakeep_asset(karakeep_client, asset_id)
+            async with KarakeepClient() as client:
+                logger.info("Fetching PDF asset %s from KaraKeep for arXiv %s", asset_id, arxiv_id)
+                return await fetch_karakeep_asset(client, asset_id)
 
         raise BookmarkContentUnavailableError(f"Bookmark {bookmark.id} has PDF asset but no way to fetch it")
 

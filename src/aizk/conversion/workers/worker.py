@@ -12,6 +12,8 @@ import tempfile
 import time
 from typing import Any, Literal
 
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlmodel import Session, select
 
 from aizk.conversion.storage.manifest import generate_manifest, save_manifest
@@ -219,6 +221,7 @@ def _upload_converted(job_id: int, workspace: Path) -> None:
             fig_key = f"{prefix}/figures/{fig_path.name}"
             figure_uris.append(s3_client.upload_file(fig_path, fig_key))
 
+        job.finished_at = _utcnow()
         manifest = generate_manifest(
             bookmark=bookmark,
             job=job,
@@ -249,7 +252,6 @@ def _upload_converted(job_id: int, workspace: Path) -> None:
         session.add(output)
 
         job.status = ConversionJobStatus.SUCCEEDED
-        job.finished_at = _utcnow()
         job.error_code = None
         job.error_message = None
         job.updated_at = _utcnow()
@@ -321,18 +323,32 @@ def poll_and_process_jobs() -> bool:
     now = _utcnow()
 
     with Session(engine) as session:
-        job = session.exec(
-            select(ConversionJob)
-            .where(ConversionJob.status == ConversionJobStatus.QUEUED)
-            .where(
-                (ConversionJob.earliest_next_attempt_at.is_(None)) | (ConversionJob.earliest_next_attempt_at <= now)  # type: ignore[operator]
-            )
-            .order_by(ConversionJob.queued_at)
-        ).first()
-
-        if not job:
+        try:
+            # BEGIN IMMEDIATE prevents multiple workers from selecting the same job.
+            session.exec(text("BEGIN IMMEDIATE"))
+            job = session.exec(
+                select(ConversionJob)
+                .where(ConversionJob.status == ConversionJobStatus.QUEUED)
+                .where(
+                    (ConversionJob.earliest_next_attempt_at.is_(None))  # type: ignore[operator]
+                    | (ConversionJob.earliest_next_attempt_at <= now)
+                )
+                .order_by(ConversionJob.queued_at)
+            ).first()
+        except OperationalError as exc:
+            session.rollback()
+            logger.warning("Job poll skipped due to database lock: %s", exc)
+            return False
+        except DBAPIError:
+            session.rollback()
+            logger.exception("Job poll failed due to database error")
             return False
 
+        if not job:
+            session.rollback()
+            return False
+
+        job_id = job.id
         job.status = ConversionJobStatus.RUNNING
         job.started_at = now
         job.attempts += 1
@@ -340,7 +356,10 @@ def poll_and_process_jobs() -> bool:
         session.add(job)
         session.commit()
 
-    process_job(job.id)
+    if job_id is None:
+        raise RuntimeError("Queued job missing id; cannot process job")
+
+    process_job(job_id)
     return True
 
 
