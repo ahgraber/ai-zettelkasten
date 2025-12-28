@@ -122,7 +122,7 @@ def _prepare_conversion_input(
     if is_pdf_asset(karakeep_bookmark):
         asset_id = get_bookmark_asset_id(karakeep_bookmark)
         if asset_id:
-            pdf_bytes = asyncio.run(fetch_karakeep_asset(KarakeepClient(), asset_id))
+            pdf_bytes = asyncio.run(fetch_karakeep_asset(asset_id))
             return ConversionInput(pipeline="pdf", content_bytes=pdf_bytes, fetched_at=fetched_at)
 
     # Fallback to HTML content
@@ -209,7 +209,7 @@ def _upload_converted(job_id: int, workspace: Path) -> None:
         if not s3_client.bucket:
             raise S3Error("S3 bucket is not configured", "s3_upload_failed")
 
-        prefix = bookmark.aizk_uuid
+        prefix = str(bookmark.aizk_uuid)
         s3_prefix_uri = f"s3://{s3_client.bucket}/{prefix}/"
         markdown_key = f"{prefix}/{markdown_filename}"
         markdown_uri = s3_client.upload_file(markdown_path, markdown_key)
@@ -255,27 +255,6 @@ def _upload_converted(job_id: int, workspace: Path) -> None:
         job.error_code = None
         job.error_message = None
         job.updated_at = _utcnow()
-        session.add(job)
-        session.commit()
-
-
-def _mark_upload_error(job_id: int, error: Exception) -> None:
-    """Record upload error without changing UPLOAD_PENDING status."""
-    config = ConversionConfig()
-    engine = get_engine(config.database_url)
-    now = _utcnow()
-    error_code = getattr(error, "error_code", "s3_upload_failed")
-
-    with Session(engine) as session:
-        job = session.get(ConversionJob, job_id)
-        if not job:
-            return
-        job.error_code = error_code
-        job.error_message = str(error)
-        job.last_error_at = now
-        delay = config.retry_base_delay_seconds * (2**job.attempts)
-        job.earliest_next_attempt_at = now + dt.timedelta(seconds=delay)
-        job.updated_at = now
         session.add(job)
         session.commit()
 

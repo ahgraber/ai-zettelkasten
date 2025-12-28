@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from uuid import UUID
 
 import xxhash
 
@@ -11,7 +12,7 @@ from aizk.conversion.utilities.config import ConversionConfig
 
 
 def compute_idempotency_key(
-    aizk_uuid: str,
+    aizk_uuid: UUID,
     payload_version: int,
     config: ConversionConfig,
 ) -> str:
@@ -33,7 +34,7 @@ def compute_idempotency_key(
     config_payload = {key: value for key, value in config.model_dump().items() if key.startswith("docling_")}
     config_json = json.dumps(config_payload, sort_keys=True, separators=(",", ":"))
 
-    raw = f"{aizk_uuid}:{payload_version}:{docling_version}:{config_json}"
+    raw = f"{str(aizk_uuid)}:{payload_version}:{docling_version}:{config_json}"
 
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 

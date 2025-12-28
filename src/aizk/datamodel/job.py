@@ -3,6 +3,7 @@
 import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Optional
+from uuid import UUID
 
 from sqlalchemy import Column, Text
 from sqlmodel import Field, Relationship, SQLModel
@@ -27,7 +28,7 @@ class ConversionJob(SQLModel, table=True):
     __tablename__ = "conversion_jobs"
 
     id: int | None = Field(default=None, primary_key=True)
-    aizk_uuid: str = Field(foreign_key="bookmarks.aizk_uuid", nullable=False, index=True)
+    aizk_uuid: UUID = Field(foreign_key="bookmarks.aizk_uuid", nullable=False, index=True)
     title: str = Field(max_length=500, nullable=False)
     payload_version: int = Field(default=1, nullable=False)
     status: ConversionJobStatus = Field(default=ConversionJobStatus.NEW, nullable=False, index=True)
