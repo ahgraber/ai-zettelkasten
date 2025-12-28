@@ -7,6 +7,7 @@ from aizk.conversion.utilities.hashing import compute_idempotency_key, compute_m
 
 
 def test_compute_idempotency_key_matches_sha256():
+    from importlib.metadata import version
     import json
 
     config = ConversionConfig()
@@ -15,8 +16,9 @@ def test_compute_idempotency_key_matches_sha256():
         sort_keys=True,
         separators=(",", ":"),
     )
-    key = compute_idempotency_key("uuid-1", 2, "2.65.0", config)
-    expected = hashlib.sha256(f"uuid-1:2:2.65.0:{config_json}".encode("utf-8")).hexdigest()
+    docling_version = version("docling")
+    key = compute_idempotency_key("uuid-1", 2, config)
+    expected = hashlib.sha256(f"uuid-1:2:{docling_version}:{config_json}".encode("utf-8")).hexdigest()
     assert key == expected
 
 

@@ -361,7 +361,7 @@ class BatchHandler:
             "file_id": file_id,
             "filepath": filepath,
             "status": "submitted",
-            "created_at": datetime.datetime.now(),
+            "created_at": datetime.datetime.now(datetime.timezone.utc),
         }
 
         logger.info(f"Submitted batch {batch_id}")
