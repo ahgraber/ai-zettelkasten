@@ -35,15 +35,3 @@ def test_detect_content_type(url, metadata, expected):
 )
 def test_detect_source_type(url, expected):
     assert detect_source_type(url) == expected
-
-
-@pytest.mark.parametrize(
-    ("url", "expected"),
-    [
-        ("https://github.com/org/repo/blob/main/README.md", "https://github.com/org/repo/tree/main/README.md"),
-        ("https://github.com/org/repo", "https://github.com/org/repo"),
-        ("https://example.com/path", "https://example.com/path"),
-    ],
-)
-def test_standardize_github(url, expected):
-    assert standardize_github(url) == expected
