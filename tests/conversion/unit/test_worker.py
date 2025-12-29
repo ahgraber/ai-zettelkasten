@@ -1,4 +1,4 @@
-"""Unit tests for worker upload retry behavior."""
+"""Unit tests for polling retryable conversion jobs."""
 
 from __future__ import annotations
 
@@ -10,6 +10,21 @@ from aizk.conversion.workers import worker
 from aizk.conversion.workers.worker import ConversionInput
 from aizk.datamodel.bookmark import Bookmark
 from aizk.datamodel.job import ConversionJob, ConversionJobStatus
+
+
+def _create_bookmark(db_session: Session) -> Bookmark:
+    bookmark = Bookmark(
+        karakeep_id="bm_poll_retryable",
+        url="https://example.com",
+        normalized_url="https://example.com",
+        title="Poll Retryable",
+        content_type="html",
+        source_type="web",
+    )
+    db_session.add(bookmark)
+    db_session.commit()
+    db_session.refresh(bookmark)
+    return bookmark
 
 
 def test_process_job_retries_upload(monkeypatch, db_session: Session, html_bookmark) -> None:
@@ -77,3 +92,60 @@ def test_process_job_retries_upload(monkeypatch, db_session: Session, html_bookm
     assert upload_attempts["count"] == 3
     assert sleep_calls == [1, 2]
     assert handle_errors["count"] == 0
+
+
+def test_poll_picks_retryable_job_after_delay(monkeypatch, db_session: Session) -> None:
+    """Ensure FAILED_RETRYABLE jobs are eligible once the backoff window expires."""
+    now = dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc)
+    monkeypatch.setattr(worker, "_utcnow", lambda: now)
+
+    bookmark = _create_bookmark(db_session)
+    job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title,
+        idempotency_key="a" * 64,
+        status=ConversionJobStatus.FAILED_RETRYABLE,
+        attempts=1,
+        queued_at=now - dt.timedelta(minutes=5),
+        earliest_next_attempt_at=now - dt.timedelta(seconds=1),
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+
+    processed: list[int] = []
+
+    # Avoid running the full job; only capture the job id selected for processing.
+    monkeypatch.setattr(worker, "process_job", lambda job_id: processed.append(job_id))
+
+    assert worker.poll_and_process_jobs() is True
+    assert processed == [job.id]
+
+    db_session.refresh(job)
+    assert job.status == ConversionJobStatus.RUNNING
+    assert job.attempts == 2
+
+
+def test_poll_skips_retryable_job_before_delay(monkeypatch, db_session: Session) -> None:
+    """Ensure FAILED_RETRYABLE jobs are not picked up before earliest_next_attempt_at."""
+    now = dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc)
+    monkeypatch.setattr(worker, "_utcnow", lambda: now)
+
+    bookmark = _create_bookmark(db_session)
+    job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title,
+        idempotency_key="b" * 64,
+        status=ConversionJobStatus.FAILED_RETRYABLE,
+        attempts=1,
+        queued_at=now - dt.timedelta(minutes=5),
+        earliest_next_attempt_at=now + dt.timedelta(minutes=5),
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    processed: list[int] = []
+    monkeypatch.setattr(worker, "process_job", lambda job_id: processed.append(job_id))
+
+    assert worker.poll_and_process_jobs() is False
+    assert processed == []
