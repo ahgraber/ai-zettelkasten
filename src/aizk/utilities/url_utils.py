@@ -36,8 +36,6 @@ SOCIAL_MEDIA_DOMAINS = frozenset(
     }
 )
 
-GITHUB_DOMAINS = frozenset({"github.com", "gist.github.com", "raw.githubusercontent.com"})
-
 
 # --- Core URL Extraction ----------------------------------------------------
 def fix_url_from_markdown(url: str) -> str:
@@ -201,20 +199,6 @@ def is_social_url(url: str) -> bool:
         return netloc in SOCIAL_MEDIA_DOMAINS or any(netloc.endswith("." + domain) for domain in SOCIAL_MEDIA_DOMAINS)
 
 
-def is_github_url(url: str) -> bool:
-    """Check if URL is from a GitHub domain."""
-    validated = validate_url(url)
-
-    try:
-        parsed = urlparse(str(validated))
-    except Exception:
-        return False
-    else:
-        netloc = parsed.netloc.lower()
-        # Check exact match first, then subdomains
-        return netloc in GITHUB_DOMAINS or any(netloc.endswith("." + domain) for domain in GITHUB_DOMAINS)
-
-
 # --- URL Processing/Standardization -----------------------------------------
 def strip_utm_params(url: str) -> str:
     """Remove UTM tracking parameters from URL."""
@@ -257,39 +241,3 @@ def safelink_to_url(url: str) -> str:
         return matches[0]
     else:
         raise ValueError(f"Could not extract URL from SafeLink: {decoded}")
-
-
-def standardize_github(url: str) -> str:
-    """Standardize GitHub URLs to repository root when possible."""
-    if not any(domain in url for domain in ["githubusercontent.com", "github.com"]):
-        return url
-
-    pattern = re.compile(
-        r"/(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+)(?:/(?:refs/heads|blob|tree)/(?P<branch>[\w./-]+))?",
-        re.IGNORECASE,
-    )
-
-    parsed = urlparse(url)
-    match = pattern.match(parsed.path)
-
-    if not match or not match.group("owner") or not match.group("repo"):
-        return url
-
-    owner = match.group("owner")
-    repo = match.group("repo")
-    branch = match.group("branch")
-
-    if parsed.netloc == "gist.github.com":
-        return urlunparse((parsed.scheme, parsed.netloc, f"{owner}/{repo}", None, None, None))
-    elif parsed.netloc == "raw.githubusercontent.com":
-        path = f"{owner}/{repo}"
-        if branch:
-            path += f"/tree/{branch}"
-        return urlunparse((parsed.scheme, "github.com", path, None, None, None))
-    elif parsed.netloc == "github.com":
-        path = f"{owner}/{repo}"
-        if branch:
-            path += f"/tree/{branch}"
-        return urlunparse((parsed.scheme, parsed.netloc, path, None, None, None))
-
-    return url
