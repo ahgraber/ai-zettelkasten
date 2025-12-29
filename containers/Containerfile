@@ -1,0 +1,23 @@
+FROM ghcr.io/astral-sh/uv:python3.12-trixie-slim
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy \
+    VIRTUAL_ENV=/app/.venv \
+    PATH="/app/.venv/bin:$PATH" \
+    API_RELOAD=false
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml uv.lock README.md LICENSE ./
+RUN uv sync --frozen --no-dev
+
+COPY src ./src
+RUN mkdir -p /app/data
+
+EXPOSE 8000
+
+CMD ["python", "-m", "aizk.conversion.cli", "serve"]
