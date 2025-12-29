@@ -12,7 +12,7 @@ from aizk.db import create_db_and_tables, get_engine
 from karakeep_client.models import Bookmark
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture()
 def test_db_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Return a temp SQLite path for test database storage."""
     return tmp_path_factory.mktemp("conversion_db") / "conversion_service.db"
