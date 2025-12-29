@@ -48,6 +48,7 @@ from aizk.datamodel.bookmark import Bookmark as BookmarkRecord
 from aizk.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.datamodel.output import ConversionOutput
 from aizk.db import get_engine
+from aizk.utilities.async_utils import run_async
 from karakeep_client.models import Bookmark as KarakeepBookmark
 
 logger = logging.getLogger(__name__)
@@ -100,28 +101,17 @@ def _prepare_conversion_input(
     """Prepare conversion input bytes and determine pipeline."""
     fetched_at = _utcnow()
     if bookmark_record.source_type == "arxiv":
-        pdf_bytes = asyncio.run(
-            fetch_arxiv(
-                karakeep_bookmark,
-                config,
-            )
-        )
+        pdf_bytes = asyncio.run(fetch_arxiv(karakeep_bookmark, config))
         return ConversionInput(pipeline="pdf", content_bytes=pdf_bytes, fetched_at=fetched_at)
 
     if bookmark_record.source_type == "github":
-        readme_bytes = asyncio.run(
-            fetch_github_readme(
-                get_bookmark_source_url(karakeep_bookmark),
-                config,
-            )
-        )
-        html = f"<html><body><pre>{readme_bytes.decode('utf-8', errors='ignore')}</pre></body></html>"
-        return ConversionInput(pipeline="html", content_bytes=html.encode("utf-8"), fetched_at=fetched_at)
+        readme_bytes = asyncio.run(fetch_github_readme(karakeep_bookmark, config))
+        return ConversionInput(pipeline="html", content_bytes=readme_bytes, fetched_at=fetched_at)
 
     if is_pdf_asset(karakeep_bookmark):
         asset_id = get_bookmark_asset_id(karakeep_bookmark)
         if asset_id:
-            pdf_bytes = asyncio.run(fetch_karakeep_asset(asset_id))
+            pdf_bytes = run_async(fetch_karakeep_asset, asset_id)
             return ConversionInput(pipeline="pdf", content_bytes=pdf_bytes, fetched_at=fetched_at)
 
     # Fallback to HTML content

@@ -7,7 +7,7 @@ import logging
 from typing import Literal
 
 from aizk.conversion.utilities.arxiv_utils import is_arxiv_url
-from aizk.utilities.url_utils import is_github_url
+from aizk.conversion.utilities.github_utils import is_github_url
 from karakeep_client.karakeep import KarakeepClient
 from karakeep_client.models import Bookmark, ContentTypeAsset, ContentTypeLink, ContentTypeText
 
