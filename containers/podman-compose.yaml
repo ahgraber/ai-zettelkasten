@@ -1,0 +1,23 @@
+services:
+  conversion-api:
+    build:
+      context: ..
+      dockerfile: containers/Containerfile
+    image: aizk-docling:latest
+    command: ["python", "-m", "aizk.conversion.cli", "serve"]
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../.env
+    volumes:
+      - ../data:/app/data:rw
+
+  conversion-worker:
+    image: aizk-docling:latest
+    command: ["python", "-m", "aizk.conversion.cli", "worker"]
+    env_file:
+      - ../.env
+    volumes:
+      - ../data:/app/data:rw
+    depends_on:
+      - conversion-api
