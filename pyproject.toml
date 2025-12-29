@@ -35,7 +35,7 @@ dependencies = [
     "huggingface-hub>=0.23.5",
     "jinja2>=3.1.4",
     "json-repair>=0.30.3",
-    "karakeep-client",
+    "karakeep-client>=0.1.0",
     "markitdown[pdf]>=0.1.3",
     "nltk>=3.9.1",
     "numpy>=2",
@@ -52,6 +52,7 @@ dependencies = [
     "requests>=2.32.3",
     "semhash>=0.3.0",
     "sentence-transformers>=3.3.1",
+    "setproctitle>=1.3.7",
     "spacy>=3.7.5,<4",
     "sqlalchemy>=2",
     "sqlmodel>=0.0.22",
@@ -105,6 +106,7 @@ lint = [
     "ruff>=0.12.0",
 ]
 test = [
+    "botocore>=1.42.17",
     "coverage>=7.6.9",
     "pytest>=8.3.4",
     "pytest-asyncio>=0.24",
@@ -216,3 +218,11 @@ source = [ "src" ]
 
 [tool.coverage.report]
 show_missing = true
+
+[tool.uv-ship]
+release-branch = "main"
+tag-prefix = "v"
+allow-dirty = false
+changelog-path = "CHANGELOG"
+changelog-template = "- {message} [{hash}]"
+commit-message = "bump: {old_ver} → {new_ver}"

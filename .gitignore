@@ -24,12 +24,15 @@ Thumbs.db
 *.env
 .env.*
 .envrc
+!.env.example
 
 # Python and Node dependencies
 .local/
 .venv/
 bin/
+__pycache__/
 node_modules/
+*.py[cod]
 venv/
 
 # direnv
@@ -86,6 +89,8 @@ data/
 *.bak
 *.log
 *.zip
+*.swp
+*.tmp
 .archive/
 .logs/
 .task/

@@ -30,31 +30,22 @@ from typing import Optional
 from dotenv import load_dotenv
 import httpx  # NOQA: E402
 from pydantic import BaseModel, Field, ValidationError
+from setproctitle import setproctitle
 from tqdm.auto import tqdm
 
-# %%
-# Add the src directory to the path so we can import treadmill
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from aizk.arxiv import AsyncArxivClient, get_arxiv_paper_metadata
+from aizk.conversion.utilities.arxiv_utils import ArxivClient
 from aizk.utilities.file_utils import to_valid_fname
 from aizk.utilities.limiters import SlidingWindowRateLimiter
-from aizk.utilities.url_utils import (
-    arxiv_abs_url,
-    arxiv_html_url,
-    arxiv_pdf_url,
-    get_arxiv_id,
-    is_arxiv_url,
-    standardize_arxiv,
-    to_arxiv_export_url,
-)
 
 # %%
+# define python process name
+setproctitle(Path(__file__).stem)
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 
-treadmill_logger = logging.getLogger("treadmill")
-treadmill_logger.setLevel(logging.DEBUG)
+aizk_logger = logging.getLogger("aizk")
+aizk_logger.setLevel(logging.DEBUG)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -104,7 +95,7 @@ ids = [
 # scrape from arxiv
 # save to ./data/reorder_experiment/{arxiv_id}/
 
-client = AsyncArxivClient()
+client = ArxivClient()
 paper_metadata = await client.get_paper_metadata(ids)
 if len(ids) != len(paper_metadata):
     logger.error("Some paper metadata could not be retrieved.")
@@ -126,7 +117,7 @@ for id_, metadata in zip(ids, paper_metadata):
         logger.info("HTML file for %s already exists, skipping download.", id_)
     else:
         logger.debug("Saving html for %s...", id_)
-        html = await client._get_paper_content(arxiv_html_url(id_))
+        html = await client.download_paper_html(id_, use_export_url=False)
         with open(htmlfile, "w", encoding="utf-8") as f:
             f.write(html)
         time.sleep(3)
@@ -136,7 +127,7 @@ for id_, metadata in zip(ids, paper_metadata):
         logger.info("PDF file for %s already exists, skipping download.", id_)
     else:
         logger.debug("Saving PDF for %s...", id_)
-        pdf = await client._get_paper_pdf(arxiv_pdf_url(id_))
+        pdf = await client.download_paper_pdf(id_)
         with open(pdffile, "wb") as f:
             f.write(pdf)
         time.sleep(3)

@@ -1,28 +1,14 @@
-from unittest.mock import Mock, patch
-
 from pydantic import ValidationError as PydanticValidationError
 import pytest
 from validators import ValidationError as URLValidatorValidationError
 
-import responses  # For mocking HTTP requests
-
 from aizk.utilities.url_utils import (
-    _emergentmind_to_arxiv,
-    _huggingface_to_arxiv,
-    arxiv_abs_url,
-    arxiv_html_url,
-    arxiv_pdf_url,
     clean_markdown_title,
-    clean_md_artifacts,
-    convert_paper_urls_to_arxiv,
     extract_markdown_urls,
     extract_urls,
     fix_url_from_markdown,
-    follow_redirects,
-    process_url,
+    is_social_url,
     safelink_to_url,
-    standardize_arxiv,
-    standardize_github,
     strip_utm_params,
     validate_url,
 )
@@ -191,7 +177,7 @@ class TestExtractURLs:
                 ["http://例子.测试", "http://مثال.إختبار"],
             ),
             # URLs with parentheses (common in academic citations)
-            ("See paper (https://arxiv.org/abs/1234.5678) for details", ["https://arxiv.org/abs/1234.5678"]),
+            ("See paper (https://arxiv.org/abs/2000.56789) for details", ["https://arxiv.org/abs/2000.56789"]),
             # URLs in code blocks (should still be extracted)
             ("```\nGET https://api.example.com/v1/users\n```", ["https://api.example.com/v1/users"]),
             # Multiple URLs in the same line
@@ -471,22 +457,22 @@ class TestCleanMarkdownTitle:
     @pytest.mark.parametrize(
         "input_text,expected_output",
         [
-            ("[1234.56789] This is an arxiv title", "[1234.56789] This is an arxiv title"),
-            ("\\[1234.56789\\] This is an arxiv title", "[1234.56789] This is an arxiv title"),
-            ("[[1234.56789] This is an arxiv title]", "[1234.56789] This is an arxiv title"),
-            ("[\\[1234.56789\\] This is an arxiv title]", "[1234.56789] This is an arxiv title"),
-            ("\\[\\[1234.56789\\] This is an arxiv title\\]", "[1234.56789] This is an arxiv title"),
+            ("[2000.56789] This is an arxiv title", "[2000.56789] This is an arxiv title"),
+            ("\\[2000.56789\\] This is an arxiv title", "[2000.56789] This is an arxiv title"),
+            ("[[2000.56789] This is an arxiv title]", "[2000.56789] This is an arxiv title"),
+            ("[\\[2000.56789\\] This is an arxiv title]", "[2000.56789] This is an arxiv title"),
+            ("\\[\\[2000.56789\\] This is an arxiv title\\]", "[2000.56789] This is an arxiv title"),
             (
-                "[[1234.56789] This is an arxiv title](https://arxiv.org/abs/1234.56789)",
-                "[[1234.56789] This is an arxiv title](https://arxiv.org/abs/1234.56789)",
+                "[[2000.56789] This is an arxiv title](https://arxiv.org/abs/2000.56789)",
+                "[[2000.56789] This is an arxiv title](https://arxiv.org/abs/2000.56789)",
             ),
             (
-                "[\\[1234.56789\\] This is an arxiv title](https://arxiv.org/abs/1234.56789)",
-                "[[1234.56789] This is an arxiv title](https://arxiv.org/abs/1234.56789)",
+                "[\\[2000.56789\\] This is an arxiv title](https://arxiv.org/abs/2000.56789)",
+                "[[2000.56789] This is an arxiv title](https://arxiv.org/abs/2000.56789)",
             ),
             (
-                "\\[\\[1234.56789\\] This is an arxiv title\\](https://arxiv.org/abs/1234.56789)",
-                "[[1234.56789] This is an arxiv title](https://arxiv.org/abs/1234.56789)",
+                "\\[\\[2000.56789\\] This is an arxiv title\\](https://arxiv.org/abs/2000.56789)",
+                "[[2000.56789] This is an arxiv title](https://arxiv.org/abs/2000.56789)",
             ),
         ],
     )
@@ -530,25 +516,6 @@ class TestFixURLFromMarkdown:
         assert fix_url_from_markdown(url) == "https://openai.com/index/hello-gpt-4o/"
 
 
-class TestCleanMDArtifacts:
-    def test_basic_url(self):
-        url = "https://example.com"
-        assert clean_md_artifacts(url) == url
-
-    def test_markdown_artifacts(self):
-        urls = [
-            "https://example.com)[–](end",
-            "https://example.com)[—](https://other.com",
-            "https://example.com)[\\](https://other.com",
-            "https://example.com)[�](https://other.com",
-        ]
-        for url in urls:
-            assert clean_md_artifacts(url) == "https://example.com"
-
-    def test_empty_string(self):
-        assert clean_md_artifacts("") == ""
-
-
 class TestStripUTMParams:
     def test_basic_url(self):
         url = "https://example.com"
@@ -588,414 +555,61 @@ class TestSafeLinkToURL:
             assert safelink_to_url(case[0]) == case[1]
 
 
-class TestFollowRedirects:
-    @responses.activate
-    def test_successful_redirect(self):
-        start_url = "http://t.co/"
-        final_url = "http://example.com/"
-
-        responses.get(
-            start_url,
-            status=301,
-            headers={"Location": final_url},
-            body="Redirecting...",
-        )
-        responses.add(
-            responses.GET,
-            final_url,
-            status=200,
-            body="Final destination",
-        )
-        assert follow_redirects(start_url) == final_url
-
-    @responses.activate
-    def test_no_redirect(self):
-        url = "http://example.com/"
-        responses.get(url, status=200)
-        assert follow_redirects(url) == url
-
-
-class TestEmergentMindToArxiv:
-    def test_basic_conversion_export_url(self):
-        """Test conversion with use_export_url=True (default)."""
-        assert (
-            _emergentmind_to_arxiv("https://emergentmind.com/papers/1706.03762")
-            == "http://export.arxiv.org/abs/1706.03762"
-        )
-
-    def test_basic_conversion_no_export_url(self):
-        """Test conversion with use_export_url=False."""
-        assert (
-            _emergentmind_to_arxiv("https://emergentmind.com/papers/1706.03762", use_export_url=False)
-            == "https://arxiv.org/abs/1706.03762"
-        )
-
-    def test_case_insensitive_export_url(self):
-        assert (
-            _emergentmind_to_arxiv("https://EmergentMind.com/papers/1706.03762")
-            == "http://export.arxiv.org/abs/1706.03762"
-        )
-
-    def test_case_insensitive_no_export_url(self):
-        assert (
-            _emergentmind_to_arxiv("https://EmergentMind.com/papers/1706.03762", use_export_url=False)
-            == "https://arxiv.org/abs/1706.03762"
-        )
-
-    def test_non_emergentmind_url(self):
-        url = "https://example.com/1706.03762"
-        assert _emergentmind_to_arxiv(url) == url
-        assert _emergentmind_to_arxiv(url, use_export_url=False) == url
-
-    def test_invalid_paper_id(self):
-        url = "https://emergentmind.com/papers/invalid"
-        assert _emergentmind_to_arxiv(url) == url
-        assert _emergentmind_to_arxiv(url, use_export_url=False) == url
-
-    def test_empty_string(self):
-        assert _emergentmind_to_arxiv("") == ""
-        assert _emergentmind_to_arxiv("", use_export_url=False) == ""
-
-    def test_full_url_with_params_export_url(self):
-        assert (
-            _emergentmind_to_arxiv("https://emergentmind.com/papers/1706.03762?param=value")
-            == "http://export.arxiv.org/abs/1706.03762"
-        )
-
-    def test_full_url_with_params_no_export_url(self):
-        assert (
-            _emergentmind_to_arxiv("https://emergentmind.com/papers/1706.03762?param=value", use_export_url=False)
-            == "https://arxiv.org/abs/1706.03762"
-        )
-
-
-class TestHuggingfaceToArxiv:
-    def test_basic_conversion_export_url(self):
-        """Test conversion with use_export_url=True (default)."""
-        assert (
-            _huggingface_to_arxiv("https://huggingface.co/papers/1706.03762")
-            == "http://export.arxiv.org/abs/1706.03762"
-        )
-
-    def test_basic_conversion_no_export_url(self):
-        """Test conversion with use_export_url=False."""
-        assert (
-            _huggingface_to_arxiv("https://huggingface.co/papers/1706.03762", use_export_url=False)
-            == "https://arxiv.org/abs/1706.03762"
-        )
-
-    def test_case_insensitive_export_url(self):
-        assert (
-            _huggingface_to_arxiv("https://HuggingFace.co/papers/1706.03762")
-            == "http://export.arxiv.org/abs/1706.03762"
-        )
-
-    def test_case_insensitive_no_export_url(self):
-        assert (
-            _huggingface_to_arxiv("https://HuggingFace.co/papers/1706.03762", use_export_url=False)
-            == "https://arxiv.org/abs/1706.03762"
-        )
-
-    def test_non_huggingface_url(self):
-        url = "https://example.com/1706.03762"
-        assert _huggingface_to_arxiv(url) == url
-        assert _huggingface_to_arxiv(url, use_export_url=False) == url
-
-    def test_invalid_paper_id(self):
-        url = "https://huggingface.co/papers/invalid"
-        assert _huggingface_to_arxiv(url) == url
-        assert _huggingface_to_arxiv(url, use_export_url=False) == url
-
-    def test_empty_string(self):
-        assert _huggingface_to_arxiv("") == ""
-        assert _huggingface_to_arxiv("", use_export_url=False) == ""
-
-    def test_full_url_with_params_export_url(self):
-        assert (
-            _huggingface_to_arxiv("https://huggingface.co/papers/1706.03762?param=value")
-            == "http://export.arxiv.org/abs/1706.03762"
-        )
-
-    def test_full_url_with_params_no_export_url(self):
-        assert (
-            _huggingface_to_arxiv("https://huggingface.co/papers/1706.03762?param=value", use_export_url=False)
-            == "https://arxiv.org/abs/1706.03762"
-        )
-
-
-class TestStandardizeArxiv:
-    def test_pdf_conversion_export_url(self):
-        """Test PDF to abstract conversion with use_export_url=True (default)."""
-        assert standardize_arxiv("https://arxiv.org/pdf/1706.03762") == "http://export.arxiv.org/abs/1706.03762"
-
-    def test_pdf_conversion_no_export_url(self):
-        """Test PDF to abstract conversion with use_export_url=False."""
-        assert (
-            standardize_arxiv("https://arxiv.org/pdf/1706.03762", use_export_url=False)
-            == "https://arxiv.org/abs/1706.03762"
-        )
-
-    def test_html_conversion_export_url(self):
-        """Test HTML to abstract conversion with use_export_url=True (default)."""
-        assert standardize_arxiv("https://arxiv.org/html/1706.03762") == "http://export.arxiv.org/abs/1706.03762"
-
-    def test_html_conversion_no_export_url(self):
-        """Test HTML to abstract conversion with use_export_url=False."""
-        assert (
-            standardize_arxiv("https://arxiv.org/html/1706.03762", use_export_url=False)
-            == "https://arxiv.org/abs/1706.03762"
-        )
-
-    def test_abs_conversion_export_url(self):
-        """Test abstract URL conversion with use_export_url=True (default)."""
-        assert standardize_arxiv("https://arxiv.org/abs/1706.03762") == "http://export.arxiv.org/abs/1706.03762"
-
-    def test_abs_conversion_no_export_url(self):
-        """Test abstract URL conversion with use_export_url=False."""
-        assert (
-            standardize_arxiv("https://arxiv.org/abs/1706.03762", use_export_url=False)
-            == "https://arxiv.org/abs/1706.03762"
-        )
-
-    def test_case_insensitive_export_url(self):
-        assert standardize_arxiv("https://ArXiv.org/abs/1706.03762") == "http://export.arxiv.org/abs/1706.03762"
-
-    def test_case_insensitive_no_export_url(self):
-        assert (
-            standardize_arxiv("https://ArXiv.org/abs/1706.03762", use_export_url=False)
-            == "https://arxiv.org/abs/1706.03762"
-        )
-
-    def test_invalid_paper_id(self):
-        url = "https://arxiv.org/abs/invalid"
-        assert standardize_arxiv(url) == url
-        assert standardize_arxiv(url, use_export_url=False) == url
-
-    def test_non_arxiv_url(self):
-        url = "https://example.com/1706.03762"
-        assert standardize_arxiv(url) == url
-        assert standardize_arxiv(url, use_export_url=False) == url
-
-    def test_empty_string(self):
-        assert standardize_arxiv("") == ""
-        assert standardize_arxiv("", use_export_url=False) == ""
-
-
-class TestStandardizeGithub:
-    @pytest.mark.parametrize(
-        "input_url,expected",
-        [
-            # Non-GitHub URLs should remain unchanged
-            ("https://example.com/path", "https://example.com/path"),
-            # GitHub main site URLs
-            ("https://github.com/owner/repo", "https://github.com/owner/repo"),
-            # Various branches
-            (
-                "https://github.com/owner/repo/tree/main",
-                "https://github.com/owner/repo/tree/main",
-            ),
-            (
-                "https://github.com/owner/repo/tree/feature-1234",
-                "https://github.com/owner/repo/tree/feature-1234",
-            ),
-            (
-                "https://github.com/owner/repo/tree/feature/item-1234",
-                "https://github.com/owner/repo/tree/feature/item-1234",
-            ),
-            (
-                "https://github.com/owner/repo/tree/v1.2.34",
-                "https://github.com/owner/repo/tree/v1.2.34",
-            ),
-            # Specific files
-            (
-                "https://github.com/owner/repo/blob/main/file.py",
-                "https://github.com/owner/repo/tree/main/file.py",
-            ),
-            (
-                "https://github.com/owner/repo/blob/feature-1234/file.py",
-                "https://github.com/owner/repo/tree/feature-1234/file.py",
-            ),
-            # Raw URLs should convert to github.com
-            (
-                "https://raw.githubusercontent.com/owner/repo/refs/heads/main/README.md",
-                "https://github.com/owner/repo/tree/main/README.md",
-            ),
-            (
-                "https://raw.githubusercontent.com/owner/repo/refs/heads/main/file.py",
-                "https://github.com/owner/repo/tree/main/file.py",
-            ),
-            (
-                "https://raw.githubusercontent.com/owner/repo/refs/heads/master/path/file.txt",
-                "https://github.com/owner/repo/tree/master/path/file.txt",
-            ),
-            # Gist URLs
-            ("https://gist.github.com/owner/12345", "https://gist.github.com/owner/12345"),
-            # Edge cases
-            ("", ""),  # Empty URL
-            ("https://github.com", "https://github.com"),  # No path
-            ("https://github.com/owner/repo/main", "https://github.com/owner/repo"),  # false branch
-            ("https://github.com/invalid@user/repo", "https://github.com/invalid@user/repo"),  # Invalid characters
-        ],
-    )
-    def test_standardize_github(self, input_url: str, expected: str):
-        assert standardize_github(input_url) == expected
-
-    def test_different_schemes(self):
-        # Test with different URL schemes
-        assert standardize_github("http://github.com/owner/repo") == "http://github.com/owner/repo"
-        assert standardize_github("git://github.com/owner/repo") == "git://github.com/owner/repo"
-
-    def test_with_query_params(self):
-        # URLs with query parameters should have them removed
-        input_url = "https://github.com/owner/repo?ref=main"
-        expected = "https://github.com/owner/repo"
-        assert standardize_github(input_url) == expected
-
-    def test_with_fragments(self):
-        # URLs with fragments should have them removed
-        input_url = "https://github.com/owner/repo#readme"
-        expected = "https://github.com/owner/repo"
-        assert standardize_github(input_url) == expected
-
-    def test_malformed_urls(self):
-        # Test handling of malformed URLs
-        malformed_urls = [
-            "not_a_url",
-            "github.com/no/scheme",
-            "https://github.com/only-owner",
-        ]
-        for url in malformed_urls:
-            assert standardize_github(url) == url  # Should return unchanged
+class TestIsSocialUrl:
+    """Test the is_social_url function for detecting social media URLs."""
 
     @pytest.mark.parametrize(
-        "input_url",
+        "url",
         [
-            "https://github.com/owner/repo/refs/heads/feature",
-            "https://raw.githubusercontent.com/owner/repo/refs/heads/feature/file.txt",
-            "https://gist.github.com/owner/repo/refs/heads/feature",
+            "https://linkedin.com/in/someone",
+            "https://twitter.com/user",
+            "https://x.com/user",
+            "https://bsky.app/profile/user",
+            "https://facebook.com/user",
+            "https://instagram.com/user",
+            "https://threads.net/@user",
         ],
     )
-    def test_refs_heads_urls(self, input_url):
-        # Test URLs containing refs/heads pattern
-        result = standardize_github(input_url)
-        assert "refs/heads" not in result
-        assert "/owner/repo" in result
+    def test_social_urls_exact_domain(self, url):
+        """Test that exact social media domain URLs are detected correctly."""
+        assert is_social_url(url) is True
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://www.linkedin.com/in/someone",
+            "https://www.twitter.com/user",
+            "https://www.x.com/user",
+            "https://www.bsky.app/profile/user",
+            "https://www.facebook.com/user",
+            "https://www.instagram.com/user",
+            "https://www.threads.net/@user",
+            "https://mobile.twitter.com/user",
+            "https://api.twitter.com/user",
+            "https://subdomain.linkedin.com/page",
+        ],
+    )
+    def test_social_urls_with_subdomains(self, url):
+        """Test that social media URLs with subdomains (www, mobile, etc.) are detected correctly."""
+        assert is_social_url(url) is True
 
-class TestArxivAbsUrl:
-    def test_export_url_default(self):
-        """Test arxiv_abs_url with use_export_url=True (default)."""
-        assert arxiv_abs_url("1706.03762") == "http://export.arxiv.org/abs/1706.03762"
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/not-social",
+            "https://www.example.com/not-social",
+            "https://github.com/user/repo",
+            "https://arxiv.org/abs/2000.56789",
+            "https://google.com/search",
+            "https://linkedin.co.uk/in/someone",  # Different TLD
+            "https://twitter.com.br/user",  # Different TLD
+        ],
+    )
+    def test_non_social_urls(self, url):
+        """Test that non-social media URLs are not detected as social."""
+        assert is_social_url(url) is False
 
-    def test_export_url_true(self):
-        """Test arxiv_abs_url with use_export_url=True explicitly."""
-        assert arxiv_abs_url("1706.03762", use_export_url=True) == "http://export.arxiv.org/abs/1706.03762"
-
-    def test_export_url_false(self):
-        """Test arxiv_abs_url with use_export_url=False."""
-        assert arxiv_abs_url("1706.03762", use_export_url=False) == "https://arxiv.org/abs/1706.03762"
-
-    def test_with_version(self):
-        """Test arxiv_abs_url with versioned arXiv ID."""
-        assert arxiv_abs_url("1706.03762v1") == "http://export.arxiv.org/abs/1706.03762v1"
-        assert arxiv_abs_url("1706.03762v1", use_export_url=False) == "https://arxiv.org/abs/1706.03762v1"
-
-    def test_new_format_id(self):
-        """Test arxiv_abs_url with new format arXiv ID."""
-        assert arxiv_abs_url("2101.00001") == "http://export.arxiv.org/abs/2101.00001"
-        assert arxiv_abs_url("2101.00001", use_export_url=False) == "https://arxiv.org/abs/2101.00001"
-
-
-class TestArxivPdfUrl:
-    def test_export_url_default(self):
-        """Test arxiv_pdf_url with use_export_url=True (default)."""
-        assert arxiv_pdf_url("1706.03762") == "http://export.arxiv.org/pdf/1706.03762"
-
-    def test_export_url_true(self):
-        """Test arxiv_pdf_url with use_export_url=True explicitly."""
-        assert arxiv_pdf_url("1706.03762", use_export_url=True) == "http://export.arxiv.org/pdf/1706.03762"
-
-    def test_export_url_false(self):
-        """Test arxiv_pdf_url with use_export_url=False."""
-        assert arxiv_pdf_url("1706.03762", use_export_url=False) == "https://arxiv.org/pdf/1706.03762"
-
-    def test_with_version(self):
-        """Test arxiv_pdf_url with versioned arXiv ID."""
-        assert arxiv_pdf_url("1706.03762v1") == "http://export.arxiv.org/pdf/1706.03762v1"
-        assert arxiv_pdf_url("1706.03762v1", use_export_url=False) == "https://arxiv.org/pdf/1706.03762v1"
-
-    def test_new_format_id(self):
-        """Test arxiv_pdf_url with new format arXiv ID."""
-        assert arxiv_pdf_url("2101.00001") == "http://export.arxiv.org/pdf/2101.00001"
-        assert arxiv_pdf_url("2101.00001", use_export_url=False) == "https://arxiv.org/pdf/2101.00001"
-
-
-class TestArxivHtmlUrl:
-    def test_export_url_default(self):
-        """Test arxiv_html_url with use_export_url=True (default)."""
-        assert arxiv_html_url("1706.03762") == "http://export.arxiv.org/html/1706.03762"
-
-    def test_export_url_true(self):
-        """Test arxiv_html_url with use_export_url=True explicitly."""
-        assert arxiv_html_url("1706.03762", use_export_url=True) == "http://export.arxiv.org/html/1706.03762"
-
-    def test_export_url_false(self):
-        """Test arxiv_html_url with use_export_url=False."""
-        assert arxiv_html_url("1706.03762", use_export_url=False) == "https://arxiv.org/html/1706.03762"
-
-    def test_with_version(self):
-        """Test arxiv_html_url with versioned arXiv ID."""
-        assert arxiv_html_url("1706.03762v1") == "http://export.arxiv.org/html/1706.03762v1"
-        assert arxiv_html_url("1706.03762v1", use_export_url=False) == "https://arxiv.org/html/1706.03762v1"
-
-    def test_new_format_id(self):
-        """Test arxiv_html_url with new format arXiv ID."""
-        assert arxiv_html_url("2101.00001") == "http://export.arxiv.org/html/2101.00001"
-        assert arxiv_html_url("2101.00001", use_export_url=False) == "https://arxiv.org/html/2101.00001"
-
-
-class TestConvertPaperUrlsToArxiv:
-    def test_emergentmind_conversion_export_url(self):
-        """Test convert_paper_urls_to_arxiv with EmergentMind URL and use_export_url=True (default)."""
-        assert (
-            convert_paper_urls_to_arxiv("https://emergentmind.com/papers/1706.03762")
-            == "http://export.arxiv.org/abs/1706.03762"
-        )
-
-    def test_emergentmind_conversion_no_export_url(self):
-        """Test convert_paper_urls_to_arxiv with EmergentMind URL and use_export_url=False."""
-        assert (
-            convert_paper_urls_to_arxiv("https://emergentmind.com/papers/1706.03762", use_export_url=False)
-            == "https://arxiv.org/abs/1706.03762"
-        )
-
-    def test_huggingface_conversion_export_url(self):
-        """Test convert_paper_urls_to_arxiv with Hugging Face URL and use_export_url=True (default)."""
-        assert (
-            convert_paper_urls_to_arxiv("https://huggingface.co/papers/1706.03762")
-            == "http://export.arxiv.org/abs/1706.03762"
-        )
-
-    def test_huggingface_conversion_no_export_url(self):
-        """Test convert_paper_urls_to_arxiv with Hugging Face URL and use_export_url=False."""
-        assert (
-            convert_paper_urls_to_arxiv("https://huggingface.co/papers/1706.03762", use_export_url=False)
-            == "https://arxiv.org/abs/1706.03762"
-        )
-
-    def test_non_paper_url(self):
-        """Test convert_paper_urls_to_arxiv with non-paper URL."""
-        url = "https://example.com/some/path"
-        assert convert_paper_urls_to_arxiv(url) == url
-        assert convert_paper_urls_to_arxiv(url, use_export_url=False) == url
-
-    def test_multiple_conversions(self):
-        """Test that both EmergentMind and Hugging Face conversions work together."""
-        # This would be a URL that matches both patterns (unlikely in reality, but tests the chain)
-        em_url = "https://emergentmind.com/papers/1706.03762"
-        hf_url = "https://huggingface.co/papers/2101.00001"
-
-        assert convert_paper_urls_to_arxiv(em_url) == "http://export.arxiv.org/abs/1706.03762"
-        assert convert_paper_urls_to_arxiv(hf_url) == "http://export.arxiv.org/abs/2101.00001"
-        assert convert_paper_urls_to_arxiv(em_url, use_export_url=False) == "https://arxiv.org/abs/1706.03762"
-        assert convert_paper_urls_to_arxiv(hf_url, use_export_url=False) == "https://arxiv.org/abs/2101.00001"
+    def test_invalid_url(self):
+        """Test that invalid URLs raise appropriate errors."""
+        with pytest.raises((PydanticValidationError, URLValidatorValidationError, ValueError)):
+            is_social_url("not-a-url")

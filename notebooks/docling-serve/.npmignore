@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+coverage/
+*.log
+*.log.*
+.env
+.env.*
+.envrc
+Thumbs.db
+.DS_Store
