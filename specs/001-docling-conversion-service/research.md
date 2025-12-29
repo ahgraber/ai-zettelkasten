@@ -240,14 +240,14 @@ pipeline_options = ConversionPipelineOptions(
 **Findings**:
 
 - arXiv HTML export at `export.arxiv.org/html/{arxiv_id}` launched 2023, provides semantic HTML with equations as MathML
-- HTML export has better structure preservation, faster conversion, and smaller file size than PDF
+- HTML export has better structure preservation, faster conversion, and smaller file size than PDF but is still "experimental"
 - Not all papers have HTML export (older papers or author opt-out); fallback to PDF required
 - arXiv rate limits: 5 requests/second per IP; implement exponential backoff on 429/503
 
-**Decision**: Prioritize HTML, fallback to PDF
+**Decision**: Use PDF
 
-1. Extract arxiv_id from URL using regex: `r'arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{4,5})'`
-2. Attempt fetch from `https://export.arxiv.org/html/{arxiv_id}`
+1. Extract arxiv_id from URL using regex: `r'arxiv\.org/(?:abs|pdf|html)/(\d{4}\.\d{4,5})'`
+2. Attempt fetch from `https://export.arxiv.org/pdf/{arxiv_id}`
 3. If 404, attempt fetch from `https://export.arxiv.org/pdf/{arxiv_id}`
 4. If both fail, mark job FAILED_RETRYABLE with error_code='arxiv_unavailable'
 
