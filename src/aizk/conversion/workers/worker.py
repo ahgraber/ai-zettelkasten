@@ -296,7 +296,11 @@ def poll_and_process_jobs() -> bool:
             session.exec(text("BEGIN IMMEDIATE"))
             job = session.exec(
                 select(ConversionJob)
-                .where(ConversionJob.status == ConversionJobStatus.QUEUED)
+                .where(
+                    ConversionJob.status.in_(
+                        [ConversionJobStatus.QUEUED, ConversionJobStatus.FAILED_RETRYABLE]
+                    )
+                )
                 .where(
                     (ConversionJob.earliest_next_attempt_at.is_(None))  # type: ignore[operator]
                     | (ConversionJob.earliest_next_attempt_at <= now)
