@@ -1,0 +1,88 @@
+"""CLI entrypoint for conversion service operations."""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+
+from setproctitle import setproctitle
+import uvicorn
+
+from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.litestream import LitestreamManager
+from aizk.conversion.utilities.startup import StartupValidationError, log_feature_summary, validate_startup
+from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
+
+logger = logging.getLogger(__name__)
+
+
+def _cmd_db_init(_args: argparse.Namespace) -> int:
+    """Initialize database tables via Alembic migrations."""
+    setproctitle("docling-db-init")
+    from aizk.conversion.migrations import run_migrations
+
+    run_migrations()
+    return 0
+
+
+def _cmd_serve(_args: argparse.Namespace) -> int:
+    """Run the FastAPI server."""
+    setproctitle("docling-api")
+    config = ConversionConfig()
+    log_feature_summary(config, "api")
+    configure_mlflow_tracing(
+        enabled=config.mlflow_tracing_enabled,
+        tracking_uri=config.mlflow_tracking_uri,
+        experiment_name=config.mlflow_experiment_name,
+    )
+    LitestreamManager(config, role="api").start()
+    uvicorn.run(
+        "aizk.conversion.api.main:app",
+        host=config.api_host,
+        port=config.api_port,
+        reload=config.api_reload,
+    )
+    return 0
+
+
+def _cmd_worker(_args: argparse.Namespace) -> int:
+    """Run the background worker."""
+    setproctitle("docling-worker")
+    config = ConversionConfig()
+    try:
+        validate_startup(config, role="worker")
+    except StartupValidationError:
+        logger.exception("startup validation failed", extra={"role": "worker"})
+        return 1
+    configure_mlflow_tracing(
+        enabled=config.mlflow_tracing_enabled,
+        tracking_uri=config.mlflow_tracking_uri,
+        experiment_name=config.mlflow_experiment_name,
+    )
+    LitestreamManager(config, role="worker").start()
+    from aizk.conversion.migrations import run_migrations
+
+    run_migrations()
+    try:
+        from aizk.conversion.workers.loop import run_worker
+    except ImportError as exc:
+        raise RuntimeError("Worker implementation is not available yet.") from exc
+    return run_worker(config)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the conversion service CLI."""
+    parser = argparse.ArgumentParser(prog="aizk-conversion")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser("db-init").set_defaults(func=_cmd_db_init)
+    subparsers.add_parser("serve").set_defaults(func=_cmd_serve)
+    subparsers.add_parser("worker").set_defaults(func=_cmd_worker)
+
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
