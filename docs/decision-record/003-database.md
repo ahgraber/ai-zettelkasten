@@ -127,6 +127,7 @@ LIMIT 10;
 
 - **Write‑heavy vector updates**: HNSW maintenance cost can be noticeable for frequent upserts; batch builds or periodic reindexing may be required for very large corpora.
 - **Multi‑writer**: SQLite is single‑writer; acceptable for local dev and CI, but not for many concurrent writers. For that, graduate to Postgres+pgvector or Turso.
+- **Multi‑node deployments**: SQLite is a local file. If API and workers run on different Kubernetes nodes, they must share the same RWX volume mounted at the same path; reliability depends on the storage backend. If a shared volume is not available or stable, use Postgres instead.
 - **Model churn**: Changing embedding dimensions requires rebuilding indexes; we mitigate via per‑model collections.
 
 ## Migration path (if/when needed)
