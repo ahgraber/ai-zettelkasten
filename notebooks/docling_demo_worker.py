@@ -73,8 +73,7 @@ async def fetch_source_content(bookmark: Bookmark) -> tuple[ProcessingPipeline, 
         return "pdf", content_bytes
 
     if source_type == "github":
-        source_url = get_bookmark_source_url(bookmark)
-        content_bytes = await fetch_github_readme(source_url, config)
+        content_bytes = await fetch_github_readme(bookmark, config)
         return "html", content_bytes
 
     if is_pdf_asset(bookmark):
@@ -98,8 +97,6 @@ async def fetch_source_content(bookmark: Bookmark) -> tuple[ProcessingPipeline, 
 
 # %%
 # process job: convert to Markdown
-
-
 def convert_to_markdown(
     pipeline: ProcessingPipeline,
     content_bytes: bytes,
