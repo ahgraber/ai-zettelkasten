@@ -133,24 +133,21 @@ curl -X POST http://localhost:8000/v1/jobs \
   -H "Content-Type: application/json" \
   -d '{
     "karakeep_id": "test_001",
-    "url": "https://arxiv.org/abs/1706.03762",
-    "title": "Attention Is All You Need"
   }'
 
 # Using httpie
 http POST localhost:8000/v1/jobs \
-  karakeep_id=test_001 \
-  url=https://arxiv.org/abs/1706.03762 \
-  title="Attention Is All You Need"
+  karakeep_id=test_001
 
 # Using Python
 import requests
 
-response = requests.post("http://localhost:8000/v1/jobs", json={
+response = requests.post(
+  "http://localhost:8000/v1/jobs",
+  json={
     "karakeep_id": "test_001",
-    "url": "https://arxiv.org/abs/1706.03762",
-    "title": "Attention Is All You Need"
-})
+  }
+)
 print(response.json())
 ```
 
@@ -211,7 +208,7 @@ curl "http://localhost:8000/v1/outputs/550e8400-e29b-41d4-a716-446655440000?late
       "aizk_uuid": "550e8400-e29b-41d4-a716-446655440000",
       "payload_version": 1,
       "s3_prefix": "s3://aizk-conversions/550e8400-e29b-41d4-a716-446655440000/",
-      "markdown_key": "s3://aizk-conversions/550e8400-e29b-41d4-a716-446655440000/attention-is-all-you-need.md",
+      "markdown_key": "s3://aizk-conversions/550e8400-e29b-41d4-a716-446655440000/output.md",
       "manifest_key": "s3://aizk-conversions/550e8400-e29b-41d4-a716-446655440000/manifest.json",
       "markdown_hash_xx64": "1234567890abcdef",
       "figure_count": 8,
@@ -254,13 +251,9 @@ curl -X POST http://localhost:8000/v1/jobs/batch \
     "jobs": [
       {
         "karakeep_id": "bm_001",
-        "url": "https://arxiv.org/abs/1706.03762",
-        "title": "Attention Paper"
       },
       {
         "karakeep_id": "bm_002",
-        "url": "https://github.com/microsoft/docling",
-        "title": "Docling Repo"
       }
     ]
   }'
@@ -305,8 +298,6 @@ curl -X POST http://localhost:8000/v1/jobs \
   -H "Content-Type: application/json" \
   -d '{
     "karakeep_id": "test_001",
-    "url": "https://arxiv.org/abs/1706.03762",
-    "title": "Attention Is All You Need",
     "payload_version": 2
   }'
 
@@ -380,7 +371,7 @@ SELECT * FROM bookmarks WHERE karakeep_id = 'test_001';
 rm data/conversion_service.db
 
 # Recreate
-python -m aizk.conversion.cli db init
+python -m aizk.conversion.cli db-init
 ```
 
 ### Clear S3 Bucket
