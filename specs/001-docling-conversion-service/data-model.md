@@ -59,7 +59,7 @@ This document defines the complete data model for the Docling Conversion Service
 **Business Rules**:
 
 - `karakeep_id` is unique across all bookmarks
-- `content_type` is typically provided by KaraKeep bookmark metadata; if missing, detect from URL extension (.pdf → 'pdf', otherwise 'html')
+- `content_type` is typically provided by KaraKeep bookmark metadata; if missing, assume 'html'
 - `source_type` is always parsed from URL pattern regardless of content_type:
   - Contains 'arxiv.org' → 'arxiv'
   - Contains 'github.com' → 'github'
@@ -243,12 +243,10 @@ This document defines the complete data model for the Docling Conversion Service
     "figures": [
       {
         "key": "s3://bucket/550e8400-e29b-41d4-a716-446655440000/figure1.png",
-        "description": "Transformer model architecture",
         "created_at": "2025-12-23T10:31:16Z"
       },
       {
         "key": "s3://bucket/550e8400-e29b-41d4-a716-446655440000/figure2.png",
-        "description": "Attention visualization",
         "created_at": "2025-12-23T10:31:17Z"
       }
     ]
