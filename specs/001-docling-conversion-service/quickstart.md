@@ -543,6 +543,27 @@ docker-compose logs -f conversion-service
 docker-compose down
 ```
 
+## Podman Compose Deployment
+
+### Podman Compose (API + Worker)
+
+```bash
+podman-compose -f containers/podman-compose.yaml up -d --build
+```
+
+### View Logs
+
+```bash
+podman-compose -f containers/podman-compose.yaml logs -f conversion-api
+podman-compose -f containers/podman-compose.yaml logs -f conversion-worker
+```
+
+### Stop Stack
+
+```bash
+podman-compose -f containers/podman-compose.yaml down
+```
+
 ## Production Considerations
 
 ### Environment Variables (Production)

@@ -56,6 +56,14 @@ Contributions and fixes are welcome. Please open issues or pull requests with cl
 
 Publishing is supported using [floRaths/uv-ship: a CLI-tool for shipping with uv](https://github.com/floRaths/uv-ship)
 
+## Containers (Podman)
+
+Use the Podman compose file to run API + worker separately from the same image:
+
+```sh
+podman-compose -f containers/podman-compose.yaml up -d --build
+```
+
 ## License
 
 [AGPL-3.0](https://github.com/ahgraber/karakeep-client/blob/main/LICENSE)
