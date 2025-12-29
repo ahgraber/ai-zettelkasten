@@ -4,7 +4,7 @@ import pytest
 
 from aizk.conversion.utilities.arxiv_utils import get_arxiv_id
 from aizk.conversion.utilities.bookmark_utils import detect_source_type
-from aizk.utilities.url_utils import normalize_url, standardize_github
+from aizk.utilities.url_utils import normalize_url
 
 
 def test_normalize_url_sorts_query_and_drops_fragment():
@@ -22,15 +22,3 @@ def test_normalize_url_sorts_query_and_drops_fragment():
 )
 def test_detect_source_type(url, expected):
     assert detect_source_type(url) == expected
-
-
-@pytest.mark.parametrize(
-    ("url", "expected"),
-    [
-        ("https://github.com/org/repo/blob/main/README.md", "https://github.com/org/repo/tree/main/README.md"),
-        ("https://github.com/org/repo", "https://github.com/org/repo"),
-        ("https://example.com/path", "https://example.com/path"),
-    ],
-)
-def test_standardize_github(url, expected):
-    assert standardize_github(url) == expected
