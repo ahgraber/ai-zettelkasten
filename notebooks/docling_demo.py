@@ -4,7 +4,7 @@
 This notebook pulls bookmarks from the Karakeep API, runs assets and links through
 Docling's PDF and HTML pipelines (including picture description VLM enrichment),
 exports Markdown plus extracted images,..
-Environment variables such as ``KARAKEEP_API_KEY``, ``KARAKEEP_BASEURL``.
+Environment variables such as ``KARAKEEP_API_KEY``, ``KARAKEEP_BASE_URL``.
 """
 
 # %%
