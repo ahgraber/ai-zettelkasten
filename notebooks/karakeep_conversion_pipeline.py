@@ -131,6 +131,15 @@ async def submit_all_bookmarks(
                     continue
                 try:
                     await submit_bookmark(http_client, bookmark.id)
+                except httpx.HTTPStatusError as exc:
+                    failed += 1
+                    response = exc.response
+                    logger.exception(
+                        "Submission failed for bookmark %s (status=%s body=%s)",
+                        bookmark.id,
+                        response.status_code,
+                        response.text,
+                    )
                 except httpx.HTTPError:
                     failed += 1
                     logger.exception("Submission failed for bookmark %s", bookmark.id)
@@ -161,13 +170,23 @@ async def list_jobs(
         return response.json()
 
 
-async def summarize_job_statuses(limit: int = 200) -> dict[str, int]:
-    """Summarize job statuses from the latest jobs."""
-    payload = await list_jobs(limit=limit, offset=0)
+async def summarize_job_statuses(page_size: int = 200) -> dict[str, int]:
+    """Summarize job statuses across all jobs."""
     counts: dict[str, int] = {}
-    for job in payload.get("jobs", []):
-        status = str(job.get("status", "unknown"))
-        counts[status] = counts.get(status, 0) + 1
+    offset = 0
+
+    while True:
+        payload = await list_jobs(limit=page_size, offset=offset)
+        jobs = payload.get("jobs", [])
+        for job in jobs:
+            status = str(job.get("status", "unknown"))
+            counts[status] = counts.get(status, 0) + 1
+
+        total = int(payload.get("total", 0))
+        offset += len(jobs)
+        if offset >= total or not jobs:
+            break
+
     return counts
 
 
@@ -190,7 +209,7 @@ recent_jobs.get("jobs", [])[:5]
 
 
 # %%
-status_summary = await summarize_job_statuses(limit=200)
+status_summary = await summarize_job_statuses(page_size=200)
 status_summary
 
 # %% [markdown]
