@@ -284,6 +284,40 @@ def handle_job_error(job_id: int, error: Exception) -> None:
         session.commit()
 
 
+def recover_stale_running_jobs(config: ConversionConfig) -> int:
+    """Mark stale RUNNING jobs as retryable.
+
+    This can catch jobs that were being processed when a worker crashed.
+    """
+    engine = get_engine(config.database_url)
+    now = _utcnow()
+    stale_before = now - dt.timedelta(minutes=config.worker_stale_job_minutes)
+
+    with Session(engine) as session:
+        jobs = session.exec(
+            select(ConversionJob)
+            .where(ConversionJob.status == ConversionJobStatus.RUNNING)
+            .where(ConversionJob.started_at.is_not(None))  # type: ignore[operator]
+            .where(ConversionJob.started_at < stale_before)
+        ).all()
+
+        if not jobs:
+            return 0
+
+        for job in jobs:
+            job.status = ConversionJobStatus.FAILED_RETRYABLE
+            job.earliest_next_attempt_at = now
+            job.error_code = "worker_stale_running"
+            job.error_message = f"Marked stale after {config.worker_stale_job_minutes} minutes without completion."
+            job.last_error_at = now
+            job.updated_at = now
+            session.add(job)
+
+        session.commit()
+
+    return len(jobs)
+
+
 def poll_and_process_jobs() -> bool:
     """Pick up the next queued job and process it."""
     config = ConversionConfig()
@@ -296,11 +330,7 @@ def poll_and_process_jobs() -> bool:
             session.exec(text("BEGIN IMMEDIATE"))
             job = session.exec(
                 select(ConversionJob)
-                .where(
-                    ConversionJob.status.in_(
-                        [ConversionJobStatus.QUEUED, ConversionJobStatus.FAILED_RETRYABLE]
-                    )
-                )
+                .where(ConversionJob.status.in_([ConversionJobStatus.QUEUED, ConversionJobStatus.FAILED_RETRYABLE]))
                 .where(
                     (ConversionJob.earliest_next_attempt_at.is_(None))  # type: ignore[operator]
                     | (ConversionJob.earliest_next_attempt_at <= now)
@@ -416,7 +446,15 @@ def process_job(job_id: int) -> None:
 def run_worker(poll_interval_seconds: float = 2.0) -> None:
     """Run the worker loop for processing jobs."""
     logger.info("Starting conversion worker loop")
+    config = ConversionConfig()
+    last_recovery_check = 0.0
     while True:
+        now = time.monotonic()
+        if now - last_recovery_check >= config.worker_stale_job_check_seconds:
+            recovered = recover_stale_running_jobs(config)
+            if recovered:
+                logger.warning("Recovered %d stale RUNNING jobs", recovered)
+            last_recovery_check = now
         processed = poll_and_process_jobs()
         if not processed:
             time.sleep(poll_interval_seconds)
