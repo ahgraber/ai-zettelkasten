@@ -1,0 +1,590 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Conversion Jobs</title>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap"
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f2eb;
+        --bg-elevated: #fffdf8;
+        --ink: #1f1a16;
+        --muted: #6c5f55;
+        --accent: #b44b33;
+        --accent-strong: #8f3322;
+        --border: rgba(31, 26, 22, 0.12);
+        --shadow: 0 18px 40px rgba(31, 26, 22, 0.12);
+        --radius: 16px;
+        --mono: "SFMono-Regular", ui-monospace, "Cascadia Code", "IBM Plex Mono", "Fira Code", monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Space Grotesk", sans-serif;
+        color: var(--ink);
+        background: radial-gradient(circle at top, #fef9f1 0%, #f3e9dd 45%, #ece1d4 100%);
+        min-height: 100vh;
+      }
+
+      .shell {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 32px 20px 64px;
+        position: relative;
+      }
+
+      .halo {
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(circle at 20% 20%, rgba(180, 75, 51, 0.18), transparent 55%),
+          radial-gradient(circle at 80% 10%, rgba(30, 120, 110, 0.1), transparent 50%);
+        pointer-events: none;
+      }
+
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 16px;
+        justify-content: space-between;
+        position: relative;
+        z-index: 1;
+        animation: floatIn 0.6s ease-out both;
+      }
+
+      h1 {
+        font-size: clamp(1.8rem, 2.8vw, 2.6rem);
+        margin: 0;
+        letter-spacing: -0.02em;
+      }
+
+      .subtitle {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 0.98rem;
+      }
+
+      .summary {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+
+      .pill {
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: rgba(31, 26, 22, 0.06);
+      }
+
+      .panel {
+        margin-top: 24px;
+        background: var(--bg-elevated);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+        position: relative;
+        z-index: 1;
+        animation: floatIn 0.7s ease-out both;
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--border);
+        background: rgba(255, 252, 246, 0.9);
+      }
+
+      .control {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-width: 180px;
+      }
+
+      label {
+        font-size: 0.75rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      input[type="text"],
+      select {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 10px 12px;
+        font-size: 0.95rem;
+        font-family: inherit;
+        background: white;
+        color: var(--ink);
+      }
+
+      input[type="text"]:focus,
+      select:focus {
+        outline: 2px solid rgba(180, 75, 51, 0.25);
+        border-color: rgba(180, 75, 51, 0.5);
+      }
+
+      .actions {
+        margin-left: auto;
+        display: flex;
+        gap: 10px;
+        align-items: flex-end;
+      }
+
+      button {
+        border: none;
+        border-radius: 999px;
+        padding: 10px 16px;
+        font-weight: 600;
+        font-family: inherit;
+        cursor: pointer;
+        transition:
+          transform 0.15s ease,
+          box-shadow 0.15s ease;
+      }
+
+      button:active {
+        transform: translateY(1px);
+      }
+
+      .btn-primary {
+        background: var(--accent);
+        color: white;
+        box-shadow: 0 6px 16px rgba(180, 75, 51, 0.25);
+      }
+
+      .btn-secondary {
+        background: rgba(31, 26, 22, 0.08);
+        color: var(--ink);
+      }
+
+      .btn-danger {
+        background: #2f1f19;
+        color: #f8e9e1;
+      }
+
+      .table-wrap {
+        overflow-x: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 980px;
+      }
+
+      thead {
+        background: rgba(31, 26, 22, 0.04);
+      }
+
+      th,
+      td {
+        text-align: left;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--border);
+        font-size: 0.92rem;
+      }
+
+      th {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+      }
+
+      tbody tr {
+        transition: background 0.2s ease;
+      }
+
+      tbody tr:hover {
+        background: rgba(180, 75, 51, 0.08);
+      }
+
+      .mono {
+        font-family: var(--mono);
+        font-size: 0.85rem;
+      }
+
+      .status {
+        padding: 6px 10px;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 600;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+      }
+
+      .status::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+
+      .status.queued {
+        color: #256b63;
+        background: rgba(37, 107, 99, 0.12);
+      }
+
+      .status.running {
+        color: #1a4d8f;
+        background: rgba(26, 77, 143, 0.12);
+      }
+
+      .status.failed {
+        color: #a33b2c;
+        background: rgba(163, 59, 44, 0.12);
+      }
+
+      .status.failed-retryable {
+        color: #b5655a;
+        background: rgba(181, 101, 90, 0.16);
+      }
+
+      .status.failed-perm {
+        color: #7c1d12;
+        background: rgba(124, 29, 18, 0.16);
+      }
+
+      .status.succeeded {
+        color: #2c6f3d;
+        background: rgba(44, 111, 61, 0.12);
+      }
+
+      .status.cancelled {
+        color: #705446;
+        background: rgba(112, 84, 70, 0.12);
+      }
+
+      .row-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .row-actions button {
+        padding: 6px 10px;
+        font-size: 0.78rem;
+      }
+
+      .empty {
+        text-align: center;
+        padding: 40px 20px;
+        color: var(--muted);
+      }
+
+      .notice {
+        padding: 12px 18px;
+        font-size: 0.9rem;
+        color: var(--muted);
+        border-top: 1px solid var(--border);
+        background: rgba(255, 252, 246, 0.85);
+      }
+
+      .pager {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 14px 18px;
+        border-top: 1px solid var(--border);
+        background: rgba(255, 252, 246, 0.85);
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+
+      .pager a {
+        text-decoration: none;
+        color: var(--ink);
+        border: 1px solid var(--border);
+        padding: 8px 14px;
+        border-radius: 999px;
+        background: white;
+        font-weight: 600;
+      }
+
+      .pager a[aria-disabled="true"] {
+        pointer-events: none;
+        color: var(--muted);
+        background: rgba(31, 26, 22, 0.04);
+      }
+
+      @keyframes floatIn {
+        from {
+          opacity: 0;
+          transform: translateY(12px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @media (max-width: 720px) {
+        .toolbar {
+          flex-direction: column;
+        }
+
+        .actions {
+          width: 100%;
+          justify-content: stretch;
+        }
+
+        .actions button {
+          flex: 1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="halo"></div>
+      <header>
+        <div>
+          <h1>Conversion Jobs</h1>
+          <p class="subtitle">Monitor conversion flow, filter statuses, and retry failed runs.</p>
+        </div>
+        <div class="summary" id="summary">
+          <span class="pill">Total: <strong id="total-count">0</strong></span>
+          <span class="pill">Filtered: <strong id="filtered-count">0</strong></span>
+          <span class="pill">Selected: <strong id="selected-count">0</strong></span>
+        </div>
+      </header>
+
+      <section class="panel">
+        <div class="toolbar">
+          <div class="control">
+            <label for="status-filter">Status</label>
+            <select id="status-filter">
+              <option value="">All statuses</option>
+              <option value="QUEUED">Queued</option>
+              <option value="RUNNING">Running</option>
+              <option value="UPLOAD_PENDING">Upload Pending</option>
+              <option value="SUCCEEDED">Succeeded</option>
+              <option value="FAILED_RETRYABLE">Failed Retryable</option>
+              <option value="FAILED_PERM">Failed Permanent</option>
+              <option value="CANCELLED">Cancelled</option>
+            </select>
+          </div>
+          <div class="control" style="min-width: 260px">
+            <label for="text-filter">Search</label>
+            <input id="text-filter" type="text" placeholder="Filter by ID, UUID, or title" autocomplete="off" />
+          </div>
+          <div class="actions">
+            <button class="btn-secondary" id="refresh-btn" type="button">Refresh</button>
+            <button class="btn-primary" id="retry-selected" type="button">Retry Selected</button>
+            <button class="btn-danger" id="cancel-selected" type="button">Cancel Selected</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th><input type="checkbox" id="select-all" aria-label="Select all" /></th>
+                <th>Job ID</th>
+                <th>aizk_uuid</th>
+                <th>karakeep_id</th>
+                <th>title</th>
+                <th>status</th>
+                <th>attempts</th>
+                <th>queued_at</th>
+                <th>started_at</th>
+                <th>finished_at</th>
+                <th>error_code</th>
+                <th>actions</th>
+              </tr>
+            </thead>
+            <tbody id="jobs-body">
+              {% if jobs %} {% for job in jobs %}
+              <tr data-status="{{ job.status }}" data-search="{{ job.search_text }}" data-job-id="{{ job.id }}">
+                <td><input type="checkbox" class="row-select" /></td>
+                <td class="mono">
+                  <a href="/v1/jobs/{{ job.id }}" target="_blank" rel="noopener noreferrer">{{ job.id }}</a>
+                </td>
+                <td class="mono">{{ job.aizk_uuid }}</td>
+                <td>{{ job.karakeep_id }}</td>
+                <td>{{ job.title }}</td>
+                <td>
+                  <span class="status {{ job.status | lower | replace('_', '-') }}">{{ job.status }}</span>
+                </td>
+                <td class="mono">{{ job.attempts }}</td>
+                <td class="mono">{{ job.queued_at }}</td>
+                <td class="mono">{{ job.started_at }}</td>
+                <td class="mono">{{ job.finished_at }}</td>
+                <td class="mono">{{ job.error_code }}</td>
+                <td class="row-actions">
+                  <button class="btn-secondary row-retry" type="button">Retry</button>
+                  <button class="btn-danger row-cancel" type="button">Cancel</button>
+                </td>
+              </tr>
+              {% endfor %} {% else %}
+              <tr>
+                <td colspan="12" class="empty">No jobs yet. Submit a bookmark to get started.</td>
+              </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+        <div class="notice" id="notice">Select jobs to retry or cancel. Bulk actions run immediately.</div>
+        <div class="pager">
+          <span>Showing {{ start_index }}–{{ end_index }} of {{ total }}</span>
+          <div>
+            <a
+              href="?limit={{ limit }}&offset={{ prev_offset if prev_offset is not none else offset }}"
+              aria-disabled="{{ 'true' if prev_offset is none else 'false' }}"
+              >Previous</a
+            >
+            <a
+              href="?limit={{ limit }}&offset={{ next_offset if next_offset is not none else offset }}"
+              aria-disabled="{{ 'true' if next_offset is none else 'false' }}"
+              >Next</a
+            >
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      const statusFilter = document.getElementById("status-filter")
+      const textFilter = document.getElementById("text-filter")
+      const jobsBody = document.getElementById("jobs-body")
+      const selectAll = document.getElementById("select-all")
+      const totalCount = document.getElementById("total-count")
+      const filteredCount = document.getElementById("filtered-count")
+      const selectedCount = document.getElementById("selected-count")
+      const notice = document.getElementById("notice")
+
+      const rows = Array.from(jobsBody.querySelectorAll("tr[data-job-id]"))
+      totalCount.textContent = "{{ total }}"
+
+      function updateCounts(visibleRows) {
+        filteredCount.textContent = visibleRows.length
+        const selected = rows.filter((row) => row.querySelector(".row-select").checked)
+        selectedCount.textContent = selected.length
+      }
+
+      function applyFilters() {
+        const statusValue = statusFilter.value
+        const textValue = textFilter.value.trim().toLowerCase()
+        const visibleRows = []
+
+        rows.forEach((row) => {
+          const matchesStatus = !statusValue || row.dataset.status === statusValue
+          const matchesText = !textValue || row.dataset.search.includes(textValue)
+          const show = matchesStatus && matchesText
+          row.style.display = show ? "" : "none"
+          if (show) {
+            visibleRows.push(row)
+          }
+        })
+
+        updateCounts(visibleRows)
+      }
+
+      function selectedJobIds() {
+        return rows
+          .filter((row) => row.style.display !== "none")
+          .filter((row) => row.querySelector(".row-select").checked)
+          .map((row) => Number(row.dataset.jobId))
+      }
+
+      function setNotice(message, isError = false) {
+        notice.textContent = message
+        notice.style.color = isError ? "#a33b2c" : "var(--muted)"
+      }
+
+      async function performBulkAction(action) {
+        const jobIds = selectedJobIds()
+        if (!jobIds.length) {
+          setNotice("Select at least one job to continue.", true)
+          return
+        }
+
+        setNotice(`${action === "retry" ? "Retrying" : "Cancelling"} ${jobIds.length} jobs...`)
+        const response = await fetch("/v1/jobs/actions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action, job_ids: jobIds }),
+        })
+
+        if (!response.ok) {
+          setNotice("Bulk action failed. Check API logs for details.", true)
+          return
+        }
+
+        window.location.reload()
+      }
+
+      async function performRowAction(jobId, action) {
+        const endpoint = action === "retry" ? `/v1/jobs/${jobId}/retry` : `/v1/jobs/${jobId}/cancel`
+        setNotice(`${action === "retry" ? "Retrying" : "Cancelling"} job ${jobId}...`)
+        const response = await fetch(endpoint, { method: "POST" })
+        if (!response.ok) {
+          setNotice(`Job ${jobId} ${action} failed.`, true)
+          return
+        }
+        window.location.reload()
+      }
+
+      statusFilter.addEventListener("change", applyFilters)
+      textFilter.addEventListener("input", applyFilters)
+
+      selectAll.addEventListener("change", () => {
+        const isChecked = selectAll.checked
+        rows.forEach((row) => {
+          if (row.style.display !== "none") {
+            row.querySelector(".row-select").checked = isChecked
+          }
+        })
+        updateCounts(rows.filter((row) => row.style.display !== "none"))
+      })
+
+      rows.forEach((row) => {
+        row.querySelector(".row-select").addEventListener("change", () => {
+          const visibleRows = rows.filter((item) => item.style.display !== "none")
+          const selectedVisible = visibleRows.filter((item) => item.querySelector(".row-select").checked)
+          selectAll.checked = visibleRows.length > 0 && selectedVisible.length === visibleRows.length
+          updateCounts(visibleRows)
+        })
+
+        row.querySelector(".row-retry").addEventListener("click", () => {
+          performRowAction(row.dataset.jobId, "retry")
+        })
+        row.querySelector(".row-cancel").addEventListener("click", () => {
+          performRowAction(row.dataset.jobId, "cancel")
+        })
+      })
+
+      document.getElementById("retry-selected").addEventListener("click", () => {
+        performBulkAction("retry")
+      })
+
+      document.getElementById("cancel-selected").addEventListener("click", () => {
+        performBulkAction("cancel")
+      })
+
+      document.getElementById("refresh-btn").addEventListener("click", () => {
+        window.location.reload()
+      })
+
+      applyFilters()
+    </script>
+  </body>
+</html>
