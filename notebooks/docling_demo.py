@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Demo script for KarakeepClient usage.
 
-This script demonstrates how to use the KarakeepClient to interact with the Karakeep API.
-Make sure to set KARAKEEP_API_KEY and KARAKEEP_BASEURL environment variables.
+This notebook pulls bookmarks from the Karakeep API, runs assets and links through
+Docling's PDF and HTML pipelines (including picture description VLM enrichment),
+exports Markdown plus extracted images,..
+Environment variables such as ``KARAKEEP_API_KEY``, ``KARAKEEP_BASE_URL``.
 """
 
 # %%

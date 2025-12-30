@@ -2,7 +2,7 @@
 """Demo script for KarakeepClient usage.
 
 This script demonstrates how to use the KarakeepClient to interact with the Karakeep API.
-Make sure to set KARAKEEP_API_KEY and KARAKEEP_BASEURL environment variables.
+Make sure to set KARAKEEP_API_KEY and KARAKEEP_BASE_URL environment variables.
 """
 
 # %%
