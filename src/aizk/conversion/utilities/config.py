@@ -28,6 +28,11 @@ class ConversionConfig(BaseSettings):
     fetch_timeout_seconds: int = Field(default=30, validation_alias="FETCH_TIMEOUT_SECONDS")
     retry_max_attempts: int = Field(default=3, validation_alias="RETRY_MAX_ATTEMPTS")
     retry_base_delay_seconds: int = Field(default=60, validation_alias="RETRY_BASE_DELAY_SECONDS")
+    worker_stale_job_minutes: int = Field(default=30, validation_alias="WORKER_STALE_JOB_MINUTES")
+    worker_stale_job_check_seconds: float = Field(
+        default=60.0,
+        validation_alias="WORKER_STALE_JOB_CHECK_SECONDS",
+    )
 
     docling_pdf_max_pages: int = Field(default=250, validation_alias="DOCLING_PDF_MAX_PAGES")
     docling_enable_ocr: bool = Field(default=True, validation_alias="DOCLING_ENABLE_OCR")
