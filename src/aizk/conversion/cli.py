@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from setproctitle import setproctitle
@@ -11,6 +12,13 @@ import uvicorn
 from aizk.conversion.api.main import create_app
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.db import create_db_and_tables
+
+
+def _require_karakeep_env() -> None:
+    required_keys = ("KARAKEEP_API_KEY", "KARAKEEP_BASE_URL")
+    missing = [key for key in required_keys if not os.environ.get(key)]
+    if missing:
+        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
 
 
 def _cmd_db_init(_args: argparse.Namespace) -> int:
@@ -22,6 +30,7 @@ def _cmd_db_init(_args: argparse.Namespace) -> int:
 
 def _cmd_serve(_args: argparse.Namespace) -> int:
     """Run the FastAPI server."""
+    _require_karakeep_env()
     setproctitle("docling-api")
     config = ConversionConfig()
     uvicorn.run(
@@ -35,6 +44,7 @@ def _cmd_serve(_args: argparse.Namespace) -> int:
 
 def _cmd_worker(_args: argparse.Namespace) -> int:
     """Run the background worker."""
+    _require_karakeep_env()
     setproctitle("docling-worker")
     try:
         from aizk.conversion.workers.worker import run_worker
