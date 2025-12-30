@@ -6,8 +6,11 @@ import logging
 import time
 from typing import (
     Any,
+    Awaitable,
     Callable,
     Optional,
+    ParamSpec,
+    TypeVar,
 )
 
 from tqdm.auto import tqdm
@@ -16,39 +19,44 @@ import tenacity
 
 logger = logging.getLogger(__name__)
 
+P = ParamSpec("P")
+R = TypeVar("R")
 
 class Limiter(ABC):
     """Abstract base class for all limiters."""
 
     @abstractmethod
-    async def acquire(self):
+    async def acquire(self) -> None:
         """Acquire permission to proceed, blocking if necessary according to the limiter's policy."""
         pass
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "Limiter":
         """Async context manager entry. Calls acquire by default."""
         await self.acquire()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):  # NOQA: B027
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:  # NOQA: B027
         """Async context manager exit. No-op by default."""
         pass
 
-    def __enter__(self):
+    def __enter__(self) -> None:
         """Prevent synchronous usage of async-only limiters."""
         raise RuntimeError("Limiter supports only asynchronous context management. Use 'async with'.")
 
-    def __exit__(self, exc_type, exc_val, exc_tb):  # NOQA: B027
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:  # NOQA: B027
         """Prevent synchronous usage of async-only limiters."""
         raise RuntimeError("Limiter supports only asynchronous context management. Use 'async with'.")
 
-    def __call__(self, func: Callable) -> Callable:
+    def __call__(
+        self,
+        func: Callable[P, Awaitable[R]],
+    ) -> Callable[P, Awaitable[R]]:
         """Wrap an async function with this limiter."""
         if not asyncio.iscoroutinefunction(func):
             raise TypeError("Limiter can only wrap async functions.")
 
         @wraps(func)
-        async def async_wrapper(*args, **kwargs):
+        async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             await self.acquire()
             return await func(*args, **kwargs)
 
@@ -68,7 +76,7 @@ class SlidingWindowRateLimiter(Limiter):
         Avoid sharing a limiter across multiple asyncio event loops or threads.
     """
 
-    def __init__(self, max_requests: int, window_seconds: float):
+    def __init__(self, max_requests: int, window_seconds: float) -> None:
         if max_requests <= 0 or window_seconds <= 0:
             raise ValueError("requests and window_seconds must be positive")
         self.max_requests = max_requests
@@ -76,7 +84,7 @@ class SlidingWindowRateLimiter(Limiter):
         self._window = deque()
         self._lock = asyncio.Lock()
 
-    async def acquire(self):
+    async def acquire(self) -> None:
         """Acquire permission to proceed, blocking if rate limit exceeded."""
         while True:
             async with self._lock:
@@ -115,7 +123,7 @@ class LeakyBucketRateLimiter(Limiter):
         window_seconds: float,
         *,
         max_burst: Optional[int] = None,
-    ):
+    ) -> None:
         if max_requests <= 0 or window_seconds <= 0:
             raise ValueError("requests and window_seconds must be positive")
         if max_burst is not None and max_burst <= 0:
@@ -129,7 +137,7 @@ class LeakyBucketRateLimiter(Limiter):
         self._last_leak_time = time.monotonic()
         self._lock = asyncio.Lock()
 
-    async def acquire(self):
+    async def acquire(self) -> None:
         """Acquire permission to proceed, blocking if bucket is full."""
         while True:
             async with self._lock:
@@ -160,7 +168,7 @@ class GCRARateLimiter(Limiter):
         Avoid sharing a limiter across multiple asyncio event loops or threads.
     """
 
-    def __init__(self, max_requests: int, window_seconds: float):
+    def __init__(self, max_requests: int, window_seconds: float) -> None:
         if max_requests <= 0 or window_seconds <= 0:
             raise ValueError("requests and window_seconds must be positive")
 
@@ -208,7 +216,9 @@ class GCRARateLimiter(Limiter):
         self._tat = 0.0
 
 
-def rate_limit(limiter: Limiter):
+def rate_limit(
+    limiter: Limiter,
+) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]:
     """Rate limit async functions using a limiter instance.
 
     When stacking with other decorators (e.g., @retry, @concurrency_limit),
@@ -226,13 +236,15 @@ def rate_limit(limiter: Limiter):
     ... async def fetch_data(): ...
     """
 
-    def decorator(func):
+    def decorator(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
         return limiter(func)
 
     return decorator
 
 
-def concurrency_limit(max_concurrent: int):
+def concurrency_limit(
+    max_concurrent: int,
+) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]:
     """Limit concurrency for async functions.
 
     When stacking with @rate_limit or @retry, place @concurrency_limit outside @rate_limit
@@ -249,14 +261,14 @@ def concurrency_limit(max_concurrent: int):
     if max_concurrent <= 0:
         raise ValueError("concurrency must be positive")
 
-    def decorator(func):
+    def decorator(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
         if not asyncio.iscoroutinefunction(func):
             raise ValueError("Function must be async")
 
         sem = asyncio.Semaphore(max_concurrent)
 
         @wraps(func)
-        async def async_wrapper(*args, **kwargs):
+        async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             async with sem:
                 return await func(*args, **kwargs)
 
@@ -272,7 +284,7 @@ def retry(
     after: Optional[Callable] = None,
     reraise: bool = True,
     **kwargs,
-):
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
     """Retry sync/async functions using tenacity. Respects rate/concurrency limits if stacked.
 
     When stacking with @rate_limit or @concurrency_limit, place @retry on the outside
@@ -289,7 +301,7 @@ def retry(
     ... def fetch_sync(): ...
     """
 
-    def decorator(func):
+    def decorator(func: Callable[P, R]) -> Callable[P, R]:
         retry_kwargs = dict(
             stop=stop or tenacity.stop_after_attempt(3),
             wait=wait or tenacity.wait_exponential(multiplier=0.5, min=1, max=10),
