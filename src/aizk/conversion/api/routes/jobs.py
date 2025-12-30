@@ -15,7 +15,16 @@ from sqlmodel import Session, select
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from aizk.conversion.api.dependencies import get_db_session
-from aizk.conversion.api.schemas import ArtifactSummary, JobList, JobResponse, JobSubmission
+from aizk.conversion.api.schemas import (
+    ArtifactSummary,
+    BulkActionResponse,
+    BulkActionResult,
+    BulkActionSummary,
+    BulkJobActionRequest,
+    JobList,
+    JobResponse,
+    JobSubmission,
+)
 from aizk.conversion.utilities.bookmark_utils import (
     detect_content_type,
     detect_source_type,
@@ -84,6 +93,36 @@ def _job_to_response(
 def _get_output_summary(session: Session, job_id: int) -> ConversionOutput | None:
     """Load conversion output for a job."""
     return session.exec(select(ConversionOutput).where(ConversionOutput.job_id == job_id)).first()
+
+
+def _apply_job_retry(job: ConversionJob, now: dt.datetime) -> None:
+    """Apply retry transition to a conversion job."""
+    if job.status not in {
+        ConversionJobStatus.FAILED_RETRYABLE,
+        ConversionJobStatus.FAILED_PERM,
+        ConversionJobStatus.CANCELLED,
+    }:
+        raise ValueError("job_not_retryable")
+    job.status = ConversionJobStatus.QUEUED
+    job.attempts += 1
+    job.earliest_next_attempt_at = None
+    job.last_error_at = None
+    job.error_code = None
+    job.error_message = None
+    job.queued_at = now
+    job.started_at = None
+    job.finished_at = None
+    job.updated_at = now
+
+
+def _apply_job_cancel(job: ConversionJob, now: dt.datetime) -> None:
+    """Apply cancel transition to a conversion job."""
+    if job.status not in {ConversionJobStatus.QUEUED, ConversionJobStatus.RUNNING}:
+        raise ValueError("job_not_cancellable")
+    job.status = ConversionJobStatus.CANCELLED
+    job.finished_at = now
+    job.earliest_next_attempt_at = None
+    job.updated_at = now
 
 
 @router.post("", response_model=JobResponse, status_code=status.HTTP_201_CREATED)
@@ -225,3 +264,87 @@ def list_jobs(
         responses.append(_job_to_response(job, job.bookmark, job.output))
 
     return JobList(jobs=responses, total=total, limit=limit, offset=offset)
+
+
+@router.post("/{job_id}/retry", response_model=JobResponse)
+def retry_job(
+    job_id: int,
+    session: Annotated[Session, Depends(get_db_session)],
+) -> JobResponse:
+    """Retry a failed or cancelled job."""
+    job = session.get(ConversionJob, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
+    now = _utcnow()
+    try:
+        _apply_job_retry(job, now)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": str(exc), "message": "Job cannot be retried"},
+        ) from exc
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    bookmark = session.exec(select(Bookmark).where(Bookmark.aizk_uuid == job.aizk_uuid)).one()
+    output = _get_output_summary(session, job_id)
+    return _job_to_response(job, bookmark, output)
+
+
+@router.post("/{job_id}/cancel", response_model=JobResponse)
+def cancel_job(
+    job_id: int,
+    session: Annotated[Session, Depends(get_db_session)],
+) -> JobResponse:
+    """Cancel a queued or running job."""
+    job = session.get(ConversionJob, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
+    now = _utcnow()
+    try:
+        _apply_job_cancel(job, now)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": str(exc), "message": "Job cannot be cancelled"},
+        ) from exc
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    bookmark = session.exec(select(Bookmark).where(Bookmark.aizk_uuid == job.aizk_uuid)).one()
+    output = _get_output_summary(session, job_id)
+    return _job_to_response(job, bookmark, output)
+
+
+@router.post("/actions", response_model=BulkActionResponse)
+def bulk_job_actions(
+    payload: BulkJobActionRequest,
+    session: Annotated[Session, Depends(get_db_session)],
+) -> BulkActionResponse:
+    """Apply retry or cancel actions across multiple jobs."""
+    now = _utcnow()
+    results: list[BulkActionResult] = []
+    success = 0
+    errors = 0
+
+    for job_id in payload.job_ids:
+        job = session.get(ConversionJob, job_id)
+        if not job:
+            results.append(BulkActionResult(job_id=job_id, status="error", error="job_not_found"))
+            errors += 1
+            continue
+        try:
+            if payload.action == "retry":
+                _apply_job_retry(job, now)
+            else:
+                _apply_job_cancel(job, now)
+            session.add(job)
+            results.append(BulkActionResult(job_id=job_id, status="success", error=None))
+            success += 1
+        except ValueError as exc:
+            results.append(BulkActionResult(job_id=job_id, status="error", error=str(exc)))
+            errors += 1
+
+    session.commit()
+    summary = BulkActionSummary(success=success, errors=errors)
+    return BulkActionResponse(action=payload.action, results=results, summary=summary)
