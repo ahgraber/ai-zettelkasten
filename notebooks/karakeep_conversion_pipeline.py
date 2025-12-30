@@ -29,6 +29,29 @@
 # `CONVERSION_API_BASE_URL` if you use a different host/port.
 
 # %% [markdown]
+# ## GPU crash debugging (remote host)
+#
+# If the host hard-locks during GPU work, capture logs before reboot:
+#
+# ```bash
+# # Enable persistent journaling (one-time)
+# sudo sed -i 's/^#\\?Storage=.*/Storage=persistent/' /etc/systemd/journald.conf
+# sudo systemctl restart systemd-journald
+#
+# # Tail kernel logs to disk during the run
+# sudo dmesg -wT | tee ~/dmesg-live.log
+#
+# # After a crash/reboot, review recent kernel/NVIDIA events
+# sudo journalctl -k --since "30 minutes ago" | rg -i "nvidia|nouveau|nvrm|xid"
+#
+# # Collect NVIDIA driver diagnostics (before/after if possible)
+# sudo nvidia-bug-report.sh
+#
+# # CPU-only sanity check
+# CUDA_VISIBLE_DEVICES="" uv run python -m aizk.conversion.cli worker
+# ```
+
+# %% [markdown]
 # ## Liveness check
 #
 # Verify the API is up before submitting jobs:

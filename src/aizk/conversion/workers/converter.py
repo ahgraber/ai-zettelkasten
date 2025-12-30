@@ -19,6 +19,7 @@ from docling.datamodel.base_models import InputFormat
 from docling.datamodel.document import ConversionResult
 from docling.datamodel.pipeline_options import (
     ConvertPipelineOptions,
+    EasyOcrOptions,
     PictureDescriptionApiOptions,
     ThreadedPdfPipelineOptions,
 )
@@ -147,6 +148,7 @@ def _create_document_converter(
     pdf_pipeline_opts.enable_remote_services = bool(picture_opts)
     pdf_pipeline_opts.accelerator_options = accelerator_opts
     pdf_pipeline_opts.do_ocr = config.docling_enable_ocr
+    pdf_pipeline_opts.ocr_options = EasyOcrOptions()
     pdf_pipeline_opts.ocr_options.lang = ["en"]
     pdf_pipeline_opts.do_code_enrichment = True
     pdf_pipeline_opts.do_formula_enrichment = True
