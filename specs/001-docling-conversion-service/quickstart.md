@@ -335,6 +335,14 @@ Access Web UI at http://localhost:8000/ui/jobs
 - View error details for failed jobs
 - Click job ID to view full details
 
+**How to use**:
+
+1. Open http://localhost:8000/ui/jobs after starting the API server.
+2. Use the Status dropdown and Search box to narrow the job list.
+3. Select one or more rows and click Retry Selected or Cancel Selected.
+4. Use the per-row Retry/Cancel buttons for single job actions.
+5. Click a job ID to open the JSON job response in a new tab.
+
 ## Development Tips
 
 ### Watch Logs
