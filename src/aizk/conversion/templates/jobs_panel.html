@@ -1,0 +1,229 @@
+{% set status_value = page.status_filter.value if page.status_filter else "" %} {% set search_value = page.search or ""
+%} {% macro qs(offset=None, sort=None, direction=None) -%} ?status={{ status_value|urlencode }}&search={{
+search_value|urlencode }}&limit={{ page.limit }}&offset={{ offset if offset is not none else page.offset }}&sort={{
+(sort or page.sort)|urlencode }}&direction={{ (direction or page.direction)|urlencode }} {%- endmacro %} {% macro
+next_dir(column) -%} {%- if page.sort == column -%} {{ "asc" if page.direction == "desc" else "desc" }} {%- else -%}
+desc {%- endif -%} {%- endmacro %}
+
+<section class="panel" id="jobs-panel">
+  <form
+    id="filters"
+    class="toolbar"
+    hx-get="/ui/jobs"
+    hx-target="#jobs-panel"
+    hx-swap="outerHTML"
+    hx-trigger="change delay:150ms, keyup delay:250ms from:#text-filter, submit"
+    hx-push-url="true"
+  >
+    <div class="control">
+      <label for="status-filter">Status</label>
+      <select id="status-filter" name="status">
+        <option value="" {% if not status_value %}selected{% endif %}>All statuses</option>
+        {% for status in ["QUEUED","RUNNING","UPLOAD_PENDING","SUCCEEDED","FAILED_RETRYABLE","FAILED_PERM","CANCELLED"]
+        %}
+        <option value="{{ status }}" {% if status_value="" ="status" %}selected{% endif %}>
+          {{ status.replace("_", " ").title() }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="control" style="min-width: 260px">
+      <label for="text-filter">Search</label>
+      <input
+        id="text-filter"
+        type="text"
+        name="search"
+        placeholder="Filter by ID, UUID, or title"
+        autocomplete="off"
+        value="{{ search_value }}"
+      />
+    </div>
+    <input type="hidden" name="sort" value="{{ page.sort }}" />
+    <input type="hidden" name="direction" value="{{ page.direction }}" />
+    <input type="hidden" name="limit" value="{{ page.limit }}" />
+    <input type="hidden" name="offset" value="{{ page.offset }}" />
+    <div class="actions">
+      <button
+        class="btn-secondary"
+        type="button"
+        hx-get="/ui/jobs{{ qs(offset=0) }}"
+        hx-target="#jobs-panel"
+        hx-swap="outerHTML"
+        hx-push-url="true"
+      >
+        Refresh
+      </button>
+      <button class="btn-secondary" id="reset-filters" type="button">Reset</button>
+    </div>
+  </form>
+
+  <div class="summary" aria-live="polite">
+    <span class="pill">Total: <strong id="total-count">{{ page.total_jobs }}</strong></span>
+    <span class="pill">Matches: <strong id="filtered-count">{{ page.filtered_total }}</strong></span>
+    <span class="pill">Selected: <strong id="selected-count">0</strong></span>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="select-all" aria-label="Select all" /></th>
+          <th>
+            <button
+              class="sortable"
+              data-direction="{{ page.direction if page.sort == 'job_id' else '' }}"
+              hx-get="/ui/jobs{{ qs(offset=0, sort='job_id', direction=next_dir('job_id')) }}"
+              hx-target="#jobs-panel"
+              hx-swap="outerHTML"
+              hx-push-url="true"
+              type="button"
+              aria-sort="{{ 'ascending' if page.sort == 'job_id' and page.direction == 'asc' else 'descending' if page.sort == 'job_id' else 'none' }}"
+            >
+              Job ID
+            </button>
+          </th>
+          <th>aizk_uuid</th>
+          <th>karakeep_id</th>
+          <th>title</th>
+          <th>
+            <button
+              class="sortable"
+              data-direction="{{ page.direction if page.sort == 'status' else '' }}"
+              hx-get="/ui/jobs{{ qs(offset=0, sort='status', direction=next_dir('status')) }}"
+              hx-target="#jobs-panel"
+              hx-swap="outerHTML"
+              hx-push-url="true"
+              type="button"
+              aria-sort="{{ 'ascending' if page.sort == 'status' and page.direction == 'asc' else 'descending' if page.sort == 'status' else 'none' }}"
+            >
+              status
+            </button>
+          </th>
+          <th>attempts</th>
+          <th>
+            <button
+              class="sortable"
+              data-direction="{{ page.direction if page.sort == 'queued_at' else '' }}"
+              hx-get="/ui/jobs{{ qs(offset=0, sort='queued_at', direction=next_dir('queued_at')) }}"
+              hx-target="#jobs-panel"
+              hx-swap="outerHTML"
+              hx-push-url="true"
+              type="button"
+              aria-sort="{{ 'ascending' if page.sort == 'queued_at' and page.direction == 'asc' else 'descending' if page.sort == 'queued_at' else 'none' }}"
+            >
+              queued_at
+            </button>
+          </th>
+          <th>started_at</th>
+          <th>finished_at</th>
+          <th>error_code</th>
+          <th>actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if page.jobs %} {% for job in page.jobs %}
+        <tr>
+          <td>
+            <input type="checkbox" class="row-select" name="job_ids" value="{{ job.id }}" form="jobs-form" />
+          </td>
+          <td class="mono">
+            <a href="/v1/jobs/{{ job.id }}" target="_blank" rel="noopener noreferrer">{{ job.id }}</a>
+          </td>
+          <td class="mono uuid">{{ job.aizk_uuid }}</td>
+          <td>{{ job.karakeep_id }}</td>
+          <td class="title-cell">{{ job.title }}</td>
+          <td>
+            <span class="status {{ job.status | lower | replace('_', '-') }}">{{ job.status }}</span>
+          </td>
+          <td class="mono">{{ job.attempts }}</td>
+          <td class="mono dt" data-iso="{{ job.queued_at }}">{{ job.queued_at }}</td>
+          <td class="mono dt" data-iso="{{ job.started_at }}">{{ job.started_at }}</td>
+          <td class="mono dt" data-iso="{{ job.finished_at }}">{{ job.finished_at }}</td>
+          <td class="mono">{{ job.error_code }}</td>
+          <td class="row-actions">
+            <button
+              class="btn-secondary"
+              type="button"
+              hx-post="/ui/jobs/actions{{ qs(offset=page.offset) }}"
+              hx-target="#jobs-panel"
+              hx-swap="outerHTML"
+              hx-vals='{{ {"action": "retry", "job_ids": [job.id], "status": status_value, "search": search_value, "sort": page.sort, "direction": page.direction, "limit": page.limit, "offset": page.offset}|tojson }}'
+            >
+              Retry
+            </button>
+            <button
+              class="btn-danger"
+              type="button"
+              hx-post="/ui/jobs/actions{{ qs(offset=page.offset) }}"
+              hx-target="#jobs-panel"
+              hx-swap="outerHTML"
+              hx-vals='{{ {"action": "cancel", "job_ids": [job.id], "status": status_value, "search": search_value, "sort": page.sort, "direction": page.direction, "limit": page.limit, "offset": page.offset}|tojson }}'
+            >
+              Cancel
+            </button>
+          </td>
+        </tr>
+        {% endfor %} {% else %}
+        <tr class="empty-row">
+          <td colspan="12" class="empty">No jobs yet. Submit a bookmark to get started.</td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+
+  <form
+    id="jobs-form"
+    class="bulk-actions"
+    hx-post="/ui/jobs/actions"
+    hx-target="#jobs-panel"
+    hx-swap="outerHTML"
+    hx-push-url="false"
+  >
+    <input type="hidden" name="status" value="{{ status_value }}" />
+    <input type="hidden" name="search" value="{{ search_value }}" />
+    <input type="hidden" name="sort" value="{{ page.sort }}" />
+    <input type="hidden" name="direction" value="{{ page.direction }}" />
+    <input type="hidden" name="limit" value="{{ page.limit }}" />
+    <input type="hidden" name="offset" value="{{ page.offset }}" />
+    <button class="btn-primary" type="submit" name="action" value="retry">Retry Selected</button>
+    <button class="btn-danger" type="submit" name="action" value="cancel">Cancel Selected</button>
+  </form>
+
+  <div class="notice" id="notice">
+    {{ page.notice or "Select jobs to retry or cancel. Bulk actions run immediately." }}
+  </div>
+  <div class="pager">
+    <span
+      >Showing {{ page.start_index }}–{{ page.end_index }} of {{ page.filtered_total }} ({{ page.total_jobs }}
+      total)</span
+    >
+    <div>
+      {% if page.prev_offset is not none %}
+      <a
+        href="/ui/jobs{{ qs(offset=page.prev_offset) }}"
+        hx-get="/ui/jobs{{ qs(offset=page.prev_offset) }}"
+        hx-target="#jobs-panel"
+        hx-swap="outerHTML"
+        hx-push-url="true"
+      >
+        Previous
+      </a>
+      {% else %}
+      <a href="#" aria-disabled="true">Previous</a>
+      {% endif %} {% if page.next_offset is not none %}
+      <a
+        href="/ui/jobs{{ qs(offset=page.next_offset) }}"
+        hx-get="/ui/jobs{{ qs(offset=page.next_offset) }}"
+        hx-target="#jobs-panel"
+        hx-swap="outerHTML"
+        hx-push-url="true"
+      >
+        Next
+      </a>
+      {% else %}
+      <a href="#" aria-disabled="true">Next</a>
+      {% endif %}
+    </div>
+  </div>
+</section>
