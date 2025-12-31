@@ -70,6 +70,18 @@ def _to_direction(direction: str | None) -> str:
     return _DEFAULT_DIRECTION
 
 
+def _parse_status_filter(value: str | None) -> ConversionJobStatus | None:
+    if not value:
+        return None
+    try:
+        return ConversionJobStatus(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "invalid_status", "message": "Invalid status filter"},
+        ) from exc
+
+
 def _apply_filters(
     query,
     status_filter: ConversionJobStatus | None,
@@ -160,7 +172,7 @@ def _load_jobs_page(
 def ui_jobs(
     request: Request,
     session: Annotated[Session, Depends(get_db_session)],
-    status_filter: Annotated[ConversionJobStatus | None, Query(alias="status")] = None,
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
     search: Annotated[str | None, Query(max_length=200)] = None,
     sort: Annotated[str | None, Query()] = _DEFAULT_SORT,
     direction: Annotated[str | None, Query()] = _DEFAULT_DIRECTION,
@@ -173,7 +185,7 @@ def ui_jobs(
         session=session,
         limit=limit,
         offset=offset,
-        status_filter=status_filter,
+        status_filter=_parse_status_filter(status_filter),
         search=normalized_search,
         sort=sort,
         direction=direction,
@@ -190,7 +202,7 @@ def ui_job_actions(
     session: Annotated[Session, Depends(get_db_session)],
     action: Annotated[str, Form()],
     job_ids: Annotated[list[int] | None, Form()] = None,
-    status_filter: Annotated[ConversionJobStatus | None, Form(alias="status")] = None,
+    status_filter: Annotated[str | None, Form(alias="status")] = None,
     search: Annotated[str | None, Form()] = None,
     sort: Annotated[str | None, Form()] = _DEFAULT_SORT,
     direction: Annotated[str | None, Form()] = _DEFAULT_DIRECTION,
@@ -229,7 +241,7 @@ def ui_job_actions(
         session=session,
         limit=limit,
         offset=offset,
-        status_filter=status_filter,
+        status_filter=_parse_status_filter(status_filter),
         search=normalized_search,
         sort=sort,
         direction=direction,
