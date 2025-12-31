@@ -21,7 +21,7 @@ desc {%- endif -%} {%- endmacro %}
         <option value="" {% if not status_value %}selected{% endif %}>All statuses</option>
         {% for status in ["QUEUED","RUNNING","UPLOAD_PENDING","SUCCEEDED","FAILED_RETRYABLE","FAILED_PERM","CANCELLED"]
         %}
-        <option value="{{ status }}" {% if status_value="" ="status" %}selected{% endif %}>
+        <option value="{{ status }}" {% if status_value == status %}selected{% endif %}>
           {{ status.replace("_", " ").title() }}
         </option>
         {% endfor %}

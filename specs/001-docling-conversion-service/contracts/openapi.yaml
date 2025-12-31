@@ -1,3 +1,4 @@
+---
 openapi: 3.1.0
 info:
   title: Docling Conversion Service API
@@ -146,6 +147,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
+  /v1/jobs/status-counts:
+    get:
+      tags: [jobs]
+      summary: Get job status counts
+      description: |
+        Return aggregated counts of conversion jobs grouped by status.
+      operationId: getJobStatusCounts
+      responses:
+        "200":
+          description: Job status counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobStatusCounts"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HTTPValidationError"
 
   /v1/jobs/{job_id}:
     get:
@@ -423,6 +445,19 @@ components:
       example:
         karakeep_id: "bm_123"
         payload_version: 1
+
+    JobStatusCounts:
+      type: object
+      required:
+        - counts
+        - total
+      properties:
+        counts:
+          type: object
+          additionalProperties:
+            type: integer
+        total:
+          type: integer
 
     JobResponse:
       type: object

@@ -153,6 +153,7 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - **FR-020**: System MUST expose POST /v1/jobs/{job_id}/cancel endpoint that marks QUEUED or RUNNING jobs as CANCELLED on best-effort basis
 - **FR-021**: System MUST expose POST /v1/jobs/batch endpoint accepting array of job submissions, processing each independently and returning per-item results with job_id or error details
 - **FR-022**: System MUST expose POST /v1/jobs/actions endpoint accepting bulk retry or cancel operations with array of job IDs
+- **FR-022a**: System MUST expose GET /v1/jobs/status-counts endpoint returning aggregate counts of jobs grouped by status (QUEUED, RUNNING, etc.).
 - **FR-023**: System MUST expose GET /v1/outputs/{aizk_uuid} endpoint returning conversion_outputs records ordered by created_at descending; support ?latest=true query parameter to return only most recent output
 - **FR-024**: System MUST render an HTMX-powered HTML Web UI at /ui/jobs displaying job table with columns: Job ID, aizk_uuid, karakeep_id, title, status, attempts, queued_at, started_at, finished_at, error_code
 - **FR-025**: Web UI MUST provide checkboxes for multi-select, Retry and Cancel buttons posting to /v1/jobs/actions, and server-side status/text filters and sort that operate across all jobs (not just the current page)
