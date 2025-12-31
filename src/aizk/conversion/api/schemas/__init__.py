@@ -8,6 +8,7 @@ from .jobs import (
     BulkJobActionRequest,
     JobList,
     JobResponse,
+    JobStatusCounts,
     JobSubmission,
 )
 
@@ -19,5 +20,6 @@ __all__ = [
     "BulkJobActionRequest",
     "JobList",
     "JobResponse",
+    "JobStatusCounts",
     "JobSubmission",
 ]
