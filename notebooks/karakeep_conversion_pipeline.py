@@ -193,24 +193,14 @@ async def list_jobs(
         return response.json()
 
 
-async def summarize_job_statuses(page_size: int = 200) -> dict[str, int]:
+async def summarize_job_statuses() -> dict[str, int]:
     """Summarize job statuses across all jobs."""
-    counts: dict[str, int] = {}
-    offset = 0
-
-    while True:
-        payload = await list_jobs(limit=page_size, offset=offset)
-        jobs = payload.get("jobs", [])
-        for job in jobs:
-            status = str(job.get("status", "unknown"))
-            counts[status] = counts.get(status, 0) + 1
-
-        total = int(payload.get("total", 0))
-        offset += len(jobs)
-        if offset >= total or not jobs:
-            break
-
-    return counts
+    base_url = resolve_conversion_api_base_url()
+    async with httpx.AsyncClient(base_url=base_url, timeout=30) as http_client:
+        response = await http_client.get("/v1/jobs/status-counts")
+        response.raise_for_status()
+        payload = response.json()
+        return payload.get("counts", {})
 
 
 # %%
@@ -232,8 +222,15 @@ recent_jobs.get("jobs", [])[:5]
 
 
 # %%
-status_summary = await summarize_job_statuses(page_size=200)
+status_summary = await summarize_job_statuses()
 status_summary
+
+# %% [markdown]
+# Or use shell function
+#
+# export aizk_base_url="http://localhost:8000"
+# curl -s "${aizk_base_url}/v1/jobs/status-counts" | jq '.counts'
+
 
 # %% [markdown]
 # ## Stop the API + worker
