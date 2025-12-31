@@ -1,51 +1,143 @@
 # Instructions
 
-Revise and expand unit tests, critically reviewing the provided source code and its existing unit tests.
+Revise/Expand **tests only**. Critically review the associated source code and any existing tests to ensure the tests validate **intended behavior and contracts**, not merely the current implementation.
 
-1. Infer the intended behavior and purpose of the source code. If necessary, ask questions to clarify.
-2. Evaluate whether the unit tests accurately validate this **intended behavior**, rather than simply confirming the current implementation.
-3. Identify any gaps in test coverage, such as missing edge cases, incorrect assertions, or lack of negative tests.
-4. If applicable, recommend improvements to the source code itself to enhance clarity, testability, or adherence to best practices.
-5. Develop a clear, step-by-step plan. Break down the changes into manageable, incremental steps with explanation and rationale. Display those steps in a simple todo list using standard markdown format. Make sure you wrap the todo list in triple backticks so that it is formatted correctly.
-6. Implement the changes incrementally. Make small, testable code changes.
+## Scope and Constraints
 
-Provide a clear summary of your changes and reasoning.
+- **You may only change tests. Do not change production/source code.**
+- Prefer small, incremental, testable edits.
+- If the source code's intent is unclear or underspecified, ask targeted questions **before** making assumptions that would lock in incorrect behavior.
 
-DO NOT MAKE CHANGES TO SOURCE CODE. You can only make changes to the unit tests.
+## Process
+
+1. **Determine intent and contracts**
+
+   - Infer the intended behavior from names, docstrings, type hints, usage patterns, and existing tests.
+   - If intent is ambiguous, explicitly call out assumptions and ask clarifying questions.
+
+2. **Validate tests against intent (not implementation)**
+
+   - Ensure tests verify observable outcomes and stable contracts.
+   - Avoid assertions coupled to internal details (private functions, exact log lines, internal data structures), unless those details are explicitly part of the public contract.
+
+3. **Identify coverage gaps**
+
+   - Missing edge cases and boundary conditions
+   - Negative/error paths and exception types/messages (when part of contract)
+   - Incorrect or weak assertions (false positives)
+   - Tests that fail to distinguish between correct and incorrect behavior
+   - Flaky tests (time, randomness, ordering, concurrency)
+
+4. **Optional: highlight code issues, but do not modify code**
+
+   - If you notice source changes that would improve clarity/testability, list them as recommendations only.
+   - Do not implement them.
+
+5. **Plan the changes**
+
+   - Provide a step-by-step todo list in **markdown**, wrapped in triple backticks.
+   - Each step should be small and independently verifiable.
+
+6. **Implement incrementally**
+
+   - Apply changes in small steps, keeping tests readable and focused.
+   - After changes, provide a concise summary of what improved and why.
+
+## Deliverables
+
+- A todo plan (markdown checklist in triple backticks)
+
+- Updated unit tests (only)
+
+- A brief summary of:
+
+  - what behaviors/contracts are now covered
+  - what gaps remain (if any)
+  - any notable risks/assumptions
 
 ## Testing Guidelines
 
-### Testing Framework & Structure
+### Framework and Structure
 
-- Use pytest as the primary testing framework.
-- Structure tests using the Arrange-Act-Assert (AAA) pattern.
-- Create separate test classes for different components or behaviors
+- Use **pytest**.
+- Follow the **Arrange–Act–Assert** pattern.
+- Prefer **plain test functions**; use test classes only when they add structure (shared setup via fixtures is usually better than class state).
+- Keep one behavior per test; avoid multi-assert "kitchen sink" tests unless the assertions are tightly related.
 
-### Test Naming & Organization
+### Naming and Organization
 
-- Use descriptive names for test functions and test cases. Test method names should follow: test\_<method>_<scenario>_\<expected_result>
-- Use markers to categorize tests for selective running.
+- **Unit tests mirror source modules**: one source module → one unit test module (parallel structure)
 
-### Test Coverage & Scenarios
+- **Integration tests** (if/when present) are grouped by **scenario / contract / intent**, not source structure.
 
-- Write comprehensive unit tests for all critical functions, classes, and methods.
-- Test both positive and negative test cases, including edge cases, boundary conditions, and error scenarios.
-- Test that proper error handling is in place and proper exceptions are thrown.
+- Test naming:
 
-### Test Isolation & Dependencies
+  - `test_<unit>_<scenario>_<expected_result>`
+  - Prefer describing the behavior, not the implementation.
 
-- Mock external dependencies and I/O operations
-- Utilize mocks and stubs to isolate the unit under test and avoid external dependencies when testing.
-- Avoid testing implementation details; focus on behavior and contracts
+### Unit vs Integration Boundaries
 
-### Test Clarity & Assertions
+- **Unit tests**
 
-- Use test function docstrings to clearly describe the behavior or contract under test (what is expected and why it matters), avoiding implementation details.
-- Provide clear assertion failure messages explaining the intent and why the test failed (e.g., context like input parameters or expected boundary conditions).
+  - Validate a module's public behavior in isolation
+  - Avoid network, filesystem, real DB, real time/sleep
+  - Dependencies should be mocked/stubbed/faked at module boundaries
 
-### Test Data & Fixtures
+- **Integration tests**
 
-- Utilize pytest fixtures to set up test environments and share test data.
-- Use pytest.mark.parametrize to test different inputs and expected outcomes.
-- Use meaningful test data that represents realistic scenarios
-- Use fixtures to avoid logging inside test functions.
+  - Validate interactions across modules/boundaries
+  - Use real infrastructure only when explicitly intended and controlled
+
+### Isolation, Mocks, and Patching
+
+- Mock external dependencies and I/O.
+- Patch at the **import location used by the unit under test** (avoid patching the "definition site" when the unit imported it elsewhere).
+- Prefer pytest's `monkeypatch` for simple patching; use `unittest.mock` for call assertions and more complex mocking.
+- Avoid mocking internal implementation details; mock only at boundaries.
+
+### Coverage and Scenarios
+
+- Cover:
+
+  - happy path(s)
+  - boundary conditions
+  - invalid inputs / error paths
+  - exceptions (type and message only when message is part of the contract)
+
+- Prefer table-driven coverage with `pytest.mark.parametrize` for input variation.
+
+### Assertions and Clarity
+
+- Assertions should clearly express \*why- the behavior matters.
+
+- Prefer precise assertions over vague checks:
+
+  - assert returned value, state change, and/or emitted events
+  - avoid "it didn't crash" tests unless explicitly valuable
+
+- Add assertion context only when it materially improves diagnosis (don't over-annotate).
+
+### Fixtures and Test Data
+
+- Use fixtures to:
+
+  - share setup
+  - remove duplication
+  - keep tests focused on the act/assert parts
+
+- Keep fixtures:
+
+  - small
+  - explicit
+  - scoped appropriately (`function` by default)
+
+- Use realistic, meaningful test data; avoid overly synthetic values unless targeting a boundary.
+
+- Avoid logging inside tests; rely on assertion clarity.
+
+### Determinism and Reliability
+
+- Tests must be deterministic:
+
+  - no reliance on wall-clock time, random ordering, global state, or test execution order
+  - if time/randomness is part of the code, freeze/patch it
