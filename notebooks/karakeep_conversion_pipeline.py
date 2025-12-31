@@ -228,8 +228,7 @@ status_summary
 # %% [markdown]
 # Or use shell function
 #
-# export aizk_base_url="http://localhost:8000"
-# curl -s "${aizk_base_url}/v1/jobs/status-counts" | jq '.counts'
+# watch -n 300 'curl -s "http://localhost:${API_PORT}/v1/jobs/status-counts" | jq '.counts''
 
 
 # %% [markdown]
