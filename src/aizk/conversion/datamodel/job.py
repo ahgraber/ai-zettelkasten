@@ -27,7 +27,7 @@ class ConversionJob(SQLModel, table=True):
 
     __tablename__ = "conversion_jobs"
 
-    id: int | None = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True, nullable=False)
     aizk_uuid: UUID = Field(foreign_key="bookmarks.aizk_uuid", nullable=False, index=True)
     title: str = Field(max_length=500, nullable=False)
     payload_version: int = Field(default=1, nullable=False)
@@ -56,5 +56,5 @@ class ConversionJob(SQLModel, table=True):
 
 
 if TYPE_CHECKING:
-    from aizk.datamodel.bookmark import Bookmark
-    from aizk.datamodel.output import ConversionOutput
+    from aizk.conversion.datamodel.bookmark import Bookmark
+    from aizk.conversion.datamodel.output import ConversionOutput

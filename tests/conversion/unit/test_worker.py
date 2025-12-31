@@ -6,10 +6,10 @@ import datetime as dt
 
 from sqlmodel import Session
 
+from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.workers import worker
 from aizk.conversion.workers.worker import ConversionInput
-from aizk.datamodel.bookmark import Bookmark
-from aizk.datamodel.job import ConversionJob, ConversionJobStatus
 
 
 def _create_bookmark(db_session: Session) -> Bookmark:

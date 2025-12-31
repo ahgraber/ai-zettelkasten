@@ -2,9 +2,9 @@
 
 from sqlmodel import SQLModel
 
-from aizk.datamodel.bookmark import Bookmark
-from aizk.datamodel.job import ConversionJob
-from aizk.datamodel.output import ConversionOutput
+from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.job import ConversionJob
+from aizk.conversion.datamodel.output import ConversionOutput
 
 
 def test_indexed_columns():

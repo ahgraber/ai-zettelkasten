@@ -7,9 +7,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from aizk.conversion.api.routes import jobs_router, ui_router
+from aizk.conversion.db import create_db_and_tables
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.logging import configure_logging
-from aizk.db import create_db_and_tables
 
 
 @asynccontextmanager
