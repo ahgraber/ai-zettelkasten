@@ -8,7 +8,7 @@ from typing import Iterator
 import pytest
 from sqlmodel import Session
 
-from aizk.db import create_db_and_tables, get_engine
+from aizk.conversion.db import create_db_and_tables, get_engine
 from karakeep_client.models import Bookmark
 
 

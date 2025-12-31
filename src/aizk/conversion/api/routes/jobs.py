@@ -25,19 +25,11 @@ from aizk.conversion.api.schemas import (
     JobResponse,
     JobSubmission,
 )
-from aizk.conversion.utilities.bookmark_utils import (
-    detect_content_type,
-    detect_source_type,
-    fetch_karakeep_bookmark,
-    get_bookmark_source_url,
-    validate_bookmark_content,
-)
+from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.hashing import compute_idempotency_key
-from aizk.datamodel.bookmark import Bookmark
-from aizk.datamodel.job import ConversionJob, ConversionJobStatus
-from aizk.datamodel.output import ConversionOutput
-from aizk.utilities.url_utils import normalize_url
 
 logger = logging.getLogger(__name__)
 
@@ -67,12 +59,15 @@ def _job_to_response(
             figure_count=output.figure_count,
         )
 
+    bookmark_url = AnyUrl(bookmark.url) if bookmark.url else None
+    bookmark_title = bookmark.title or job.title
+
     return JobResponse(
         id=job.id,
         aizk_uuid=job.aizk_uuid,
         karakeep_id=bookmark.karakeep_id,
-        url=AnyUrl(bookmark.url),
-        title=bookmark.title,
+        url=bookmark_url,
+        title=bookmark_title,
         source_type=bookmark.source_type,
         status=job.status,
         attempts=job.attempts,
@@ -133,29 +128,11 @@ def submit_job(
 ) -> JobResponse:
     """Submit a new conversion job."""
     config = ConversionConfig()
-    karakeep_bookmark = fetch_karakeep_bookmark(submission.karakeep_id)
-    if not karakeep_bookmark:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "karakeep_bookmark_not_found",
-                "message": f"KaraKeep bookmark not found for {submission.karakeep_id}",
-            },
-        )
-    validate_bookmark_content(karakeep_bookmark)
-    source_url = get_bookmark_source_url(karakeep_bookmark)
-    source_type = detect_source_type(source_url)
-    content_type = detect_content_type(karakeep_bookmark)
 
     bookmark = session.exec(select(Bookmark).where(Bookmark.karakeep_id == submission.karakeep_id)).first()
     if not bookmark:
         bookmark = Bookmark(
             karakeep_id=submission.karakeep_id,
-            url=source_url,
-            normalized_url=normalize_url(source_url),
-            title=karakeep_bookmark.title or source_url,
-            content_type=content_type,
-            source_type=source_type,
             created_at=_utcnow(),
             updated_at=_utcnow(),
         )
@@ -180,7 +157,7 @@ def submit_job(
     now = _utcnow()
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
-        title=bookmark.title,
+        title=bookmark.title or bookmark.karakeep_id,
         payload_version=submission.payload_version,
         status=ConversionJobStatus.QUEUED,
         attempts=0,

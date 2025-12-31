@@ -11,8 +11,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
-    from aizk.datamodel.bookmark import Bookmark
-    from aizk.datamodel.job import ConversionJob
+    from aizk.conversion.datamodel.bookmark import Bookmark
+    from aizk.conversion.datamodel.job import ConversionJob
 
 logger = logging.getLogger(__name__)
 

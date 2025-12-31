@@ -7,8 +7,8 @@ from collections.abc import Iterator
 from boto3.session import Session as BotoSession
 from sqlmodel import Session
 
+from aizk.conversion.db import get_session
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.db import get_session
 
 
 def get_db_session() -> Iterator[Session]:
