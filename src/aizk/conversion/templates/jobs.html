@@ -221,6 +221,44 @@
         font-size: 0.85rem;
       }
 
+      .uuid {
+        max-width: 140px;
+        word-break: break-all;
+      }
+
+      .title-cell {
+        min-width: 240px;
+      }
+
+      .sortable {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 600;
+        cursor: pointer;
+        border: none;
+        background: none;
+        color: inherit;
+        padding: 0;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 0.75rem;
+      }
+
+      .sortable::after {
+        content: "⇅";
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
+
+      .sortable[data-direction="asc"]::after {
+        content: "↑";
+      }
+
+      .sortable[data-direction="desc"]::after {
+        content: "↓";
+      }
+
       .status {
         padding: 6px 10px;
         border-radius: 999px;
@@ -398,13 +436,13 @@
             <thead>
               <tr>
                 <th><input type="checkbox" id="select-all" aria-label="Select all" /></th>
-                <th>Job ID</th>
+                <th><button class="sortable" data-sort="job_id" type="button">Job ID</button></th>
                 <th>aizk_uuid</th>
                 <th>karakeep_id</th>
                 <th>title</th>
-                <th>status</th>
+                <th><button class="sortable" data-sort="status" type="button">status</button></th>
                 <th>attempts</th>
-                <th>queued_at</th>
+                <th><button class="sortable" data-sort="queued_at" type="button">queued_at</button></th>
                 <th>started_at</th>
                 <th>finished_at</th>
                 <th>error_code</th>
@@ -418,16 +456,16 @@
                 <td class="mono">
                   <a href="/v1/jobs/{{ job.id }}" target="_blank" rel="noopener noreferrer">{{ job.id }}</a>
                 </td>
-                <td class="mono">{{ job.aizk_uuid }}</td>
+                <td class="mono uuid">{{ job.aizk_uuid }}</td>
                 <td>{{ job.karakeep_id }}</td>
-                <td>{{ job.title }}</td>
+                <td class="title-cell">{{ job.title }}</td>
                 <td>
                   <span class="status {{ job.status | lower | replace('_', '-') }}">{{ job.status }}</span>
                 </td>
                 <td class="mono">{{ job.attempts }}</td>
-                <td class="mono">{{ job.queued_at }}</td>
-                <td class="mono">{{ job.started_at }}</td>
-                <td class="mono">{{ job.finished_at }}</td>
+                <td class="mono dt" data-iso="{{ job.queued_at }}">{{ job.queued_at }}</td>
+                <td class="mono dt" data-iso="{{ job.started_at }}">{{ job.started_at }}</td>
+                <td class="mono dt" data-iso="{{ job.finished_at }}">{{ job.finished_at }}</td>
                 <td class="mono">{{ job.error_code }}</td>
                 <td class="row-actions">
                   <button class="btn-secondary row-retry" type="button">Retry</button>
@@ -472,6 +510,7 @@
       const notice = document.getElementById("notice")
 
       const rows = Array.from(jobsBody.querySelectorAll("tr[data-job-id]"))
+      const sortableButtons = Array.from(document.querySelectorAll(".sortable"))
       totalCount.textContent = "{{ total }}"
 
       function updateCounts(visibleRows) {
@@ -496,6 +535,101 @@
         })
 
         updateCounts(visibleRows)
+      }
+
+      function formatDateCells() {
+        const formatter = new Intl.DateTimeFormat(undefined, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        })
+        document.querySelectorAll(".dt").forEach((cell) => {
+          const iso = cell.dataset.iso
+          if (!iso) {
+            cell.textContent = ""
+            return
+          }
+          const parsed = new Date(iso)
+          if (Number.isNaN(parsed.getTime())) {
+            cell.textContent = iso
+            return
+          }
+          cell.textContent = formatter.format(parsed)
+          cell.title = iso
+        })
+      }
+
+      function statusPriority(value) {
+        const order = {
+          QUEUED: 0,
+          FAILED_RETRYABLE: 1,
+          UPLOAD_PENDING: 2,
+          RUNNING: 3,
+          FAILED_PERM: 4,
+          CANCELLED: 5,
+          SUCCEEDED: 6,
+          NEW: 7,
+        }
+        return order[value] ?? 99
+      }
+
+      function parseTimestamp(value) {
+        if (!value) {
+          return Number.POSITIVE_INFINITY
+        }
+        const parsed = new Date(value)
+        return Number.isNaN(parsed.getTime()) ? Number.POSITIVE_INFINITY : parsed.getTime()
+      }
+
+      function sortRows(sortKey, direction) {
+        const multiplier = direction === "asc" ? 1 : -1
+        rows.sort((left, right) => {
+          if (sortKey === "job_id") {
+            return (Number(left.dataset.jobId) - Number(right.dataset.jobId)) * multiplier
+          }
+          if (sortKey === "status") {
+            const diff = statusPriority(left.dataset.status) - statusPriority(right.dataset.status)
+            if (diff !== 0) {
+              return diff * multiplier
+            }
+          }
+          if (sortKey === "queued_at") {
+            const leftTime = parseTimestamp(left.querySelector(".dt")?.dataset.iso)
+            const rightTime = parseTimestamp(right.querySelector(".dt")?.dataset.iso)
+            if (leftTime !== rightTime) {
+              return (leftTime - rightTime) * multiplier
+            }
+          }
+          return (Number(left.dataset.jobId) - Number(right.dataset.jobId)) * multiplier
+        })
+
+        rows.forEach((row) => jobsBody.appendChild(row))
+      }
+
+      function sortRowsDefault() {
+        rows.sort((left, right) => {
+          const statusDiff = statusPriority(left.dataset.status) - statusPriority(right.dataset.status)
+          if (statusDiff !== 0) {
+            return statusDiff
+          }
+          const leftTime = parseTimestamp(left.querySelector(".dt")?.dataset.iso)
+          const rightTime = parseTimestamp(right.querySelector(".dt")?.dataset.iso)
+          if (leftTime !== rightTime) {
+            return leftTime - rightTime
+          }
+          return Number(left.dataset.jobId) - Number(right.dataset.jobId)
+        })
+
+        rows.forEach((row) => jobsBody.appendChild(row))
+      }
+
+      function setSortState(activeButton, direction) {
+        sortableButtons.forEach((button) => {
+          if (button === activeButton) {
+            button.dataset.direction = direction
+          } else {
+            delete button.dataset.direction
+          }
+        })
       }
 
       function selectedJobIds() {
@@ -546,6 +680,17 @@
       statusFilter.addEventListener("change", applyFilters)
       textFilter.addEventListener("input", applyFilters)
 
+      sortableButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          const sortKey = button.dataset.sort
+          const current = button.dataset.direction
+          const next = current === "asc" ? "desc" : "asc"
+          setSortState(button, next)
+          sortRows(sortKey, next)
+          applyFilters()
+        })
+      })
+
       selectAll.addEventListener("change", () => {
         const isChecked = selectAll.checked
         rows.forEach((row) => {
@@ -584,6 +729,9 @@
         window.location.reload()
       })
 
+      formatDateCells()
+      setSortState(document.querySelector('.sortable[data-sort="queued_at"]'), "asc")
+      sortRowsDefault()
       applyFilters()
     </script>
   </body>
