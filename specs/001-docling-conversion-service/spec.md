@@ -35,7 +35,7 @@ A user views all conversion jobs in the Web UI, identifies failed jobs, and retr
 
 **Why this priority**: Operational visibility and error recovery are essential for maintaining service reliability, but the core conversion must work first.
 
-**Independent Test**: Can be tested by accessing Web UI at /ui/jobs, viewing job list with status filters, selecting failed jobs via checkboxes, and clicking Retry button. Delivers operational control independent of job submission.
+**Independent Test**: Can be tested by accessing Web UI at /ui/jobs, viewing job list with server-side status/text filters (HTMX single-page), selecting failed jobs via checkboxes, and clicking Retry button. Delivers operational control independent of job submission.
 
 **Job Processing Strategy** (enables efficient retries):
 
@@ -154,8 +154,8 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - **FR-021**: System MUST expose POST /v1/jobs/batch endpoint accepting array of job submissions, processing each independently and returning per-item results with job_id or error details
 - **FR-022**: System MUST expose POST /v1/jobs/actions endpoint accepting bulk retry or cancel operations with array of job IDs
 - **FR-023**: System MUST expose GET /v1/outputs/{aizk_uuid} endpoint returning conversion_outputs records ordered by created_at descending; support ?latest=true query parameter to return only most recent output
-- **FR-024**: System MUST render HTML-only Web UI at /ui/jobs displaying job table with columns: Job ID, aizk_uuid, karakeep_id, title, status, attempts, queued_at, started_at, finished_at, error_code
-- **FR-025**: Web UI MUST provide checkboxes for multi-select, Retry and Cancel buttons posting to /v1/jobs/actions, and client-side filters for status and text search
+- **FR-024**: System MUST render an HTMX-powered HTML Web UI at /ui/jobs displaying job table with columns: Job ID, aizk_uuid, karakeep_id, title, status, attempts, queued_at, started_at, finished_at, error_code
+- **FR-025**: Web UI MUST provide checkboxes for multi-select, Retry and Cancel buttons posting to /v1/jobs/actions, and server-side status/text filters and sort that operate across all jobs (not just the current page)
 - **FR-026**: System MUST process jobs with bounded concurrency (configurable, default: 4 parallel workers) in FIFO order by queued_at timestamp
 - **FR-028**: System MUST support concurrent read access from multiple workers with transaction isolation, preventing race conditions during job status updates and artifact writing: SQLite in WAL mode with synchronous=NORMAL, prepared statements, and single-writer pattern with database lock retry logic
 - **FR-029**: System MUST create indexes on: (1) job status and retry scheduling (conversion_jobs), (2) bookmark URL deduplication (bookmarks), (3) output lookup by aizk_uuid (conversion_outputs)

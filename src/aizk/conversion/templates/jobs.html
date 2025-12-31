@@ -8,6 +8,7 @@
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap"
     />
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
     <style>
       :root {
         color-scheme: light;
@@ -72,20 +73,6 @@
         margin: 6px 0 0;
         color: var(--muted);
         font-size: 0.98rem;
-      }
-
-      .summary {
-        display: flex;
-        gap: 12px;
-        flex-wrap: wrap;
-        font-size: 0.85rem;
-        color: var(--muted);
-      }
-
-      .pill {
-        padding: 6px 12px;
-        border-radius: 999px;
-        background: rgba(31, 26, 22, 0.06);
       }
 
       .panel {
@@ -177,6 +164,23 @@
       .btn-danger {
         background: #2f1f19;
         color: #f8e9e1;
+      }
+
+      .summary {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        font-size: 0.85rem;
+        color: var(--muted);
+        padding: 12px 18px;
+        border-bottom: 1px solid var(--border);
+        background: rgba(255, 252, 246, 0.9);
+      }
+
+      .pill {
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: rgba(31, 26, 22, 0.06);
       }
 
       .table-wrap {
@@ -323,6 +327,14 @@
         font-size: 0.78rem;
       }
 
+      .bulk-actions {
+        display: flex;
+        gap: 10px;
+        padding: 14px 18px;
+        border-top: 1px solid var(--border);
+        background: rgba(255, 252, 246, 0.85);
+      }
+
       .empty {
         text-align: center;
         padding: 40px 20px;
@@ -346,6 +358,8 @@
         background: rgba(255, 252, 246, 0.85);
         font-size: 0.9rem;
         color: var(--muted);
+        gap: 12px;
+        flex-wrap: wrap;
       }
 
       .pager a {
@@ -397,152 +411,17 @@
       <header>
         <div>
           <h1>Conversion Jobs</h1>
-          <p class="subtitle">Monitor conversion flow, filter statuses, and retry failed runs.</p>
-        </div>
-        <div class="summary" id="summary">
-          <span class="pill">Total: <strong id="total-count">0</strong></span>
-          <span class="pill">Filtered: <strong id="filtered-count">0</strong></span>
-          <span class="pill">Selected: <strong id="selected-count">0</strong></span>
+          <p class="subtitle">HTMX-powered view over all jobs with server-side search, sort, and bulk actions.</p>
         </div>
       </header>
 
-      <section class="panel">
-        <div class="toolbar">
-          <div class="control">
-            <label for="status-filter">Status</label>
-            <select id="status-filter">
-              <option value="">All statuses</option>
-              <option value="QUEUED">Queued</option>
-              <option value="RUNNING">Running</option>
-              <option value="UPLOAD_PENDING">Upload Pending</option>
-              <option value="SUCCEEDED">Succeeded</option>
-              <option value="FAILED_RETRYABLE">Failed Retryable</option>
-              <option value="FAILED_PERM">Failed Permanent</option>
-              <option value="CANCELLED">Cancelled</option>
-            </select>
-          </div>
-          <div class="control" style="min-width: 260px">
-            <label for="text-filter">Search</label>
-            <input id="text-filter" type="text" placeholder="Filter by ID, UUID, or title" autocomplete="off" />
-          </div>
-          <div class="actions">
-            <button class="btn-secondary" id="refresh-btn" type="button">Refresh</button>
-            <button class="btn-primary" id="retry-selected" type="button">Retry Selected</button>
-            <button class="btn-danger" id="cancel-selected" type="button">Cancel Selected</button>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th><input type="checkbox" id="select-all" aria-label="Select all" /></th>
-                <th><button class="sortable" data-sort="job_id" type="button">Job ID</button></th>
-                <th>aizk_uuid</th>
-                <th>karakeep_id</th>
-                <th>title</th>
-                <th><button class="sortable" data-sort="status" type="button">status</button></th>
-                <th>attempts</th>
-                <th><button class="sortable" data-sort="queued_at" type="button">queued_at</button></th>
-                <th>started_at</th>
-                <th>finished_at</th>
-                <th>error_code</th>
-                <th>actions</th>
-              </tr>
-            </thead>
-            <tbody id="jobs-body">
-              {% if jobs %} {% for job in jobs %}
-              <tr data-status="{{ job.status }}" data-search="{{ job.search_text }}" data-job-id="{{ job.id }}">
-                <td><input type="checkbox" class="row-select" /></td>
-                <td class="mono">
-                  <a href="/v1/jobs/{{ job.id }}" target="_blank" rel="noopener noreferrer">{{ job.id }}</a>
-                </td>
-                <td class="mono uuid">{{ job.aizk_uuid }}</td>
-                <td>{{ job.karakeep_id }}</td>
-                <td class="title-cell">{{ job.title }}</td>
-                <td>
-                  <span class="status {{ job.status | lower | replace('_', '-') }}">{{ job.status }}</span>
-                </td>
-                <td class="mono">{{ job.attempts }}</td>
-                <td class="mono dt" data-iso="{{ job.queued_at }}">{{ job.queued_at }}</td>
-                <td class="mono dt" data-iso="{{ job.started_at }}">{{ job.started_at }}</td>
-                <td class="mono dt" data-iso="{{ job.finished_at }}">{{ job.finished_at }}</td>
-                <td class="mono">{{ job.error_code }}</td>
-                <td class="row-actions">
-                  <button class="btn-secondary row-retry" type="button">Retry</button>
-                  <button class="btn-danger row-cancel" type="button">Cancel</button>
-                </td>
-              </tr>
-              {% endfor %} {% else %}
-              <tr>
-                <td colspan="12" class="empty">No jobs yet. Submit a bookmark to get started.</td>
-              </tr>
-              {% endif %}
-            </tbody>
-          </table>
-        </div>
-        <div class="notice" id="notice">Select jobs to retry or cancel. Bulk actions run immediately.</div>
-        <div class="pager">
-          <span>Showing {{ start_index }}–{{ end_index }} of {{ total }}</span>
-          <div>
-            <a
-              href="?limit={{ limit }}&offset={{ prev_offset if prev_offset is not none else offset }}"
-              aria-disabled="{{ 'true' if prev_offset is none else 'false' }}"
-              >Previous</a
-            >
-            <a
-              href="?limit={{ limit }}&offset={{ next_offset if next_offset is not none else offset }}"
-              aria-disabled="{{ 'true' if next_offset is none else 'false' }}"
-              >Next</a
-            >
-          </div>
-        </div>
-      </section>
+      {% include "jobs_panel.html" %}
     </div>
 
     <script>
-      const statusFilter = document.getElementById("status-filter")
-      const textFilter = document.getElementById("text-filter")
-      const jobsBody = document.getElementById("jobs-body")
-      const selectAll = document.getElementById("select-all")
-      const totalCount = document.getElementById("total-count")
-      const filteredCount = document.getElementById("filtered-count")
-      const selectedCount = document.getElementById("selected-count")
-      const notice = document.getElementById("notice")
-
-      const rows = Array.from(jobsBody.querySelectorAll("tr[data-job-id]"))
-      const sortableButtons = Array.from(document.querySelectorAll(".sortable"))
-      totalCount.textContent = "{{ total }}"
-
-      function updateCounts(visibleRows) {
-        filteredCount.textContent = visibleRows.length
-        const selected = rows.filter((row) => row.querySelector(".row-select").checked)
-        selectedCount.textContent = selected.length
-      }
-
-      function applyFilters() {
-        const statusValue = statusFilter.value
-        const textValue = textFilter.value.trim().toLowerCase()
-        const visibleRows = []
-
-        rows.forEach((row) => {
-          const matchesStatus = !statusValue || row.dataset.status === statusValue
-          const matchesText = !textValue || row.dataset.search.includes(textValue)
-          const show = matchesStatus && matchesText
-          row.style.display = show ? "" : "none"
-          if (show) {
-            visibleRows.push(row)
-          }
-        })
-
-        updateCounts(visibleRows)
-      }
-
-      function formatDateCells() {
-        const formatter = new Intl.DateTimeFormat(undefined, {
-          dateStyle: "medium",
-          timeStyle: "short",
-        })
-        document.querySelectorAll(".dt").forEach((cell) => {
+      function formatDateCells(root = document) {
+        const formatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" })
+        root.querySelectorAll(".dt").forEach((cell) => {
           const iso = cell.dataset.iso
           if (!iso) {
             cell.textContent = ""
@@ -558,181 +437,79 @@
         })
       }
 
-      function statusPriority(value) {
-        const order = {
-          QUEUED: 0,
-          FAILED_RETRYABLE: 1,
-          UPLOAD_PENDING: 2,
-          RUNNING: 3,
-          FAILED_PERM: 4,
-          CANCELLED: 5,
-          SUCCEEDED: 6,
-          NEW: 7,
+      function attachSelectionHandlers(root = document) {
+        const selectedCount = document.getElementById("selected-count")
+        const selectAll = root.querySelector("#select-all")
+        const checkboxes = Array.from(root.querySelectorAll(".row-select"))
+        if (!selectedCount || !selectAll) {
+          return
         }
-        return order[value] ?? 99
+
+        function updateSelected() {
+          const selected = checkboxes.filter((cb) => cb.checked)
+          selectedCount.textContent = selected.length.toString()
+          selectAll.checked = selected.length > 0 && selected.length === checkboxes.length
+        }
+
+        selectAll.addEventListener("change", (event) => {
+          checkboxes.forEach((cb) => {
+            cb.checked = event.target.checked
+          })
+          updateSelected()
+        })
+
+        checkboxes.forEach((cb) => {
+          cb.addEventListener("change", updateSelected)
+        })
+
+        updateSelected()
       }
 
-      function parseTimestamp(value) {
-        if (!value) {
-          return Number.POSITIVE_INFINITY
+      function resetOffset() {
+        const offsetField = document.querySelector('#filters input[name="offset"]')
+        if (offsetField) {
+          offsetField.value = "0"
         }
-        const parsed = new Date(value)
-        return Number.isNaN(parsed.getTime()) ? Number.POSITIVE_INFINITY : parsed.getTime()
       }
 
-      function sortRows(sortKey, direction) {
-        const multiplier = direction === "asc" ? 1 : -1
-        rows.sort((left, right) => {
-          if (sortKey === "job_id") {
-            return (Number(left.dataset.jobId) - Number(right.dataset.jobId)) * multiplier
-          }
-          if (sortKey === "status") {
-            const diff = statusPriority(left.dataset.status) - statusPriority(right.dataset.status)
-            if (diff !== 0) {
-              return diff * multiplier
+      function attachFilterReset() {
+        const form = document.getElementById("filters")
+        if (!form) {
+          return
+        }
+        const resetButton = document.getElementById("reset-filters")
+        if (resetButton) {
+          resetButton.addEventListener("click", () => {
+            form.reset()
+            resetOffset()
+            if (window.htmx) {
+              window.htmx.trigger(form, "submit")
             }
-          }
-          if (sortKey === "queued_at") {
-            const leftTime = parseTimestamp(left.querySelector(".dt")?.dataset.iso)
-            const rightTime = parseTimestamp(right.querySelector(".dt")?.dataset.iso)
-            if (leftTime !== rightTime) {
-              return (leftTime - rightTime) * multiplier
-            }
-          }
-          return (Number(left.dataset.jobId) - Number(right.dataset.jobId)) * multiplier
-        })
-
-        rows.forEach((row) => jobsBody.appendChild(row))
-      }
-
-      function sortRowsDefault() {
-        rows.sort((left, right) => {
-          const statusDiff = statusPriority(left.dataset.status) - statusPriority(right.dataset.status)
-          if (statusDiff !== 0) {
-            return statusDiff
-          }
-          const leftTime = parseTimestamp(left.querySelector(".dt")?.dataset.iso)
-          const rightTime = parseTimestamp(right.querySelector(".dt")?.dataset.iso)
-          if (leftTime !== rightTime) {
-            return leftTime - rightTime
-          }
-          return Number(left.dataset.jobId) - Number(right.dataset.jobId)
-        })
-
-        rows.forEach((row) => jobsBody.appendChild(row))
-      }
-
-      function setSortState(activeButton, direction) {
-        sortableButtons.forEach((button) => {
-          if (button === activeButton) {
-            button.dataset.direction = direction
-          } else {
-            delete button.dataset.direction
-          }
-        })
-      }
-
-      function selectedJobIds() {
-        return rows
-          .filter((row) => row.style.display !== "none")
-          .filter((row) => row.querySelector(".row-select").checked)
-          .map((row) => Number(row.dataset.jobId))
-      }
-
-      function setNotice(message, isError = false) {
-        notice.textContent = message
-        notice.style.color = isError ? "#a33b2c" : "var(--muted)"
-      }
-
-      async function performBulkAction(action) {
-        const jobIds = selectedJobIds()
-        if (!jobIds.length) {
-          setNotice("Select at least one job to continue.", true)
-          return
+          })
         }
-
-        setNotice(`${action === "retry" ? "Retrying" : "Cancelling"} ${jobIds.length} jobs...`)
-        const response = await fetch("/v1/jobs/actions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action, job_ids: jobIds }),
-        })
-
-        if (!response.ok) {
-          setNotice("Bulk action failed. Check API logs for details.", true)
-          return
+        form.addEventListener("change", resetOffset)
+        const search = document.getElementById("text-filter")
+        if (search) {
+          search.addEventListener("input", resetOffset)
         }
-
-        window.location.reload()
       }
 
-      async function performRowAction(jobId, action) {
-        const endpoint = action === "retry" ? `/v1/jobs/${jobId}/retry` : `/v1/jobs/${jobId}/cancel`
-        setNotice(`${action === "retry" ? "Retrying" : "Cancelling"} job ${jobId}...`)
-        const response = await fetch(endpoint, { method: "POST" })
-        if (!response.ok) {
-          setNotice(`Job ${jobId} ${action} failed.`, true)
-          return
-        }
-        window.location.reload()
+      function initJobsPanel(root = document) {
+        formatDateCells(root)
+        attachSelectionHandlers(root)
       }
 
-      statusFilter.addEventListener("change", applyFilters)
-      textFilter.addEventListener("input", applyFilters)
-
-      sortableButtons.forEach((button) => {
-        button.addEventListener("click", () => {
-          const sortKey = button.dataset.sort
-          const current = button.dataset.direction
-          const next = current === "asc" ? "desc" : "asc"
-          setSortState(button, next)
-          sortRows(sortKey, next)
-          applyFilters()
-        })
+      document.addEventListener("DOMContentLoaded", () => {
+        attachFilterReset()
+        initJobsPanel()
       })
 
-      selectAll.addEventListener("change", () => {
-        const isChecked = selectAll.checked
-        rows.forEach((row) => {
-          if (row.style.display !== "none") {
-            row.querySelector(".row-select").checked = isChecked
-          }
-        })
-        updateCounts(rows.filter((row) => row.style.display !== "none"))
+      document.body.addEventListener("htmx:afterSwap", (event) => {
+        if (event.target.id === "jobs-panel") {
+          attachFilterReset()
+          initJobsPanel(event.target)
+        }
       })
-
-      rows.forEach((row) => {
-        row.querySelector(".row-select").addEventListener("change", () => {
-          const visibleRows = rows.filter((item) => item.style.display !== "none")
-          const selectedVisible = visibleRows.filter((item) => item.querySelector(".row-select").checked)
-          selectAll.checked = visibleRows.length > 0 && selectedVisible.length === visibleRows.length
-          updateCounts(visibleRows)
-        })
-
-        row.querySelector(".row-retry").addEventListener("click", () => {
-          performRowAction(row.dataset.jobId, "retry")
-        })
-        row.querySelector(".row-cancel").addEventListener("click", () => {
-          performRowAction(row.dataset.jobId, "cancel")
-        })
-      })
-
-      document.getElementById("retry-selected").addEventListener("click", () => {
-        performBulkAction("retry")
-      })
-
-      document.getElementById("cancel-selected").addEventListener("click", () => {
-        performBulkAction("cancel")
-      })
-
-      document.getElementById("refresh-btn").addEventListener("click", () => {
-        window.location.reload()
-      })
-
-      formatDateCells()
-      setSortState(document.querySelector('.sortable[data-sort="queued_at"]'), "asc")
-      sortRowsDefault()
-      applyFilters()
     </script>
   </body>
 </html>
