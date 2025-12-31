@@ -23,6 +23,7 @@ from aizk.conversion.api.schemas import (
     BulkJobActionRequest,
     JobList,
     JobResponse,
+    JobStatusCounts,
     JobSubmission,
 )
 from aizk.conversion.datamodel.bookmark import Bookmark
@@ -172,6 +173,20 @@ def submit_job(
 
     job_response = _job_to_response(job, bookmark, None)
     return job_response
+
+
+@router.get("/status-counts", response_model=JobStatusCounts)
+def get_job_status_counts(
+    session: Annotated[Session, Depends(get_db_session)],
+) -> JobStatusCounts:
+    """Return aggregated counts of jobs by status."""
+    rows = session.exec(select(ConversionJob.status, func.count()).group_by(ConversionJob.status)).all()
+    counts: dict[str, int] = {}
+    for status_, count in rows:
+        key = status_.value if isinstance(status_, ConversionJobStatus) else str(status_)
+        counts[key] = count
+    total = sum(counts.values())
+    return JobStatusCounts(counts=counts, total=total)
 
 
 @router.get("/{job_id}", response_model=JobResponse)
