@@ -8,24 +8,157 @@ Do not overreach the request. If the user asks for code, provide only the code c
 
 - Write clean, readable, and well-documented code.
 - Prioritize simplicity, clarity, and explicitness in code structure and logic.
-- Overly defensive programming leads to overcomplication - program for the minimal golden path and expand defense only where unit tests indicate need.
+- Overly defensive programming leads to overcomplication — program for the minimal golden path and expand defense only where unit tests indicate need.
 - Follow the Zen of Python and adopt pythonic patterns.
 - Focus on modularity and reusability, organizing code into functions, classes, and modules; favor composition over inheritance.
 - Optimize for performance and efficiency; avoid unnecessary computations and prefer efficient algorithms.
 - Ensure proper error handling and structured logging for debugging.
+- Treat architectural boundaries as first-class concerns, not incidental implementation details.
+
+## Architectural Principles
+
+These principles apply whether the system is a **modular monolith** or a **distributed system**.
+
+### Module Boundaries and Data Ownership
+
+- Each module **owns its data and invariants**.
+- A module's data is an internal implementation detail and must not be accessed or modified directly by other modules.
+- Cross-module interaction must occur **only through explicit public interfaces** (functions, services, or well-defined types).
+
+### Controlled Data Sharing
+
+- Data may be shared across modules only:
+
+  - via dedicated query or service interfaces
+  - using immutable or read-only representations (DTOs, value objects)
+
+- Share the **minimum data necessary** to fulfill the use case.
+
+- Never share persistence models or internal data structures across module boundaries.
+
+### Consistency Boundaries
+
+- A module is the **unit of immediate consistency**.
+
+- Transactions must not span multiple modules.
+
+- Cross-module workflows rely on:
+
+  - events
+  - background jobs
+  - eventual consistency
+
+- Accept and design for eventual consistency outside a module boundary.
+
+### Service Interaction Rules
+
+- While handling an external request (sync or async), a service must not depend on synchronous or asynchronous calls to other domain services to complete its core business operation.
+
+- Allowed interactions during request handling:
+
+  - publishing events
+  - enqueueing commands or jobs
+  - interacting with infrastructure services (logging, metrics, auth)
+
+- Direct service-to-service request chains for domain logic are discouraged.
+
+### Architectural Intent
+
+- Prefer a **modular monolith** with strict boundaries over premature microservices.
+- Architecture should enable independent evolution, testing, and refactoring of modules.
+- Microservices are an organizational scaling tool, not a default technical choice.
 
 ## Style Guidelines
 
-- Use descriptive and consistent naming conventions (e.g., snake_case for functions and variables, PascalCase for classes, UPPER_SNAKE_CASE for constants).
-- Write clear and comprehensive docstrings using google docstrings formatting for all public functions, classes, and modules, explaining their usage, parameters, and return values.
+- Use descriptive and consistent naming conventions (e.g., `snake_case` for functions and variables, `PascalCase` for classes, `UPPER_SNAKE_CASE` for constants).
+- Write clear and comprehensive docstrings using **Google docstrings** formatting for all public functions, classes, and modules.
 - Use type hints to improve code readability and enable static analysis.
-- Use f-strings for formatting strings, but %-formatting for logs
+- Use `f`-strings for formatting strings, but %-formatting for logs.
 - Use environment variables for configuration management.
 - Do not lint or format code manually; automated tooling runs on save/commit or can be invoked using `ruff`.
+- Avoid architectural leakage in naming (e.g., `shared`, `common`, `utils` packages without clear ownership).
+
+## Error Handling and Logging
+
+Design errors for two audiences: **machines** (automated recovery) and **humans** (debugging context).
+
+### Structured Error Types (Machine-Readable)
+
+- Create custom exception classes that encode error categories and actionable information.
+- Use exception attributes to carry structured data (error kind, retry status, codes).
+- Prefer specific exception types over generic ones for clear handling logic.
+
+```python
+class StorageError(Exception):
+    """Storage operation failure with machine-actionable metadata."""
+
+    def __init__(self, kind: str, message: str, retryable: bool = False):
+        super().__init__(message)
+        self.kind = kind  # e.g., "NotFound", "RateLimited"
+        self.retryable = retryable
+
+
+# Usage: code can inspect attributes for recovery decisions
+try:
+    storage.write(data)
+except StorageError as e:
+    if e.kind == "RateLimited" and e.retryable:
+        schedule_retry()
+    elif e.kind == "NotFound":
+        create_resource()
+    else:
+        raise
+```
+
+### Adding Context (Human-Readable)
+
+Never blindly forward exceptions. Add context at each layer boundary.
+
+- **Exception Chaining**: Use `raise ... from ...` to preserve the cause chain while adding context.
+
+```python
+try:
+    data = fetch_external_api(user_id)
+except HTTPError as err:
+    raise RuntimeError(f"Failed to fetch data for user {user_id}") from err
+```
+
+### Logging Best Practices
+
+- Use `logging.getLogger(__name__)` for module-level loggers.
+- Log exceptions with full context: `logger.exception(msg)`.
+- Use %-formatting for log messages: `logger.error("Failed for user %s", user_id)`.
+- Include structured context via the `extra` parameter for machine-parseable logs.
+- Log at appropriate boundaries (typically once per request/operation at the top level) to avoid duplicate log entries.
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+try:
+    result = call_service(param)
+except ServiceError as e:
+    logger.error(
+        "Service call failed for param=%s",
+        param,
+        exc_info=True,
+        extra={"error_kind": e.kind, "retryable": e.retryable},
+    )
+    raise
+```
+
+### Principles
+
+- Design error types around what callers need to **do**, not just where they originated.
+- Add context at **module boundaries** where high-level operations are known.
+- Make errors carry both **machine-actionable metadata** (for recovery logic) and **human context** (for debugging).
+- Avoid exception hierarchies that leak internal implementation details across module boundaries.
 
 ## Python Environment
 
-When running python commands, make sure to activate the virtual environment first.
-
-The python environment is managed by `uv` in the pyproject.toml file. Do not change the python environment or install new packages. If you need a package that is not available, alert the user.
-Do not lint or format code manually; automated tooling runs on save/commit or can be invoked using the `ruff` CLI tool.
+- When running Python commands, activate the virtual environment first.
+- The Python environment is managed by `uv` in the `pyproject.toml` file.
+- Do not change the Python environment or install new packages.
+- If a required package is unavailable, alert the user.
+- Do not lint or format code manually; automated tooling runs on save/commit or can be invoked using the `ruff` CLI tool.
