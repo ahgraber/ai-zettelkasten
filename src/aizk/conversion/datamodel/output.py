@@ -13,7 +13,7 @@ class ConversionOutput(SQLModel, table=True):
 
     __tablename__ = "conversion_outputs"
 
-    id: int | None = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True, nullable=False)
     job_id: int = Field(foreign_key="conversion_jobs.id", nullable=False, unique=True, index=True)
     aizk_uuid: UUID = Field(foreign_key="bookmarks.aizk_uuid", nullable=False, index=True)
     title: str = Field(max_length=500, nullable=False)
@@ -36,5 +36,5 @@ class ConversionOutput(SQLModel, table=True):
 
 
 if TYPE_CHECKING:
-    from aizk.datamodel.bookmark import Bookmark
-    from aizk.datamodel.job import ConversionJob
+    from aizk.conversion.datamodel.bookmark import Bookmark
+    from aizk.conversion.datamodel.job import ConversionJob
