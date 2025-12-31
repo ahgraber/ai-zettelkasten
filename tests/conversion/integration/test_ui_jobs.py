@@ -3,8 +3,8 @@
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.datamodel.bookmark import Bookmark
-from aizk.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 
 
 def test_ui_jobs_renders_table_and_filters(db_session) -> None:

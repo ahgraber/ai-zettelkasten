@@ -16,10 +16,16 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlmodel import Session, select
 
+from aizk.conversion.datamodel.bookmark import Bookmark as BookmarkRecord
+from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.conversion.db import get_engine
 from aizk.conversion.storage.manifest import generate_manifest, save_manifest
 from aizk.conversion.storage.s3_client import S3Client, S3Error
 from aizk.conversion.utilities.bookmark_utils import (
     BookmarkContentError,
+    detect_content_type,
+    detect_source_type,
     fetch_karakeep_bookmark,
     get_bookmark_asset_id,
     get_bookmark_html_content,
@@ -44,11 +50,8 @@ from aizk.conversion.workers.fetcher import (
     fetch_github_readme,
     fetch_karakeep_asset,
 )
-from aizk.datamodel.bookmark import Bookmark as BookmarkRecord
-from aizk.datamodel.job import ConversionJob, ConversionJobStatus
-from aizk.datamodel.output import ConversionOutput
-from aizk.db import get_engine
 from aizk.utilities.async_utils import run_async
+from aizk.utilities.url_utils import normalize_url
 from karakeep_client.models import Bookmark as KarakeepBookmark
 
 logger = logging.getLogger(__name__)
@@ -394,6 +397,36 @@ def process_job(job_id: int) -> None:
     except BookmarkContentError as exc:
         handle_job_error(job_id, exc)
         return
+
+    try:
+        source_url = get_bookmark_source_url(karakeep_bookmark)
+        updated_source_type = detect_source_type(source_url)
+        updated_content_type = detect_content_type(karakeep_bookmark)
+        updated_title = karakeep_bookmark.title or source_url
+        normalized_url = normalize_url(source_url) if source_url else None
+    except BookmarkContentError as exc:
+        handle_job_error(job_id, exc)
+        return
+
+    with Session(engine) as session:
+        bookmark = session.exec(select(BookmarkRecord).where(BookmarkRecord.aizk_uuid == job.aizk_uuid)).one()
+        job_record = session.get(ConversionJob, job_id)
+        bookmark.url = source_url
+        bookmark.normalized_url = normalized_url
+        bookmark.title = updated_title
+        bookmark.content_type = updated_content_type
+        bookmark.source_type = updated_source_type
+        bookmark.updated_at = _utcnow()
+        if job_record:
+            job_record.title = updated_title
+            job_record.updated_at = _utcnow()
+            session.add(job_record)
+        session.add(bookmark)
+        session.commit()
+        session.refresh(bookmark)
+        if job_record:
+            session.refresh(job_record)
+            job = job_record
 
     with tempfile.TemporaryDirectory() as tmpdirname:
         workspace = Path(tmpdirname)

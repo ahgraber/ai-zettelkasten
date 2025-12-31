@@ -8,10 +8,10 @@ from uuid import UUID
 
 from sqlalchemy.orm import Mapped
 
+from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.workers import worker as worker_module
-from aizk.datamodel.bookmark import Bookmark
-from aizk.datamodel.job import ConversionJob, ConversionJobStatus
-from aizk.datamodel.output import ConversionOutput
 
 
 def test_poll_and_process_jobs_is_atomic(db_session, monkeypatch):

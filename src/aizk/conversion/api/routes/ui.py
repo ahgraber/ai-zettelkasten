@@ -12,8 +12,8 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.templating import Jinja2Templates
 
 from aizk.conversion.api.dependencies import get_db_session
-from aizk.datamodel.bookmark import Bookmark
-from aizk.datamodel.job import ConversionJob
+from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.job import ConversionJob
 
 router = APIRouter(prefix="/ui", tags=["ui"])
 
@@ -49,13 +49,14 @@ def ui_jobs(
     for job, bookmark in rows:
         if job.id is None:
             continue
-        search_text = f"{job.aizk_uuid} {bookmark.karakeep_id} {job.title}".lower()
+        title = job.title or bookmark.title or ""
+        search_text = f"{job.aizk_uuid} {bookmark.karakeep_id} {title}".lower()
         jobs.append(
             {
                 "id": job.id,
                 "aizk_uuid": str(job.aizk_uuid),
                 "karakeep_id": bookmark.karakeep_id,
-                "title": job.title,
+                "title": title,
                 "status": job.status.value,
                 "attempts": job.attempts,
                 "queued_at": _format_dt(job.queued_at),

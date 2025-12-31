@@ -33,11 +33,11 @@ This document defines the complete data model for the Docling Conversion Service
 | id             | Integer     | PRIMARY KEY, AUTOINCREMENT          | Internal database ID                                                             |
 | karakeep_id    | String(255) | UNIQUE, NOT NULL, INDEXED           | External KaraKeep bookmark identifier                                            |
 | aizk_uuid      | UUID        | UNIQUE, NOT NULL, INDEXED           | Internal UUID for this bookmark (UUID4)                                          |
-| url            | Text        | NOT NULL                            | Original source URL as submitted                                                 |
-| normalized_url | Text        | NOT NULL, INDEXED                   | Normalized URL for deduplication                                                 |
-| title          | Text        | NOT NULL                            | Bookmark title from KaraKeep or extracted                                        |
-| content_type   | String(10)  | NOT NULL                            | Format of content: 'html' or 'pdf' (from KaraKeep metadata or detected from URL) |
-| source_type    | String(20)  | NOT NULL                            | Origin/source of URL: 'arxiv', 'github', or 'other' (parsed from URL pattern)    |
+| url            | Text        | NULLABLE                            | Original source URL as submitted; populated by worker after KaraKeep fetch       |
+| normalized_url | Text        | NULLABLE, INDEXED                   | Normalized URL for deduplication; populated by worker                            |
+| title          | Text        | NULLABLE                            | Bookmark title from KaraKeep or extracted; populated by worker                   |
+| content_type   | String(10)  | NULLABLE                            | Format of content: 'html' or 'pdf' (from KaraKeep metadata or detected from URL) |
+| source_type    | String(20)  | NULLABLE                            | Origin/source of URL: 'arxiv', 'github', or 'other' (parsed from URL pattern)    |
 | created_at     | DateTime    | NOT NULL, DEFAULT CURRENT_TIMESTAMP | Record creation timestamp (UTC)                                                  |
 | updated_at     | DateTime    | NOT NULL, DEFAULT CURRENT_TIMESTAMP | Record update timestamp (UTC)                                                    |
 
@@ -50,15 +50,16 @@ This document defines the complete data model for the Docling Conversion Service
 
 - `karakeep_id`: Non-empty string, max 255 chars
 - `aizk_uuid`: Valid UUID4 format
-- `url`: Valid URL format (validated by pydantic HttpUrl)
-- `normalized_url`: Computed from url via normalization function
-- `content_type`: Must be one of: 'html', 'pdf' (from KaraKeep metadata)
-- `source_type`: Must be one of: 'arxiv', 'github', 'other' (parsed from URL domain/pattern)
-- `title`: Non-empty string, max 500 chars (truncate with ellipsis if needed)
+- `url`: When present, valid URL format (validated by pydantic HttpUrl)
+- `normalized_url`: When present, computed from url via normalization function
+- `content_type`: When present, must be one of: 'html', 'pdf' (from KaraKeep metadata)
+- `source_type`: When present, must be one of: 'arxiv', 'github', 'other' (parsed from URL domain/pattern)
+- `title`: When present, non-empty string, max 500 chars (truncate with ellipsis if needed)
 
 **Business Rules**:
 
 - `karakeep_id` is unique across all bookmarks
+- API submission stores karakeep_id/aizk_uuid immediately; URL/title/content/source_type are populated by the worker after KaraKeep fetch.
 - `content_type` is typically provided by KaraKeep bookmark metadata; if missing, assume 'html'
 - `source_type` is always parsed from URL pattern regardless of content_type:
   - Contains 'arxiv.org' → 'arxiv'
@@ -453,7 +454,7 @@ def compute_config_hash(pipeline_options: dict) -> str:
 **Bookmark Model**:
 
 ```python
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlmodel import Field, SQLModel, Relationship
 from uuid import UUID, uuid4
@@ -465,12 +466,13 @@ class Bookmark(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     karakeep_id: str = Field(max_length=255, unique=True, index=True)
     aizk_uuid: UUID = Field(default_factory=uuid4, unique=True, index=True)
-    url: str
-    normalized_url: str = Field(index=True)
-    title: str = Field(max_length=500)
-    source_type: str = Field(max_length=20)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    url: Optional[str] = None
+    normalized_url: Optional[str] = Field(default=None, index=True)
+    title: Optional[str] = Field(default=None, max_length=500)
+    content_type: Optional[str] = Field(default=None, max_length=10)
+    source_type: Optional[str] = Field(default=None, max_length=20)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Relationships
     jobs: list["ConversionJob"] = Relationship(back_populates="bookmark")

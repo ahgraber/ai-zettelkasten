@@ -10,8 +10,8 @@ from setproctitle import setproctitle
 import uvicorn
 
 from aizk.conversion.api.main import create_app
+from aizk.conversion.db import create_db_and_tables
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.db import create_db_and_tables
 
 
 def _require_karakeep_env() -> None:
