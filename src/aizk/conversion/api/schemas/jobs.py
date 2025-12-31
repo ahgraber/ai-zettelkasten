@@ -61,6 +61,13 @@ class JobList(BaseModel):
     offset: int
 
 
+class JobStatusCounts(BaseModel):
+    """Aggregated conversion job counts by status."""
+
+    counts: dict[str, int]
+    total: int
+
+
 class BulkJobActionRequest(BaseModel):
     """Request schema for bulk job actions."""
 
