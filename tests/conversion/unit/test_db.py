@@ -2,7 +2,7 @@
 
 from sqlalchemy import inspect
 
-from aizk.db import create_db_and_tables, get_engine
+from aizk.conversion.db import create_db_and_tables, get_engine
 
 
 def test_create_db_and_tables(tmp_path):

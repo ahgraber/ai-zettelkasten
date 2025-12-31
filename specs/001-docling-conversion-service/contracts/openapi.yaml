@@ -430,9 +430,6 @@ components:
         - id
         - aizk_uuid
         - karakeep_id
-        - url
-        - title
-        - source_type
         - status
         - attempts
         - payload_version
@@ -451,10 +448,13 @@ components:
         url:
           type: string
           format: uri
+          nullable: true
         title:
           type: string
+          nullable: true
         source_type:
           $ref: "#/components/schemas/SourceType"
+          nullable: true
         status:
           $ref: "#/components/schemas/ConversionJobStatus"
         attempts:
