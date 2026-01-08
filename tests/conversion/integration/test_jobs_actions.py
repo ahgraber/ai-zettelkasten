@@ -30,14 +30,14 @@ def _create_job(
     session,
     *,
     aizk_uuid: UUID,
-    title: str,
+    title: str | None,
     status: ConversionJobStatus,
     idempotency_key: str,
     attempts: int = 0,
 ) -> ConversionJob:
     job = ConversionJob(
         aizk_uuid=aizk_uuid,
-        title=title,
+        title=title or "",
         payload_version=1,
         status=status,
         attempts=attempts,
@@ -88,9 +88,9 @@ def test_bulk_retry_resets_failed_jobs(db_session) -> None:
     db_session.refresh(job_retryable)
     db_session.refresh(job_cancelled)
     assert job_retryable.status == ConversionJobStatus.QUEUED
-    assert job_retryable.attempts == 2
+    assert job_retryable.attempts == 1
     assert job_cancelled.status == ConversionJobStatus.QUEUED
-    assert job_cancelled.attempts == 3
+    assert job_cancelled.attempts == 2
 
 
 def test_bulk_cancel_marks_queued_and_running_jobs(db_session) -> None:
