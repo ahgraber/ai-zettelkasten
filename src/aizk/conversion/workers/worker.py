@@ -10,9 +10,10 @@ import logging
 from pathlib import Path
 import tempfile
 import time
-from typing import Any, Literal
+from typing import Literal
 
 from sqlalchemy import text
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlmodel import Session, select
 
@@ -84,6 +85,10 @@ class MissingArtifactsError(RuntimeError):
     error_code = "missing_artifacts"
 
 
+class ConversionCancelledError(RuntimeError):
+    """Raised when a conversion job is cancelled during processing."""
+
+
 def _utcnow() -> dt.datetime:
     """Return timezone-aware UTC timestamp."""
     return dt.datetime.now(dt.timezone.utc)
@@ -136,9 +141,11 @@ def _run_conversion(
     bookmark: BookmarkRecord,
     conversion_input: ConversionInput,
     config: ConversionConfig,
+    engine: Engine,
     workspace: Path,
 ) -> ConversionArtifacts:
     """Run conversion phase and persist artifacts locally."""
+    _raise_if_cancelled(job.id, engine)
     content_bytes = conversion_input.content_bytes
     pipeline_name = conversion_input.pipeline
     fetched_at = conversion_input.fetched_at
@@ -148,6 +155,7 @@ def _run_conversion(
     else:
         markdown_text, figure_paths = convert_html(content_bytes, workspace, config, source_url=bookmark.url)
 
+    _raise_if_cancelled(job.id, engine)
     markdown_filename = OUTPUT_MARKDOWN_FILENAME
     markdown_file = markdown_path(workspace, markdown_filename)
     markdown_file.write_text(markdown_text)
@@ -172,6 +180,14 @@ def _run_conversion(
         fetched_at=fetched_at,
         docling_version=metadata["docling_version"],
     )
+
+
+def _raise_if_cancelled(job_id: int, engine: Engine) -> None:
+    """Raise if the job status has been marked as cancelled."""
+    with Session(engine) as session:
+        job = session.get(ConversionJob, job_id)
+        if job and job.status == ConversionJobStatus.CANCELLED:
+            raise ConversionCancelledError(f"Job {job_id} cancelled")
 
 
 def _upload_converted(job_id: int, workspace: Path) -> None:
@@ -439,6 +455,7 @@ def process_job(job_id: int) -> None:
     with tempfile.TemporaryDirectory() as tmpdirname:
         workspace = Path(tmpdirname)
         try:
+            _raise_if_cancelled(job_id, engine)
             conversion_input = _prepare_conversion_input(
                 bookmark_record=bookmark,
                 karakeep_bookmark=karakeep_bookmark,
@@ -450,7 +467,9 @@ def process_job(job_id: int) -> None:
                 config=config,
                 workspace=workspace,
                 conversion_input=conversion_input,
+                engine=engine,
             )
+            _raise_if_cancelled(job_id, engine)
             with Session(engine) as session:
                 job = session.get(ConversionJob, job_id)
                 if job:
@@ -458,6 +477,9 @@ def process_job(job_id: int) -> None:
                     job.updated_at = _utcnow()
                     session.add(job)
                     session.commit()
+        except ConversionCancelledError:
+            logger.info("Job %s cancelled during processing", job_id)
+            return
         except (ConversionError, FetchError, BookmarkContentUnavailableError, BookmarkContentError) as exc:
             handle_job_error(job_id, exc)
             return
