@@ -100,7 +100,6 @@ def _apply_job_retry(job: ConversionJob, now: dt.datetime) -> None:
     }:
         raise ValueError("job_not_retryable")
     job.status = ConversionJobStatus.QUEUED
-    job.attempts += 1
     job.earliest_next_attempt_at = None
     job.last_error_at = None
     job.error_code = None
