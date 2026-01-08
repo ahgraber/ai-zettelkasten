@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 
+import pytest
 from sqlmodel import Session
 
 from aizk.conversion.datamodel.bookmark import Bookmark
@@ -94,6 +95,64 @@ def test_process_job_retries_upload(monkeypatch, db_session: Session, html_bookm
     assert handle_errors["count"] == 0
 
 
+def test_process_job_stops_on_cancellation(monkeypatch, db_session: Session, html_bookmark) -> None:
+    """Stop processing before upload when a job is cancelled mid-run."""
+    bookmark = Bookmark(
+        karakeep_id="bm_cancel_test",
+        url="https://example.com",
+        normalized_url="https://example.com",
+        title="Cancel Test",
+        content_type="html",
+        source_type="web",
+    )
+    db_session.add(bookmark)
+    db_session.commit()
+    db_session.refresh(bookmark)
+
+    job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title,
+        idempotency_key="c" * 64,
+        status=ConversionJobStatus.QUEUED,
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+
+    def _prepare_conversion_input(**_kwargs):
+        return ConversionInput(
+            pipeline="html",
+            content_bytes=b"<html><body>cancel</body></html>",
+            fetched_at=dt.datetime.now(dt.timezone.utc),
+        )
+
+    def _run_conversion(**kwargs):
+        engine = kwargs["engine"]
+        with Session(engine) as session:
+            job_record = session.get(ConversionJob, job.id)
+            job_record.status = ConversionJobStatus.CANCELLED
+            session.add(job_record)
+            session.commit()
+
+    upload_calls = {"count": 0}
+
+    def _upload_converted(_job_id, _workspace):
+        """If called, will increment, indicating failure to stop on cancellation."""
+        upload_calls["count"] += 1
+
+    monkeypatch.setattr(worker, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
+    monkeypatch.setattr(worker, "validate_bookmark_content", lambda _bookmark: None)
+    monkeypatch.setattr(worker, "_prepare_conversion_input", _prepare_conversion_input)
+    monkeypatch.setattr(worker, "_run_conversion", _run_conversion)
+    monkeypatch.setattr(worker, "_upload_converted", _upload_converted)
+
+    worker.process_job(job.id)
+
+    assert upload_calls["count"] == 0
+    db_session.refresh(job)
+    assert job.status == ConversionJobStatus.CANCELLED
+
+
 def test_poll_picks_retryable_job_after_delay(monkeypatch, db_session: Session) -> None:
     """Ensure FAILED_RETRYABLE jobs are eligible once the backoff window expires."""
     now = dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc)
@@ -149,3 +208,19 @@ def test_poll_skips_retryable_job_before_delay(monkeypatch, db_session: Session)
 
     assert worker.poll_and_process_jobs() is False
     assert processed == []
+
+
+def test_raise_if_cancelled_raises(db_session: Session) -> None:
+    """Raise a cancellation exception when a job is already cancelled."""
+    bookmark = _create_bookmark(db_session)
+    job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title,
+        idempotency_key="d" * 64,
+        status=ConversionJobStatus.CANCELLED,
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    with pytest.raises(worker.ConversionCancelledError):
+        worker._raise_if_cancelled(job.id, db_session.get_bind())
