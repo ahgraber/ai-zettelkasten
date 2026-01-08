@@ -195,6 +195,8 @@ def _upload_converted(job_id: int, workspace: Path) -> None:
         job = session.get(ConversionJob, job_id)
         if not job:
             return
+        if job.status == ConversionJobStatus.CANCELLED:
+            return
         bookmark = session.exec(select(BookmarkRecord).where(BookmarkRecord.aizk_uuid == job.aizk_uuid)).one()
 
         s3_client = S3Client(config)
@@ -227,6 +229,10 @@ def _upload_converted(job_id: int, workspace: Path) -> None:
         manifest_path = workspace / "manifest.json"
         save_manifest(manifest, manifest_path)
         manifest_uri = s3_client.upload_file(manifest_path, f"{prefix}/manifest.json")
+
+        session.refresh(job)
+        if job.status == ConversionJobStatus.CANCELLED:
+            return
 
         output = ConversionOutput(
             job_id=job.id,
@@ -270,6 +276,8 @@ def handle_job_error(job_id: int, error: Exception) -> None:
     with Session(engine) as session:
         job = session.get(ConversionJob, job_id)
         if not job:
+            return
+        if job.status == ConversionJobStatus.CANCELLED:
             return
         if retryable:
             delay = config.retry_base_delay_seconds * (2**job.attempts)
