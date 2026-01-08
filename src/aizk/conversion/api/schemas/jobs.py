@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import AnyUrl, BaseModel, Field
 
-from aizk.datamodel.job import ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJobStatus
 
 
 class JobSubmission(BaseModel):
@@ -33,9 +34,9 @@ class JobResponse(BaseModel):
     id: int
     aizk_uuid: UUID
     karakeep_id: str
-    url: AnyUrl
-    title: str
-    source_type: str
+    url: AnyUrl | None = None
+    title: str | None = None
+    source_type: str | None = None
     status: ConversionJobStatus
     attempts: int
     payload_version: int
@@ -58,3 +59,40 @@ class JobList(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class JobStatusCounts(BaseModel):
+    """Aggregated conversion job counts by status."""
+
+    counts: dict[str, int]
+    total: int
+
+
+class BulkJobActionRequest(BaseModel):
+    """Request schema for bulk job actions."""
+
+    action: Literal["retry", "cancel"]
+    job_ids: list[int] = Field(..., min_length=1, max_length=100)
+
+
+class BulkActionResult(BaseModel):
+    """Per-job result for bulk actions."""
+
+    job_id: int
+    status: Literal["success", "error"]
+    error: str | None = None
+
+
+class BulkActionSummary(BaseModel):
+    """Summary counts for bulk actions."""
+
+    success: int
+    errors: int
+
+
+class BulkActionResponse(BaseModel):
+    """Response schema for bulk job actions."""
+
+    action: Literal["retry", "cancel"]
+    results: list[BulkActionResult]
+    summary: BulkActionSummary

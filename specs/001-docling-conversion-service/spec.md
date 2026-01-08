@@ -20,7 +20,7 @@ A user submits a KaraKeep bookmark (HTML or PDF URL) to the conversion service a
 1. **Given** a valid HTML bookmark URL, **When** user submits conversion job via API, **Then** system creates job record, fetches HTML, converts to Markdown with Docling, extracts figures, uploads to S3, and marks job as SUCCEEDED
 2. **Given** a valid PDF bookmark URL, **When** user submits conversion job, **Then** system fetches PDF, converts to Markdown, extracts figures, uploads all artifacts to S3 under `bucket/<aizk_uuid>/`
 3. **Given** a bookmark with identical idempotency_key already exists, **When** user resubmits same bookmark, **Then** system rejects submission with reason 'duplicate_idempotency_key'
-4. **Given** a KaraKeep bookmark without HTML content, text, or PDF asset, **When** user submits conversion job, **Then** system raises validation exception with error_code='karakeep_bookmark_missing_contents'
+4. **Given** a KaraKeep bookmark without HTML content, text, or PDF asset, **When** user submits conversion job, **Then** the job is accepted but the worker marks it FAILED_PERM with error_code='karakeep_bookmark_missing_contents'
 5. **Given** an arXiv bookmark from abstract page (arxiv.org/abs), **When** user submits conversion job, **Then** system downloads PDF from arXiv using aizk.utilities.arxiv client and converts to Markdown
 6. **Given** an arXiv bookmark with PDF asset in KaraKeep, **When** user submits conversion job, **Then** system fetches the PDF from KaraKeep and converts to Markdown
 7. **Given** an arXiv bookmark with HTML content and source URL to PDF, **When** user submits conversion job, **Then** system downloads PDF from `arxiv_pdf_url` metadata field and converts to Markdown
@@ -35,7 +35,7 @@ A user views all conversion jobs in the Web UI, identifies failed jobs, and retr
 
 **Why this priority**: Operational visibility and error recovery are essential for maintaining service reliability, but the core conversion must work first.
 
-**Independent Test**: Can be tested by accessing Web UI at /ui/jobs, viewing job list with status filters, selecting failed jobs via checkboxes, and clicking Retry button. Delivers operational control independent of job submission.
+**Independent Test**: Can be tested by accessing Web UI at /ui/jobs, viewing job list with server-side status/text filters (HTMX single-page), selecting failed jobs via checkboxes, and clicking Retry button. Delivers operational control independent of job submission.
 
 **Job Processing Strategy** (enables efficient retries):
 
@@ -94,6 +94,9 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - Default storage: SQLite via SQLModel (local development/testing)
 - Default Orchestration framework: Prefect - when needed
 - **KaraKeep Integration**: Bookmark submission records KaraKeep identifiers and the worker fetches the bookmark from KaraKeep; validates required content (HTML/text/PDF); fetches PDF assets from KaraKeep when present
+- **Request Isolation**: API handlers must not depend on external services while serving requests; bookmark metadata (url/title/source_type) may be null until the worker fetches KaraKeep data and backfills the bookmark/job records.
+- **Data Ownership**: Conversion entities (Bookmark, ConversionJob, ConversionOutput) live in `aizk.conversion.datamodel` and are created via `aizk.conversion.db`. Other modules must access conversion data only through the conversion service interfaces (API or published schemas), not direct table access.
+- **SQLite Pragmas**: SQLite connections MUST enable WAL (`PRAGMA journal_mode=WAL`), `PRAGMA foreign_keys=ON`, `PRAGMA synchronous=NORMAL`, and `PRAGMA busy_timeout=5000`. Write-level contention is mitigated by these settings; `BEGIN IMMEDIATE` may be added later if needed without breaking app startup.
 - **Raw Input Provenance**: KaraKeep is the authoritative source for raw inputs; the system records durable references (karakeep_id and source URLs) for replay without persisting raw inputs locally.
 - **arXiv Handling**: Implement PDF downloads for abstract page links (arxiv.org/abs); implement URL parsing for arXiv ID extraction and arxiv_pdf_url metadata handling; leverage existing utilities where available
 - **S3 Storage Strategy**: Atomic uploads with verification checksums; failed uploads must not mark jobs SUCCEEDED; implement transaction semantics to ensure consistency between database and S3
@@ -127,9 +130,10 @@ A manager component submits batches of bookmarks to the service and gracefully h
 
 ### Functional Requirements
 
-- **FR-001**: System MUST accept bookmark submissions via REST API with karakeep_id and optional payload_version and idempotency_key. System MUST assign or derive aizk_uuid. URL, title, and content_type are extracted from the KaraKeep bookmark; source_type indicates origin (arxiv/github/other) parsed from the bookmark URL.
+- **FR-001**: System MUST accept bookmark submissions via REST API with karakeep_id and optional payload_version and idempotency_key. System MUST assign or derive aizk_uuid and persist the job. URL, title, content_type, and source_type are resolved during worker processing based on the KaraKeep bookmark (not during API handling).
+- **FR-001a**: API handlers MUST enqueue conversion jobs without invoking external services; url/title/source_type/content_type may be null in responses until the worker fetches KaraKeep metadata and backfills the bookmark and job records.
 - **FR-002**: System MUST normalize URLs for deduplication by removing fragments, sorting query parameters, and lowercasing domain
-- **FR-003**: System MUST fetch the KaraKeep bookmark and validate it has HTML content, text, or PDF asset; raise exception with error_code='karakeep_bookmark_missing_contents' if all are absent. System MUST detect content_type from the KaraKeep bookmark structure: PDF asset present → 'pdf', HTML content/text present → 'html'. System MUST detect source_type from URL patterns: arxiv.org → 'arxiv', github.com → 'github', otherwise → 'other'
+- **FR-003**: Worker MUST fetch the KaraKeep bookmark and validate it has HTML content, text, or PDF asset; mark the job FAILED_PERM with error_code='karakeep_bookmark_missing_contents' if all are absent. System MUST detect content_type from the KaraKeep bookmark structure: PDF asset present → 'pdf', HTML content/text present → 'html'. System MUST detect source_type from URL patterns: arxiv.org → 'arxiv', github.com → 'github', otherwise → 'other'. API handlers MUST NOT call KaraKeep or other external services while serving requests.
 - **FR-004**: System MUST assign or look up internal aizk_uuid for each bookmark and persist in bookmarks table with karakeep_id as unique key
 - **FR-005**: System MUST create conversion_jobs record with status='NEW', compute idempotency_key from hash of aizk_uuid + payload_version + docling_version + config_hash, and reject submissions with duplicate idempotency_key
 - **FR-006**: System MUST fetch source content from KaraKeep as source of truth using karakeep_client with timeout (default: 30s) and retry logic (3 attempts with exponential backoff)
@@ -149,9 +153,10 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - **FR-020**: System MUST expose POST /v1/jobs/{job_id}/cancel endpoint that marks QUEUED or RUNNING jobs as CANCELLED on best-effort basis
 - **FR-021**: System MUST expose POST /v1/jobs/batch endpoint accepting array of job submissions, processing each independently and returning per-item results with job_id or error details
 - **FR-022**: System MUST expose POST /v1/jobs/actions endpoint accepting bulk retry or cancel operations with array of job IDs
+- **FR-022a**: System MUST expose GET /v1/jobs/status-counts endpoint returning aggregate counts of jobs grouped by status (QUEUED, RUNNING, etc.).
 - **FR-023**: System MUST expose GET /v1/outputs/{aizk_uuid} endpoint returning conversion_outputs records ordered by created_at descending; support ?latest=true query parameter to return only most recent output
-- **FR-024**: System MUST render HTML-only Web UI at /ui/jobs displaying job table with columns: Job ID, aizk_uuid, karakeep_id, title, status, attempts, queued_at, started_at, finished_at, error_code
-- **FR-025**: Web UI MUST provide checkboxes for multi-select, Retry and Cancel buttons posting to /v1/jobs/actions, and client-side filters for status and text search
+- **FR-024**: System MUST render an HTMX-powered HTML Web UI at /ui/jobs displaying job table with columns: Job ID, aizk_uuid, karakeep_id, title, status, attempts, queued_at, started_at, finished_at, error_code
+- **FR-025**: Web UI MUST provide checkboxes for multi-select, Retry and Cancel buttons posting to /v1/jobs/actions, and server-side status/text filters and sort that operate across all jobs (not just the current page)
 - **FR-026**: System MUST process jobs with bounded concurrency (configurable, default: 4 parallel workers) in FIFO order by queued_at timestamp
 - **FR-028**: System MUST support concurrent read access from multiple workers with transaction isolation, preventing race conditions during job status updates and artifact writing: SQLite in WAL mode with synchronous=NORMAL, prepared statements, and single-writer pattern with database lock retry logic
 - **FR-029**: System MUST create indexes on: (1) job status and retry scheduling (conversion_jobs), (2) bookmark URL deduplication (bookmarks), (3) output lookup by aizk_uuid (conversion_outputs)
@@ -172,7 +177,7 @@ A manager component submits batches of bookmarks to the service and gracefully h
 
 ### Key Entities
 
-- **Bookmark**: Represents a KaraKeep bookmark with metadata needed for conversion execution. Attributes: id (PK), karakeep_id (unique), aizk_uuid (unique internal identifier), url (canonical source identifier), title, source_type (html/pdf/arxiv/github), normalized_url (for deduplication), created_at, updated_at. Relationships: one-to-many with conversion_jobs, one-to-many with conversion_outputs. Note: Does not replicate full KaraKeep bookmark; stores only fields required for conversion routing and deduplication. Source-specific identifiers (arxiv_id, github owner/repo) are extracted from URL during processing using utilities.
+- **Bookmark**: Represents a KaraKeep bookmark with metadata needed for conversion execution. Attributes: id (PK), karakeep_id (unique), aizk_uuid (unique internal identifier), url (canonical source identifier, nullable until worker fetch), title (nullable until worker fetch), source_type (html/pdf/arxiv/github, nullable until worker fetch), normalized_url (for deduplication, nullable until worker fetch), created_at, updated_at. Relationships: one-to-many with conversion_jobs, one-to-many with conversion_outputs. Note: Does not replicate full KaraKeep bookmark; stores only fields required for conversion routing and deduplication. Source-specific identifiers (arxiv_id, github owner/repo) are extracted from URL during processing using utilities.
 - **ConversionJob**: Represents a single conversion attempt. Attributes: id (PK), aizk_uuid (FK to bookmarks), payload_version, status (ConversionJobStatus: NEW/QUEUED/RUNNING/SUCCEEDED/FAILED_RETRYABLE/FAILED_PERM/CANCELLED), attempts, error_code, error_message, queued_at, started_at, finished_at, idempotency_key (unique), earliest_next_attempt_at (for retry backoff scheduling), last_error_at. Relationships: many-to-one with bookmarks, one-to-one with conversion_outputs (if SUCCEEDED)
 - **ConversionOutput**: Represents successful conversion artifact set. Attributes: id (PK), job_id (FK to conversion_jobs), aizk_uuid (FK to bookmarks), payload_version, s3_prefix, markdown_key, manifest_key (contains full artifact listing), markdown_hash_xx64, figure_count, docling_version, pipeline_name, created_at. Relationships: many-to-one with bookmarks, one-to-one with conversion_jobs. Note: Individual figures and artifacts are listed in manifest.json only, not tracked as separate database rows.
 

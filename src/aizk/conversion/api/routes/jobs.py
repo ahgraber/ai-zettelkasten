@@ -15,20 +15,22 @@ from sqlmodel import Session, select
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from aizk.conversion.api.dependencies import get_db_session
-from aizk.conversion.api.schemas import ArtifactSummary, JobList, JobResponse, JobSubmission
-from aizk.conversion.utilities.bookmark_utils import (
-    detect_content_type,
-    detect_source_type,
-    fetch_karakeep_bookmark,
-    get_bookmark_source_url,
-    validate_bookmark_content,
+from aizk.conversion.api.schemas import (
+    ArtifactSummary,
+    BulkActionResponse,
+    BulkActionResult,
+    BulkActionSummary,
+    BulkJobActionRequest,
+    JobList,
+    JobResponse,
+    JobStatusCounts,
+    JobSubmission,
 )
+from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.hashing import compute_idempotency_key
-from aizk.datamodel.bookmark import Bookmark
-from aizk.datamodel.job import ConversionJob, ConversionJobStatus
-from aizk.datamodel.output import ConversionOutput
-from aizk.utilities.url_utils import normalize_url
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +60,15 @@ def _job_to_response(
             figure_count=output.figure_count,
         )
 
+    bookmark_url = AnyUrl(bookmark.url) if bookmark.url else None
+    bookmark_title = bookmark.title or job.title
+
     return JobResponse(
         id=job.id,
         aizk_uuid=job.aizk_uuid,
         karakeep_id=bookmark.karakeep_id,
-        url=AnyUrl(bookmark.url),
-        title=bookmark.title,
+        url=bookmark_url,
+        title=bookmark_title,
         source_type=bookmark.source_type,
         status=job.status,
         attempts=job.attempts,
@@ -86,6 +91,36 @@ def _get_output_summary(session: Session, job_id: int) -> ConversionOutput | Non
     return session.exec(select(ConversionOutput).where(ConversionOutput.job_id == job_id)).first()
 
 
+def _apply_job_retry(job: ConversionJob, now: dt.datetime) -> None:
+    """Apply retry transition to a conversion job."""
+    if job.status not in {
+        ConversionJobStatus.FAILED_RETRYABLE,
+        ConversionJobStatus.FAILED_PERM,
+        ConversionJobStatus.CANCELLED,
+    }:
+        raise ValueError("job_not_retryable")
+    job.status = ConversionJobStatus.QUEUED
+    job.attempts += 1
+    job.earliest_next_attempt_at = None
+    job.last_error_at = None
+    job.error_code = None
+    job.error_message = None
+    job.queued_at = now
+    job.started_at = None
+    job.finished_at = None
+    job.updated_at = now
+
+
+def _apply_job_cancel(job: ConversionJob, now: dt.datetime) -> None:
+    """Apply cancel transition to a conversion job."""
+    if job.status not in {ConversionJobStatus.QUEUED, ConversionJobStatus.RUNNING}:
+        raise ValueError("job_not_cancellable")
+    job.status = ConversionJobStatus.CANCELLED
+    job.finished_at = now
+    job.earliest_next_attempt_at = None
+    job.updated_at = now
+
+
 @router.post("", response_model=JobResponse, status_code=status.HTTP_201_CREATED)
 def submit_job(
     submission: JobSubmission,
@@ -94,29 +129,11 @@ def submit_job(
 ) -> JobResponse:
     """Submit a new conversion job."""
     config = ConversionConfig()
-    karakeep_bookmark = fetch_karakeep_bookmark(submission.karakeep_id)
-    if not karakeep_bookmark:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "karakeep_bookmark_not_found",
-                "message": f"KaraKeep bookmark not found for {submission.karakeep_id}",
-            },
-        )
-    validate_bookmark_content(karakeep_bookmark)
-    source_url = get_bookmark_source_url(karakeep_bookmark)
-    source_type = detect_source_type(source_url)
-    content_type = detect_content_type(karakeep_bookmark)
 
     bookmark = session.exec(select(Bookmark).where(Bookmark.karakeep_id == submission.karakeep_id)).first()
     if not bookmark:
         bookmark = Bookmark(
             karakeep_id=submission.karakeep_id,
-            url=source_url,
-            normalized_url=normalize_url(source_url),
-            title=karakeep_bookmark.title or source_url,
-            content_type=content_type,
-            source_type=source_type,
             created_at=_utcnow(),
             updated_at=_utcnow(),
         )
@@ -141,7 +158,7 @@ def submit_job(
     now = _utcnow()
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
-        title=bookmark.title,
+        title=bookmark.title or bookmark.karakeep_id,
         payload_version=submission.payload_version,
         status=ConversionJobStatus.QUEUED,
         attempts=0,
@@ -156,6 +173,20 @@ def submit_job(
 
     job_response = _job_to_response(job, bookmark, None)
     return job_response
+
+
+@router.get("/status-counts", response_model=JobStatusCounts)
+def get_job_status_counts(
+    session: Annotated[Session, Depends(get_db_session)],
+) -> JobStatusCounts:
+    """Return aggregated counts of jobs by status."""
+    rows = session.exec(select(ConversionJob.status, func.count()).group_by(ConversionJob.status)).all()
+    counts: dict[str, int] = {}
+    for status_, count in rows:
+        key = status_.value if isinstance(status_, ConversionJobStatus) else str(status_)
+        counts[key] = count
+    total = sum(counts.values())
+    return JobStatusCounts(counts=counts, total=total)
 
 
 @router.get("/{job_id}", response_model=JobResponse)
@@ -225,3 +256,87 @@ def list_jobs(
         responses.append(_job_to_response(job, job.bookmark, job.output))
 
     return JobList(jobs=responses, total=total, limit=limit, offset=offset)
+
+
+@router.post("/{job_id}/retry", response_model=JobResponse)
+def retry_job(
+    job_id: int,
+    session: Annotated[Session, Depends(get_db_session)],
+) -> JobResponse:
+    """Retry a failed or cancelled job."""
+    job = session.get(ConversionJob, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
+    now = _utcnow()
+    try:
+        _apply_job_retry(job, now)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": str(exc), "message": "Job cannot be retried"},
+        ) from exc
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    bookmark = session.exec(select(Bookmark).where(Bookmark.aizk_uuid == job.aizk_uuid)).one()
+    output = _get_output_summary(session, job_id)
+    return _job_to_response(job, bookmark, output)
+
+
+@router.post("/{job_id}/cancel", response_model=JobResponse)
+def cancel_job(
+    job_id: int,
+    session: Annotated[Session, Depends(get_db_session)],
+) -> JobResponse:
+    """Cancel a queued or running job."""
+    job = session.get(ConversionJob, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
+    now = _utcnow()
+    try:
+        _apply_job_cancel(job, now)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": str(exc), "message": "Job cannot be cancelled"},
+        ) from exc
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    bookmark = session.exec(select(Bookmark).where(Bookmark.aizk_uuid == job.aizk_uuid)).one()
+    output = _get_output_summary(session, job_id)
+    return _job_to_response(job, bookmark, output)
+
+
+@router.post("/actions", response_model=BulkActionResponse)
+def bulk_job_actions(
+    payload: BulkJobActionRequest,
+    session: Annotated[Session, Depends(get_db_session)],
+) -> BulkActionResponse:
+    """Apply retry or cancel actions across multiple jobs."""
+    now = _utcnow()
+    results: list[BulkActionResult] = []
+    success = 0
+    errors = 0
+
+    for job_id in payload.job_ids:
+        job = session.get(ConversionJob, job_id)
+        if not job:
+            results.append(BulkActionResult(job_id=job_id, status="error", error="job_not_found"))
+            errors += 1
+            continue
+        try:
+            if payload.action == "retry":
+                _apply_job_retry(job, now)
+            else:
+                _apply_job_cancel(job, now)
+            session.add(job)
+            results.append(BulkActionResult(job_id=job_id, status="success", error=None))
+            success += 1
+        except ValueError as exc:
+            results.append(BulkActionResult(job_id=job_id, status="error", error=str(exc)))
+            errors += 1
+
+    session.commit()
+    summary = BulkActionSummary(success=success, errors=errors)
+    return BulkActionResponse(action=payload.action, results=results, summary=summary)

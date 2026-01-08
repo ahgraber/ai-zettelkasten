@@ -12,10 +12,10 @@ from sqlalchemy.orm import Mapped
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
+from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.job import ConversionJob
+from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.workers.worker import ConversionInput
-from aizk.datamodel.bookmark import Bookmark
-from aizk.datamodel.job import ConversionJob
-from aizk.datamodel.output import ConversionOutput
 
 
 def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
@@ -55,10 +55,6 @@ def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
         return f"s3://{self.bucket}/{s3_key}"
 
     # Avoid KaraKeep network calls; reuse a fixed bookmark payload.
-    monkeypatch.setattr(
-        "aizk.conversion.api.routes.jobs.fetch_karakeep_bookmark",
-        lambda _karakeep_id: html_bookmark,
-    )
     monkeypatch.setattr(
         "aizk.conversion.workers.worker.fetch_karakeep_bookmark",
         lambda _karakeep_id: html_bookmark,

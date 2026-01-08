@@ -84,6 +84,7 @@ data/
 *.csv
 *.html
 *.pdf
+!src/**/*.html
 
 # temp / working files & folders
 *.bak

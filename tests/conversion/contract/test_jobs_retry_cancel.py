@@ -1,4 +1,4 @@
-"""Contract tests for conversion job APIs."""
+"""Contract tests for retry and cancel job endpoints."""
 
 from pathlib import Path
 import yaml
@@ -14,18 +14,16 @@ def _load_openapi_spec() -> dict:
     return yaml.safe_load(spec_path.read_text())
 
 
-def test_jobs_endpoints_match_openapi_contract():
+def test_job_retry_cancel_endpoints_match_openapi_contract() -> None:
     spec = _load_openapi_spec()
-    app = create_app()
-    app_spec = app.openapi()
+    app_spec = create_app().openapi()
 
     if not app_spec.get("paths"):
         pytest.xfail("API routes not registered in FastAPI app yet.")
 
     expected_paths = {
-        "/v1/jobs": {"post", "get"},
-        "/v1/jobs/{job_id}": {"get"},
-        "/v1/jobs/status-counts": {"get"},
+        "/v1/jobs/{job_id}/retry": {"post"},
+        "/v1/jobs/{job_id}/cancel": {"post"},
     }
 
     for path, methods in expected_paths.items():
@@ -34,15 +32,3 @@ def test_jobs_endpoints_match_openapi_contract():
         for method in methods:
             assert method in spec["paths"][path]
             assert method in app_spec["paths"][path]
-
-
-def test_jobs_schemas_present_in_openapi():
-    spec = _load_openapi_spec()
-    app_spec = create_app().openapi()
-
-    if not app_spec.get("components"):
-        pytest.xfail("API schemas not registered in FastAPI app yet.")
-
-    for schema_name in ("JobSubmission", "JobResponse", "JobStatusCounts", "ConversionJobStatus"):
-        assert schema_name in spec["components"]["schemas"]
-        assert schema_name in app_spec["components"]["schemas"]

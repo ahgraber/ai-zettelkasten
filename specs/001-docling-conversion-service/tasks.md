@@ -48,9 +48,9 @@
 - [x] T015 [P] ~~Implement filename normalization in src/aizk/conversion/utilities/filename_utils.py: normalize_filename(title) lowercases, replaces special chars with hyphens, strips leading/trailing dots/dashes, truncates to 200 chars~~ override: filename normalization already exists in utilities.file_utils
 - [x] T016 Create configuration management in src/aizk/conversion/utilities/config.py using pydantic-settings: ConversionConfig with fields for S3 credentials, database path, worker concurrency, fetch timeouts
 - [x] T017 Create FastAPI app setup in src/aizk/conversion/api/main.py with lifespan context manager for database initialization and cleanup
-- [x] T018 [P] Create FastAPI dependency injection in src/aizk/conversion/api/dependencies.py: wire DB session via `aizk.db.get_session()` and provide get_s3_client() dependency
+- [x] T018 [P] Create FastAPI dependency injection in src/aizk/conversion/api/dependencies.py: wire DB session via `aizk.conversion.db.get_session()` and provide get_s3_client() dependency
 - [x] T019 [P] Create structured logging configuration in src/aizk/conversion/utilities/logging.py with context fields (aizk_uuid, job_id, karakeep_id, status)
-- [x] T020 Create CLI entrypoint in src/aizk/conversion/cli.py with commands: db-init (initialize database via aizk.db.create_db_and_tables), serve (run FastAPI server), worker (run background worker)
+- [x] T020 Create CLI entrypoint in src/aizk/conversion/cli.py with commands: db-init (initialize database via aizk.conversion.db.create_db_and_tables), serve (run FastAPI server), worker (run background worker)
 - [x] T020a [P] Implement process role identification (via setproctitle): API server identifies itself as 'api' role; worker processes identify as 'worker' role; CLI entrypoints identify as 'cli' role. Roles must be visible to system operators (e.g., via process title, environment variable, or telemetry).
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
@@ -109,20 +109,20 @@
 
 ### Tests for User Story 2 (write first)
 
-- [ ] T044 [P] [US2] Contract test for POST /v1/jobs/{job_id}/retry and /cancel in tests/conversion/contract/test_jobs_retry_cancel.py
-- [ ] T045 [P] [US2] Integration test for bulk actions in tests/conversion/integration/test_jobs_actions.py (retry/cancel flows)
-- [ ] T046 [US2] Integration test for /ui/jobs rendering in tests/conversion/integration/test_ui_jobs.py (table columns, filters, bulk action form)
-- [ ] T046a [US2] Obtain user approval of US2 tests and confirm red phase before starting implementation tasks
+- [x] T044 [P] [US2] Contract test for POST /v1/jobs/{job_id}/retry and /cancel in tests/conversion/contract/test_jobs_retry_cancel.py
+- [x] T045 [P] [US2] Integration test for bulk actions in tests/conversion/integration/test_jobs_actions.py (retry/cancel flows)
+- [x] T046 [US2] Integration test for /ui/jobs rendering in tests/conversion/integration/test_ui_jobs.py (table columns, filters, bulk action form)
+- [x] T046a [US2] Obtain user approval of US2 tests and confirm red phase before starting implementation tasks
 
 ### Implementation for User Story 2
 
-- [ ] T047 Implement POST /v1/jobs/{job_id}/retry endpoint in src/aizk/conversion/api/routes/jobs.py: reset status to QUEUED for FAILED_RETRYABLE/FAILED_PERM/CANCELLED jobs, increment attempts, clear earliest_next_attempt_at, return JobResponse or 400/404
-- [ ] T048 [P] Implement POST /v1/jobs/{job_id}/cancel endpoint in src/aizk/conversion/api/routes/jobs.py: mark QUEUED→CANCELLED immediately, mark RUNNING→CANCELLED (worker checks periodically), return JobResponse or 400/404
-- [ ] T049 [P] Implement POST /v1/jobs/actions endpoint in src/aizk/conversion/api/routes/jobs.py: bulk retry or cancel for array of job_ids, return BulkActionResponse with per-job results
-- [ ] T050 Create Jinja2 base template in src/aizk/conversion/templates/base.html with HTML structure, CSS for table styling, JavaScript for client-side filtering and checkbox selection
-- [ ] T051 Create Jinja2 jobs table template in src/aizk/conversion/templates/jobs.html: displays jobs with columns (Job ID, aizk_uuid, karakeep_id, title, status, attempts, queued_at, started_at, finished_at, error_code), includes checkboxes, Retry/Cancel buttons, status/text filters
-- [ ] T052 Implement GET /ui/jobs endpoint in src/aizk/conversion/api/routes/ui.py: query all jobs, render jobs.html template with job list
-- [ ] T053 Register UI routes in src/aizk/conversion/api/main.py: include ui router with /ui prefix, configure Jinja2Templates
+- [x] T047 Implement POST /v1/jobs/{job_id}/retry endpoint in src/aizk/conversion/api/routes/jobs.py: reset status to QUEUED for FAILED_RETRYABLE/FAILED_PERM/CANCELLED jobs, increment attempts, clear earliest_next_attempt_at, return JobResponse or 400/404
+- [x] T048 [P] Implement POST /v1/jobs/{job_id}/cancel endpoint in src/aizk/conversion/api/routes/jobs.py: mark QUEUED→CANCELLED immediately, mark RUNNING→CANCELLED (worker checks periodically), return JobResponse or 400/404
+- [x] T049 [P] Implement POST /v1/jobs/actions endpoint in src/aizk/conversion/api/routes/jobs.py: bulk retry or cancel for array of job_ids, return BulkActionResponse with per-job results
+- [x] T050 Create single-file Jinja2 template in src/aizk/conversion/templates/jobs.html with HTML structure, inline CSS, and JavaScript for filtering/selection
+- [x] T051 Add jobs table layout in src/aizk/conversion/templates/jobs.html: columns (Job ID, aizk_uuid, karakeep_id, title, status, attempts, queued_at, started_at, finished_at, error_code), checkboxes, Retry/Cancel buttons, status/text filters
+- [x] T052 Implement GET /ui/jobs endpoint in src/aizk/conversion/api/routes/ui.py: query all jobs, render jobs.html template with job list
+- [x] T053 Register UI routes in src/aizk/conversion/api/main.py: include ui router with /ui prefix, configure Jinja2Templates
 
 **Checkpoint**: User Story 2 complete - Web UI operational monitoring and retry working
 

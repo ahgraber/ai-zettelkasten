@@ -7,8 +7,8 @@ from collections.abc import Iterator
 from sqlalchemy import Engine, event
 from sqlmodel import Session, SQLModel, create_engine
 
+import aizk.conversion.datamodel  # noqa: F401
 from aizk.conversion.utilities.config import ConversionConfig
-import aizk.datamodel  # noqa: F401
 
 
 def _configure_sqlite_pragmas(engine: Engine) -> None:
@@ -37,7 +37,10 @@ def get_engine(database_url: str | None = None) -> Engine:
         return engine
 
     connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
-    engine = create_engine(database_url, connect_args=connect_args)
+    engine = create_engine(
+        database_url,
+        connect_args=connect_args,
+    )
     if database_url.startswith("sqlite"):
         _configure_sqlite_pragmas(engine)
     _ENGINE_CACHE[database_url] = engine

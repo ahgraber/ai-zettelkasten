@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Conversion Jobs</title>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap"
+    />
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f2eb;
+        --bg-elevated: #fffdf8;
+        --ink: #1f1a16;
+        --muted: #6c5f55;
+        --accent: #b44b33;
+        --accent-strong: #8f3322;
+        --border: rgba(31, 26, 22, 0.12);
+        --shadow: 0 18px 40px rgba(31, 26, 22, 0.12);
+        --radius: 16px;
+        --mono: "SFMono-Regular", ui-monospace, "Cascadia Code", "IBM Plex Mono", "Fira Code", monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Space Grotesk", sans-serif;
+        color: var(--ink);
+        background: radial-gradient(circle at top, #fef9f1 0%, #f3e9dd 45%, #ece1d4 100%);
+        min-height: 100vh;
+      }
+
+      .shell {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 32px 20px 64px;
+        position: relative;
+      }
+
+      .halo {
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(circle at 20% 20%, rgba(180, 75, 51, 0.18), transparent 55%),
+          radial-gradient(circle at 80% 10%, rgba(30, 120, 110, 0.1), transparent 50%);
+        pointer-events: none;
+      }
+
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 16px;
+        justify-content: space-between;
+        position: relative;
+        z-index: 1;
+        animation: floatIn 0.6s ease-out both;
+      }
+
+      h1 {
+        font-size: clamp(1.8rem, 2.8vw, 2.6rem);
+        margin: 0;
+        letter-spacing: -0.02em;
+      }
+
+      .subtitle {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 0.98rem;
+      }
+
+      .panel {
+        margin-top: 24px;
+        background: var(--bg-elevated);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+        position: relative;
+        z-index: 1;
+        animation: floatIn 0.7s ease-out both;
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--border);
+        background: rgba(255, 252, 246, 0.9);
+      }
+
+      .control {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-width: 180px;
+      }
+
+      label {
+        font-size: 0.75rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      input[type="text"],
+      select {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 10px 12px;
+        font-size: 0.95rem;
+        font-family: inherit;
+        background: white;
+        color: var(--ink);
+      }
+
+      input[type="text"]:focus,
+      select:focus {
+        outline: 2px solid rgba(180, 75, 51, 0.25);
+        border-color: rgba(180, 75, 51, 0.5);
+      }
+
+      .actions {
+        margin-left: auto;
+        display: flex;
+        gap: 10px;
+        align-items: flex-end;
+      }
+
+      button {
+        border: none;
+        border-radius: 999px;
+        padding: 10px 16px;
+        font-weight: 600;
+        font-family: inherit;
+        cursor: pointer;
+        transition:
+          transform 0.15s ease,
+          box-shadow 0.15s ease;
+      }
+
+      button:active {
+        transform: translateY(1px);
+      }
+
+      .btn-primary {
+        background: var(--accent);
+        color: white;
+        box-shadow: 0 6px 16px rgba(180, 75, 51, 0.25);
+      }
+
+      .btn-secondary {
+        background: rgba(31, 26, 22, 0.08);
+        color: var(--ink);
+      }
+
+      .btn-danger {
+        background: #2f1f19;
+        color: #f8e9e1;
+      }
+
+      .summary {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        font-size: 0.85rem;
+        color: var(--muted);
+        padding: 12px 18px;
+        border-bottom: 1px solid var(--border);
+        background: rgba(255, 252, 246, 0.9);
+      }
+
+      .pill {
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: rgba(31, 26, 22, 0.06);
+      }
+
+      .table-wrap {
+        overflow-x: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 980px;
+      }
+
+      thead {
+        background: rgba(31, 26, 22, 0.04);
+      }
+
+      th,
+      td {
+        text-align: left;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--border);
+        font-size: 0.92rem;
+      }
+
+      th {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+      }
+
+      tbody tr {
+        transition: background 0.2s ease;
+      }
+
+      tbody tr:hover {
+        background: rgba(180, 75, 51, 0.08);
+      }
+
+      .mono {
+        font-family: var(--mono);
+        font-size: 0.85rem;
+      }
+
+      .uuid {
+        max-width: 140px;
+        word-break: break-all;
+      }
+
+      .title-cell {
+        min-width: 240px;
+      }
+
+      .sortable {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 600;
+        cursor: pointer;
+        border: none;
+        background: none;
+        color: inherit;
+        padding: 0;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 0.75rem;
+      }
+
+      .sortable::after {
+        content: "⇅";
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
+
+      .sortable[data-direction="asc"]::after {
+        content: "↑";
+      }
+
+      .sortable[data-direction="desc"]::after {
+        content: "↓";
+      }
+
+      .status {
+        padding: 6px 10px;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 600;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+      }
+
+      .status::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+
+      .status.queued {
+        color: #256b63;
+        background: rgba(37, 107, 99, 0.12);
+      }
+
+      .status.running {
+        color: #1a4d8f;
+        background: rgba(26, 77, 143, 0.12);
+      }
+
+      .status.failed {
+        color: #a33b2c;
+        background: rgba(163, 59, 44, 0.12);
+      }
+
+      .status.failed-retryable {
+        color: #b5655a;
+        background: rgba(181, 101, 90, 0.16);
+      }
+
+      .status.failed-perm {
+        color: #7c1d12;
+        background: rgba(124, 29, 18, 0.16);
+      }
+
+      .status.succeeded {
+        color: #2c6f3d;
+        background: rgba(44, 111, 61, 0.12);
+      }
+
+      .status.cancelled {
+        color: #705446;
+        background: rgba(112, 84, 70, 0.12);
+      }
+
+      .row-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .row-actions button {
+        padding: 6px 10px;
+        font-size: 0.78rem;
+      }
+
+      .bulk-actions {
+        display: flex;
+        gap: 10px;
+        padding: 14px 18px;
+        border-top: 1px solid var(--border);
+        background: rgba(255, 252, 246, 0.85);
+      }
+
+      .empty {
+        text-align: center;
+        padding: 40px 20px;
+        color: var(--muted);
+      }
+
+      .notice {
+        padding: 12px 18px;
+        font-size: 0.9rem;
+        color: var(--muted);
+        border-top: 1px solid var(--border);
+        background: rgba(255, 252, 246, 0.85);
+      }
+
+      .pager {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 14px 18px;
+        border-top: 1px solid var(--border);
+        background: rgba(255, 252, 246, 0.85);
+        font-size: 0.9rem;
+        color: var(--muted);
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .pager a {
+        text-decoration: none;
+        color: var(--ink);
+        border: 1px solid var(--border);
+        padding: 8px 14px;
+        border-radius: 999px;
+        background: white;
+        font-weight: 600;
+      }
+
+      .pager a[aria-disabled="true"] {
+        pointer-events: none;
+        color: var(--muted);
+        background: rgba(31, 26, 22, 0.04);
+      }
+
+      @keyframes floatIn {
+        from {
+          opacity: 0;
+          transform: translateY(12px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @media (max-width: 720px) {
+        .toolbar {
+          flex-direction: column;
+        }
+
+        .actions {
+          width: 100%;
+          justify-content: stretch;
+        }
+
+        .actions button {
+          flex: 1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="halo"></div>
+      <header>
+        <div>
+          <h1>Conversion Jobs</h1>
+          <p class="subtitle">WebUI view over all jobs with server-side search, sort, and bulk actions.</p>
+        </div>
+      </header>
+
+      {% include "jobs_panel.html" %}
+    </div>
+
+    <script>
+      function formatDateCells(root = document) {
+        const formatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" })
+        root.querySelectorAll(".dt").forEach((cell) => {
+          const iso = cell.dataset.iso
+          if (!iso) {
+            cell.textContent = ""
+            return
+          }
+          const parsed = new Date(iso)
+          if (Number.isNaN(parsed.getTime())) {
+            cell.textContent = iso
+            return
+          }
+          cell.textContent = formatter.format(parsed)
+          cell.title = iso
+        })
+      }
+
+      function attachSelectionHandlers(root = document) {
+        const selectedCount = document.getElementById("selected-count")
+        const selectAll = root.querySelector("#select-all")
+        const checkboxes = Array.from(root.querySelectorAll(".row-select"))
+        if (!selectedCount || !selectAll) {
+          return
+        }
+
+        function updateSelected() {
+          const selected = checkboxes.filter((cb) => cb.checked)
+          selectedCount.textContent = selected.length.toString()
+          selectAll.checked = selected.length > 0 && selected.length === checkboxes.length
+        }
+
+        selectAll.addEventListener("change", (event) => {
+          checkboxes.forEach((cb) => {
+            cb.checked = event.target.checked
+          })
+          updateSelected()
+        })
+
+        checkboxes.forEach((cb) => {
+          cb.addEventListener("change", updateSelected)
+        })
+
+        updateSelected()
+      }
+
+      function resetOffset() {
+        const offsetField = document.querySelector('#filters input[name="offset"]')
+        if (offsetField) {
+          offsetField.value = "0"
+        }
+      }
+
+      function attachFilterReset() {
+        const form = document.getElementById("filters")
+        if (!form) {
+          return
+        }
+        const resetButton = document.getElementById("reset-filters")
+        if (resetButton) {
+          resetButton.addEventListener("click", () => {
+            form.reset()
+            resetOffset()
+            if (window.htmx) {
+              window.htmx.trigger(form, "submit")
+            }
+          })
+        }
+        form.addEventListener("change", resetOffset)
+        const search = document.getElementById("text-filter")
+        if (search) {
+          search.addEventListener("input", resetOffset)
+        }
+      }
+
+      function initJobsPanel(root = document) {
+        formatDateCells(root)
+        attachSelectionHandlers(root)
+      }
+
+      document.addEventListener("DOMContentLoaded", () => {
+        attachFilterReset()
+        initJobsPanel()
+      })
+
+      document.body.addEventListener("htmx:afterSwap", (event) => {
+        if (event.target.id === "jobs-panel") {
+          attachFilterReset()
+          initJobsPanel(event.target)
+        }
+      })
+    </script>
+  </body>
+</html>
