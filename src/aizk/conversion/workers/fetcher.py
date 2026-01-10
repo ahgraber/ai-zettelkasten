@@ -30,11 +30,23 @@ logger = logging.getLogger(__name__)
 
 
 class FetchError(Exception):
-    """Base exception for fetch errors."""
+    """Base exception for fetch errors.
+
+    Network and remote fetch errors are typically transient and
+    should be retried.
+    """
+
+    retryable = True
 
 
 class BookmarkContentUnavailableError(FetchError, BookmarkContentError):
-    """Raised when KaraKeep bookmark has no usable content."""
+    """Raised when KaraKeep bookmark has no usable content.
+
+    Permanent: mirrors BookmarkContentError semantics. Explicitly override
+    retryable to False to avoid MRO picking FetchError.retryable=True.
+    """
+
+    retryable = False
 
 
 class ArxivPdfFetchError(FetchError):
@@ -42,7 +54,14 @@ class ArxivPdfFetchError(FetchError):
 
 
 class GitHubReadmeNotFoundError(FetchError):
-    """Raised when GitHub README not found."""
+    """Raised when GitHub README not found.
+
+    Permanent: repository has no README content reachable via typical
+    locations; retrying will not change the outcome.
+    """
+
+    error_code = "github_readme_not_found"
+    retryable = False
 
 
 def _is_arxiv_abstract_url(url: str) -> bool:
