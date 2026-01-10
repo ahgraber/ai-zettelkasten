@@ -48,7 +48,17 @@ logger = logging.getLogger(__name__)
 
 
 class ConversionError(Exception):
-    """Base exception for conversion errors."""
+    """Base exception for conversion errors.
+
+    Contract: Exceptions used by the conversion pipeline MUST declare
+    their retry semantics via the `retryable` attribute.
+
+    - retryable=True: transient failures that should be retried
+    - retryable=False: permanent failures that should not be retried
+    """
+
+    # Default to retryable for conversion errors unless specified otherwise.
+    retryable = True
 
     def __init__(self, message: str, error_code: str):
         super().__init__(message)
@@ -67,6 +77,8 @@ class DoclingEmptyOutputError(ConversionError):
 
     def __init__(self):
         super().__init__("Docling produced no Markdown content", "docling_empty_output")
+        # Empty output indicates a permanent failure for this input.
+        self.retryable = False
 
 
 def _get_picture_description_options(config: ConversionConfig) -> Optional[PictureDescriptionApiOptions]:
