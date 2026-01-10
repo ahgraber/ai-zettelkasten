@@ -10,7 +10,8 @@ from sqlmodel import Session
 
 from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
-from aizk.conversion.workers import worker
+from aizk.conversion.utilities.bookmark_utils import BookmarkContentError
+from aizk.conversion.workers import converter, fetcher, worker
 from aizk.conversion.workers.worker import ConversionInput
 
 
@@ -348,6 +349,7 @@ def test_process_job_supervised_times_out_with_phase(monkeypatch, db_session: Se
     import os
 
     fp.allow_unregistered(False)
+
     def _monotonic_sequence(values: list[float]):
         iterator = iter(values)
         last = values[-1]
@@ -557,3 +559,117 @@ def test_process_group_handles_esrch_gracefully(monkeypatch, db_session: Session
     assert job.id is not None
     worker.process_job_supervised(job.id, poll_interval_seconds=0.1)
     # Test passes if no exception is raised
+
+
+def test_handle_job_error_retryable_sets_failed_retryable(monkeypatch, db_session: Session) -> None:
+    """Retryable exceptions should mark job FAILED_RETRYABLE with next attempt set."""
+    monkeypatch.setenv("RETRY_BASE_DELAY_SECONDS", "1")
+    monkeypatch.setattr(worker, "get_engine", lambda _database_url=None: db_session.get_bind())
+
+    bookmark = _create_bookmark(db_session)
+    job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title,
+        idempotency_key="r" * 64,
+        status=ConversionJobStatus.QUEUED,
+        attempts=0,
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+
+    class CustomRetryableError(Exception):
+        error_code = "custom_retryable"
+        retryable = True
+
+    worker.handle_job_error(job.id, CustomRetryableError("boom"))
+
+    db_session.refresh(job)
+    assert job.status == ConversionJobStatus.FAILED_RETRYABLE
+    assert job.earliest_next_attempt_at is not None
+    assert job.finished_at is None
+
+
+def test_handle_job_error_permanent_sets_failed_perm(monkeypatch, db_session: Session) -> None:
+    """Permanent exceptions should mark job FAILED_PERM with finished_at set."""
+    monkeypatch.setattr(worker, "get_engine", lambda _database_url=None: db_session.get_bind())
+
+    bookmark = _create_bookmark(db_session)
+    job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title,
+        idempotency_key="p" * 64,
+        status=ConversionJobStatus.QUEUED,
+        attempts=0,
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+
+    worker.handle_job_error(job.id, BookmarkContentError("missing content"))
+
+    db_session.refresh(job)
+    assert job.status == ConversionJobStatus.FAILED_PERM
+    assert job.earliest_next_attempt_at is None
+    assert job.finished_at is not None
+
+
+def test_handle_job_error_defaults_to_retryable_without_attr(monkeypatch, db_session: Session) -> None:
+    """Exceptions without a retryable attribute default to retryable (FAILED_RETRYABLE)."""
+    monkeypatch.setattr(worker, "get_engine", lambda _database_url=None: db_session.get_bind())
+
+    bookmark = _create_bookmark(db_session)
+    job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title,
+        idempotency_key="q" * 64,
+        status=ConversionJobStatus.QUEUED,
+        attempts=0,
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+
+    worker.handle_job_error(job.id, RuntimeError("generic error"))
+
+    db_session.refresh(job)
+    assert job.status == ConversionJobStatus.FAILED_RETRYABLE
+    assert job.earliest_next_attempt_at is not None
+
+
+def test_error_code_and_retryable_mapping() -> None:
+    """Verify error_code and retryable combinations for key exception types."""
+    # Worker-defined errors
+    jde = worker.JobDataIntegrityError("bad job")
+    cto = worker.ConversionTimeoutError("timeout", phase="converting")
+    cse = worker.ConversionSubprocessError("subprocess failed")
+
+    assert getattr(jde, "error_code", None) == "job_data_integrity"
+    assert getattr(jde, "retryable", True) is False
+
+    assert getattr(cto, "error_code", None) == "conversion_timeout"
+    assert getattr(cto, "retryable", False) is True
+
+    assert getattr(cse, "error_code", None) == "conversion_subprocess_failed"
+    assert getattr(cse, "retryable", False) is True
+
+    # Bookmark content error (permanent)
+    bce = BookmarkContentError("missing")
+    assert getattr(bce, "error_code", None) == "karakeep_bookmark_missing_contents"
+    assert getattr(bce, "retryable", True) is False
+
+    # Converter errors
+    deo = converter.DoclingEmptyOutputError()
+    assert getattr(deo, "error_code", None) == "docling_empty_output"
+    assert getattr(deo, "retryable", True) is False
+
+    # Fetcher errors
+    fe = fetcher.FetchError("network")
+    assert getattr(fe, "error_code", "conversion_failed") == "conversion_failed"
+    assert getattr(fe, "retryable", False) is True
+
+    # Reported child error mapping based on error_code
+    rce_perm = worker.ReportedChildError("child failed", "docling_empty_output")
+    assert getattr(rce_perm, "retryable", True) is False
+    rce_retry = worker.ReportedChildError("child failed", "transient")
+    assert getattr(rce_retry, "retryable", False) is True

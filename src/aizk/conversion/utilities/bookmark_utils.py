@@ -31,9 +31,14 @@ logger = logging.getLogger(__name__)
 
 
 class BookmarkContentError(ValueError):
-    """Error raised when a KaraKeep bookmark lacks usable content."""
+    """Error raised when a KaraKeep bookmark lacks usable content.
+
+    Permanent: the bookmark lacks required content (HTML/text/PDF) and
+    should not be retried until the data changes.
+    """
 
     error_code = "karakeep_bookmark_missing_contents"
+    retryable = False
 
     def __init__(self, message: str):
         super().__init__(message)

@@ -98,6 +98,7 @@ class ConversionTimeoutError(RuntimeError):
     """Raised when a conversion job exceeds the configured timeout."""
 
     error_code = "conversion_timeout"
+    retryable = True
 
     def __init__(self, message: str, phase: str) -> None:
         super().__init__(message)
@@ -108,12 +109,14 @@ class ConversionSubprocessError(RuntimeError):
     """Raised when the conversion subprocess exits unexpectedly."""
 
     error_code = "conversion_subprocess_failed"
+    retryable = True
 
 
 class JobDataIntegrityError(RuntimeError):
     """Raised when job data invariants are violated."""
 
     error_code = "job_data_integrity"
+    retryable = False
 
 
 class ReportedChildError(RuntimeError):
@@ -122,6 +125,14 @@ class ReportedChildError(RuntimeError):
     def __init__(self, message: str, error_code: str) -> None:
         super().__init__(message)
         self.error_code = error_code
+        # Map known permanent error codes to non-retryable.
+        permanent_codes = {
+            "job_data_integrity",
+            "karakeep_bookmark_missing_contents",
+            "github_readme_not_found",
+            "docling_empty_output",
+        }
+        self.retryable = error_code not in permanent_codes
 
 
 def _utcnow() -> dt.datetime:
@@ -704,7 +715,11 @@ def process_job_supervised(job_id: int, poll_interval_seconds: float = 2.0) -> N
 
 
 def handle_job_error(job_id: int, error: Exception) -> None:
-    """Persist job failure details and compute retryability."""
+    """Persist job failure details and compute retryability.
+
+    Retry decision uses a type-safe `retryable` attribute when available,
+    defaulting to True for backward compatibility.
+    """
     config = ConversionConfig()
     engine = get_engine(config.database_url)
     now = _utcnow()
@@ -712,13 +727,7 @@ def handle_job_error(job_id: int, error: Exception) -> None:
     error_code = getattr(error, "error_code", "conversion_failed")
     message = str(error)
 
-    permanent_errors = {
-        "job_data_integrity",
-        "karakeep_bookmark_missing_contents",
-        "github_readme_not_found",
-        "docling_empty_output",
-    }
-    retryable = error_code not in permanent_errors
+    retryable = getattr(error, "retryable", True)
 
     with Session(engine) as session:
         job = session.get(ConversionJob, job_id)

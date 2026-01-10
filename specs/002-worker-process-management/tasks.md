@@ -50,24 +50,24 @@
 
 ### Tests for Error Retryability (write first)
 
-- [ ] T012 [P] [ErrorHandling] Unit test for retryable exception in tests/conversion/unit/test_worker.py: create exception with `retryable=True`, call `handle_job_error()`, verify job transitions to FAILED_RETRYABLE with `earliest_next_attempt_at` set
-- [ ] T013 [P] [ErrorHandling] Unit test for permanent exception in tests/conversion/unit/test_worker.py: create exception with `retryable=False`, call `handle_job_error()`, verify job transitions to FAILED_PERM with `finished_at` set and `earliest_next_attempt_at=None`
-- [ ] T014 [P] [ErrorHandling] Unit test for backward compatibility in tests/conversion/unit/test_worker.py: create exception without `retryable` attribute, call `handle_job_error()`, verify defaults to retryable (FAILED_RETRYABLE)
-- [ ] T015 [P] [ErrorHandling] Unit test for error code mapping in tests/conversion/unit/test_worker.py: verify each exception type has correct `error_code` and `retryable` attribute combination
-- [ ] T016 [ErrorHandling] Obtain user approval of error handling tests and confirm red phase before implementation
+- [x] T012 [P] [ErrorHandling] Unit test for retryable exception in tests/conversion/unit/test_worker.py: create exception with `retryable=True`, call `handle_job_error()`, verify job transitions to FAILED_RETRYABLE with `earliest_next_attempt_at` set
+- [x] T013 [P] [ErrorHandling] Unit test for permanent exception in tests/conversion/unit/test_worker.py: create exception with `retryable=False`, call `handle_job_error()`, verify job transitions to FAILED_PERM with `finished_at` set and `earliest_next_attempt_at=None`
+- [x] T014 [P] [ErrorHandling] Unit test for backward compatibility in tests/conversion/unit/test_worker.py: create exception without `retryable` attribute, call `handle_job_error()`, verify defaults to retryable (FAILED_RETRYABLE)
+- [x] T015 [P] [ErrorHandling] Unit test for error code mapping in tests/conversion/unit/test_worker.py: verify each exception type has correct `error_code` and `retryable` attribute combination
+- [x] T016 [ErrorHandling] Obtain user approval of error handling tests and confirm red phase before implementation
 
 ### Implementation for Error Retryability
 
-- [ ] T017 [P] [ErrorHandling] Add `retryable = True` class attribute to `ConversionError` base class in src/aizk/conversion/workers/converter.py (if exists) or create base exception class
-- [ ] T018 [P] [ErrorHandling] Set `retryable = False` on `JobDataIntegrityError` class in src/aizk/conversion/workers/worker.py
-- [ ] T019 [P] [ErrorHandling] Set `retryable = True` on `ConversionTimeoutError` class in src/aizk/conversion/workers/worker.py (timeouts are transient)
-- [ ] T020 [P] [ErrorHandling] Set `retryable = True` on `ConversionSubprocessError` class in src/aizk/conversion/workers/worker.py (crashes may be transient)
-- [ ] T021 [P] [ErrorHandling] Set `retryable = False` on `BookmarkContentError` class in src/aizk/conversion/utilities/bookmark_utils.py (missing content is permanent)
-- [ ] T022 [P] [ErrorHandling] Set `retryable = True` on `FetchError` class in src/aizk/conversion/workers/fetcher.py (network errors are transient)
-- [ ] T023 [P] [ErrorHandling] Set `retryable` attribute on other relevant exception classes in src/aizk/conversion/workers/converter.py (e.g., `DoclingEmptyOutputError` should be permanent)
-- [ ] T024 [ErrorHandling] Update `handle_job_error()` in src/aizk/conversion/workers/worker.py: replace `permanent_errors` string set with `retryable = getattr(error, "retryable", True)`
-- [ ] T025 [ErrorHandling] Remove `permanent_errors` string set from src/aizk/conversion/workers/worker.py
-- [ ] T026 [P] [ErrorHandling] Add comment/docstring to base exception class in src/aizk/conversion/workers/converter.py documenting the `retryable` attribute contract
+- [x] T017 [P] [ErrorHandling] Add `retryable = True` class attribute to `ConversionError` base class in src/aizk/conversion/workers/converter.py (if exists) or create base exception class
+- [x] T018 [P] [ErrorHandling] Set `retryable = False` on `JobDataIntegrityError` class in src/aizk/conversion/workers/worker.py
+- [x] T019 [P] [ErrorHandling] Set `retryable = True` on `ConversionTimeoutError` class in src/aizk/conversion/workers/worker.py (timeouts are transient)
+- [x] T020 [P] [ErrorHandling] Set `retryable = True` on `ConversionSubprocessError` class in src/aizk/conversion/workers/worker.py (crashes may be transient)
+- [x] T021 [P] [ErrorHandling] Set `retryable = False` on `BookmarkContentError` class in src/aizk/conversion/utilities/bookmark_utils.py (missing content is permanent)
+- [x] T022 [P] [ErrorHandling] Set `retryable = True` on `FetchError` class in src/aizk/conversion/workers/fetcher.py (network errors are transient)
+- [x] T023 [P] [ErrorHandling] Set `retryable` attribute on other relevant exception classes in src/aizk/conversion/workers/converter.py (e.g., `DoclingEmptyOutputError` should be permanent)
+- [x] T024 [ErrorHandling] Update `handle_job_error()` in src/aizk/conversion/workers/worker.py: replace `permanent_errors` string set with `retryable = getattr(error, "retryable", True)`
+- [x] T025 [ErrorHandling] Remove `permanent_errors` string set from src/aizk/conversion/workers/worker.py
+- [x] T026 [P] [ErrorHandling] Add comment/docstring to base exception class in src/aizk/conversion/workers/converter.py documenting the `retryable` attribute contract
 
 **Checkpoint**: Error classification now uses type-safe exception attributes
 
