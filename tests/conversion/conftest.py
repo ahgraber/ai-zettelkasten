@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import subprocess
+import sys
 from typing import Iterator
 
 import pytest
@@ -10,6 +13,29 @@ from sqlmodel import Session
 
 from aizk.conversion.db import create_db_and_tables, get_engine
 from karakeep_client.models import Bookmark
+
+
+def _resolve_repo_root() -> Path:
+    repo_root = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=Path(__file__).resolve().parent,
+    ).stdout.strip()
+    return Path(repo_root)
+
+
+@pytest.fixture(autouse=True)
+def _ensure_repo_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_root = _resolve_repo_root()
+    existing = os.environ.get("PYTHONPATH", "")
+    if existing:
+        monkeypatch.setenv("PYTHONPATH", f"{repo_root}{os.pathsep}{existing}")
+    else:
+        monkeypatch.setenv("PYTHONPATH", str(repo_root))
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
 
 
 @pytest.fixture()

@@ -50,24 +50,24 @@
 
 ### Tests for Error Retryability (write first)
 
-- [ ] T012 [P] [ErrorHandling] Unit test for retryable exception in tests/conversion/unit/test_worker.py: create exception with `retryable=True`, call `handle_job_error()`, verify job transitions to FAILED_RETRYABLE with `earliest_next_attempt_at` set
-- [ ] T013 [P] [ErrorHandling] Unit test for permanent exception in tests/conversion/unit/test_worker.py: create exception with `retryable=False`, call `handle_job_error()`, verify job transitions to FAILED_PERM with `finished_at` set and `earliest_next_attempt_at=None`
-- [ ] T014 [P] [ErrorHandling] Unit test for backward compatibility in tests/conversion/unit/test_worker.py: create exception without `retryable` attribute, call `handle_job_error()`, verify defaults to retryable (FAILED_RETRYABLE)
-- [ ] T015 [P] [ErrorHandling] Unit test for error code mapping in tests/conversion/unit/test_worker.py: verify each exception type has correct `error_code` and `retryable` attribute combination
-- [ ] T016 [ErrorHandling] Obtain user approval of error handling tests and confirm red phase before implementation
+- [x] T012 [P] [ErrorHandling] Unit test for retryable exception in tests/conversion/unit/test_worker.py: create exception with `retryable=True`, call `handle_job_error()`, verify job transitions to FAILED_RETRYABLE with `earliest_next_attempt_at` set
+- [x] T013 [P] [ErrorHandling] Unit test for permanent exception in tests/conversion/unit/test_worker.py: create exception with `retryable=False`, call `handle_job_error()`, verify job transitions to FAILED_PERM with `finished_at` set and `earliest_next_attempt_at=None`
+- [x] T014 [P] [ErrorHandling] Unit test for backward compatibility in tests/conversion/unit/test_worker.py: create exception without `retryable` attribute, call `handle_job_error()`, verify defaults to retryable (FAILED_RETRYABLE)
+- [x] T015 [P] [ErrorHandling] Unit test for error code mapping in tests/conversion/unit/test_worker.py: verify each exception type has correct `error_code` and `retryable` attribute combination
+- [x] T016 [ErrorHandling] Obtain user approval of error handling tests and confirm red phase before implementation
 
 ### Implementation for Error Retryability
 
-- [ ] T017 [P] [ErrorHandling] Add `retryable = True` class attribute to `ConversionError` base class in src/aizk/conversion/workers/converter.py (if exists) or create base exception class
-- [ ] T018 [P] [ErrorHandling] Set `retryable = False` on `JobDataIntegrityError` class in src/aizk/conversion/workers/worker.py
-- [ ] T019 [P] [ErrorHandling] Set `retryable = True` on `ConversionTimeoutError` class in src/aizk/conversion/workers/worker.py (timeouts are transient)
-- [ ] T020 [P] [ErrorHandling] Set `retryable = True` on `ConversionSubprocessError` class in src/aizk/conversion/workers/worker.py (crashes may be transient)
-- [ ] T021 [P] [ErrorHandling] Set `retryable = False` on `BookmarkContentError` class in src/aizk/conversion/utilities/bookmark_utils.py (missing content is permanent)
-- [ ] T022 [P] [ErrorHandling] Set `retryable = True` on `FetchError` class in src/aizk/conversion/workers/fetcher.py (network errors are transient)
-- [ ] T023 [P] [ErrorHandling] Set `retryable` attribute on other relevant exception classes in src/aizk/conversion/workers/converter.py (e.g., `DoclingEmptyOutputError` should be permanent)
-- [ ] T024 [ErrorHandling] Update `handle_job_error()` in src/aizk/conversion/workers/worker.py: replace `permanent_errors` string set with `retryable = getattr(error, "retryable", True)`
-- [ ] T025 [ErrorHandling] Remove `permanent_errors` string set from src/aizk/conversion/workers/worker.py
-- [ ] T026 [P] [ErrorHandling] Add comment/docstring to base exception class in src/aizk/conversion/workers/converter.py documenting the `retryable` attribute contract
+- [x] T017 [P] [ErrorHandling] Add `retryable = True` class attribute to `ConversionError` base class in src/aizk/conversion/workers/converter.py (if exists) or create base exception class
+- [x] T018 [P] [ErrorHandling] Set `retryable = False` on `JobDataIntegrityError` class in src/aizk/conversion/workers/worker.py
+- [x] T019 [P] [ErrorHandling] Set `retryable = True` on `ConversionTimeoutError` class in src/aizk/conversion/workers/worker.py (timeouts are transient)
+- [x] T020 [P] [ErrorHandling] Set `retryable = True` on `ConversionSubprocessError` class in src/aizk/conversion/workers/worker.py (crashes may be transient)
+- [x] T021 [P] [ErrorHandling] Set `retryable = False` on `BookmarkContentError` class in src/aizk/conversion/utilities/bookmark_utils.py (missing content is permanent)
+- [x] T022 [P] [ErrorHandling] Set `retryable = True` on `FetchError` class in src/aizk/conversion/workers/fetcher.py (network errors are transient)
+- [x] T023 [P] [ErrorHandling] Set `retryable` attribute on other relevant exception classes in src/aizk/conversion/workers/converter.py (e.g., `DoclingEmptyOutputError` should be permanent)
+- [x] T024 [ErrorHandling] Update `handle_job_error()` in src/aizk/conversion/workers/worker.py: replace `permanent_errors` string set with `retryable = getattr(error, "retryable", True)`
+- [x] T025 [ErrorHandling] Remove `permanent_errors` string set from src/aizk/conversion/workers/worker.py
+- [x] T026 [P] [ErrorHandling] Add comment/docstring to base exception class in src/aizk/conversion/workers/converter.py documenting the `retryable` attribute contract
 
 **Checkpoint**: Error classification now uses type-safe exception attributes
 
@@ -79,21 +79,21 @@
 
 ### Tests for Cancellation (write first)
 
-- [ ] T027 [P] [Cancellation] Unit test for cancellation during preflight in tests/conversion/unit/test_worker.py: mark job CANCELLED before calling `process_job_supervised()`, verify early return without subprocess spawn
-- [ ] T028 [P] [Cancellation] Unit test for cancellation during conversion in tests/conversion/unit/test_worker.py: mock subprocess alive, set job CANCELLED on first poll, verify subprocess terminated and job remains CANCELLED
-- [ ] T029 [P] [Cancellation] Unit test for cancellation before upload in tests/conversion/unit/test_worker.py: mock successful subprocess completion, set job CANCELLED before upload phase, verify upload skipped and job remains CANCELLED
-- [ ] T030 [P] [Cancellation] Unit test for cancellation logging in tests/conversion/unit/test_worker.py: verify log message includes "Job {id} cancelled during {phase}" format
-- [ ] T031 [Cancellation] Integration test for cancellation latency in tests/conversion/integration/test_conversion_flow.py: submit job, cancel mid-execution, measure time until subprocess terminated, verify \<5 seconds
-- [ ] T032 [Cancellation] Obtain user approval of cancellation tests and confirm red phase before implementation
+- [x] T027 [P] [Cancellation] Unit test for cancellation during preflight in tests/conversion/unit/test_worker.py: mark job CANCELLED before calling `process_job_supervised()`, verify early return without subprocess spawn
+- [x] T028 [P] [Cancellation] Unit test for cancellation during conversion in tests/conversion/unit/test_worker.py: mock subprocess alive, set job CANCELLED on first poll, verify subprocess terminated and job remains CANCELLED
+- [x] T029 [P] [Cancellation] Unit test for cancellation before upload in tests/conversion/unit/test_worker.py: mock successful subprocess completion, set job CANCELLED before upload phase, verify upload skipped and job remains CANCELLED
+- [x] T030 [P] [Cancellation] Unit test for cancellation logging in tests/conversion/unit/test_worker.py: verify log message includes "Job {id} cancelled during {phase}" format
+- [x] T031 [Cancellation] Integration test for cancellation latency in tests/conversion/integration/test_conversion_flow.py: submit job, cancel mid-execution, measure time until subprocess terminated, verify \<5 seconds
+- [x] T032 [Cancellation] Obtain user approval of cancellation tests and confirm red phase before implementation
 
 ### Implementation for Cancellation
 
-- [ ] T033 [Cancellation] Verify `_raise_if_cancelled()` is called before `_prepare_conversion_input()` in src/aizk/conversion/workers/worker.py (already exists in staged code, verify placement)
-- [ ] T034 [Cancellation] Verify `_raise_if_cancelled()` is called after `_run_conversion()` in src/aizk/conversion/workers/worker.py (already exists in staged code, verify placement)
-- [ ] T035 [Cancellation] Verify cancellation check before upload phase in `process_job_supervised()` in src/aizk/conversion/workers/worker.py (already exists: `if _is_job_cancelled(...)` before upload)
-- [ ] T036 [Cancellation] Add structured log message when cancellation detected during subprocess polling in src/aizk/conversion/workers/worker.py: "Job {job_id} cancelled during {last_phase}"
-- [ ] T037 [Cancellation] Add structured log message when cancellation detected before upload in src/aizk/conversion/workers/worker.py: "Job {job_id} cancelled before upload"
-- [ ] T038 [P] [Cancellation] Verify early return in `process_job_supervised()` for CANCELLED jobs in src/aizk/conversion/workers/worker.py (already exists: check `job.status in {SUCCEEDED, CANCELLED}`)
+- [x] T033 [Cancellation] Verify `_raise_if_cancelled()` is called before `_prepare_conversion_input()` in src/aizk/conversion/workers/worker.py (already exists in staged code, verify placement)
+- [x] T034 [Cancellation] Verify `_raise_if_cancelled()` is called after `_run_conversion()` in src/aizk/conversion/workers/worker.py (already exists in staged code, verify placement)
+- [x] T035 [Cancellation] Verify cancellation check before upload phase in `process_job_supervised()` in src/aizk/conversion/workers/worker.py (already exists: `if _is_job_cancelled(...)` before upload)
+- [x] T036 [Cancellation] Add structured log message when cancellation detected during subprocess polling in src/aizk/conversion/workers/worker.py: "Job {job_id} cancelled during {last_phase}"
+- [x] T037 [Cancellation] Add structured log message when cancellation detected before upload in src/aizk/conversion/workers/worker.py: "Job {job_id} cancelled before upload"
+- [x] T038 [P] [Cancellation] Verify early return in `process_job_supervised()` for CANCELLED jobs in src/aizk/conversion/workers/worker.py (already exists: check `job.status in {SUCCEEDED, CANCELLED}`)
 
 **Checkpoint**: Cancellation is now detected reliably with proper logging
 
@@ -105,23 +105,23 @@
 
 ### Tests for Timeout (write first)
 
-- [ ] T039 [P] [Timeout] Unit test for timeout during subprocess in tests/conversion/unit/test_worker.py: mock `time.monotonic()` to exceed deadline during subprocess polling, verify subprocess terminated and `ConversionTimeoutError` raised with correct phase
-- [ ] T040 [P] [Timeout] Unit test for timeout before upload in tests/conversion/unit/test_worker.py: mock deadline exceeded after subprocess completes but before upload, verify `ConversionTimeoutError` raised with phase="uploading"
-- [ ] T041 [P] [Timeout] Unit test for timeout during upload retry in tests/conversion/unit/test_worker.py: mock deadline exceeded during retry loop, verify loop exits and `ConversionTimeoutError` raised
-- [ ] T042 [P] [Timeout] Unit test for timeout phase capture in tests/conversion/unit/test_worker.py: verify `ConversionTimeoutError.phase` contains the last known phase from status queue
-- [ ] T043 [Timeout] Integration test for real timeout in tests/conversion/integration/test_worker_lifecycle.py: configure short timeout (10s), spawn subprocess that sleeps >10s, verify killed at deadline ±2s
-- [ ] T044 [Timeout] Obtain user approval of timeout tests and confirm red phase before implementation
+- [x] T039 [P] [Timeout] Unit test for timeout during subprocess in tests/conversion/unit/test_worker.py: mock `time.monotonic()` to exceed deadline during subprocess polling, verify subprocess terminated and `ConversionTimeoutError` raised with correct phase
+- [x] T040 [P] [Timeout] Unit test for timeout before upload in tests/conversion/unit/test_worker.py: mock deadline exceeded after subprocess completes but before upload, verify `ConversionTimeoutError` raised with phase="uploading"
+- [x] T041 [P] [Timeout] Unit test for timeout during upload retry in tests/conversion/unit/test_worker.py: mock deadline exceeded during retry loop, verify loop exits and `ConversionTimeoutError` raised
+- [x] T042 [P] [Timeout] Unit test for timeout phase capture in tests/conversion/unit/test_worker.py: verify `ConversionTimeoutError.phase` contains the last known phase from status queue
+- [x] T043 [Timeout] Integration test for real timeout in tests/conversion/integration/test_worker_lifecycle.py: configure short timeout (10s), spawn subprocess that sleeps >10s, verify killed at deadline ±2s
+- [x] T044 [Timeout] Obtain user approval of timeout tests and confirm red phase before implementation
 
 ### Implementation for Timeout
 
-- [ ] T045 [Timeout] Verify deadline computation in `process_job_supervised()` in src/aizk/conversion/workers/worker.py: `deadline = time.monotonic() + timeout_seconds` after RUNNING transition (already exists in staged code)
-- [ ] T046 [Timeout] Verify timeout check during subprocess polling loop in src/aizk/conversion/workers/worker.py: `if deadline and time.monotonic() >= deadline` (already exists in staged code)
-- [ ] T047 [Timeout] Verify timeout check before upload phase in src/aizk/conversion/workers/worker.py: check deadline before entering `_upload_converted()` (already exists in staged code)
-- [ ] T048 [Timeout] Verify timeout check during upload retry loop in src/aizk/conversion/workers/worker.py: check deadline at start of each retry iteration (already exists in staged code)
-- [ ] T049 [Timeout] Verify `ConversionTimeoutError` includes `phase` parameter in src/aizk/conversion/workers/worker.py: `ConversionTimeoutError(message, phase=last_phase)` (already exists in staged code)
-- [ ] T050 [P] [Timeout] Add structured log message when timeout detected in src/aizk/conversion/workers/worker.py: "Job {job_id} timed out during {phase} after {elapsed}s"
+- [x] T045 [Timeout] Verify deadline computation in `process_job_supervised()` in src/aizk/conversion/workers/worker.py: `deadline = time.monotonic() + timeout_seconds` after RUNNING transition (already exists in staged code)
+- [x] T046 [Timeout] Verify timeout check during subprocess polling loop in src/aizk/conversion/workers/worker.py: `if deadline and time.monotonic() >= deadline` (already exists in staged code)
+- [x] T047 [Timeout] Verify timeout check before upload phase in src/aizk/conversion/workers/worker.py: check deadline before entering `_upload_converted()` (already exists in staged code)
+- [x] T048 [Timeout] Verify timeout check during upload retry loop in src/aizk/conversion/workers/worker.py: check deadline at start of each retry iteration (already exists in staged code)
+- [x] T049 [Timeout] Verify `ConversionTimeoutError` includes `phase` parameter in src/aizk/conversion/workers/worker.py: `ConversionTimeoutError(message, phase=last_phase)` (already exists in staged code)
+- [x] T050 [P] [Timeout] Add structured log message when timeout detected in src/aizk/conversion/workers/worker.py: "Job {job_id} timed out during {phase} after {elapsed}s"
 
-**Checkpoint**: Timeout is enforced consistently across all phases
+**Checkpoint**: ✅ COMPLETE - Timeout is enforced consistently across all phases
 
 ---
 
@@ -131,18 +131,18 @@
 
 ### Integration Tests (write and implement together)
 
-- [ ] T051 [Testing] Create tests/conversion/integration/test_worker_lifecycle.py with fixtures for simple subprocess targets (e.g., Python script that sleeps, script that spawns child, script that writes to temp file)
-- [ ] T052 [P] [Testing] Integration test: spawn subprocess that completes normally in tests/conversion/integration/test_worker_lifecycle.py, verify exit code 0, temp directory cleaned, no processes remain
-- [ ] T053 [P] [Testing] Integration test: spawn subprocess that spawns grandchild in tests/conversion/integration/test_worker_lifecycle.py, terminate via process group, verify both parent and grandchild killed (check `ps` or `/proc`)
-- [ ] T054 [P] [Testing] Integration test: spawn subprocess, send SIGTERM, verify graceful shutdown within 5s in tests/conversion/integration/test_worker_lifecycle.py
-- [ ] T055 [P] [Testing] Integration test: spawn subprocess that ignores SIGTERM, verify SIGKILL sent after 5s in tests/conversion/integration/test_worker_lifecycle.py
-- [ ] T056 [P] [Testing] Integration test: spawn subprocess with short timeout (5s), let it run longer, verify killed at deadline in tests/conversion/integration/test_worker_lifecycle.py
-- [ ] T057 [P] [Testing] Integration test: spawn subprocess, cancel job mid-execution, verify terminated within poll interval in tests/conversion/integration/test_worker_lifecycle.py
-- [ ] T058 [P] [Testing] Integration test: simulate worker crash (don't call context manager cleanup), verify stale job recovery marks job FAILED_RETRYABLE in tests/conversion/integration/test_worker_lifecycle.py
-- [ ] T059 [Testing] Add helper function to check process table for zombies in tests/conversion/integration/test_worker_lifecycle.py: `assert_no_zombie_processes(job_id)` using `psutil` or `ps` command
-- [ ] T060 [Testing] Add helper function to check temp directory cleanup in tests/conversion/integration/test_worker_lifecycle.py: `assert_no_temp_directories(pattern)` checking `/tmp` or `tempfile.gettempdir()`
+- [x] T051 [Testing] Create tests/conversion/integration/test_worker_lifecycle.py with fixtures for simple subprocess targets (e.g., Python script that sleeps, script that spawns child, script that writes to temp file)
+- [x] T052 [P] [Testing] Integration test: spawn subprocess that completes normally in tests/conversion/integration/test_worker_lifecycle.py, verify exit code 0, temp directory cleaned, no processes remain
+- [x] T053 [P] [Testing] Integration test: spawn subprocess that spawns grandchild in tests/conversion/integration/test_worker_lifecycle.py, terminate via process group, verify both parent and grandchild killed (check `ps` or `/proc`)
+- [x] T054 [P] [Testing] Integration test: spawn subprocess, send SIGTERM, verify graceful shutdown within 5s in tests/conversion/integration/test_worker_lifecycle.py
+- [x] T055 [P] [Testing] Integration test: spawn subprocess that ignores SIGTERM, verify SIGKILL sent after 5s in tests/conversion/integration/test_worker_lifecycle.py
+- [x] T056 [P] [Testing] Integration test: spawn subprocess with short timeout (5s), let it run longer, verify killed at deadline in tests/conversion/integration/test_worker_lifecycle.py
+- [x] T057 [P] [Testing] Integration test: spawn subprocess, cancel job mid-execution, verify terminated within poll interval in tests/conversion/integration/test_worker_lifecycle.py
+- [x] T058 [P] [Testing] Integration test: simulate worker crash (don't call context manager cleanup), verify stale job recovery marks job FAILED_RETRYABLE in tests/conversion/integration/test_worker_lifecycle.py
+- [x] T059 [Testing] Add helper function to check process table for zombies in tests/conversion/integration/test_worker_lifecycle.py: `assert_no_zombie_processes(job_id)` using `psutil` or `ps` command
+- [x] T060 [Testing] Add helper function to check temp directory cleanup in tests/conversion/integration/test_worker_lifecycle.py: `assert_no_temp_directories(pattern)` checking `/tmp` or `tempfile.gettempdir()`
 
-**Checkpoint**: Integration tests validate real process management behavior
+**Checkpoint**: ✅ COMPLETE - Integration tests validate real process management behavior
 
 ---
 
@@ -152,19 +152,19 @@
 
 ### Documentation
 
-- [ ] T061 [P] [Docs] Update CHANGELOG.md with `fix(worker):` entries for process group management, exception retryability, hardened cancellation/timeout
-- [ ] T062 [P] [Docs] Add docstring to `_process_job_subprocess()` in src/aizk/conversion/workers/worker.py explaining process group creation
-- [ ] T063 [P] [Docs] Add docstring to `handle_job_error()` in src/aizk/conversion/workers/worker.py explaining retryability classification via exception attribute
-- [ ] T064 [P] [Docs] Update AGENTS.md with process management principles if not already documented
+- [x] T061 [P] [Docs] Update CHANGELOG.md with `fix(worker):` entries for process group management, exception retryability, hardened cancellation/timeout
+- [x] T062 [P] [Docs] Add docstring to `_process_job_subprocess()` in src/aizk/conversion/workers/worker.py explaining process group creation
+- [x] T063 [P] [Docs] Add docstring to `handle_job_error()` in src/aizk/conversion/workers/worker.py explaining retryability classification via exception attribute
+- [x] T064 [P] [Docs] Update AGENTS.md with process management principles if not already documented
 
 ### Validation
 
-- [ ] T065 [Validation] Run 100-job test suite (mix of success/failure/cancel/timeout) and measure: cancellation latency (95th percentile \<5s), timeout accuracy (±10s), zombie process count (0), temp directory leaks (0)
-- [ ] T066 [Validation] Verify all unit tests pass with >90% coverage for worker.py
-- [ ] T067 [Validation] Verify all integration tests pass and demonstrate real subprocess behavior
-- [ ] T068 [Validation] Manual test: submit long-running job, cancel via API, observe logs show "Job X cancelled during Y" within 5s
-- [ ] T069 [Validation] Manual test: submit job that times out, observe error includes phase and job marked FAILED_RETRYABLE
-- [ ] T070 [Validation] Run `ps aux | grep defunct` after 10 job executions to verify no zombie processes
+- [x] T065 [Validation] Run 100-job test suite (mix of success/failure/cancel/timeout) and measure: cancellation latency (95th percentile \<5s), timeout accuracy (±10s), zombie process count (0), temp directory leaks (0)
+- [x] T066 [Validation] Verify all unit tests pass with >90% coverage for worker.py
+- [x] T067 [Validation] Verify all integration tests pass and demonstrate real subprocess behavior
+- [x] T068 [Validation] Manual test: submit long-running job, cancel via API, observe logs show "Job X cancelled during Y" within 5s
+- [x] T069 [Validation] Manual test: submit job that times out, observe error includes phase and job marked FAILED_RETRYABLE
+- [x] T070 [Validation] Run `ps aux | grep defunct` after 10 job executions to verify no zombie processes
 
 **Checkpoint**: All success criteria met and documented
 
@@ -231,19 +231,19 @@ After completing all tasks, verify:
 ---
 
 **Tasks Generated**: 2026-01-10
-**Last Updated**: 2026-01-10 (Phase 1 tests passing)
+**Last Updated**: 2026-01-10 (Phase 5 integration tests complete)
 **Total Tasks**: 70
-**Completed**: 11/70 (Phase 1 complete)
-**Status**: ✅ Phase 1 PASSED - All process group tests passing
+**Completed**: 70/70 (Phases 1–6 complete)
+**Status**: ✅ Phase 1 PASSED - Process group management complete; ✅ Phase 2 PASSED - Error handling attributes complete; ✅ Phase 3 PASSED - Cancellation detection complete; ✅ Phase 4 PASSED - Timeout enforcement complete; ✅ Phase 5 PASSED - Integration tests complete; ✅ Phase 6 PASSED - Documentation & validation complete
 **Branch**: feature/job-processes
 
 **Task Breakdown**:
 
-- Phase 1 (Process Groups): ✅ 11/11 COMPLETE (5 tests + 6 implementation)
-- Phase 2 (Error Handling): ⏸️ 0/15 NOT STARTED (can proceed independently)
-- Phase 3 (Cancellation): ⏸️ 0/12 NOT STARTED (can proceed independently)
-- Phase 4 (Timeout): ⏸️ 0/12 NOT STARTED (can proceed independently)
-- Phase 5 (Integration Tests): ⏸️ 1/10 PARTIAL (scaffold created)
-- Phase 6 (Documentation & Validation): ⏸️ 0/10 NOT STARTED
+- Phase 1 (Process Groups): ✅ 11/11 COMPLETE
+- Phase 2 (Error Handling): ✅ 15/15 COMPLETE
+- Phase 3 (Cancellation): ✅ 12/12 COMPLETE
+- Phase 4 (Timeout): ✅ 12/12 COMPLETE
+- Phase 5 (Integration Tests): ✅ 10/10 COMPLETE
+- Phase 6 (Documentation & Validation): ✅ 10/10 COMPLETE
 
-**Recommended Next**: Phase 2 (Error Handling) - Replace string-based error codes with retryable exception attributes
+**Recommended Next**: None - all phases complete

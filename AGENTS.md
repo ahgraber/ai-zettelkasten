@@ -156,6 +156,45 @@ except ServiceError as e:
 - Make errors carry both **machine-actionable metadata** (for recovery logic) and **human context** (for debugging).
 - Avoid exception hierarchies that leak internal implementation details across module boundaries.
 
+### Structured Logging for Operations
+
+- Log phase transitions and critical checkpoints (e.g., "entered phase: subprocess", "cancelled before upload").
+- Include elapsed time and deadline information in timeout logs for latency debugging.
+- Log process group termination events: "Terminated process group for job X" to confirm cleanup.
+- Use `logger.info()` for operational milestones; `logger.error()` for failures; always include job ID and phase.
+
+## Process Management
+
+**Purpose**: Ensure reliable resource cleanup, observable lifecycle, and predictable termination for long-running operations (e.g., subprocess-based job processing).
+
+### Process Group Isolation
+
+- Spawn subprocesses in their own process group via `os.setpgrp()` at process start to isolate work from parent.
+- Terminate entire process trees (parent + all children) using `os.killpg(pgid, signal)` to prevent orphaned/zombie processes.
+- Use `signal.SIGTERM` for graceful shutdown; escalate to `signal.SIGKILL` if process doesn't terminate within a grace period.
+- Catch `ProcessLookupError` (errno ESRCH) when terminating process groups that have already exited; log but do not propagate.
+
+### Timeout and Cancellation Enforcement
+
+- Use wall-clock deadlines (`time.monotonic() + timeout_seconds`) rather than relative timeouts to handle scheduling delays.
+- Check deadline at **all critical checkpoints** (e.g., subprocess polling, before upload phase, during retry loops) to enforce hard limits.
+- Report timeout/cancellation with **phase information** to enable debugging: "Job X timed out during Y after Z seconds".
+- Design timeout exceptions to carry the last known phase (`ConversionTimeoutError(message, phase=last_phase)`) to distinguish where timeout occurred.
+
+### Exception Retryability Classification
+
+- Use exception attributes (`exception.retryable: bool`) to classify errors for recovery logic instead of string-based error sets.
+- Set `retryable=True` for transient failures (network timeouts, subprocess crashes, deadline exceeded).
+- Set `retryable=False` for permanent failures (data integrity errors, missing content, invalid input).
+- Default to `retryable=True` for backward compatibility via `getattr(error, "retryable", True)` to allow graceful migration.
+- Update job status based on retryability: `FAILED_RETRYABLE` (can retry) vs `FAILED_PERM` (do not retry).
+
+### Resource Cleanup Guarantees
+
+- Clean up temporary directories, file handles, and subprocess resources within a context manager or `try/finally` block.
+- Verify cleanup completeness in integration tests: assert no zombie processes remain, no temp directories leak, no file handles left open.
+- For long-running operations, measure cleanup latency (e.g., cancellation should terminate within poll interval + grace period).
+
 ## Python Environment
 
 - When running Python commands, activate the virtual environment first.
