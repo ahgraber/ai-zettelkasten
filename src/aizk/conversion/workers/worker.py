@@ -7,7 +7,10 @@ from dataclasses import dataclass
 import datetime as dt
 import json
 import logging
+import multiprocessing as mp
+import os
 from pathlib import Path
+import queue as queue_module
 import tempfile
 import time
 from typing import Literal
@@ -79,14 +82,46 @@ class ConversionArtifacts:
     docling_version: str
 
 
-class MissingArtifactsError(RuntimeError):
+class ConversionArtifactsMissingError(RuntimeError):
     """Raised when expected conversion artifacts are missing."""
 
-    error_code = "missing_artifacts"
+    error_code = "conversion_artifacts_missing"
 
 
 class ConversionCancelledError(RuntimeError):
     """Raised when a conversion job is cancelled during processing."""
+
+    error_code = "conversion_cancelled"
+
+
+class ConversionTimeoutError(RuntimeError):
+    """Raised when a conversion job exceeds the configured timeout."""
+
+    error_code = "conversion_timeout"
+
+    def __init__(self, message: str, phase: str) -> None:
+        super().__init__(message)
+        self.phase = phase
+
+
+class ConversionSubprocessError(RuntimeError):
+    """Raised when the conversion subprocess exits unexpectedly."""
+
+    error_code = "conversion_subprocess_failed"
+
+
+class JobDataIntegrityError(RuntimeError):
+    """Raised when job data invariants are violated."""
+
+    error_code = "job_data_integrity"
+
+
+class ReportedChildError(RuntimeError):
+    """Raised when a child process reports a failure."""
+
+    def __init__(self, message: str, error_code: str) -> None:
+        super().__init__(message)
+        self.error_code = error_code
 
 
 def _utcnow() -> dt.datetime:
@@ -95,9 +130,86 @@ def _utcnow() -> dt.datetime:
 
 
 def _docling_version() -> str:
+    """Return the installed docling version for conversion metadata."""
     from importlib.metadata import version
 
     return version("docling")
+
+
+def _raise_if_cancelled(job_id: int, engine: Engine) -> None:
+    """Raise if the job status has been marked as cancelled."""
+    with Session(engine) as session:
+        job = session.get(ConversionJob, job_id)
+        if job and job.status == ConversionJobStatus.CANCELLED:
+            raise ConversionCancelledError(f"Job {job_id} cancelled")
+
+
+def _is_job_cancelled(job_id: int, engine: Engine) -> bool:
+    """Return True when the job status is CANCELLED."""
+    with Session(engine) as session:
+        job = session.get(ConversionJob, job_id)
+        return bool(job and job.status == ConversionJobStatus.CANCELLED)
+
+
+def _report_status(
+    status_queue: mp.Queue | None,
+    *,
+    event: Literal["phase", "completed", "cancelled", "failed"],
+    message: str,
+    error_code: str | None = None,
+) -> None:
+    """Send a structured event from the subprocess to the parent."""
+    if not status_queue:
+        return
+    payload: dict[str, str] = {"event": event, "message": message}
+    if error_code:
+        payload["error_code"] = error_code
+    try:
+        status_queue.put_nowait(payload)
+    except Exception:
+        return
+
+
+def _prepare_bookmark_for_job(job_id: int, engine: Engine) -> tuple[BookmarkRecord, KarakeepBookmark]:
+    """Fetch, validate, and persist AIZK Bookmark for conversion.
+
+    Runs in the parent process before spawning the conversion subprocess.
+    """
+    with Session(engine) as session:
+        job = session.get(ConversionJob, job_id)
+        if not job:
+            raise JobDataIntegrityError(f"Job {job_id} missing during preflight")
+        bookmark = session.exec(select(BookmarkRecord).where(BookmarkRecord.aizk_uuid == job.aizk_uuid)).one()
+
+    karakeep_bookmark = fetch_karakeep_bookmark(bookmark.karakeep_id)
+    if not karakeep_bookmark:
+        raise FetchError(f"Bookmark {bookmark.karakeep_id} not found in KaraKeep")
+    validate_bookmark_content(karakeep_bookmark)
+
+    source_url = get_bookmark_source_url(karakeep_bookmark)
+    updated_source_type = detect_source_type(source_url)
+    updated_content_type = detect_content_type(karakeep_bookmark)
+    updated_title = karakeep_bookmark.title or source_url
+    normalized_url = normalize_url(source_url) if source_url else None
+
+    with Session(engine) as session:
+        bookmark = session.exec(select(BookmarkRecord).where(BookmarkRecord.aizk_uuid == job.aizk_uuid)).one()
+        job_record = session.get(ConversionJob, job_id)
+        bookmark.url = source_url
+        bookmark.normalized_url = normalized_url
+        bookmark.title = updated_title
+        bookmark.content_type = updated_content_type
+        bookmark.source_type = updated_source_type
+        bookmark.updated_at = _utcnow()
+        if job_record:
+            job_record.title = updated_title
+            job_record.updated_at = _utcnow()
+            session.add(job_record)
+        session.add(bookmark)
+        session.commit()
+        session.refresh(bookmark)
+
+    return bookmark, karakeep_bookmark
 
 
 def _prepare_conversion_input(
@@ -144,7 +256,10 @@ def _run_conversion(
     engine: Engine,
     workspace: Path,
 ) -> ConversionArtifacts:
-    """Run conversion phase and persist artifacts locally."""
+    """Run conversion and persist local artifacts for parent upload.
+
+    This is executed in the child process and performs cancellation checks.
+    """
     _raise_if_cancelled(job.id, engine)
     content_bytes = conversion_input.content_bytes
     pipeline_name = conversion_input.pipeline
@@ -182,21 +297,52 @@ def _run_conversion(
     )
 
 
-def _raise_if_cancelled(job_id: int, engine: Engine) -> None:
-    """Raise if the job status has been marked as cancelled."""
+def _convert_job_artifacts(
+    *,
+    job_id: int,
+    workspace: Path,
+    karakeep_payload_path: Path,
+    status_queue: mp.Queue | None,
+) -> None:
+    """Prepare input and run conversion in the child process."""
+    config = ConversionConfig()
+    engine = get_engine(config.database_url)
+
     with Session(engine) as session:
         job = session.get(ConversionJob, job_id)
-        if job and job.status == ConversionJobStatus.CANCELLED:
-            raise ConversionCancelledError(f"Job {job_id} cancelled")
+        if not job:
+            raise JobDataIntegrityError(f"Job {job_id} missing during conversion")
+        bookmark = session.exec(select(BookmarkRecord).where(BookmarkRecord.aizk_uuid == job.aizk_uuid)).one()
+
+    _raise_if_cancelled(job_id, engine)
+    karakeep_payload = json.loads(karakeep_payload_path.read_text())
+    karakeep_bookmark = KarakeepBookmark.model_validate(karakeep_payload)
+
+    _report_status(status_queue, event="phase", message="preparing_input")
+    conversion_input = _prepare_conversion_input(
+        bookmark_record=bookmark,
+        karakeep_bookmark=karakeep_bookmark,
+        config=config,
+    )
+
+    _report_status(status_queue, event="phase", message="converting")
+    _run_conversion(
+        job=job,
+        bookmark=bookmark,
+        config=config,
+        workspace=workspace,
+        conversion_input=conversion_input,
+        engine=engine,
+    )
 
 
 def _upload_converted(job_id: int, workspace: Path) -> None:
-    """Upload artifacts to S3 and record conversion output."""
+    """Upload artifacts to S3 and record conversion output in the DB."""
     config = ConversionConfig()
     engine = get_engine(config.database_url)
     metadata_file = metadata_path(workspace)
     if not metadata_file.exists():
-        raise MissingArtifactsError(f"Missing metadata for job {job_id}")
+        raise ConversionArtifactsMissingError(f"Missing metadata for job {job_id}")
 
     metadata = json.loads(metadata_file.read_text())
     markdown_filename = metadata["markdown_filename"]
@@ -205,7 +351,7 @@ def _upload_converted(job_id: int, workspace: Path) -> None:
     figure_file_paths = figure_paths(workspace, figure_files)
 
     if not markdown_file.exists():
-        raise MissingArtifactsError(f"Missing markdown for job {job_id}")
+        raise ConversionArtifactsMissingError(f"Missing markdown for job {job_id}")
 
     with Session(engine) as session:
         job = session.get(ConversionJob, job_id)
@@ -273,8 +419,292 @@ def _upload_converted(job_id: int, workspace: Path) -> None:
         session.commit()
 
 
+def _process_job_subprocess(
+    job_id: int,
+    workspace_path: str,
+    karakeep_payload_path: str,
+    status_queue: mp.Queue,
+) -> None:
+    """Subprocess entrypoint that reports conversion events to the parent."""
+    import os
+
+    os.setpgrp()  # Create new process group for cleanup of all descendants
+    try:
+        _convert_job_artifacts(
+            job_id=job_id,
+            workspace=Path(workspace_path),
+            karakeep_payload_path=Path(karakeep_payload_path),
+            status_queue=status_queue,
+        )
+        _report_status(status_queue, event="completed", message="conversion completed")
+    except ConversionCancelledError:
+        _report_status(status_queue, event="cancelled", message="conversion cancelled")
+    except (
+        ConversionError,
+        FetchError,
+        BookmarkContentUnavailableError,
+        BookmarkContentError,
+        JobDataIntegrityError,
+    ) as exc:
+        error_code = getattr(exc, "error_code", "conversion_failed")
+        _report_status(status_queue, event="failed", message=str(exc), error_code=error_code)
+        raise
+    except Exception as exc:
+        _report_status(status_queue, event="failed", message=str(exc), error_code="conversion_failed")
+        raise
+
+
+def _initialize_running_job(job_id: int, engine: Engine) -> bool:
+    """Ensure the job is in RUNNING state before processing."""
+    with Session(engine) as session:
+        job = session.get(ConversionJob, job_id)
+        if not job:
+            return False
+        if job.status in {ConversionJobStatus.SUCCEEDED, ConversionJobStatus.CANCELLED}:
+            return False
+        if job.status != ConversionJobStatus.RUNNING:
+            job.status = ConversionJobStatus.RUNNING
+            job.started_at = _utcnow()
+            job.attempts += 1
+            job.updated_at = _utcnow()
+            session.add(job)
+            session.commit()
+    return True
+
+
+def _spawn_conversion_subprocess(
+    *,
+    job_id: int,
+    workspace: Path,
+    payload_path: Path,
+) -> tuple[mp.Process, mp.Queue]:
+    """Start the conversion subprocess and return the process and status queue."""
+    ctx = mp.get_context("spawn")
+    status_queue: mp.Queue = ctx.Queue()
+    process = ctx.Process(
+        target=_process_job_subprocess,
+        args=(job_id, str(workspace), str(payload_path), status_queue),
+        daemon=True,
+    )
+    process.start()
+    return process, status_queue
+
+
+def _get_parent_pgid() -> int | None:
+    """Return the parent process group id, if available."""
+    try:
+        return os.getpgrp()
+    except OSError:
+        return None
+
+
+def _terminate_child_process(process: mp.Process, parent_pgid: int | None, sig: int) -> None:
+    """Terminate the child process or its process group safely."""
+    if not process.pid:
+        return
+    try:
+        pgid = os.getpgid(process.pid)
+        if parent_pgid is not None and pgid == parent_pgid:
+            os.kill(process.pid, sig)
+        else:
+            os.killpg(pgid, sig)
+    except (ProcessLookupError, OSError):
+        return
+
+
+def _collect_status_messages(
+    *,
+    job_id: int,
+    status_queue: mp.Queue,
+    last_phase: str,
+    reported_error: dict[str, str] | None,
+) -> tuple[str, dict[str, str] | None]:
+    """Drain the status queue, updating phase and error state."""
+    try:
+        while True:
+            message = status_queue.get_nowait()
+            event = message.get("event")
+            if event == "phase":
+                new_phase = message.get("message", last_phase)
+                if new_phase != last_phase:
+                    last_phase = new_phase
+                    logger.info("Job %s entered phase %s", job_id, last_phase)
+            elif event == "failed":
+                reported_error = message
+    except queue_module.Empty:
+        pass
+    return last_phase, reported_error
+
+
+def _supervise_conversion_process(
+    *,
+    job_id: int,
+    engine: Engine,
+    process: mp.Process,
+    status_queue: mp.Queue,
+    poll_interval_seconds: float,
+    deadline: float | None,
+) -> tuple[str, dict[str, str] | None, bool, bool]:
+    """Monitor the subprocess for cancellation or timeout."""
+    import signal
+
+    last_phase = "starting"
+    reported_error: dict[str, str] | None = None
+    parent_pgid = _get_parent_pgid()
+
+    while process.is_alive():
+        last_phase, reported_error = _collect_status_messages(
+            job_id=job_id,
+            status_queue=status_queue,
+            last_phase=last_phase,
+            reported_error=reported_error,
+        )
+
+        if _is_job_cancelled(job_id, engine):
+            _terminate_child_process(process, parent_pgid, signal.SIGTERM)
+            process.join(timeout=5.0)
+            if process.is_alive() and process.pid:
+                _terminate_child_process(process, parent_pgid, signal.SIGTERM)
+                process.join(timeout=5.0)
+            logger.info("Job %s cancelled during %s", job_id, last_phase)
+            return last_phase, reported_error, True, False
+
+        if deadline and time.monotonic() >= deadline:
+            _terminate_child_process(process, parent_pgid, signal.SIGTERM)
+            process.join(timeout=5.0)
+            if process.is_alive() and process.pid:
+                _terminate_child_process(process, parent_pgid, signal.SIGKILL)
+                process.join(timeout=5.0)
+            handle_job_error(
+                job_id,
+                ConversionTimeoutError(
+                    f"Job {job_id} exceeded its runtime during {last_phase}",
+                    last_phase,
+                ),
+            )
+            return last_phase, reported_error, False, True
+
+        process.join(timeout=poll_interval_seconds)
+
+    last_phase, reported_error = _collect_status_messages(
+        job_id=job_id,
+        status_queue=status_queue,
+        last_phase=last_phase,
+        reported_error=reported_error,
+    )
+    return last_phase, reported_error, False, False
+
+
+def process_job_supervised(job_id: int, poll_interval_seconds: float = 2.0) -> None:
+    """Run a supervised conversion attempt and upload artifacts on success.
+
+    The parent process handles preflight, cancellation, timeout, and uploads.
+    """
+    config = ConversionConfig()
+    engine = get_engine(config.database_url)
+    timeout_seconds = float(config.worker_job_timeout_seconds)
+
+    if not _initialize_running_job(job_id, engine):
+        return
+
+    try:
+        bookmark, karakeep_bookmark = _prepare_bookmark_for_job(job_id, engine)
+    except (FetchError, BookmarkContentError, JobDataIntegrityError) as exc:
+        handle_job_error(job_id, exc)
+        return
+    with tempfile.TemporaryDirectory() as tmpdirname:
+        workspace = Path(tmpdirname)
+        payload_path = workspace / "karakeep_bookmark.json"
+        payload_path.write_text(json.dumps(karakeep_bookmark.model_dump(mode="json"), indent=2))
+
+        process, status_queue = _spawn_conversion_subprocess(
+            job_id=job_id,
+            workspace=workspace,
+            payload_path=payload_path,
+        )
+
+        deadline = None
+        if timeout_seconds > 0:
+            deadline = time.monotonic() + timeout_seconds
+
+        last_phase, reported_error, cancelled, timed_out = _supervise_conversion_process(
+            job_id=job_id,
+            engine=engine,
+            process=process,
+            status_queue=status_queue,
+            poll_interval_seconds=poll_interval_seconds,
+            deadline=deadline,
+        )
+
+        if cancelled or timed_out:
+            return
+
+        if reported_error:
+            error_code = reported_error.get("error_code", "conversion_failed")
+            error_message = reported_error.get("message", "conversion_failed")
+            handle_job_error(job_id, ReportedChildError(error_message, error_code))
+            return
+
+        if process.exitcode and process.exitcode != 0:
+            handle_job_error(
+                job_id,
+                ConversionSubprocessError(f"Job {job_id} subprocess exited with code {process.exitcode}"),
+            )
+            return
+
+        if _is_job_cancelled(job_id, engine):
+            logger.info("Job %s cancelled before upload", job_id)
+            return
+
+        last_phase = "uploading"
+        if deadline and time.monotonic() >= deadline:
+            handle_job_error(
+                job_id,
+                ConversionTimeoutError(
+                    f"Job {job_id} exceeded its runtime during {last_phase}",
+                    last_phase,
+                ),
+            )
+            return
+
+        with Session(engine) as session:
+            job_record = session.get(ConversionJob, job_id)
+            if job_record:
+                job_record.status = ConversionJobStatus.UPLOAD_PENDING
+                job_record.updated_at = _utcnow()
+                session.add(job_record)
+                session.commit()
+
+        for attempt in range(1, config.retry_max_attempts + 1):
+            if deadline and time.monotonic() >= deadline:
+                handle_job_error(
+                    job_id,
+                    ConversionTimeoutError(
+                        f"Job {job_id} exceeded its runtime during {last_phase}",
+                        last_phase,
+                    ),
+                )
+                return
+            try:
+                _upload_converted(job_id, workspace)
+                break
+            except Exception as exc:
+                if attempt == config.retry_max_attempts:
+                    handle_job_error(job_id, exc)
+                    break
+                delay = config.retry_base_delay_seconds * (2 ** (attempt - 1))
+                logger.warning(
+                    "Upload attempt %d failed for job %s; retrying in %s seconds: %s",
+                    attempt,
+                    job_id,
+                    delay,
+                    exc,
+                )
+                time.sleep(delay)
+
+
 def handle_job_error(job_id: int, error: Exception) -> None:
-    """Handle job error and update status with retry logic."""
+    """Persist job failure details and compute retryability."""
     config = ConversionConfig()
     engine = get_engine(config.database_url)
     now = _utcnow()
@@ -283,6 +713,7 @@ def handle_job_error(job_id: int, error: Exception) -> None:
     message = str(error)
 
     permanent_errors = {
+        "job_data_integrity",
         "karakeep_bookmark_missing_contents",
         "github_readme_not_found",
         "docling_empty_output",
@@ -345,8 +776,8 @@ def recover_stale_running_jobs(config: ConversionConfig) -> int:
     return len(jobs)
 
 
-def poll_and_process_jobs() -> bool:
-    """Pick up the next queued job and process it."""
+def poll_and_process_jobs(poll_interval_seconds: float = 2.0) -> bool:
+    """Pick up the next eligible job and invoke supervised processing."""
     config = ConversionConfig()
     engine = get_engine(config.database_url)
     now = _utcnow()
@@ -388,126 +819,12 @@ def poll_and_process_jobs() -> bool:
     if job_id is None:
         raise RuntimeError("Queued job missing id; cannot process job")
 
-    process_job(job_id)
+    process_job_supervised(job_id, poll_interval_seconds=poll_interval_seconds)
     return True
 
 
-def process_job(job_id: int) -> None:
-    """Process a conversion job by ID."""
-    config = ConversionConfig()
-    engine = get_engine(config.database_url)
-    with Session(engine) as session:
-        job = session.get(ConversionJob, job_id)
-        if not job:
-            return
-        if job.status in {ConversionJobStatus.SUCCEEDED, ConversionJobStatus.CANCELLED}:
-            return
-        if job.status != ConversionJobStatus.RUNNING:
-            job.status = ConversionJobStatus.RUNNING
-            job.started_at = _utcnow()
-            job.attempts += 1
-            job.updated_at = _utcnow()
-            session.add(job)
-            session.commit()
-
-        bookmark = session.exec(select(BookmarkRecord).where(BookmarkRecord.aizk_uuid == job.aizk_uuid)).one()
-
-    karakeep_bookmark = fetch_karakeep_bookmark(bookmark.karakeep_id)
-    if not karakeep_bookmark:
-        handle_job_error(job_id, FetchError(f"Bookmark {bookmark.karakeep_id} not found in KaraKeep"))
-        return
-    try:
-        validate_bookmark_content(karakeep_bookmark)
-    except BookmarkContentError as exc:
-        handle_job_error(job_id, exc)
-        return
-
-    try:
-        source_url = get_bookmark_source_url(karakeep_bookmark)
-        updated_source_type = detect_source_type(source_url)
-        updated_content_type = detect_content_type(karakeep_bookmark)
-        updated_title = karakeep_bookmark.title or source_url
-        normalized_url = normalize_url(source_url) if source_url else None
-    except BookmarkContentError as exc:
-        handle_job_error(job_id, exc)
-        return
-
-    with Session(engine) as session:
-        bookmark = session.exec(select(BookmarkRecord).where(BookmarkRecord.aizk_uuid == job.aizk_uuid)).one()
-        job_record = session.get(ConversionJob, job_id)
-        bookmark.url = source_url
-        bookmark.normalized_url = normalized_url
-        bookmark.title = updated_title
-        bookmark.content_type = updated_content_type
-        bookmark.source_type = updated_source_type
-        bookmark.updated_at = _utcnow()
-        if job_record:
-            job_record.title = updated_title
-            job_record.updated_at = _utcnow()
-            session.add(job_record)
-        session.add(bookmark)
-        session.commit()
-        session.refresh(bookmark)
-        if job_record:
-            session.refresh(job_record)
-            job = job_record
-
-    with tempfile.TemporaryDirectory() as tmpdirname:
-        workspace = Path(tmpdirname)
-        try:
-            _raise_if_cancelled(job_id, engine)
-            conversion_input = _prepare_conversion_input(
-                bookmark_record=bookmark,
-                karakeep_bookmark=karakeep_bookmark,
-                config=config,
-            )
-            _run_conversion(
-                job=job,
-                bookmark=bookmark,
-                config=config,
-                workspace=workspace,
-                conversion_input=conversion_input,
-                engine=engine,
-            )
-            _raise_if_cancelled(job_id, engine)
-            with Session(engine) as session:
-                job = session.get(ConversionJob, job_id)
-                if job:
-                    job.status = ConversionJobStatus.UPLOAD_PENDING
-                    job.updated_at = _utcnow()
-                    session.add(job)
-                    session.commit()
-        except ConversionCancelledError:
-            logger.info("Job %s cancelled during processing", job_id)
-            return
-        except (ConversionError, FetchError, BookmarkContentUnavailableError, BookmarkContentError) as exc:
-            handle_job_error(job_id, exc)
-            return
-        except Exception as exc:
-            handle_job_error(job_id, exc)
-            return
-
-        for attempt in range(1, config.retry_max_attempts + 1):
-            try:
-                _upload_converted(job_id, workspace)
-                break
-            except Exception as exc:
-                if attempt == config.retry_max_attempts:
-                    handle_job_error(job_id, exc)
-                    break
-                delay = config.retry_base_delay_seconds * (2 ** (attempt - 1))
-                logger.warning(
-                    "Upload attempt %d failed for job %s; retrying in %s seconds: %s",
-                    attempt,
-                    job_id,
-                    delay,
-                    exc,
-                )
-                time.sleep(delay)
-
-
 def run_worker(poll_interval_seconds: float = 2.0) -> None:
-    """Run the worker loop for processing jobs."""
+    """Run the worker loop for polling, processing, and recovery."""
     logger.info("Starting conversion worker loop")
     config = ConversionConfig()
     last_recovery_check = 0.0
@@ -518,6 +835,6 @@ def run_worker(poll_interval_seconds: float = 2.0) -> None:
             if recovered:
                 logger.warning("Recovered %d stale RUNNING jobs", recovered)
             last_recovery_check = now
-        processed = poll_and_process_jobs()
+        processed = poll_and_process_jobs(poll_interval_seconds=poll_interval_seconds)
         if not processed:
             time.sleep(poll_interval_seconds)

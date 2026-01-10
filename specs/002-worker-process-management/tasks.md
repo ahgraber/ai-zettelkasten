@@ -25,22 +25,22 @@
 
 ### Tests for Process Groups (write first)
 
-- [ ] T001 [P] [ProcessGroups] Unit test for process group creation in tests/conversion/unit/test_worker.py: mock `os.setpgrp()` call, verify it's invoked at subprocess start
-- [ ] T002 [P] [ProcessGroups] Unit test for process group termination in tests/conversion/unit/test_worker.py: mock `os.killpg()` calls, verify SIGTERM followed by SIGKILL with correct PID and signal numbers
-- [ ] T003 [P] [ProcessGroups] Unit test for ProcessLookupError handling in tests/conversion/unit/test_worker.py: mock `os.killpg()` to raise ESRCH, verify exception is caught and logged but doesn't propagate
-- [ ] T004 [ProcessGroups] Integration test for real process group termination in tests/conversion/integration/test_worker_lifecycle.py: spawn subprocess that creates grandchild (via `subprocess.Popen`), call termination logic, verify both parent and grandchild processes are killed (check process table)
-- [ ] T005 [ProcessGroups] Obtain user approval of process group tests and confirm red phase before implementation
+- [x] T001 [P] [ProcessGroups] Unit test for process group creation in tests/conversion/unit/test_worker.py: mock `os.setpgrp()` call, verify it's invoked at subprocess start
+- [x] T002 [P] [ProcessGroups] Unit test for process group termination in tests/conversion/unit/test_worker.py: mock `os.killpg()` calls, verify SIGTERM followed by SIGKILL with correct PID and signal numbers
+- [x] T003 [P] [ProcessGroups] Unit test for ProcessLookupError handling in tests/conversion/unit/test_worker.py: mock `os.killpg()` to raise ESRCH, verify exception is caught and logged but doesn't propagate
+- [x] T004 [ProcessGroups] Integration test for real process group termination in tests/conversion/integration/test_worker_lifecycle.py: spawn subprocess that creates grandchild (via `subprocess.Popen`), call termination logic, verify both parent and grandchild processes are killed (check process table)
+- [x] T005 [ProcessGroups] Obtain user approval of process group tests and confirm red phase before implementation
 
 ### Implementation for Process Groups
 
-- [ ] T006 [ProcessGroups] Add `os.setpgrp()` call at start of `_process_job_subprocess()` in src/aizk/conversion/workers/worker.py to create new process group
-- [ ] T007 [ProcessGroups] Import `signal` and `os` modules in src/aizk/conversion/workers/worker.py for process group management
-- [ ] T008 [ProcessGroups] Refactor termination in `process_job_supervised()` in src/aizk/conversion/workers/worker.py: replace `process.terminate()` with `os.killpg(process.pid, signal.SIGTERM)` for graceful termination
-- [ ] T009 [ProcessGroups] Refactor forceful kill in `process_job_supervised()` in src/aizk/conversion/workers/worker.py: replace `process.kill()` with `os.killpg(process.pid, signal.SIGKILL)` for forceful termination
-- [ ] T010 [ProcessGroups] Add try/except block around `os.killpg()` calls in src/aizk/conversion/workers/worker.py to catch and log `ProcessLookupError` (errno ESRCH) when process group already gone
-- [ ] T011 [ProcessGroups] Add structured log message in src/aizk/conversion/workers/worker.py when process group is successfully terminated: "Terminated process group for job {job_id}"
+- [x] T006 [ProcessGroups] Add `os.setpgrp()` call at start of `_process_job_subprocess()` in src/aizk/conversion/workers/worker.py to create new process group
+- [x] T007 [ProcessGroups] Import `signal` and `os` modules in src/aizk/conversion/workers/worker.py for process group management
+- [x] T008 [ProcessGroups] Refactor termination in `process_job_supervised()` in src/aizk/conversion/workers/worker.py: replace `process.terminate()` with `os.killpg(process.pid, signal.SIGTERM)` for graceful termination
+- [x] T009 [ProcessGroups] Refactor forceful kill in `process_job_supervised()` in src/aizk/conversion/workers/worker.py: replace `process.kill()` with `os.killpg(process.pid, signal.SIGKILL)` for forceful termination
+- [x] T010 [ProcessGroups] Add try/except block around `os.killpg()` calls in src/aizk/conversion/workers/worker.py to catch and log `ProcessLookupError` (errno ESRCH) when process group already gone
+- [x] T011 [ProcessGroups] Add structured log message in src/aizk/conversion/workers/worker.py when process group is successfully terminated: "Terminated process group for job {job_id}"
 
-**Checkpoint**: Process groups implemented - grandchild processes are now cleaned up
+**Checkpoint**: ✅ COMPLETE - Process groups implemented and tested - grandchild processes are now cleaned up reliably
 
 ---
 
@@ -231,15 +231,19 @@ After completing all tasks, verify:
 ---
 
 **Tasks Generated**: 2026-01-10
+**Last Updated**: 2026-01-10 (Phase 1 tests passing)
 **Total Tasks**: 70
-**Estimated Effort**: ~3-5 days (assumes staged foundation is solid)
-**Branch**: feature/ingest
+**Completed**: 11/70 (Phase 1 complete)
+**Status**: ✅ Phase 1 PASSED - All process group tests passing
+**Branch**: feature/job-processes
 
 **Task Breakdown**:
 
-- Phase 1 (Process Groups): 11 tasks (5 tests + 6 implementation)
-- Phase 2 (Error Handling): 15 tasks (5 tests + 10 implementation)
-- Phase 3 (Cancellation): 12 tasks (6 tests + 6 implementation)
-- Phase 4 (Timeout): 12 tasks (6 tests + 6 implementation)
-- Phase 5 (Integration Tests): 10 tasks (all test implementation)
-- Phase 6 (Documentation & Validation): 10 tasks (4 docs + 6 validation)
+- Phase 1 (Process Groups): ✅ 11/11 COMPLETE (5 tests + 6 implementation)
+- Phase 2 (Error Handling): ⏸️ 0/15 NOT STARTED (can proceed independently)
+- Phase 3 (Cancellation): ⏸️ 0/12 NOT STARTED (can proceed independently)
+- Phase 4 (Timeout): ⏸️ 0/12 NOT STARTED (can proceed independently)
+- Phase 5 (Integration Tests): ⏸️ 1/10 PARTIAL (scaffold created)
+- Phase 6 (Documentation & Validation): ⏸️ 0/10 NOT STARTED
+
+**Recommended Next**: Phase 2 (Error Handling) - Replace string-based error codes with retryable exception attributes
