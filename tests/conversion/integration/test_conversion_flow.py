@@ -18,11 +18,51 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.db import get_engine
 from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.workers import worker
 from aizk.conversion.workers.worker import ConversionInput
+
+
+class _InlineProcess:
+    """Process that executes target immediately in the same process for testing."""
+
+    def __init__(self, target, args) -> None:
+        self._target = target
+        self._args = args
+        self.exitcode = None
+
+    def start(self) -> None:
+        try:
+            self._target(*self._args)
+            self.exitcode = 0
+        except Exception:
+            self.exitcode = 1
+
+    def is_alive(self) -> bool:
+        return False
+
+    def join(self, timeout: float | None = None) -> None:
+        return
+
+    def terminate(self) -> None:
+        return
+
+    def kill(self) -> None:
+        return
+
+
+class _InlineContext:
+    """Context that provides Queue and inline-executing Process for testing."""
+
+    def Queue(self):  # noqa: N802
+        return worker.queue_module.Queue()
+
+    def Process(self, target, args, daemon: bool):  # noqa: N802
+        return _InlineProcess(target, args)
 
 
 def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
     """Exercise API submit + worker processing with stubbed external services."""
+    monkeypatch.setattr(worker.mp, "get_context", lambda _ctx: _InlineContext())
     app = create_app()
     if not any(getattr(route, "path", None) == "/v1/jobs" for route in app.router.routes):
         raise AssertionError("Jobs routes not registered in FastAPI app yet.")
@@ -94,9 +134,7 @@ def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
         job = response.json()
         job_id = job["id"]
 
-        from aizk.conversion.workers.worker import process_job
-
-        process_job(job_id)
+        worker.process_job_supervised(job_id)
 
         job_response = client.get(f"/v1/jobs/{job_id}")
         assert job_response.status_code == 200
@@ -105,6 +143,7 @@ def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
 
 def test_conversion_flow_cancelled_job_skips_upload(monkeypatch, html_bookmark):
     """Stop processing when a running job is cancelled."""
+    monkeypatch.setattr(worker.mp, "get_context", lambda _ctx: _InlineContext())
     app = create_app()
     if not any(getattr(route, "path", None) == "/v1/jobs" for route in app.router.routes):
         raise AssertionError("Jobs routes not registered in FastAPI app yet.")
@@ -151,9 +190,7 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch, html_bookmark):
         job = response.json()
         job_id = job["id"]
 
-        from aizk.conversion.workers.worker import process_job
-
-        process_job(job_id)
+        worker.process_job_supervised(job_id)
 
     engine = get_engine(ConversionConfig().database_url)
     with Session(engine) as session:
