@@ -76,6 +76,7 @@ These principles apply whether the system is a **modular monolith** or a **distr
 - Use `f`-strings for formatting strings, but %-formatting for logs.
 - Use environment variables for configuration management.
 - Do not lint or format code manually; automated tooling runs on save/commit or can be invoked using `ruff`.
+- Prefer `.py` files with #%% to `.ipynb` files unless the `.ipynb` extension is specifically requested
 - Avoid architectural leakage in naming (e.g., `shared`, `common`, `utils` packages without clear ownership).
 
 ## Error Handling and Logging
