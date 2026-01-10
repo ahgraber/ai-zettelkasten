@@ -45,7 +45,7 @@ def test_poll_and_process_jobs_is_atomic(db_session, monkeypatch):
     db_session.commit()
 
     # Avoid running the full job pipeline; this test only cares about the claim step.
-    monkeypatch.setattr(worker_module, "process_job", lambda _job_id: None)
+    monkeypatch.setattr(worker_module, "process_job_supervised", lambda _job_id, poll_interval_seconds=2.0: None)
 
     # Two workers start at the same time to contend for the same queued job.
     barrier = threading.Barrier(3)
