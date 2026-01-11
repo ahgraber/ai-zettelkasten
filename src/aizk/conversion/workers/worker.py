@@ -555,6 +555,7 @@ def _supervise_conversion_process(
     status_queue: mp.Queue,
     poll_interval_seconds: float,
     deadline: float | None,
+    timeout_seconds: float,
 ) -> tuple[str, dict[str, str] | None, bool, bool]:
     """Monitor the subprocess for cancellation or timeout."""
     import signal
@@ -586,6 +587,15 @@ def _supervise_conversion_process(
             if process.is_alive() and process.pid:
                 _terminate_child_process(process, parent_pgid, signal.SIGKILL)
                 process.join(timeout=5.0)
+            elapsed = None
+            if deadline is not None:
+                elapsed = time.monotonic() - (deadline - timeout_seconds)
+            logger.info(
+                "Job %s timed out during %s after %s seconds",
+                job_id,
+                last_phase,
+                round(elapsed, 3) if elapsed is not None else "unknown",
+            )
             handle_job_error(
                 job_id,
                 ConversionTimeoutError(
@@ -645,6 +655,7 @@ def process_job_supervised(job_id: int, poll_interval_seconds: float = 2.0) -> N
             status_queue=status_queue,
             poll_interval_seconds=poll_interval_seconds,
             deadline=deadline,
+            timeout_seconds=timeout_seconds,
         )
 
         if cancelled or timed_out:
@@ -669,6 +680,13 @@ def process_job_supervised(job_id: int, poll_interval_seconds: float = 2.0) -> N
 
         last_phase = "uploading"
         if deadline and time.monotonic() >= deadline:
+            elapsed = time.monotonic() - (deadline - timeout_seconds)
+            logger.info(
+                "Job %s timed out during %s after %s seconds",
+                job_id,
+                last_phase,
+                round(elapsed, 3),
+            )
             handle_job_error(
                 job_id,
                 ConversionTimeoutError(
@@ -688,6 +706,13 @@ def process_job_supervised(job_id: int, poll_interval_seconds: float = 2.0) -> N
 
         for attempt in range(1, config.retry_max_attempts + 1):
             if deadline and time.monotonic() >= deadline:
+                elapsed = time.monotonic() - (deadline - timeout_seconds)
+                logger.info(
+                    "Job %s timed out during %s after %s seconds",
+                    job_id,
+                    last_phase,
+                    round(elapsed, 3),
+                )
                 handle_job_error(
                     job_id,
                     ConversionTimeoutError(
