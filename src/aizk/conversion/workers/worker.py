@@ -122,22 +122,33 @@ class JobDataIntegrityError(RuntimeError):
 class ReportedChildError(RuntimeError):
     """Raised when a child process reports a failure."""
 
-    def __init__(self, message: str, error_code: str) -> None:
+    def __init__(self, message: str, error_code: str, *, retryable: bool | None = None) -> None:
         super().__init__(message)
         self.error_code = error_code
-        # Map known permanent error codes to non-retryable.
-        permanent_codes = {
-            "job_data_integrity",
-            "karakeep_bookmark_missing_contents",
-            "github_readme_not_found",
-            "docling_empty_output",
-        }
-        self.retryable = error_code not in permanent_codes
+        if retryable is not None:
+            self.retryable = retryable
+
+
+class PreflightError(RuntimeError):
+    """Raised when preflight validation fails unexpectedly."""
+
+    error_code = "conversion_preflight_failed"
+    retryable = True
 
 
 def _utcnow() -> dt.datetime:
     """Return timezone-aware UTC timestamp."""
     return dt.datetime.now(dt.timezone.utc)
+
+
+@dataclass(frozen=True, slots=True)
+class SupervisionResult:
+    """Return values for conversion subprocess supervision."""
+
+    last_phase: str
+    reported_error: dict[str, str] | None
+    cancelled: bool
+    timed_out: bool
 
 
 def _docling_version() -> str:
@@ -168,6 +179,7 @@ def _report_status(
     event: Literal["phase", "completed", "cancelled", "failed"],
     message: str,
     error_code: str | None = None,
+    retryable: bool | None = None,
 ) -> None:
     """Send a structured event from the subprocess to the parent."""
     if not status_queue:
@@ -175,9 +187,17 @@ def _report_status(
     payload: dict[str, str] = {"event": event, "message": message}
     if error_code:
         payload["error_code"] = error_code
+    if retryable is not None:
+        payload["retryable"] = "true" if retryable else "false"
     try:
         status_queue.put_nowait(payload)
     except Exception:
+        logger.debug(
+            "Failed to report status event %s with message %s",
+            event,
+            message,
+            exc_info=True,
+        )
         return
 
 
@@ -437,8 +457,6 @@ def _process_job_subprocess(
     status_queue: mp.Queue,
 ) -> None:
     """Subprocess entrypoint that reports conversion events to the parent."""
-    import os
-
     os.setpgrp()  # Create new process group for cleanup of all descendants
     try:
         _convert_job_artifacts(
@@ -458,10 +476,23 @@ def _process_job_subprocess(
         JobDataIntegrityError,
     ) as exc:
         error_code = getattr(exc, "error_code", "conversion_failed")
-        _report_status(status_queue, event="failed", message=str(exc), error_code=error_code)
+        retryable = getattr(exc, "retryable", True)
+        _report_status(
+            status_queue,
+            event="failed",
+            message=str(exc),
+            error_code=error_code,
+            retryable=retryable,
+        )
         raise
     except Exception as exc:
-        _report_status(status_queue, event="failed", message=str(exc), error_code="conversion_failed")
+        _report_status(
+            status_queue,
+            event="failed",
+            message=str(exc),
+            error_code="conversion_failed",
+            retryable=True,
+        )
         raise
 
 
@@ -556,7 +587,7 @@ def _supervise_conversion_process(
     poll_interval_seconds: float,
     deadline: float | None,
     timeout_seconds: float,
-) -> tuple[str, dict[str, str] | None, bool, bool]:
+) -> SupervisionResult:
     """Monitor the subprocess for cancellation or timeout."""
     import signal
 
@@ -576,10 +607,10 @@ def _supervise_conversion_process(
             _terminate_child_process(process, parent_pgid, signal.SIGTERM)
             process.join(timeout=5.0)
             if process.is_alive() and process.pid:
-                _terminate_child_process(process, parent_pgid, signal.SIGTERM)
+                _terminate_child_process(process, parent_pgid, signal.SIGKILL)
                 process.join(timeout=5.0)
             logger.info("Job %s cancelled during %s", job_id, last_phase)
-            return last_phase, reported_error, True, False
+            return SupervisionResult(last_phase, reported_error, True, False)
 
         if deadline and time.monotonic() >= deadline:
             _terminate_child_process(process, parent_pgid, signal.SIGTERM)
@@ -603,7 +634,7 @@ def _supervise_conversion_process(
                     last_phase,
                 ),
             )
-            return last_phase, reported_error, False, True
+            return SupervisionResult(last_phase, reported_error, False, True)
 
         process.join(timeout=poll_interval_seconds)
 
@@ -613,7 +644,7 @@ def _supervise_conversion_process(
         last_phase=last_phase,
         reported_error=reported_error,
     )
-    return last_phase, reported_error, False, False
+    return SupervisionResult(last_phase, reported_error, False, False)
 
 
 def process_job_supervised(job_id: int, poll_interval_seconds: float = 2.0) -> None:
@@ -633,6 +664,9 @@ def process_job_supervised(job_id: int, poll_interval_seconds: float = 2.0) -> N
     except (FetchError, BookmarkContentError, JobDataIntegrityError) as exc:
         handle_job_error(job_id, exc)
         return
+    except Exception as exc:
+        handle_job_error(job_id, PreflightError(f"Job {job_id} preflight failed: {exc}"))
+        return
     with tempfile.TemporaryDirectory() as tmpdirname:
         workspace = Path(tmpdirname)
         payload_path = workspace / "karakeep_bookmark.json"
@@ -648,7 +682,7 @@ def process_job_supervised(job_id: int, poll_interval_seconds: float = 2.0) -> N
         if timeout_seconds > 0:
             deadline = time.monotonic() + timeout_seconds
 
-        last_phase, reported_error, cancelled, timed_out = _supervise_conversion_process(
+        result = _supervise_conversion_process(
             job_id=job_id,
             engine=engine,
             process=process,
@@ -658,13 +692,24 @@ def process_job_supervised(job_id: int, poll_interval_seconds: float = 2.0) -> N
             timeout_seconds=timeout_seconds,
         )
 
-        if cancelled or timed_out:
+        if result.cancelled or result.timed_out:
             return
 
-        if reported_error:
-            error_code = reported_error.get("error_code", "conversion_failed")
-            error_message = reported_error.get("message", "conversion_failed")
-            handle_job_error(job_id, ReportedChildError(error_message, error_code))
+        if result.reported_error:
+            error_code = result.reported_error.get("error_code", "conversion_failed")
+            error_message = result.reported_error.get("message", "conversion_failed")
+            retryable = None
+            retryable_value = result.reported_error.get("retryable")
+            if retryable_value is not None:
+                retryable = str(retryable_value).lower() == "true"
+            handle_job_error(
+                job_id,
+                ReportedChildError(
+                    error_message,
+                    error_code,
+                    retryable=retryable,
+                ),
+            )
             return
 
         if process.exitcode and process.exitcode != 0:

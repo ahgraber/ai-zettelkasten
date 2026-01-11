@@ -539,7 +539,11 @@ def test_timeout_before_upload_reports_uploading_phase(monkeypatch, db_session: 
     job = _create_running_job(db_session, bookmark)
 
     # Stub supervise to act like subprocess finished successfully
-    monkeypatch.setattr(worker, "_supervise_conversion_process", lambda **_kwargs: ("converting", None, False, False))
+    monkeypatch.setattr(
+        worker,
+        "_supervise_conversion_process",
+        lambda **_kwargs: worker.SupervisionResult("converting", None, False, False),
+    )
 
     # Ensure no upload happens
     upload_calls = {"count": 0}
@@ -586,7 +590,11 @@ def test_timeout_during_upload_retry_stops_retrying(monkeypatch, db_session: Ses
     bookmark = _create_bookmark(db_session)
     job = _create_running_job(db_session, bookmark)
 
-    monkeypatch.setattr(worker, "_supervise_conversion_process", lambda **_kwargs: ("converting", None, False, False))
+    monkeypatch.setattr(
+        worker,
+        "_supervise_conversion_process",
+        lambda **_kwargs: worker.SupervisionResult("converting", None, False, False),
+    )
     monkeypatch.setattr(worker, "_is_job_cancelled", lambda _job_id, _engine: False)
     monkeypatch.setattr(worker, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
     monkeypatch.setattr(worker, "validate_bookmark_content", lambda _bm: None)
@@ -727,7 +735,11 @@ def test_cancelled_before_upload_skips_upload(monkeypatch, db_session: Session, 
     job = _create_running_job(db_session, bookmark)
 
     # Simulate successful conversion with no errors and normal exit
-    monkeypatch.setattr(worker, "_supervise_conversion_process", lambda **_kwargs: ("converting", None, False, False))
+    monkeypatch.setattr(
+        worker,
+        "_supervise_conversion_process",
+        lambda **_kwargs: worker.SupervisionResult("converting", None, False, False),
+    )
 
     # Ensure we detect cancellation before upload phase
     monkeypatch.setattr(worker, "_is_job_cancelled", lambda _job_id, _engine: True)
@@ -955,11 +967,11 @@ def test_error_code_and_retryable_mapping() -> None:
 
     # Fetcher errors
     fe = fetcher.FetchError("network")
-    assert getattr(fe, "error_code", "conversion_failed") == "conversion_failed"
+    assert getattr(fe, "error_code", None) == "fetch_error"
     assert getattr(fe, "retryable", False) is True
 
     # Reported child error mapping based on error_code
-    rce_perm = worker.ReportedChildError("child failed", "docling_empty_output")
+    rce_perm = worker.ReportedChildError("child failed", "docling_empty_output", retryable=False)
     assert getattr(rce_perm, "retryable", True) is False
-    rce_retry = worker.ReportedChildError("child failed", "transient")
+    rce_retry = worker.ReportedChildError("child failed", "transient", retryable=True)
     assert getattr(rce_retry, "retryable", False) is True

@@ -36,6 +36,7 @@ class FetchError(Exception):
     should be retried.
     """
 
+    error_code = "fetch_error"
     retryable = True
 
 
@@ -51,6 +52,8 @@ class BookmarkContentUnavailableError(FetchError, BookmarkContentError):
 
 class ArxivPdfFetchError(FetchError):
     """Raised when arXiv PDF fetch fails."""
+
+    error_code = "arxiv_pdf_fetch_failed"
 
 
 class GitHubReadmeNotFoundError(FetchError):
