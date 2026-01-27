@@ -11,6 +11,7 @@ Do not overreach the request. If the user asks for code, provide only the code c
 - Overly defensive programming leads to overcomplication — program for the minimal golden path and expand defense only where unit tests indicate need.
 - Follow the Zen of Python and adopt pythonic patterns.
 - Focus on modularity and reusability, organizing code into functions, classes, and modules; favor composition over inheritance.
+- Use the Functional Core / Imperative Shell pattern to keep business logic pure and isolate side effects.
 - Optimize for performance and efficiency; avoid unnecessary computations and prefer efficient algorithms.
 - Ensure proper error handling and structured logging for debugging.
 - Treat architectural boundaries as first-class concerns, not incidental implementation details.
@@ -22,8 +23,22 @@ These principles apply whether the system is a **modular monolith** or a **distr
 ### Module Boundaries and Data Ownership
 
 - Each module **owns its data and invariants**.
+- The functional core / imperative shell split is **within** a module; module public interfaces typically live at the shell boundary.
+- The core's immutability and purity facilitate predictable behavior and unit testing of business logic.
+- The functional core's interface should consist of pure functions.
 - A module's data is an internal implementation detail and must not be accessed or modified directly by other modules.
-- Cross-module interaction must occur **only through explicit public interfaces** (functions, services, or well-defined types).
+- Shell code adapts between environmental data and core inputs/outputs.
+- Cross-module interaction must occur **only through explicit public interfaces** (functions, services, or well-defined types), typically at the module's imperative shell boundary.
+- Side effects (database, network, logs) are adapted at the shell boundary.
+
+### Functional Core / Imperative Shell
+
+- Rule of thumb: shells orchestrate; cores decide.
+- Functional Core: deterministic, side-effect-free functions that operate on input data and return results.
+- Imperative Shell: code that performs I/O, networking, persistence, and logging.
+- The functional core must not perform I/O, logging, environment variable reads, or direct calls to time/random; pass these in as values.
+- The functional core should return plain data (results and intended effects); the shell interprets and performs effects.
+- Prefer unit tests for the functional core; keep shell tests thin and integration-focused.
 
 ### Controlled Data Sharing
 
@@ -39,6 +54,10 @@ These principles apply whether the system is a **modular monolith** or a **distr
 ### Consistency Boundaries
 
 - A module is the **unit of immediate consistency**.
+
+- The functional core defines consistent internal logic.
+
+- Transactions or consistency guarantees outside the core must be handled by the shell or orchestration layers.
 
 - Transactions must not span multiple modules.
 
@@ -60,6 +79,16 @@ These principles apply whether the system is a **modular monolith** or a **distr
   - enqueueing commands or jobs
   - interacting with infrastructure services (logging, metrics, auth)
 
+- During request handling, the imperative shell should:
+
+- Fetch and validate external inputs.
+
+- Convert them into values passed into pure core functions.
+
+- Handle external side effects based on core outputs (e.g., send messages, write to DB).
+
+- The shell should not make business decisions; it should translate inputs, call core logic, and apply effects.
+
 - Direct service-to-service request chains for domain logic are discouraged.
 
 ### Architectural Intent
@@ -76,6 +105,7 @@ These principles apply whether the system is a **modular monolith** or a **distr
 - Use `f`-strings for formatting strings, but %-formatting for logs.
 - Use environment variables for configuration management.
 - Do not lint or format code manually; automated tooling runs on save/commit or can be invoked using `ruff`.
+- For import-order or formatting issues, use `ruff format` to fix automatically.
 - Prefer `.py` files with #%% to `.ipynb` files unless the `.ipynb` extension is specifically requested
 - Avoid architectural leakage in naming (e.g., `shared`, `common`, `utils` packages without clear ownership).
 
@@ -131,6 +161,8 @@ except HTTPError as err:
 - Use %-formatting for log messages: `logger.error("Failed for user %s", user_id)`.
 - Include structured context via the `extra` parameter for machine-parseable logs.
 - Log at appropriate boundaries (typically once per request/operation at the top level) to avoid duplicate log entries.
+- Avoid logging inside pure functions to preserve core determinism and test isolation.
+- The imperative shell should handle logging at integration points.
 
 ```python
 import logging
