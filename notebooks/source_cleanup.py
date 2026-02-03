@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Cleanup KaraKeep bookmarks from AIZK DB and S3 artifacts.
+"""Remove bookmarks from AIZK DB and S3 artifacts.
 
-After improving scraping with SingleFile + Karakeep, some bookmarks need to be completely reprocessed (remove & readd).
+After improving scraping with SingleFile + Karakeep, some bookmarks need to be completely reprocessed (remove & re-add).
 """
 
 # %%
@@ -28,26 +28,16 @@ from karakeep_client.models import Bookmark as KKBookmark
 # %%
 load_dotenv()
 
-BASE_DIR = get_repo_path(__file__)
+# %%
+DRY_RUN = True  # "True" will preview deletions without making changes
 
 # %%
+BASE_DIR = get_repo_path(__file__)
 QUERY = ""
 LIMIT = 25
 EXPLICIT_IDS: list[str] = []
 URL_DOMAIN_FILTERS: list[str] = []
 URL_CONTAINS: list[str] = []
-DRY_RUN = True
-
-
-def _dedupe_preserve(values: Iterable[str]) -> list[str]:
-    seen: set[str] = set()
-    result: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        result.append(value)
-    return result
 
 
 # %%
