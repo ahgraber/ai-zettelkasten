@@ -9,7 +9,6 @@ import sys
 from setproctitle import setproctitle
 import uvicorn
 
-from aizk.conversion.api.main import create_app
 from aizk.conversion.db import create_db_and_tables
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.litestream import LitestreamManager
@@ -36,7 +35,7 @@ def _cmd_serve(_args: argparse.Namespace) -> int:
     config = ConversionConfig()
     LitestreamManager(config, role="api").start()
     uvicorn.run(
-        create_app(),
+        "aizk.conversion.api.main:app",
         host=config.api_host,
         port=config.api_port,
         reload=config.api_reload,
