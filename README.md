@@ -25,6 +25,56 @@ Zettelkasten may also benefit from structural notes that create hierarchy, servi
 - [Introduction to the Zettelkasten Method • Zettelkasten Method](https://zettelkasten.de/introduction/)
 - [Forget Forgetting. Build a Zettelkasten.](https://every.to/superorganizers/forget-forgetting-build-a-zettelkasten-299960)
 
+## Prerequisites
+
+- [Litestream](https://litestream.io/) (v0.5+): required to replicate the SQLite conversion database to S3 for durability and recovery; we store database replicas in `s3://aizk/db/` alongside conversion artifacts.
+- [uv](https://docs.astral.sh/uv/) is recommended to manage the python environment and installation
+
+## Install
+
+This project uses Python 3.12+ and `uv` for dependency management.
+To install, clone the repo, then run:
+
+```sh
+uv sync
+```
+
+## Configure
+
+Configuration is driven by environment variables and `.env` (auto-loaded from the repo root).
+
+Required for API/worker:
+
+- `KARAKEEP_API_KEY`
+- `KARAKEEP_BASE_URL`
+
+Storage (S3 or compatible):
+
+- `S3_BUCKET_NAME` (default `aizk`)
+- `S3_ENDPOINT_URL` (required for MinIO/Garage or other S3-compatible endpoints)
+- `S3_ACCESS_KEY_ID`
+- `S3_SECRET_ACCESS_KEY`
+- `S3_REGION` (default `us-east-1`)
+
+Litestream (SQLite replication):
+
+- `LITESTREAM_ENABLED` (default `true`)
+- `LITESTREAM_CONFIG_PATH` (default `./data/litestream.yaml`)
+- `LITESTREAM_S3_BUCKET_NAME` (optional override; otherwise `S3_BUCKET_NAME`)
+- `LITESTREAM_S3_PREFIX` (default `db`)
+
+Docs: see `docs/Litestream.md` for full setup and sidecar guidance.
+
+## Running `aizk`
+
+Run the conversion CLI with uv:
+
+```sh
+uv run aizk-conversion db-init
+KARAKEEP_API_KEY=... KARAKEEP_BASE_URL=... uv run aizk-conversion serve
+KARAKEEP_API_KEY=... KARAKEEP_BASE_URL=... uv run aizk-conversion worker
+```
+
 ## Design
 
 ### Data Flow
@@ -49,18 +99,6 @@ Use node2nix to create `node-env.nix` from `package.json` `node-env.nix` will be
 ```sh
 node2nix -i package.json -o ./nix/node-packages.nix -c ./nix/default.nix -e ./nix/node-env.nix -18
 ```
-
-## Prerequisites
-
-- [**Litestream**](https://litestream.io/) (v0.5+): required to replicate the SQLite conversion database to S3 for durability and recovery; we store database replicas in `s3://aizk/db/` alongside conversion artifacts.
-
-Notes:
-
-- This repo generates a config with an **absolute** database path; if you hand-write the config, use an absolute path to match.
-- v0.5+ uses `replica:` (singular) in the config (not legacy `replicas:`).
-- For S3-compatible endpoints (MinIO/Garage/etc.), set an explicit `endpoint` in the config. Some providers are auto-detected for `force-path-style` and `sign-payload`; otherwise configure those explicitly.
-- Command-line mode requires credentials via environment variables; Litestream auto-reads `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` or `LITESTREAM_ACCESS_KEY_ID`/`LITESTREAM_SECRET_ACCESS_KEY`.
-- Command-line mode is single-replica only. For multiple databases or advanced settings, use a config file.
 
 ## Development and Contributing
 
