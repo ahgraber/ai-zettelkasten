@@ -18,7 +18,7 @@ class ConversionConfig(BaseSettings):
         validation_alias="DATABASE_URL",
     )
     s3_endpoint_url: str = Field(default="", validation_alias="S3_ENDPOINT_URL")
-    s3_bucket_name: str = Field(default="", validation_alias="S3_BUCKET_NAME")
+    s3_bucket_name: str = Field(default="aizk", validation_alias="S3_BUCKET_NAME")
     s3_access_key_id: str = Field(default="", validation_alias="S3_ACCESS_KEY_ID")
     s3_secret_access_key: str = Field(default="", validation_alias="S3_SECRET_ACCESS_KEY")
     s3_region: str = Field(default="us-east-1", validation_alias="S3_REGION")
@@ -64,6 +64,35 @@ class ConversionConfig(BaseSettings):
 
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
     log_format: str = Field(default="json", validation_alias="LOG_FORMAT")
+
+    litestream_enabled: bool = Field(default=True, validation_alias="LITESTREAM_ENABLED")
+    litestream_start_role: str = Field(default="api", validation_alias="LITESTREAM_START_ROLE")
+    litestream_binary: str = Field(default="litestream", validation_alias="LITESTREAM_BINARY")
+    litestream_config_path: str = Field(
+        default="./data/litestream.yaml",
+        validation_alias="LITESTREAM_CONFIG_PATH",
+    )
+    litestream_s3_bucket_name: str = Field(
+        default="",
+        validation_alias="LITESTREAM_S3_BUCKET_NAME",
+    )
+    litestream_s3_prefix: str = Field(default="db", validation_alias="LITESTREAM_S3_PREFIX")
+    litestream_s3_force_path_style: bool = Field(
+        default=True,
+        validation_alias="LITESTREAM_S3_FORCE_PATH_STYLE",
+    )
+    litestream_s3_sign_payload: bool = Field(
+        default=True,
+        validation_alias="LITESTREAM_S3_SIGN_PAYLOAD",
+    )
+    litestream_restore_on_startup: bool = Field(
+        default=True,
+        validation_alias="LITESTREAM_RESTORE_ON_STARTUP",
+    )
+    litestream_allow_empty_restore: bool = Field(
+        default=True,
+        validation_alias="LITESTREAM_ALLOW_EMPTY_RESTORE",
+    )
 
     api_host: str = Field(default="0.0.0.0", validation_alias="API_HOST")  # NOQA: S104
     api_port: int = Field(default=8000, validation_alias="API_PORT")
