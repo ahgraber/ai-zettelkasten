@@ -75,6 +75,12 @@ KARAKEEP_API_KEY=... KARAKEEP_BASE_URL=... uv run aizk-conversion serve
 KARAKEEP_API_KEY=... KARAKEEP_BASE_URL=... uv run aizk-conversion worker
 ```
 
+### Backfill KaraKeep bookmarks
+
+To backfill or re-enqueue existing KaraKeep bookmarks, use the notebook at `notebooks/karakeep_conversion_pipeline.py`.
+It pages through KaraKeep and submits bookmark IDs to the conversion API. The notebook includes required env vars,
+startup commands for API/worker, and a `KARAKEEP_DRY_RUN` mode for verification.
+
 ## Design
 
 ### Data Flow
