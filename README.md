@@ -30,7 +30,7 @@ Zettelkasten may also benefit from structural notes that create hierarchy, servi
 ### Data Flow
 
 1. Collect: use [Karakeep](https://karakeep.app/) as a content management system for bookmarking and archiving web-based resources.
-   - Karakeep archives content and extracts text content when possible, but specialized content extraction & parsing will perform better for archived files (such as PDFs from arxiv.org).
+   Karakeep archives content and extracts text content when possible, but specialized content extraction & parsing will perform better for archived files (such as PDFs from arxiv.org).
 2. Parse: Extract, and clean content with [docling-project/docling](https://github.com/docling-project/docling/tree/main). Export markdown and extracted images to S3-compatible blob storage.
 3. Chunk
 4. Embed
@@ -49,6 +49,18 @@ Use node2nix to create `node-env.nix` from `package.json` `node-env.nix` will be
 ```sh
 node2nix -i package.json -o ./nix/node-packages.nix -c ./nix/default.nix -e ./nix/node-env.nix -18
 ```
+
+## Prerequisites
+
+- [**Litestream**](https://litestream.io/) (v0.5+): required to replicate the SQLite conversion database to S3 for durability and recovery; we store database replicas in `s3://aizk/db/` alongside conversion artifacts.
+
+Notes:
+
+- This repo generates a config with an **absolute** database path; if you hand-write the config, use an absolute path to match.
+- v0.5+ uses `replica:` (singular) in the config (not legacy `replicas:`).
+- For S3-compatible endpoints (MinIO/Garage/etc.), set an explicit `endpoint` in the config. Some providers are auto-detected for `force-path-style` and `sign-payload`; otherwise configure those explicitly.
+- Command-line mode requires credentials via environment variables; Litestream auto-reads `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` or `LITESTREAM_ACCESS_KEY_ID`/`LITESTREAM_SECRET_ACCESS_KEY`.
+- Command-line mode is single-replica only. For multiple databases or advanced settings, use a config file.
 
 ## Development and Contributing
 
