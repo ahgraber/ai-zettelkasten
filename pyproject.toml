@@ -68,6 +68,9 @@ dependencies = [
     "zstandard>=0.23.0",
 ]
 
+[project.scripts]
+aizk-conversion = "aizk.conversion.cli:main"
+
 [project.optional-dependencies]
 # for user-facing features;
 # installable with `uv add aizk[feature]`
