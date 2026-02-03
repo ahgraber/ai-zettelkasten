@@ -45,8 +45,7 @@ LITESTREAM_ENABLED=false
 
 Notes:
 
-- This repo generates a config with an **absolute** database path; if you hand-write the config, use an absolute path to match.
-- v0.5+ uses `replica:` (singular) in the config (not legacy `replicas:`).
+- The `aizk`-generated litestream.yaml resolves an **absolute** database path; if you hand-write the config, use an absolute path to match.
 - For S3-compatible endpoints (MinIO/Garage/etc.), set an explicit `endpoint` in the config. Some providers are auto-detected for `force-path-style` and `sign-payload`; otherwise configure those explicitly.
 - Command-line mode requires credentials via environment variables; Litestream auto-reads `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` or `LITESTREAM_ACCESS_KEY_ID`/`LITESTREAM_SECRET_ACCESS_KEY`.
 - Command-line mode is single-replica only. For multiple databases or advanced settings, use a config file.
