@@ -6,11 +6,13 @@ After improving scraping with SingleFile + Karakeep, some bookmarks need to be c
 
 # %%
 import asyncio
+from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlparse
 
 import boto3
 from dotenv import load_dotenv
+from sqlalchemy.engine import make_url
 from sqlmodel import Session, select
 
 from aizk.conversion.datamodel.bookmark import Bookmark
@@ -19,11 +21,14 @@ from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.db import get_engine
 from aizk.conversion.utilities.bookmark_utils import get_bookmark_asset_id, get_bookmark_source_url
 from aizk.conversion.utilities.config import ConversionConfig
+from aizk.utilities.path_utils import get_repo_path
 from karakeep_client.karakeep import KarakeepClient, get_all_urls
 from karakeep_client.models import Bookmark as KKBookmark
 
 # %%
 load_dotenv()
+
+BASE_DIR = get_repo_path(__file__)
 
 # %%
 QUERY = ""
@@ -69,6 +74,7 @@ async def query_karakeep_bookmarks(query: str) -> list[KKBookmark]:
 
 
 # %%
+# query karakeep for bookmarks to remove by url pattern
 to_remove_ids: set[tuple[str, str]] = set()
 for query in [
     "url:huggingface.co/spaces",
@@ -79,6 +85,7 @@ for query in [
 
 # %%
 # review the set to remove
+print(f"Found {len(to_remove_ids)} bookmarks to remove:")
 for t in to_remove_ids:
     print(t)
 
@@ -87,6 +94,19 @@ karakeep_ids: list[str] = [id_ for id_, url in to_remove_ids]
 
 
 # %%
+def _resolve_sqlite_url(database_url: str, base_dir: Path) -> str:
+    url = make_url(database_url)
+    if url.get_backend_name() != "sqlite":
+        return database_url
+    if not url.database or url.database == ":memory:":
+        return database_url
+    db_path = Path(url.database)
+    if db_path.is_absolute():
+        return database_url
+    resolved = (base_dir / db_path).resolve()
+    return f"sqlite:///{resolved.as_posix()}"
+
+
 def _parse_s3_uri(uri: str) -> tuple[str, str]:
     parsed = urlparse(uri)
     if parsed.scheme != "s3":
@@ -110,7 +130,9 @@ def _delete_s3_prefix(client, bucket: str, prefix: str, dry_run: bool) -> int:
     return deleted
 
 
+# %%
 config = ConversionConfig()
+database_url = _resolve_sqlite_url(config.database_url, BASE_DIR)
 s3_client = boto3.client(
     "s3",
     endpoint_url=config.s3_endpoint_url or None,
@@ -121,7 +143,7 @@ s3_client = boto3.client(
 
 
 # %%
-engine = get_engine(config.database_url)
+engine = get_engine(database_url)
 
 with Session(engine) as session:
     bookmarks = session.exec(select(Bookmark).where(Bookmark.karakeep_id.in_(karakeep_ids))).all()
@@ -165,3 +187,5 @@ with Session(engine) as session:
 
             session.commit()
             print("Deleted bookmarks, jobs, and outputs from the AIZK database.")
+
+# %%
