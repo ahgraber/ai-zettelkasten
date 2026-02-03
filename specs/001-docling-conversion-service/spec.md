@@ -100,6 +100,7 @@ A manager component submits batches of bookmarks to the service and gracefully h
 - **Raw Input Provenance**: KaraKeep is the authoritative source for raw inputs; the system records durable references (karakeep_id and source URLs) for replay without persisting raw inputs locally.
 - **arXiv Handling**: Implement PDF downloads for abstract page links (arxiv.org/abs); implement URL parsing for arXiv ID extraction and arxiv_pdf_url metadata handling; leverage existing utilities where available
 - **S3 Storage Strategy**: Atomic uploads with verification checksums; failed uploads must not mark jobs SUCCEEDED; implement transaction semantics to ensure consistency between database and S3
+- **SQLite Replication (Litestream)**: Replicate the conversion SQLite database to the same S3 bucket used for document artifacts (default `aizk`), using a dedicated prefix such as `db/` to keep DB backups separate from content objects. Run Litestream alongside the conversion service (local process or Kubernetes sidecar), restoring the DB on startup before starting workers.
 - **Idempotency & Reprocessing**: Compute idempotency_key as hash of aizk_uuid + payload_version + docling_version + config_hash; allow reprocessing via payload_version bumps without overwriting existing artifacts unless markdown_hash changes
 - **Secrets & Configuration**: Configuration and keys must be read from environment variables. Store them in a gitignored `.env` file locally; no secrets committed to the repo.
 

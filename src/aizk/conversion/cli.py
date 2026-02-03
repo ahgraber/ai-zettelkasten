@@ -12,6 +12,7 @@ import uvicorn
 from aizk.conversion.api.main import create_app
 from aizk.conversion.db import create_db_and_tables
 from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.litestream import LitestreamManager
 
 
 def _require_karakeep_env() -> None:
@@ -33,6 +34,7 @@ def _cmd_serve(_args: argparse.Namespace) -> int:
     _require_karakeep_env()
     setproctitle("docling-api")
     config = ConversionConfig()
+    LitestreamManager(config, role="api").start()
     uvicorn.run(
         create_app(),
         host=config.api_host,
@@ -46,6 +48,8 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
     """Run the background worker."""
     _require_karakeep_env()
     setproctitle("docling-worker")
+    config = ConversionConfig()
+    LitestreamManager(config, role="worker").start()
     try:
         from aizk.conversion.workers.worker import run_worker
     except ImportError as exc:
