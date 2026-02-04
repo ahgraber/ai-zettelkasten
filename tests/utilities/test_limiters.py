@@ -3,6 +3,7 @@ import time
 from typing import Awaitable, Callable, cast
 from unittest.mock import AsyncMock, Mock, patch
 
+from pyleak import no_task_leaks
 import pytest
 
 import tenacity
@@ -83,6 +84,20 @@ class TestSlidingWindowRateLimiter:
 
         assert third_result == "async_result"
         assert third_call_time >= short_timeout * 0.25
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_async_function_decoration_no_task_leaks(self, short_timeout):
+        limiter = SlidingWindowRateLimiter(max_requests=2, window_seconds=short_timeout)
+
+        @limiter
+        async def test_func(value: int) -> int:
+            await asyncio.sleep(0.01)
+            return value
+
+        async with no_task_leaks(action="raise"):
+            results = [await test_func(i) for i in range(3)]
+
+        assert results == [0, 1, 2]
 
     def test_sync_context_manager_not_supported(self):
         """Ensure synchronous context manager usage is disallowed."""
@@ -735,6 +750,20 @@ class TestDecorators:
         results = await asyncio.gather(*(task() for _ in range(8)))
         assert results == [1] * 8
         assert peak == max_parallel
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_concurrency_limit_no_task_leaks(self):
+        decorator = concurrency_limit(2)
+
+        @decorator
+        async def task(value: int) -> int:
+            await asyncio.sleep(0.01)
+            return value
+
+        async with no_task_leaks(action="raise"):
+            results = await asyncio.gather(*(task(i) for i in range(4)))
+
+        assert results == [0, 1, 2, 3]
 
     @pytest.mark.asyncio(loop_scope="function")
     async def test_retry_async_fails_then_succeeds_with_hooks(self):
