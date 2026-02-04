@@ -112,7 +112,11 @@ def _apply_job_retry(job: ConversionJob, now: dt.datetime) -> None:
 
 def _apply_job_cancel(job: ConversionJob, now: dt.datetime) -> None:
     """Apply cancel transition to a conversion job."""
-    if job.status not in {ConversionJobStatus.QUEUED, ConversionJobStatus.RUNNING}:
+    if job.status not in {
+        ConversionJobStatus.QUEUED,
+        ConversionJobStatus.RUNNING,
+        ConversionJobStatus.FAILED_RETRYABLE,
+    }:
         raise ValueError("job_not_cancellable")
     job.status = ConversionJobStatus.CANCELLED
     job.finished_at = now
