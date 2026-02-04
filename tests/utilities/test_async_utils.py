@@ -1,5 +1,6 @@
 import asyncio
 
+from pyleak import no_task_leaks
 import pytest
 
 from aizk.utilities.async_utils import (
@@ -74,3 +75,35 @@ async def test_map_concurrently_preserves_order():
     results = await map_concurrently(range(5), double, concurrency=2)
 
     assert results == [0, 2, 4, 6, 8]
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_gather_with_concurrency_no_task_leaks():
+    async def work(value: int) -> int:
+        await asyncio.sleep(0.005)
+        return value
+
+    async with no_task_leaks(action="raise"):
+        results = await gather_with_concurrency([work(i) for i in range(5)], concurrency=2)
+
+    assert results == [0, 1, 2, 3, 4]
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_map_concurrently_no_task_leaks_with_exceptions():
+    async def maybe_fail(value: int) -> int:
+        await asyncio.sleep(0.005)
+        if value == 2:
+            raise ValueError("boom")
+        return value
+
+    async with no_task_leaks(action="raise"):
+        results = await map_concurrently(
+            [0, 1, 2, 3],
+            maybe_fail,
+            concurrency=2,
+            return_exceptions=True,
+        )
+
+    assert results[0] == 0
+    assert isinstance(results[2], ValueError)
