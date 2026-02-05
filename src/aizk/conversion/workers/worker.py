@@ -36,6 +36,7 @@ from aizk.conversion.utilities.bookmark_utils import (
     get_bookmark_source_url,
     get_bookmark_text_content,
     is_pdf_asset,
+    is_precrawled_archive_asset,
     validate_bookmark_content,
 )
 from aizk.conversion.utilities.config import ConversionConfig
@@ -264,6 +265,12 @@ def _prepare_conversion_input(
         if asset_id:
             pdf_bytes = run_async(fetch_karakeep_asset, asset_id)
             return ConversionInput(pipeline="pdf", content_bytes=pdf_bytes, fetched_at=fetched_at)
+
+    if is_precrawled_archive_asset(karakeep_bookmark):
+        asset_id = get_bookmark_asset_id(karakeep_bookmark)
+        if asset_id:
+            html_bytes = run_async(fetch_karakeep_asset, asset_id)
+            return ConversionInput(pipeline="html", content_bytes=html_bytes, fetched_at=fetched_at)
 
     # Fallback to HTML content
     html_content = get_bookmark_html_content(karakeep_bookmark)
