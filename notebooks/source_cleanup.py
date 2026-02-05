@@ -16,7 +16,7 @@ from sqlalchemy.engine import make_url
 from sqlmodel import Session, select
 
 from aizk.conversion.datamodel.bookmark import Bookmark
-from aizk.conversion.datamodel.job import ConversionJob
+from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.db import get_engine
 from aizk.conversion.utilities.bookmark_utils import get_bookmark_asset_id, get_bookmark_source_url
@@ -177,5 +177,44 @@ with Session(engine) as session:
 
             session.commit()
             print("Deleted bookmarks, jobs, and outputs from the AIZK database.")
+
+# %%
+# delete FAILED_PERM jobs and any artifacts
+with Session(engine) as session:
+    failed_jobs = session.exec(
+        select(ConversionJob).where(ConversionJob.status == ConversionJobStatus.FAILED_PERM)
+    ).all()
+    if not failed_jobs:
+        print("No FAILED_PERM jobs found.")
+    else:
+        output_by_job_id: dict[int, ConversionOutput] = {}
+        s3_prefixes: set[str] = set()
+        for job in failed_jobs:
+            output = session.exec(
+                select(ConversionOutput).where(ConversionOutput.job_id == job.id)
+            ).first()
+            if output:
+                output_by_job_id[job.id] = output
+                if output.s3_prefix:
+                    s3_prefixes.add(output.s3_prefix)
+
+        print(
+            f"Matched {len(failed_jobs)} FAILED_PERM jobs and {len(output_by_job_id)} outputs"
+        )
+        for s3_prefix in sorted(s3_prefixes):
+            bucket, prefix = _parse_s3_uri(s3_prefix)
+            deleted = _delete_s3_prefix(s3_client, bucket, prefix, DRY_RUN)
+            action = "Would delete" if DRY_RUN else "Deleted"
+            print(f"{action} {deleted} objects under {s3_prefix}")
+
+        if DRY_RUN:
+            print("Dry run enabled; no database rows deleted.")
+        else:
+            for output in output_by_job_id.values():
+                session.delete(output)
+            for job in failed_jobs:
+                session.delete(job)
+            session.commit()
+            print("Deleted FAILED_PERM jobs and outputs from the AIZK database.")
 
 # %%
