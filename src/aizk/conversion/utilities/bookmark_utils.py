@@ -22,6 +22,7 @@ __all__ = [
     "get_bookmark_source_url",
     "get_bookmark_text_content",
     "is_pdf_asset",
+    "is_precrawled_archive_asset",
     "resolve_bookmark_content_type",
     "resolve_bookmark_type",
     "validate_bookmark_content",
@@ -95,6 +96,14 @@ def get_bookmark_asset_id(bookmark: Bookmark) -> str | None:
     content = bookmark.content
     if isinstance(content, ContentTypeAsset):
         return content.asset_id
+
+    if isinstance(content, ContentTypeLink):
+        if content.precrawled_archive_asset_id:
+            return content.precrawled_archive_asset_id
+        for asset in bookmark.assets:
+            if asset.asset_type == "precrawledArchive":
+                return asset.id
+
     return None
 
 
@@ -102,6 +111,17 @@ def is_pdf_asset(bookmark: Bookmark) -> bool:
     """Check whether the bookmark carries a PDF asset."""
     content = bookmark.content
     return isinstance(content, ContentTypeAsset) and content.asset_type == "pdf"
+
+
+def is_precrawled_archive_asset(bookmark: Bookmark) -> bool:
+    """Check whether the bookmark carries or references a precrawled archive asset."""
+    content = bookmark.content
+    if isinstance(content, ContentTypeAsset) and content.asset_type == "precrawledArchive":
+        return True
+    if isinstance(content, ContentTypeLink) and content.precrawled_archive_asset_id:
+        return True
+
+    return any(asset.asset_type == "precrawledArchive" for asset in bookmark.assets)
 
 
 def resolve_bookmark_type(bookmark: Bookmark) -> str:
@@ -171,5 +191,7 @@ def validate_bookmark_content(bookmark: Bookmark) -> None:
     if text_content and text_content.strip():
         return
     if is_pdf_asset(bookmark):
+        return
+    if is_precrawled_archive_asset(bookmark):
         return
     raise BookmarkContentError(f"Bookmark {bookmark.id} is missing HTML, text, or PDF content")
