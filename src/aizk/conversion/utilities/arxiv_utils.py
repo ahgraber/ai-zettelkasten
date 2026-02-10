@@ -309,10 +309,10 @@ def _parse_arxiv_entry(entry: Element, namespaces: Dict[str, str]) -> Dict[str, 
 
 # %%
 """ArxivClient is an httpx client that must use the appropriate limiter to respect the arxiv API limits.  The clients should be able to be used as context managers and client objects."""
-# IMPORTANT: "make no more than one request every three seconds, and limit requests to a single connection at a time.""
+# "make no more than one request every N seconds, and limit requests to a single connection at a time.""
 _arxiv_rate_limiter = LeakyBucketRateLimiter(
     max_requests=1,
-    window_seconds=3.0,
+    window_seconds=5.0,
     max_burst=1,
 )
 
