@@ -29,8 +29,10 @@ SOCIAL_MEDIA_DOMAINS = frozenset(
         "linkedin.com",
         "twitter.com",
         "x.com",
+        "t.co",
         "bsky.app",
         "facebook.com",
+        "fbcdn.net",
         "instagram.com",
         "threads.net",
     }
