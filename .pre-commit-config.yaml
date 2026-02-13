@@ -69,7 +69,7 @@ repos:
         stages: [pre-commit]
   # renovate: datasource=github-tags depName=Lucas-C/pre-commit-hooks
   - repo: https://github.com/Lucas-C/pre-commit-hooks
-    rev: "v1.5.5"
+    rev: "v1.5.6"
     hooks:
       - id: remove-crlf
         stages: [pre-commit]
@@ -83,8 +83,8 @@ repos:
         stages: [pre-commit]
       - id: fix-ligatures
         stages: [pre-commit]
-  # renovate: datasource=github-tags depName=zricethezav/gitleaks
-  - repo: https://github.com/zricethezav/gitleaks
+  # renovate: datasource=github-tags depName=gitleaks/gitleaks
+  - repo: https://github.com/gitleaks/gitleaks
     rev: "v8.30.0"
     hooks:
       - id: gitleaks
@@ -97,7 +97,7 @@ repos:
         stages: [pre-commit]
   # renovate: datasource=github-tags depName=commitizen-tools/commitizen
   - repo: https://github.com/commitizen-tools/commitizen
-    rev: v4.10.0
+    rev: v4.13.7
     hooks:
       - id: commitizen
         language: python
@@ -105,7 +105,7 @@ repos:
           - commit-msg
   # # renovate: datasource=github-tags depName=editorconfig-checker/editorconfig-checker.python
   # - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
-  #   rev: "3.2.1"
+  #   rev: "3.6.0"
   #   hooks:
   #     - id: editorconfig-checker
   #       name: Check editorconfig compliance
@@ -133,31 +133,33 @@ repos:
           - mdformat-ruff
           # - mdformat-shfmt # disable until can pass args (ref: https://github.com/hukkin/mdformat-shfmt/issues/7)
           - mdformat-simple-breaks
-  # renovate: datasource=github-tags depName=igorshubovych/markdownlint-cli
-  - repo: https://github.com/igorshubovych/markdownlint-cli
-    rev: "v0.47.0"
+  # renovate: datasource=github-tags depName=rvben/rumdl-pre-commit
+  - repo: https://github.com/rvben/rumdl-pre-commit
+    rev: v0.1.18
     hooks:
-      - id: markdownlint
-        name: Lint markdown files
-        args:
-          - --config=.markdownlint.yaml
-          - --fix
+      # - id: rumdl      # Lint only (fails on issues)
+      #   stages: [pre-commit]
+      - id: rumdl-fmt  # Auto-format (fixes what it can)
         stages: [pre-commit]
-  # renovate: datasource=github-tags depName=charliermarsh/ruff-pre-commit
-  - repo: https://github.com/charliermarsh/ruff-pre-commit
-    rev: "v0.14.9"
+  # renovate: datasource=github-tags depName=astral-sh/ruff-pre-commit
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: "v0.15.1"
     hooks:
-      - id: ruff
-        name: Lint and Format with Ruff
+      - id: ruff-check
+        name: Lint with Ruff
         args: [--fix]
+        stages: [pre-commit]
+      - id: ruff-format
+        name: Format with Ruff
         stages: [pre-commit]
   # renovate: datasource=github-tags depName=kynan/nbstripout
   - repo: https://github.com/kynan/nbstripout
-    rev: 0.8.2
+    rev: 0.9.0
     hooks:
       - id: nbstripout
         name: Strip metadata and outputs from ipynb files
         stages: [pre-commit]
+  # hadolint's native pre-commit hook uses the local/system install
   - repo: local
     hooks:
       - id: hadolint
@@ -196,7 +198,7 @@ repos:
         stages: [pre-commit]
   # renovate: datasource=github-tags depName=adrienverge/yamllint
   - repo: https://github.com/adrienverge/yamllint
-    rev: "v1.37.1"
+    rev: "v1.38.0"
     hooks:
       - id: yamllint
         name: Lint yaml files
@@ -207,7 +209,7 @@ repos:
   ### In this case, comment out this block until ".typos.toml" has been committed successfully
   # renovate: datasource=github-tags depName=crate-ci/typos
   - repo: https://github.com/crate-ci/typos
-    rev: "v1.40.0"
+    rev: "v1.43.4"
     hooks:
       - id: typos
         name: Spellcheck with Typos
