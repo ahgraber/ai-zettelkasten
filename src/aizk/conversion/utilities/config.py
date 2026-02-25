@@ -61,6 +61,9 @@ class ConversionConfig(BaseSettings):
         default="",
         validation_alias="CHAT_COMPLETIONS_API_KEY",
     )
+    mlflow_tracing_enabled: bool = Field(default=False, validation_alias="MLFLOW_TRACING_ENABLED")
+    mlflow_tracking_uri: str = Field(default="", validation_alias="MLFLOW_TRACKING_URI")
+    mlflow_experiment_name: str = Field(default="", validation_alias="MLFLOW_EXPERIMENT_NAME")
 
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
     log_format: str = Field(default="json", validation_alias="LOG_FORMAT")
