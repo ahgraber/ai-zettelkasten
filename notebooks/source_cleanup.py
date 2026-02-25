@@ -40,7 +40,7 @@ load_dotenv()
 
 # %%
 DRY_RUN = True
-INCLUDE_MISSING_IN_KARAKEEP = True
+REMOVE_MISSING_IN_KARAKEEP = True
 KARAKEEP_PAGE_SIZE = 100
 TABLE_LIMIT = 50
 
@@ -56,7 +56,7 @@ class CleanupRunConfig:
     """Runtime configuration for source cleanup."""
 
     dry_run: bool
-    include_missing_in_karakeep: bool
+    remove_missing_in_karakeep: bool
     karakeep_page_size: int
     table_limit: int
     reprocess_karakeep_ids: set[str]
@@ -66,7 +66,7 @@ def _default_run_config() -> CleanupRunConfig:
     """Build runtime config from module defaults."""
     return CleanupRunConfig(
         dry_run=DRY_RUN,
-        include_missing_in_karakeep=INCLUDE_MISSING_IN_KARAKEEP,
+        remove_missing_in_karakeep=REMOVE_MISSING_IN_KARAKEEP,
         karakeep_page_size=KARAKEEP_PAGE_SIZE,
         table_limit=TABLE_LIMIT,
         reprocess_karakeep_ids=set(REPROCESS_KARAKEEP_IDS),
@@ -83,10 +83,10 @@ def parse_args(argv: list[str] | None = None) -> CleanupRunConfig:
         help="KaraKeep page size when loading all bookmark IDs (default: 100).",
     )
     parser.add_argument(
-        "--include-missing-in-karakeep",
+        "--remove-missing-in-karakeep",
         action=argparse.BooleanOptionalAction,
-        default=INCLUDE_MISSING_IN_KARAKEEP,
-        help="Include AIZK bookmarks not present in KaraKeep (default: enabled).",
+        default=REMOVE_MISSING_IN_KARAKEEP,
+        help="Remove AIZK bookmarks not present in KaraKeep (default: enabled).",
     )
     parser.add_argument(
         "--table-limit",
@@ -136,7 +136,7 @@ def parse_args(argv: list[str] | None = None) -> CleanupRunConfig:
 
     return CleanupRunConfig(
         dry_run=args.execution_mode == "dry_run",
-        include_missing_in_karakeep=args.include_missing_in_karakeep,
+        remove_missing_in_karakeep=args.remove_missing_in_karakeep,
         karakeep_page_size=args.page_size,
         table_limit=args.table_limit,
         reprocess_karakeep_ids=reprocess_ids,
@@ -289,7 +289,7 @@ def _build_targets_and_reasons(
     bookmarks_by_karakeep_id: dict[str, Bookmark],
     karakeep_ids: set[str],
     *,
-    include_missing_in_karakeep: bool,
+    remove_missing_in_karakeep: bool,
     reprocess_karakeep_ids: set[str],
 ) -> tuple[list[Bookmark], dict[str, list[str]], list[str]]:
     """Build target bookmarks and reason mapping.
@@ -309,7 +309,7 @@ def _build_targets_and_reasons(
     for karakeep_id in reprocess_karakeep_ids:
         reasons_by_id[karakeep_id].add("manual_reprocess")
 
-    if include_missing_in_karakeep:
+    if remove_missing_in_karakeep:
         missing_in_karakeep = sorted(set(bookmarks_by_karakeep_id) - karakeep_ids)
         for karakeep_id in missing_in_karakeep:
             reasons_by_id[karakeep_id].add("missing_in_karakeep")
@@ -434,14 +434,14 @@ async def main(run_config: CleanupRunConfig | None = None) -> None:
         bookmarks_by_karakeep_id = {bookmark.karakeep_id: bookmark for bookmark in bookmarks}
         karakeep_ids = (
             await fetch_all_karakeep_ids(page_size=active_config.karakeep_page_size)
-            if active_config.include_missing_in_karakeep
+            if active_config.remove_missing_in_karakeep
             else set()
         )
 
         targets, reasons_by_id, missing_in_aizk = _build_targets_and_reasons(
             bookmarks_by_karakeep_id,
             karakeep_ids,
-            include_missing_in_karakeep=active_config.include_missing_in_karakeep,
+            remove_missing_in_karakeep=active_config.remove_missing_in_karakeep,
             reprocess_karakeep_ids=active_config.reprocess_karakeep_ids,
         )
 
