@@ -12,6 +12,7 @@ import uvicorn
 from aizk.conversion.db import create_db_and_tables
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.litestream import LitestreamManager
+from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
 
 
 def _require_karakeep_env() -> None:
@@ -33,6 +34,11 @@ def _cmd_serve(_args: argparse.Namespace) -> int:
     _require_karakeep_env()
     setproctitle("docling-api")
     config = ConversionConfig()
+    configure_mlflow_tracing(
+        enabled=config.mlflow_tracing_enabled,
+        tracking_uri=config.mlflow_tracking_uri,
+        experiment_name=config.mlflow_experiment_name,
+    )
     LitestreamManager(config, role="api").start()
     uvicorn.run(
         "aizk.conversion.api.main:app",
@@ -48,6 +54,11 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
     _require_karakeep_env()
     setproctitle("docling-worker")
     config = ConversionConfig()
+    configure_mlflow_tracing(
+        enabled=config.mlflow_tracing_enabled,
+        tracking_uri=config.mlflow_tracking_uri,
+        experiment_name=config.mlflow_experiment_name,
+    )
     LitestreamManager(config, role="worker").start()
     try:
         from aizk.conversion.workers.worker import run_worker
