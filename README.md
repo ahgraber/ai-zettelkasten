@@ -2,14 +2,17 @@
 
 An AI-driven [Zettelkasten](https://zettelkasten.de/introduction/)-style mindmap and assistant for "talk to my data" and deep research over web-based resources.
 
-This project is intended to be self-hosted with minimal infrastructure requirements - a mini PC with a multicore processor and 8+ GB RAM should suffice. Infrastructure components should be manageable by a 'compose' stack (_note: though I'll be hosting on a k3s cluster_). This means no GPU requirements; AI inference is provided through API services.
+This project is intended to be self-hosted with minimal infrastructure requirements - a mini PC with a multicore processor and 8+ GB RAM should suffice.
+Infrastructure components should be manageable by a 'compose' stack (_note: though I'll be hosting on a k3s cluster_).
+This means no GPU requirements; AI inference is provided through API services.
 
 ## What is a Zettelkasten?
 
 A Zettelkasten is a way of connecting atomic ideas into a linked (hypertextual), personal knowledge graph.
 
 1. Each Node ("zettel", from German "slip" or "note") is atomic, containing a single concept, idea, or fact
-2. Nodes are interconnected with links. _A Zettelkasten makes **connecting** and not **collecting** a priority._
+2. Nodes are interconnected with links.
+   _A Zettelkasten makes **connecting** and not **collecting** a priority._
 3. A Zettelkasten is unique, resulting from knowledge processing over an individual corpus.
 
 Each node must have:
@@ -18,7 +21,8 @@ Each node must have:
 2. Content - The individual (atomic) piece of knowledge.
 3. References - The source reference(s) for the content.
 
-In a traditional Zettelkasten, the zettel body would contain links to other nodes. In the AI Zettelkasten, these are defined as an additional Relationship that contains source/destination directionality, relationship type, and other metadata.
+In a traditional Zettelkasten, the zettel body would contain links to other nodes.
+In the AI Zettelkasten, these are defined as an additional Relationship that contains source/destination directionality, relationship type, and other metadata.
 
 Zettelkasten may also benefit from structural notes that create hierarchy, serving as aggregator or summary nodes about a broader (but still atomic!) concept that incorporates or relates to multiple, more granular nodes.
 
@@ -63,6 +67,12 @@ Litestream (SQLite replication):
 - `LITESTREAM_S3_BUCKET_NAME` (optional override; otherwise `S3_BUCKET_NAME`)
 - `LITESTREAM_S3_PREFIX` (default `db`)
 
+MLflow tracing (optional):
+
+- `MLFLOW_TRACING_ENABLED` (default `false`)
+- `MLFLOW_TRACKING_URI` (optional; uses MLflow defaults when unset)
+- `MLFLOW_EXPERIMENT_NAME` (optional)
+
 Docs: see `docs/Litestream.md` for full setup and sidecar guidance.
 
 ## Running `aizk`
@@ -78,8 +88,8 @@ KARAKEEP_API_KEY=... KARAKEEP_BASE_URL=... uv run aizk-conversion worker
 ### Backfill KaraKeep bookmarks
 
 To backfill or re-enqueue existing KaraKeep bookmarks, use the notebook at `notebooks/karakeep_conversion_pipeline.py`.
-It pages through KaraKeep and submits bookmark IDs to the conversion API. The notebook includes required env vars,
-startup commands for API/worker, and a `KARAKEEP_DRY_RUN` mode for verification.
+It pages through KaraKeep and submits bookmark IDs to the conversion API.
+The notebook includes required env vars, startup commands for API/worker, and a `KARAKEEP_DRY_RUN` mode for verification.
 
 ## Design
 
@@ -87,7 +97,8 @@ startup commands for API/worker, and a `KARAKEEP_DRY_RUN` mode for verification.
 
 1. Collect: use [Karakeep](https://karakeep.app/) as a content management system for bookmarking and archiving web-based resources.
    Karakeep archives content and extracts text content when possible, but specialized content extraction & parsing will perform better for archived files (such as PDFs from arxiv.org).
-2. Parse: Extract, and clean content with [docling-project/docling](https://github.com/docling-project/docling/tree/main). Export markdown and extracted images to S3-compatible blob storage.
+2. Parse: Extract, and clean content with [docling-project/docling](https://github.com/docling-project/docling/tree/main).
+   Export markdown and extracted images to S3-compatible blob storage.
 3. Chunk
 4. Embed
 5. Index
@@ -108,7 +119,8 @@ node2nix -i package.json -o ./nix/node-packages.nix -c ./nix/default.nix -e ./ni
 
 ## Development and Contributing
 
-Contributions and fixes are welcome. Please open issues or pull requests with clear descriptions and tests where appropriate.
+Contributions and fixes are welcome.
+Please open issues or pull requests with clear descriptions and tests where appropriate.
 
 Publishing is supported using [floRaths/uv-ship: a CLI-tool for shipping with uv](https://github.com/floRaths/uv-ship)
 

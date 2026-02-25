@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 import json
 from pathlib import Path
 import time
@@ -8,6 +9,7 @@ import pytest
 
 import openai
 
+import aizk.utilities.batch_utils as batch_utils_module
 from aizk.utilities.batch_utils import (
     BatchHandler,
     BatchProcessingError,
@@ -258,6 +260,57 @@ class TestBatchHandlerProcessing:
         assert "0" in results
         assert "1" in results
         assert len(results) == 2
+
+    def test_process_embeddings_batch_tracing_attributes_minimal(self, embeddings_handler, monkeypatch):
+        """Embedding traces include only model attribute at span start."""
+        captured_calls: list[tuple[str, str, dict[str, object]]] = []
+
+        @contextmanager
+        def _capture_trace_model_call(*, name, span_type, attributes=None):
+            captured_calls.append((name, span_type, attributes or {}))
+            yield None
+
+        monkeypatch.setattr(batch_utils_module, "trace_model_call", _capture_trace_model_call)
+        self._mock_successful_workflow(embeddings_handler, "batch_123")
+        mock_output_file = MagicMock()
+        mock_output_file.text = '{"custom_id": "0", "response": {"body": {"data": [{"embedding": [0.1]}]}}}'
+        embeddings_handler.client.files.content.return_value = mock_output_file
+        embeddings_handler.show_progress = False
+
+        embeddings_handler.process_embeddings_batch(["hello"])
+
+        assert captured_calls == [
+            (
+                "embedding.batch",
+                "EMBEDDING",
+                {"model": "text-embeddings-3-small-batch"},
+            )
+        ]
+
+    def test_process_chat_batch_tracing_uses_parent_and_chunk_spans(self, chat_handler, monkeypatch):
+        """Chat tracing emits one parent span plus per-chunk spans."""
+        captured_calls: list[tuple[str, str, dict[str, object]]] = []
+
+        @contextmanager
+        def _capture_trace_model_call(*, name, span_type, attributes=None):
+            captured_calls.append((name, span_type, attributes or {}))
+            yield None
+
+        monkeypatch.setattr(batch_utils_module, "trace_model_call", _capture_trace_model_call)
+        self._mock_successful_workflow(chat_handler, "batch_123")
+        mock_output_file = MagicMock()
+        mock_output_file.text = (
+            '{"custom_id": "0", "response": {"body": {"choices": [{"message": {"content": "ok"}}]}}}'
+        )
+        chat_handler.client.files.content.return_value = mock_output_file
+        chat_handler.show_progress = False
+
+        chat_handler.process_chat_batch([[{"role": "user", "content": "Hello"}]])
+
+        assert captured_calls[0][0] == "llm.chat.completions.batch"
+        assert captured_calls[0][1] == "CHAT_MODEL"
+        assert captured_calls[1][0] == "llm.chat.completions.batch.chunk"
+        assert captured_calls[1][1] == "CHAIN"
 
     def test_process_chat_batch_with_custom_ids(self, chat_handler):
         """Test chat batch processing with custom IDs."""

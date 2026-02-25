@@ -43,6 +43,7 @@ from docling_core.types.io import DocumentStream
 
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.paths import figure_dir
+from aizk.utilities.mlflow_tracing import trace_model_call
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +119,11 @@ Respond ONLY with the description, no other text.
         prompt=alt_text_prompt,
         timeout=timeout,
     )
+
+
+def _is_picture_description_enabled(config: ConversionConfig) -> bool:
+    """Return whether upstream picture-description chat calls are enabled."""
+    return bool(config.chat_completions_base_url.rstrip("/") and config.chat_completions_api_key)
 
 
 def _create_document_converter(
@@ -309,7 +315,19 @@ def convert_html(
     try:
         converter = _create_document_converter(config, source_url=source_url)
         source = DocumentStream(name="document.html", stream=BytesIO(html_bytes))
-        conv_result: ConversionResult = converter.convert(source)
+        if _is_picture_description_enabled(config):
+            with trace_model_call(
+                name="llm.chat.completions.docling_picture_description",
+                span_type="CHAT_MODEL",
+                attributes={
+                    "model": config.docling_vlm_model,
+                    "pipeline": "html",
+                    "provider_endpoint": "/chat/completions",
+                },
+            ):
+                conv_result = converter.convert(source)
+        else:
+            conv_result = converter.convert(source)
         doc = conv_result.document
 
         markdown = _docling_to_markdown(doc)
@@ -346,7 +364,19 @@ def convert_pdf(
     try:
         converter = _create_document_converter(config)
         source = DocumentStream(name="document.pdf", stream=BytesIO(pdf_bytes))
-        conv_result: ConversionResult = converter.convert(source)
+        if _is_picture_description_enabled(config):
+            with trace_model_call(
+                name="llm.chat.completions.docling_picture_description",
+                span_type="CHAT_MODEL",
+                attributes={
+                    "model": config.docling_vlm_model,
+                    "pipeline": "pdf",
+                    "provider_endpoint": "/chat/completions",
+                },
+            ):
+                conv_result = converter.convert(source)
+        else:
+            conv_result = converter.convert(source)
         doc = conv_result.document
 
         markdown = _docling_to_markdown(doc)
