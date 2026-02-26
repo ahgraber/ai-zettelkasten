@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.templating import Jinja2Templates
 
 from aizk.conversion.api.dependencies import get_db_session
-from aizk.conversion.api.routes.jobs import _apply_job_cancel, _apply_job_retry
+from aizk.conversion.api.routes.jobs import _apply_job_cancel, _apply_job_delete, _apply_job_retry
 from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 
@@ -209,8 +209,8 @@ def ui_job_actions(
     limit: Annotated[int, Form(ge=1, le=200)] = 50,
     offset: Annotated[int, Form(ge=0)] = 0,
 ):
-    """Apply retry or cancel actions from the Web UI."""
-    if action not in {"retry", "cancel"}:
+    """Apply retry, cancel, or delete actions from the Web UI."""
+    if action not in {"retry", "cancel", "delete"}:
         raise HTTPException(status_code=400, detail={"error": "invalid_action", "message": "Invalid action"})
 
     now = dt.datetime.now(dt.timezone.utc)
@@ -226,16 +226,20 @@ def ui_job_actions(
         try:
             if action == "retry":
                 _apply_job_retry(job, now)
-            else:
+                session.add(job)
+            elif action == "cancel":
                 _apply_job_cancel(job, now)
-            session.add(job)
+                session.add(job)
+            else:
+                _apply_job_delete(session, job)
             success += 1
         except ValueError:
             errors += 1
 
     session.commit()
 
-    notice = f"{success} jobs {action}ed; {errors} failed." if selected_ids else "Select at least one job."
+    action_label = {"retry": "retried", "cancel": "cancelled", "delete": "deleted"}[action]
+    notice = f"{success} jobs {action_label}; {errors} failed." if selected_ids else "Select at least one job."
     normalized_search = search.strip() if search else None
     page = _load_jobs_page(
         session=session,

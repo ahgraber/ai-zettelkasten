@@ -55,6 +55,7 @@ def test_ui_jobs_renders_table_and_filters(db_session) -> None:
     assert "finished_at" in body
     assert "error_code" in body
     assert str(job.id) in body
+    assert "Delete" in body
     assert 'id="status-filter"' in body
     assert 'id="text-filter"' in body
     assert "Matches:" in body
@@ -127,3 +128,95 @@ def test_ui_jobs_filters_across_all_jobs(db_session) -> None:
     assert str(target_job.id) in filtered.text
     assert "Special Target" in filtered.text
     assert 'id="filtered-count">1' in filtered.text
+
+
+def test_ui_jobs_delete_action_removes_failed_and_cancelled_jobs(db_session) -> None:
+    app = create_app()
+    bookmark = Bookmark(
+        karakeep_id="bm_ui_delete",
+        url="https://example.com/delete",
+        normalized_url="https://example.com/delete",
+        title="Delete Example",
+        content_type="html",
+        source_type="other",
+    )
+    db_session.add(bookmark)
+    db_session.commit()
+    db_session.refresh(bookmark)
+
+    failed_job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title,
+        payload_version=1,
+        status=ConversionJobStatus.FAILED_RETRYABLE,
+        attempts=1,
+        idempotency_key="f" * 64,
+    )
+    cancelled_job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title,
+        payload_version=1,
+        status=ConversionJobStatus.CANCELLED,
+        attempts=2,
+        idempotency_key="g" * 64,
+    )
+    db_session.add(failed_job)
+    db_session.add(cancelled_job)
+    db_session.commit()
+    db_session.refresh(failed_job)
+    db_session.refresh(cancelled_job)
+    failed_job_id = failed_job.id
+    cancelled_job_id = cancelled_job.id
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/ui/jobs/actions",
+            data={"action": "delete", "job_ids": [failed_job_id, cancelled_job_id]},
+            headers={"HX-Request": "true"},
+        )
+
+    assert response.status_code == 200
+    assert "2 jobs deleted; 0 failed." in response.text
+    db_session.expire_all()
+    assert db_session.get(ConversionJob, failed_job_id) is None
+    assert db_session.get(ConversionJob, cancelled_job_id) is None
+
+
+def test_ui_jobs_delete_action_rejects_non_deletable_status(db_session) -> None:
+    app = create_app()
+    bookmark = Bookmark(
+        karakeep_id="bm_ui_delete_reject",
+        url="https://example.com/delete-reject",
+        normalized_url="https://example.com/delete-reject",
+        title="Delete Reject Example",
+        content_type="html",
+        source_type="other",
+    )
+    db_session.add(bookmark)
+    db_session.commit()
+    db_session.refresh(bookmark)
+
+    queued_job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title,
+        payload_version=1,
+        status=ConversionJobStatus.QUEUED,
+        attempts=0,
+        idempotency_key="h" * 64,
+    )
+    db_session.add(queued_job)
+    db_session.commit()
+    db_session.refresh(queued_job)
+    queued_job_id = queued_job.id
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/ui/jobs/actions",
+            data={"action": "delete", "job_ids": [queued_job_id]},
+            headers={"HX-Request": "true"},
+        )
+
+    assert response.status_code == 200
+    assert "0 jobs deleted; 1 failed." in response.text
+    db_session.expire_all()
+    assert db_session.get(ConversionJob, queued_job_id) is not None

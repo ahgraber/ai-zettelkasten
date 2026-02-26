@@ -124,6 +124,21 @@ def _apply_job_cancel(job: ConversionJob, now: dt.datetime) -> None:
     job.updated_at = now
 
 
+def _apply_job_delete(session: Session, job: ConversionJob) -> None:
+    """Apply delete transition to a conversion job."""
+    if job.status not in {
+        ConversionJobStatus.FAILED_RETRYABLE,
+        ConversionJobStatus.FAILED_PERM,
+        ConversionJobStatus.CANCELLED,
+    }:
+        raise ValueError("job_not_deletable")
+
+    output = session.exec(select(ConversionOutput).where(ConversionOutput.job_id == job.id)).first()
+    if output:
+        session.delete(output)
+    session.delete(job)
+
+
 @router.post("", response_model=JobResponse, status_code=status.HTTP_201_CREATED)
 def submit_job(
     submission: JobSubmission,
