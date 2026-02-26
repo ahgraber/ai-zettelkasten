@@ -114,9 +114,14 @@ def is_pdf_asset(bookmark: Bookmark) -> bool:
 
 
 def is_precrawled_archive_asset(bookmark: Bookmark) -> bool:
-    """Check whether the bookmark carries a precrawled archive asset."""
+    """Check whether the bookmark carries or references a precrawled archive asset."""
     content = bookmark.content
-    return isinstance(content, ContentTypeAsset) and content.asset_type == "precrawledArchive"
+    if isinstance(content, ContentTypeAsset) and content.asset_type == "precrawledArchive":
+        return True
+    if isinstance(content, ContentTypeLink) and content.precrawled_archive_asset_id:
+        return True
+
+    return any(asset.asset_type == "precrawledArchive" for asset in bookmark.assets)
 
 
 def resolve_bookmark_type(bookmark: Bookmark) -> str:

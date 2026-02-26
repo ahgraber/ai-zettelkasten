@@ -12,6 +12,7 @@ from aizk.conversion.utilities.bookmark_utils import (
     get_bookmark_source_url,
     get_bookmark_text_content,
     is_pdf_asset,
+    is_precrawled_archive_asset,
     resolve_bookmark_content_type,
     resolve_bookmark_type,
     validate_bookmark_content,
@@ -75,6 +76,34 @@ def test_validate_bookmark_content_rejects_empty_link():
         validate_bookmark_content(bookmark)
     assert exc_info.value.error_code == "karakeep_bookmark_missing_contents"
     assert resolve_bookmark_content_type(bookmark) == "link"
+
+
+def test_validate_bookmark_content_accepts_link_with_precrawled_archive():
+    bookmark = Bookmark.model_validate(
+        {
+            "id": "link_precrawled",
+            "createdAt": "2025-11-07T23:22:10.000Z",
+            "modifiedAt": None,
+            "title": "Link with precrawled archive",
+            "archived": False,
+            "favourited": False,
+            "taggingStatus": "success",
+            "summarizationStatus": None,
+            "note": None,
+            "summary": None,
+            "tags": [],
+            "content": {
+                "type": "link",
+                "url": "https://example.com/page",
+                "precrawledArchiveAssetId": "asset-precrawled-1",
+            },
+            "assets": [{"id": "asset-precrawled-1", "assetType": "precrawledArchive"}],
+        }
+    )
+
+    assert get_bookmark_asset_id(bookmark) == "asset-precrawled-1"
+    assert is_precrawled_archive_asset(bookmark) is True
+    assert validate_bookmark_content(bookmark) is None
 
 
 @pytest.mark.parametrize(
