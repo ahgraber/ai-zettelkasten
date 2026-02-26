@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 
 from aizk.conversion.api.routes import jobs_router, ui_router
 from aizk.conversion.db import create_db_and_tables
@@ -32,6 +33,12 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Docling Conversion Service", lifespan=lifespan)
     app.include_router(jobs_router)
     app.include_router(ui_router)
+
+    @app.get("/", include_in_schema=False)
+    def root_redirect() -> RedirectResponse:
+        """Temporary shim redirecting root to the jobs UI."""
+        return RedirectResponse(url="/ui/jobs", status_code=307)
+
     return app
 
 
