@@ -161,6 +161,18 @@ desc {%- endif -%} {%- endmacro %}
             >
               Cancel
             </button>
+            {% if job.status in ["FAILED_RETRYABLE", "FAILED_PERM", "CANCELLED"] %}
+            <button
+              class="btn-danger"
+              type="button"
+              hx-post="/ui/jobs/actions{{ qs(offset=page.offset) }}"
+              hx-target="#jobs-panel"
+              hx-swap="outerHTML"
+              hx-vals='{{ {"action": "delete", "job_ids": [job.id], "status": status_value, "search": search_value, "sort": page.sort, "direction": page.direction, "limit": page.limit, "offset": page.offset}|tojson }}'
+            >
+              Delete
+            </button>
+            {% endif %}
           </td>
         </tr>
         {% endfor %} {% else %}
@@ -188,10 +200,11 @@ desc {%- endif -%} {%- endmacro %}
     <input type="hidden" name="offset" value="{{ page.offset }}" />
     <button class="btn-primary" type="submit" name="action" value="retry">Retry Selected</button>
     <button class="btn-danger" type="submit" name="action" value="cancel">Cancel Selected</button>
+    <button class="btn-danger" type="submit" name="action" value="delete">Delete Selected</button>
   </form>
 
   <div class="notice" id="notice">
-    {{ page.notice or "Select jobs to retry or cancel. Bulk actions run immediately." }}
+    {{ page.notice or "Select jobs to retry, cancel, or delete. Bulk actions run immediately." }}
   </div>
   <div class="pager">
     <span
