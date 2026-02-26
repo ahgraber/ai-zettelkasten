@@ -204,6 +204,14 @@ async def summarize_job_statuses() -> dict[str, int]:
 
 
 # %%
+# # test with a single bookmark ID
+# karakeep_client = KarakeepClient()
+# base_url = resolve_conversion_api_base_url()
+
+# async with httpx.AsyncClient(base_url=base_url, timeout=30) as http_client:
+#     await submit_bookmark(http_client, "ldow3o5ib8cvxkwj7439xhqm")
+
+# %%
 submitted_count, failed_count = await submit_all_bookmarks(
     page_size=10,
     n_pages=2,
