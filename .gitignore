@@ -6,6 +6,7 @@
 # dot-directories, unless explicitly kept
 .*/
 !.github/
+!.specs/
 !.renovate/
 
 # Editors
