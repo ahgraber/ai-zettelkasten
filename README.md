@@ -117,13 +117,6 @@ Use node2nix to create `node-env.nix` from `package.json` `node-env.nix` will be
 node2nix -i package.json -o ./nix/node-packages.nix -c ./nix/default.nix -e ./nix/node-env.nix -18
 ```
 
-## Development and Contributing
-
-Contributions and fixes are welcome.
-Please open issues or pull requests with clear descriptions and tests where appropriate.
-
-Publishing is supported using [floRaths/uv-ship: a CLI-tool for shipping with uv](https://github.com/floRaths/uv-ship)
-
 ## Containers (Podman)
 
 Use the Podman compose file to run API + worker separately from the same image:
@@ -131,6 +124,18 @@ Use the Podman compose file to run API + worker separately from the same image:
 ```sh
 podman-compose -f containers/podman-compose.yaml up -d --build
 ```
+
+## AI Disclosure
+
+This project uses spec-driven development to allow AI coding assistance to work on well-specified features.
+See the `sdd-*` family of [ahgraber/skills: Agent skills](https://github.com/ahgraber/skills).
+
+## Development and Contributing
+
+Contributions and fixes are welcome.
+Please open issues or pull requests with clear descriptions and tests where appropriate.
+
+Publishing is supported using [floRaths/uv-ship: a CLI-tool for shipping with uv](https://github.com/floRaths/uv-ship)
 
 ## License
 
