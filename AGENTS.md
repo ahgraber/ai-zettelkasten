@@ -82,3 +82,27 @@ For multi-step tasks, state a brief plan defining the step task and associated v
 - Use structured logging where the project uses logging.
 - Run lint/format/test through project tooling when available; do not hand-format code.
 - Write tests for public behavior and regressions, not implementation details.
+
+## Technology & Data Handling Requirements
+
+- Python code runs in the uv-managed environment; dependencies are pinned via uv/lockfiles (pyproject.toml + uv.lock) and honored by Nix devshells — no ad-hoc global installs.
+- Default runtime targets CPU-only execution; GPU use requires an explicit cost and ops justification.
+- Storage of raw inputs and derived artifacts must permit replay; blob/object storage locations are recorded alongside metadata.
+- Secret management: Secrets/keys MUST NOT be committed.
+  Store them in a gitignored `.env` file (or a secret manager) and access them via environment variables at runtime.
+- Process identification: Every Python process MUST set a descriptive process title using `setproctitle` so hosts running multiple Python processes can distinguish them.
+
+## Workflow & Quality Gates
+
+- Use Spec-Driven Development and Test-Driven Development.
+- Any change to data schemas, embedding parameters, or retrieval scoring requires a migration/test plan and version bump of the affected artifact.
+- Code review checks for reproducibility (pinned deps, seeded operations), privacy adherence, and observability hooks (structured logs + metrics).
+- Techstack/tooling choices for external services or internal frameworks MUST reference an ADR in `docs/decision-record/` or be manually overridden with references to other documents.
+- Significant architectural decisions MUST have an ADR.
+
+## Governance Practices
+
+- Semantic Versioning is REQUIRED (MAJOR.MINOR.PATCH).
+- Conventional Commits are REQUIRED for commit messages and/or PR titles.
+- Keep a Changelog is REQUIRED; maintain `CHANGELOG.md` following <https://keepachangelog.com>.
+- After the first MINOR release, all changes affecting data/schema/contracts MUST include a migration plan and a deprecation schedule.
