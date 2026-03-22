@@ -10,7 +10,7 @@ from aizk.conversion.api.main import create_app
 
 def _load_openapi_spec() -> dict:
     repo_root = Path(__file__).resolve().parents[3]
-    spec_path = repo_root / "specs" / "001-docling-conversion-service" / "contracts" / "openapi.yaml"
+    spec_path = repo_root / ".specs" / "specs" / "conversion-api" / "openapi.yaml"
     return yaml.safe_load(spec_path.read_text())
 
 
