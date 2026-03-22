@@ -58,9 +58,9 @@ The system SHALL not begin processing a job that is already CANCELLED when a wor
 
 #### Scenario: Job cancelled between poll and running transition
 
-- **GIVEN** a job is selected by the worker but cancelled before the RUNNING state is set
-- **WHEN** the worker enters the supervised processing function
-- **THEN** it detects the CANCELLED status and exits without starting the conversion subprocess
+- **GIVEN** a job is selected by the worker but cancelled before the supervised processing function begins
+- **WHEN** the worker reads the current job status from the database before issuing the RUNNING update
+- **THEN** it detects the CANCELLED status and exits without starting the conversion subprocess and without transitioning the job to RUNNING
 
 ### Requirement: Enforce a wall-clock timeout on job execution
 
@@ -128,7 +128,7 @@ The system SHALL guarantee that the temporary workspace created for a job is rem
 
 ### Requirement: Classify errors as retryable or permanent
 
-The system SHALL classify each error type as retryable or permanent, and SHALL use this classification to determine the resulting job status without relying on error message matching.
+The system SHALL classify each error type as retryable or permanent via an explicit `retryable: bool` class attribute on every exception class, and SHALL use this classification to determine the resulting job status without relying on error message matching or `getattr` fallbacks.
 
 #### Scenario: Retryable error transitions job to FAILED_RETRYABLE
 
@@ -153,5 +153,5 @@ The system SHALL classify each error type as retryable or permanent, and SHALL u
 - **Phase values**: `starting`, `preparing_input`, `converting`, `uploading` — communicated from child to parent via inter-process queue; not persisted to database
 - **Termination sequence**: SIGTERM → wait 5s → SIGKILL → wait 5s → log error if still alive
 - **Workspace**: `tempfile.TemporaryDirectory` context manager in parent; path passed as string argument to subprocess; OS-level cleanup handles leaks from worker crashes
-- **Error retryability**: `retryable: bool` attribute on exception base class; `handle_job_error()` reads this attribute rather than matching error type strings
+- **Error retryability**: `retryable: ClassVar[bool]` attribute on every exception class (including `S3Error` and `S3UploadError`); `handle_job_error()` reads this attribute directly rather than matching error type strings or relying on `getattr` fallbacks
 - **Platform**: POSIX only (Linux, macOS); Windows not supported

@@ -416,6 +416,46 @@ def _upload_converted(job_id: int, workspace: Path) -> None:
             return
         bookmark = session.exec(select(BookmarkRecord).where(BookmarkRecord.aizk_uuid == job.aizk_uuid)).one()
 
+        # Reuse existing S3 artifacts when the content hash matches a prior output for
+        # the same bookmark, avoiding redundant uploads of identical content.
+        new_hash = metadata["markdown_hash_xx64"]
+        prior_output = session.exec(
+            select(ConversionOutput)
+            .where(ConversionOutput.aizk_uuid == bookmark.aizk_uuid)
+            .where(ConversionOutput.markdown_hash_xx64 == new_hash)
+            .order_by(ConversionOutput.created_at.desc())
+        ).first()
+
+        if prior_output is not None:
+            logger.info(
+                "Job %s: content hash matches prior output %s; reusing S3 artifacts at %s",
+                job_id,
+                prior_output.id,
+                prior_output.s3_prefix,
+            )
+            output = ConversionOutput(
+                job_id=job.id,
+                aizk_uuid=bookmark.aizk_uuid,
+                title=bookmark.title,
+                payload_version=job.payload_version,
+                s3_prefix=prior_output.s3_prefix,
+                markdown_key=prior_output.markdown_key,
+                manifest_key=prior_output.manifest_key,
+                markdown_hash_xx64=new_hash,
+                figure_count=prior_output.figure_count,
+                docling_version=metadata["docling_version"],
+                pipeline_name=metadata["pipeline_name"],
+            )
+            session.add(output)
+            job.finished_at = _utcnow()
+            job.status = ConversionJobStatus.SUCCEEDED
+            job.error_code = None
+            job.error_message = None
+            job.updated_at = _utcnow()
+            session.add(job)
+            session.commit()
+            return
+
         s3_client = S3Client(config)
         if not s3_client.bucket:
             raise S3Error("S3 bucket is not configured", "s3_upload_failed")
