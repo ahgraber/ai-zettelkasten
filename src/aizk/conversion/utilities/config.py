@@ -100,3 +100,7 @@ class ConversionConfig(BaseSettings):
     api_host: str = Field(default="0.0.0.0", validation_alias="API_HOST")  # NOQA: S104
     api_port: int = Field(default=8000, validation_alias="API_PORT")
     api_reload: bool = Field(default=True, validation_alias="API_RELOAD")
+
+    def is_picture_description_enabled(self) -> bool:
+        """Return whether upstream picture-description chat calls are enabled."""
+        return bool(self.chat_completions_base_url.rstrip("/") and self.chat_completions_api_key)

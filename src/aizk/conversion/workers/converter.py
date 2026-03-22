@@ -121,11 +121,6 @@ Respond ONLY with the description, no other text.
     )
 
 
-def _is_picture_description_enabled(config: ConversionConfig) -> bool:
-    """Return whether upstream picture-description chat calls are enabled."""
-    return bool(config.chat_completions_base_url.rstrip("/") and config.chat_completions_api_key)
-
-
 def _create_document_converter(
     config: ConversionConfig,
     source_url: Optional[str] = None,
@@ -315,7 +310,7 @@ def convert_html(
     try:
         converter = _create_document_converter(config, source_url=source_url)
         source = DocumentStream(name="document.html", stream=BytesIO(html_bytes))
-        if _is_picture_description_enabled(config):
+        if config.is_picture_description_enabled():
             with trace_model_call(
                 name="llm.chat.completions.docling_picture_description",
                 span_type="CHAT_MODEL",
@@ -364,7 +359,7 @@ def convert_pdf(
     try:
         converter = _create_document_converter(config)
         source = DocumentStream(name="document.pdf", stream=BytesIO(pdf_bytes))
-        if _is_picture_description_enabled(config):
+        if config.is_picture_description_enabled():
             with trace_model_call(
                 name="llm.chat.completions.docling_picture_description",
                 span_type="CHAT_MODEL",
