@@ -61,6 +61,23 @@ class ManifestArtifacts(BaseModel):
     figures: list[ManifestArtifactFigure]
 
 
+class ManifestConfigSnapshot(BaseModel):
+    """Conversion config fields that affect output, captured for exact replay.
+
+    Field set must stay in sync with build_output_config_snapshot in hashing.py.
+    The contract is enforced by test_build_output_config_snapshot_matches_manifest_contract.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    docling_pdf_max_pages: int = Field(description="Maximum PDF pages processed by Docling")
+    docling_enable_ocr: bool = Field(description="Whether OCR is enabled during conversion")
+    docling_enable_table_structure: bool = Field(description="Whether table structure extraction is enabled")
+    docling_vlm_model: str = Field(description="Configured VLM model for picture descriptions")
+    docling_picture_timeout: float = Field(description="Timeout for picture description generation")
+    picture_description_enabled: bool = Field(description="Whether figure alt-text was generated via chat completions")
+
+
 class ConversionManifest(BaseModel):
     """Complete conversion manifest with all metadata."""
 
@@ -72,6 +89,7 @@ class ConversionManifest(BaseModel):
     source: ManifestSource
     conversion: ManifestConversionMetadata
     artifacts: ManifestArtifacts
+    config_snapshot: ManifestConfigSnapshot
 
 
 def _coerce_datetime(value: datetime | None, fallback: datetime) -> datetime:
@@ -91,6 +109,8 @@ def generate_manifest(
     figure_s3_uris: list[str],
     docling_version: str,
     pipeline_name: Literal["html", "pdf"],
+    *,
+    config_snapshot: ManifestConfigSnapshot,
 ) -> ConversionManifest:
     """Generate manifest for conversion artifacts.
 
@@ -103,6 +123,7 @@ def generate_manifest(
         figure_s3_uris: List of absolute S3 URIs for figures.
         docling_version: Docling version used.
         pipeline_name: Pipeline name (html/pdf).
+        config_snapshot: Replayable conversion config snapshot used for this output.
 
     Returns:
         ConversionManifest Pydantic model.
@@ -147,6 +168,7 @@ def generate_manifest(
             ),
             figures=figures,
         ),
+        config_snapshot=config_snapshot,
     )
 
 

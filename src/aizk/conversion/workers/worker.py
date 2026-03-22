@@ -24,7 +24,11 @@ from aizk.conversion.datamodel.bookmark import Bookmark as BookmarkRecord
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.db import get_engine
-from aizk.conversion.storage.manifest import generate_manifest, save_manifest
+from aizk.conversion.storage.manifest import (
+    ManifestConfigSnapshot,
+    generate_manifest,
+    save_manifest,
+)
 from aizk.conversion.storage.s3_client import S3Client, S3Error
 from aizk.conversion.utilities.bookmark_utils import (
     BookmarkContentError,
@@ -40,14 +44,18 @@ from aizk.conversion.utilities.bookmark_utils import (
     validate_bookmark_content,
 )
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.utilities.hashing import compute_markdown_hash
+from aizk.conversion.utilities.hashing import build_output_config_snapshot, compute_markdown_hash
 from aizk.conversion.utilities.paths import (
     OUTPUT_MARKDOWN_FILENAME,
     figure_paths,
     markdown_path,
     metadata_path,
 )
-from aizk.conversion.workers.converter import ConversionError, convert_html, convert_pdf
+from aizk.conversion.workers.converter import (
+    ConversionError,
+    convert_html,
+    convert_pdf,
+)
 from aizk.conversion.workers.fetcher import (
     BookmarkContentUnavailableError,
     FetchError,
@@ -313,6 +321,11 @@ def _run_conversion(
     markdown_file = markdown_path(workspace, markdown_filename)
     markdown_file.write_text(markdown_text)
     markdown_hash = compute_markdown_hash(markdown_text)
+    picture_description_enabled = config.is_picture_description_enabled()
+    config_snapshot = build_output_config_snapshot(
+        config,
+        picture_description_enabled=picture_description_enabled,
+    )
 
     metadata = {
         "pipeline_name": pipeline_name,
@@ -321,6 +334,7 @@ def _run_conversion(
         "figure_files": [path.name for path in figure_paths],
         "markdown_hash_xx64": markdown_hash,
         "docling_version": _docling_version(),
+        "config_snapshot": config_snapshot,
     }
     metadata_file = metadata_path(workspace)
     metadata_file.write_text(json.dumps(metadata, indent=2, sort_keys=False))
@@ -425,6 +439,7 @@ def _upload_converted(job_id: int, workspace: Path) -> None:
             figure_s3_uris=figure_uris,
             docling_version=metadata["docling_version"],
             pipeline_name=metadata["pipeline_name"],
+            config_snapshot=ManifestConfigSnapshot(**metadata["config_snapshot"]),
         )
         manifest_path = workspace / "manifest.json"
         save_manifest(manifest, manifest_path)

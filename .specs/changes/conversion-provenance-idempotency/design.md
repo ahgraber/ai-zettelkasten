@@ -13,7 +13,7 @@ The `karakeep_id` is already stored on the `Bookmark` record as a unique key but
 
 ### Decision: Represent chat completions presence as a boolean flag in the key
 
-**Chosen:** derive a `picture_description_enabled: bool` from `chat_completions_base_url is not None` and include it in the idempotency key hash string.
+**Chosen:** derive a `picture_description_enabled: bool` from whether picture descriptions are actually enabled at runtime, which requires both a non-empty `chat_completions_base_url` and `chat_completions_api_key`, and include it in the idempotency key hash string.
 
 **Rationale:** The actual endpoint URL is an operational detail and may change between deployments pointing to equivalent services.
 What materially affects output is whether picture description ran at all.
@@ -28,8 +28,7 @@ A boolean captures this cleanly and avoids key churn from URL normalisation edge
 
 ### Decision: Write config snapshot to manifest, not to the database output record
 
-**Chosen:** add a `config_snapshot` section to the S3 manifest JSON containing the Docling config
-fields and `picture_description_enabled`.
+**Chosen:** add a `config_snapshot` section to the S3 manifest JSON containing the Docling config fields and `picture_description_enabled`.
 
 **Rationale:** The manifest is already the canonical artifact-level record of how a conversion was produced.
 Adding the config there keeps the database schema unchanged and puts provenance data alongside the artifacts it describes.
@@ -61,7 +60,7 @@ Idempotency key inputs (hashing.py)
   payload_version
   docling_version              (unchanged)
   docling_config_fields hash   (unchanged)
-+ picture_description_enabled  (NEW: bool from chat_completions_base_url is not None)
++ picture_description_enabled  (NEW: bool from picture-description runtime enablement)
   → SHA-256 hex digest
 
 Manifest JSON (manifest.py)
