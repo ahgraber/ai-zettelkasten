@@ -137,7 +137,4 @@ Actual markdown from conversions reveals edge cases better than synthetic test c
 **Acceptance criteria:**
 
 - If baseline spec is synchronized with delta, add note about whitespace normalization to Technical Notes section under markdown output handling
-- Add entry to `CHANGELOG.md` under appropriate version/date
 - Commit message references this change
-
-**Notes:** Per CLAUDE.md, maintain changelog and semantic versioning

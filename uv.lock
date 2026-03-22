@@ -358,7 +358,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=12.1.1" },
     { name = "pydantic", specifier = ">=2.9.2" },
     { name = "pydantic-ai-slim", extras = ["openai", "anthropic", "huggingface", "openrouter", "cli", "mcp", "fastmcp", "evals", "ag-ui", "retries", "temporal", "ui"] },
-    { name = "pydantic-settings", specifier = ">=2.12.0" },
+    { name = "pydantic-settings", specifier = ">2.10" },
     { name = "pymupdf", specifier = ">=1.26.7" },
     { name = "pypandoc", specifier = ">=1.14" },
     { name = "python-dateutil", specifier = ">=2.9.0.post0" },
@@ -2635,7 +2635,7 @@ name = "gunicorn"
 version = "25.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "packaging", marker = "sys_platform != 'win32'" },
+    { name = "packaging" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/66/13/ef67f59f6a7896fdc2c1d62b5665c5219d6b0a9a1784938eb9a28e55e128/gunicorn-25.1.0.tar.gz", hash = "sha256:1426611d959fa77e7de89f8c0f32eed6aa03ee735f98c01efba3e281b1c47616", size = 594377, upload-time = "2026-02-13T11:09:58.989Z" }
 wheels = [
@@ -4243,13 +4243,13 @@ name = "mlx-lm"
 version = "0.29.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "jinja2", marker = "sys_platform == 'darwin'" },
+    { name = "jinja2", marker = "sys_platform != 'linux'" },
     { name = "mlx", marker = "sys_platform == 'darwin'" },
-    { name = "numpy", marker = "sys_platform == 'darwin'" },
-    { name = "protobuf", marker = "sys_platform == 'darwin'" },
-    { name = "pyyaml", marker = "sys_platform == 'darwin'" },
-    { name = "sentencepiece", marker = "sys_platform == 'darwin'" },
-    { name = "transformers", marker = "sys_platform == 'darwin'" },
+    { name = "numpy", marker = "sys_platform != 'linux'" },
+    { name = "protobuf", marker = "sys_platform != 'linux'" },
+    { name = "pyyaml", marker = "sys_platform != 'linux'" },
+    { name = "sentencepiece", marker = "sys_platform != 'linux'" },
+    { name = "transformers", marker = "sys_platform != 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e3/62/f46e1355256a114808517947f8e83ad6be310c7288c551db0fa678f47923/mlx_lm-0.29.1.tar.gz", hash = "sha256:b99180d8f33d33a077b814e550bfb2d8a59ae003d668fd1f4b3fff62a381d34b", size = 232302, upload-time = "2025-12-16T16:58:27.959Z" }
 wheels = [
@@ -4271,18 +4271,18 @@ name = "mlx-vlm"
 version = "0.3.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "datasets", marker = "sys_platform == 'darwin'" },
-    { name = "fastapi", marker = "sys_platform == 'darwin'" },
-    { name = "mlx", marker = "sys_platform == 'darwin'" },
-    { name = "mlx-lm", marker = "sys_platform == 'darwin'" },
-    { name = "numpy", marker = "sys_platform == 'darwin'" },
-    { name = "opencv-python", marker = "sys_platform == 'darwin'" },
-    { name = "pillow", marker = "sys_platform == 'darwin'" },
-    { name = "requests", marker = "sys_platform == 'darwin'" },
-    { name = "soundfile", marker = "sys_platform == 'darwin'" },
-    { name = "tqdm", marker = "sys_platform == 'darwin'" },
-    { name = "transformers", marker = "sys_platform == 'darwin'" },
-    { name = "uvicorn", marker = "sys_platform == 'darwin'" },
+    { name = "datasets", marker = "sys_platform != 'linux'" },
+    { name = "fastapi", marker = "sys_platform != 'linux'" },
+    { name = "mlx", marker = "sys_platform != 'linux'" },
+    { name = "mlx-lm", marker = "sys_platform != 'linux'" },
+    { name = "numpy", marker = "sys_platform != 'linux'" },
+    { name = "opencv-python", marker = "sys_platform != 'linux'" },
+    { name = "pillow", marker = "sys_platform != 'linux'" },
+    { name = "requests", marker = "sys_platform != 'linux'" },
+    { name = "soundfile", marker = "sys_platform != 'linux'" },
+    { name = "tqdm", marker = "sys_platform != 'linux'" },
+    { name = "transformers", marker = "sys_platform != 'linux'" },
+    { name = "uvicorn", marker = "sys_platform != 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1d/98/6b3c2d1317a317d0df544fe9ab0ef4f233ea85c1e4ac2fe6af7289ea1ee5/mlx_vlm-0.3.9.tar.gz", hash = "sha256:ae5050d0b1a051a29099c3a65efdbf6874bb497e8465734ac1992b6b179135b4", size = 303350, upload-time = "2025-12-03T21:48:24.199Z" }
 wheels = [
@@ -4939,9 +4939,9 @@ name = "ocrmac"
 version = "1.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "click", marker = "sys_platform == 'darwin'" },
-    { name = "pillow", marker = "sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-vision", marker = "sys_platform == 'darwin'" },
+    { name = "click", marker = "sys_platform != 'linux'" },
+    { name = "pillow", marker = "sys_platform != 'linux'" },
+    { name = "pyobjc-framework-vision", marker = "sys_platform != 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/5e/07/3e15ab404f75875c5e48c47163300eb90b7409044d8711fc3aaf52503f2e/ocrmac-1.0.1.tar.gz", hash = "sha256:507fe5e4cbd67b2d03f6729a52bbc11f9d0b58241134eb958a5daafd4b9d93d9", size = 1454317, upload-time = "2026-01-08T16:44:26.412Z" }
 wheels = [
@@ -6275,7 +6275,7 @@ name = "pyobjc-framework-cocoa"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform == 'darwin'" },
+    { name = "pyobjc-core", marker = "sys_platform != 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/02/a3/16ca9a15e77c061a9250afbae2eae26f2e1579eb8ca9462ae2d2c71e1169/pyobjc_framework_cocoa-12.1.tar.gz", hash = "sha256:5556c87db95711b985d5efdaaf01c917ddd41d148b1e52a0c66b1a2e2c5c1640", size = 2772191, upload-time = "2025-11-14T10:13:02.069Z" }
 wheels = [
@@ -6291,8 +6291,8 @@ name = "pyobjc-framework-coreml"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'" },
+    { name = "pyobjc-core", marker = "sys_platform != 'linux'" },
+    { name = "pyobjc-framework-cocoa", marker = "sys_platform != 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/30/2d/baa9ea02cbb1c200683cb7273b69b4bee5070e86f2060b77e6a27c2a9d7e/pyobjc_framework_coreml-12.1.tar.gz", hash = "sha256:0d1a4216891a18775c9e0170d908714c18e4f53f9dc79fb0f5263b2aa81609ba", size = 40465, upload-time = "2025-11-14T10:14:02.265Z" }
 wheels = [
@@ -6308,8 +6308,8 @@ name = "pyobjc-framework-quartz"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'" },
+    { name = "pyobjc-core", marker = "sys_platform != 'linux'" },
+    { name = "pyobjc-framework-cocoa", marker = "sys_platform != 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/94/18/cc59f3d4355c9456fc945eae7fe8797003c4da99212dd531ad1b0de8a0c6/pyobjc_framework_quartz-12.1.tar.gz", hash = "sha256:27f782f3513ac88ec9b6c82d9767eef95a5cf4175ce88a1e5a65875fee799608", size = 3159099, upload-time = "2025-11-14T10:21:24.31Z" }
 wheels = [
@@ -6325,10 +6325,10 @@ name = "pyobjc-framework-vision"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-coreml", marker = "sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin'" },
+    { name = "pyobjc-core", marker = "sys_platform != 'linux'" },
+    { name = "pyobjc-framework-cocoa", marker = "sys_platform != 'linux'" },
+    { name = "pyobjc-framework-coreml", marker = "sys_platform != 'linux'" },
+    { name = "pyobjc-framework-quartz", marker = "sys_platform != 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c2/5a/08bb3e278f870443d226c141af14205ff41c0274da1e053b72b11dfc9fb2/pyobjc_framework_vision-12.1.tar.gz", hash = "sha256:a30959100e85dcede3a786c544e621ad6eb65ff6abf85721f805822b8c5fe9b0", size = 59538, upload-time = "2025-11-14T10:23:21.979Z" }
 wheels = [
@@ -7172,15 +7172,15 @@ wheels = [
 
 [[package]]
 name = "rich"
-version = "13.9.4"
+version = "14.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "markdown-it-py" },
     { name = "pygments" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ab/3a/0316b28d0761c6734d6bc14e770d85506c986c85ffb239e688eeaab2c2bc/rich-13.9.4.tar.gz", hash = "sha256:439594978a49a09530cff7ebc4b5c7103ef57baf48d5ea3184f21d9a2befa098", size = 223149, upload-time = "2024-11-01T16:43:57.873Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b3/c6/f3b320c27991c46f43ee9d856302c70dc2d0fb2dba4842ff739d5f46b393/rich-14.3.3.tar.gz", hash = "sha256:b8daa0b9e4eef54dd8cf7c86c03713f53241884e814f4e2f5fb342fe520f639b", size = 230582, upload-time = "2026-02-19T17:23:12.474Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/19/71/39c7c0d87f8d4e6c020a393182060eaefeeae6c01dab6a84ec346f2567df/rich-13.9.4-py3-none-any.whl", hash = "sha256:6049d5e6ec054bf2779ab3358186963bac2ea89175919d699e378b99738c2a90", size = 242424, upload-time = "2024-11-01T16:43:55.817Z" },
+    { url = "https://files.pythonhosted.org/packages/14/25/b208c5683343959b670dc001595f2f3737e051da617f66c31f7c4fa93abc/rich-14.3.3-py3-none-any.whl", hash = "sha256:793431c1f8619afa7d3b52b2cdec859562b950ea0d4b6b505397612db8d5362d", size = 310458, upload-time = "2026-02-19T17:23:13.732Z" },
 ]
 
 [[package]]
@@ -7905,8 +7905,8 @@ name = "soundfile"
 version = "0.13.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "sys_platform == 'darwin'" },
-    { name = "numpy", marker = "sys_platform == 'darwin'" },
+    { name = "cffi", marker = "sys_platform != 'linux'" },
+    { name = "numpy", marker = "sys_platform != 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e1/41/9b873a8c055582859b239be17902a85339bec6a30ad162f98c9b0288a2cc/soundfile-0.13.1.tar.gz", hash = "sha256:b2c68dab1e30297317080a5b43df57e302584c49e2942defdde0acccc53f0e5b", size = 46156, upload-time = "2025-01-25T09:17:04.831Z" }
 wheels = [

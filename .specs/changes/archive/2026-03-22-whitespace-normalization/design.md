@@ -49,7 +49,34 @@ Docling's conversion pipelines sometimes produce extraneous whitespace:
 - Apply normalization uniformly (simple but breaks code examples)
 - Strip all leading/trailing whitespace (too aggressive)
 
-### 3. Test-driven approach to edge cases
+### 3. Strip all trailing spaces before newlines
+
+**Decision:** Strip all trailing spaces immediately before `\n` characters in non-code-block regions.
+
+**Rationale (empirically verified 2026-03-22):**
+
+Standard Markdown assigns meaning to exactly two trailing spaces before a newline as a hard line break (`<br>`), making the treatment of trailing spaces ambiguous in principle.
+The question was whether Docling's converters ever emit intentional two-space hard breaks.
+
+Investigation confirmed they do not:
+
+1. **Source code:** `MarkdownDocSerializer` in `docling-core` has no code path that emits `"  \n"`.
+   Content joins use `"\n\n"` (paragraph) or `"\n"` (list item); trailing spaces are never inserted.
+
+2. **`<br>` handling:** The HTML backend (`html_backend.py`) replaces `<br>` elements with a plain `\n` character via `br.replace_with(NavigableString("\n"))`.
+   This `\n` collapses to a word separator within paragraph text — it does not become a Markdown hard break.
+
+3. **Empirical:** Converting HTML containing `<br>` elements through the full pipeline produces space-separated text with zero trailing spaces on any output line.
+
+**Conclusion:** All trailing spaces in Docling output are conversion artifacts with no rendering significance.
+Strip-all is safe and eliminates noise from hash inputs.
+
+**Alternatives considered:**
+
+- Normalize to exactly two spaces (conservative, preserves hard-break semantics) — rejected: introduces false hard breaks where source never intended them
+- Strip only 1-space and 3+-space runs, preserve exactly two — rejected: unnecessary complexity; Docling never produces intentional hard breaks
+
+### 4. Test-driven approach to edge cases
 
 **Decision:** Comprehensive test suite covering basic rules plus edge cases discovered during implementation.
 
