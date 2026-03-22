@@ -30,3 +30,26 @@ Normalization collapses multiple consecutive spaces to a single space and collap
 - **GIVEN** the Markdown contains code blocks with intentional indentation
 - **WHEN** whitespace normalization is applied
 - **THEN** the indentation within code blocks is preserved and not collapsed
+
+#### Scenario: Leading indentation for list nesting preserved
+
+<!-- markdownlint-disable MD038 -->
+
+- **GIVEN** the Markdown contains a nested list where nesting level is encoded by leading spaces (e.g. `- nested item` or `  - deeper item`)
+- **WHEN** whitespace normalization is applied
+- **THEN** the leading spaces on each line are preserved exactly, so list nesting structure is not altered
+
+<!-- markdownlint-enable -->
+
+#### Scenario: Trailing spaces on lines stripped
+
+- **GIVEN** the Markdown contains lines with one or more trailing spaces before the newline
+- **WHEN** whitespace normalization is applied
+- **THEN** all trailing spaces before newlines are removed
+- **AND** no two-space hard line breaks are introduced, because Docling never emits them
+
+#### Scenario: Tab characters expanded to spaces
+
+- **GIVEN** the Markdown contains tab characters outside code blocks
+- **WHEN** whitespace normalization is applied
+- **THEN** each tab is replaced by four spaces, which are then subject to space collapsing
