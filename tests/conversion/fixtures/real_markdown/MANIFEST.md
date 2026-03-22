@@ -9,13 +9,15 @@ They are NOT stored as separate `.md` files because markdown linters normalize w
 
 ## Sources
 
-| Fixture variable                     | UUID       | Pipeline | Pattern tested                                                           |
-| ------------------------------------ | ---------- | -------- | ------------------------------------------------------------------------ |
-| `EU_AI_ETHICS_RAW`                   | `0000661e` | pdf      | Word-level double-spacing (every word `word  word`)                      |
-| `TULU3_TEMPLATE_CODE_RAW`            | `019618ce` | pdf      | Double spaces inside code block (Jinja template `{{  '`) — must preserve |
-| `SWE_AGENT_TRAILING_WS_RAW`          | `026a32bf` | pdf      | Lines with trailing whitespace                                           |
-| `PHOTOREALISTIC_EXCESS_NEWLINES_RAW` | `02a91012` | pdf      | 3–4 consecutive blank lines between sections                             |
-| `HUGGINGFACE_TENSOR_CODE_RAW`        | `00b2e9a4` | html     | Matrix alignment spaces inside code block — must preserve                |
+| Fixture variable                     | UUID       | Pipeline | Pattern tested                                                                                |
+| ------------------------------------ | ---------- | -------- | --------------------------------------------------------------------------------------------- |
+| `EU_AI_ETHICS_RAW`                   | `0000661e` | pdf      | Word-level double-spacing (every word `word  word`)                                           |
+| `TULU3_TEMPLATE_CODE_RAW`            | `019618ce` | pdf      | Double spaces inside code block (Jinja template `{{  '`) — must preserve                      |
+| `SWE_AGENT_TRAILING_WS_RAW`          | `026a32bf` | pdf      | Lines with trailing whitespace                                                                |
+| `PHOTOREALISTIC_EXCESS_NEWLINES_RAW` | `02a91012` | pdf      | 3–4 consecutive blank lines between sections                                                  |
+| `HUGGINGFACE_TENSOR_CODE_RAW`        | `00b2e9a4` | html     | Matrix alignment spaces inside code block — must preserve                                     |
+| `GITHUB_SPEC_KIT_RAW`                | `9858bf92` | html     | GitHub README: table cell right-padding spaces (column alignment artifact from HTML pipeline) |
+| `ALIGNMENT_FORUM_TRAILING_WS_RAW`    | `6e17bc1e` | html     | General web: trailing spaces on list-header bullets (`- Header: \n` pattern)                  |
 
 ## How the sources were found
 

@@ -230,3 +230,115 @@ class TestRealWorldExcessNewlines:
         once = normalize_whitespace(PHOTOREALISTIC_EXCESS_NEWLINES_RAW)
         twice = normalize_whitespace(once)
         assert once == twice
+
+
+# GitHub HTML pipeline — github.com/github/spec-kit README (uuid 9858bf92).
+# Markdown table produced by Docling HTML pipeline: each cell is right-padded with spaces
+# to align pipe characters across columns, creating multi-space runs inside cells.
+# Rows are separated by blank lines (Docling HTML table rendering artifact).
+GITHUB_SPEC_KIT_RAW = (
+    "| `--ai`                 | Option   | AI assistant to use: `claude`, `gemini`, `copilot`,"
+    " `cursor-agent`, `qwen`, `opencode`, `codex`, `windsurf`, `kilocode`, `auggie`,"
+    " `roo`, `codebuddy`, `amp`, `shai`, `q`, `bob`, or `qoder`"
+    "                                                                                      |\n"
+    "\n"
+    "| `--script`             | Option   | Script variant to use: `sh` (bash/zsh) or `ps` (PowerShell)"
+    "                                                                                                 |\n"
+    "\n"
+    "| `--ignore-agent-tools` | Flag     | Skip checks for AI agent tools like Claude Code"
+    "                                                                                              |\n"
+    "\n"
+    "| `--no-git`             | Flag     | Skip git repository initialization"
+    "                                                                                           |\n"
+    "\n"
+    "| `--here`               | Flag     | Initialize project in the current directory instead of creating a new one"
+    "                                                                                                    |\n"
+)
+
+# General web HTML pipeline — alignmentforum.org post (uuid 6e17bc1e).
+# Figure-description list items produced by Docling HTML pipeline with trailing spaces
+# before newlines on section-header bullets (pattern: "- Header label: \n").
+ALIGNMENT_FORUM_TRAILING_WS_RAW = (
+    "- Activations row (colored emphasis): \n"
+    '  - Under Description: a note that the activation involves "blackboard: shared black"'
+    " with the word black highlighted.\n"
+    '  - Under Local context: a cue "3. Which pass option" with "Which" highlighted.\n'
+    '  - Under Succession: the phrase "suspects, aged 16 to" with "16 to" highlighted.\n'
+    "- DFA (blue-highlighted row): \n"
+    '  - Under Description: "blackboard: shared black"\n'
+    '  - Under Local context: "3. Which pass option"\n'
+    '  - Under Succession: "suspects, aged 16 to"\n'
+    "- Top Logit row (textual): \n"
+    '  - Under Description: "board"\n'
+    '  - Under Local context: "?" (a placeholder)\n'
+    '  - Under Succession: "17"\n'
+)
+
+
+class TestRealWorldGithubHtmlOutput:
+    """GitHub HTML pipeline: table cell padding spaces are collapsed; inline code preserved.
+
+    Source: github.com/github/spec-kit README (uuid 9858bf92), HTML pipeline.
+    """
+
+    def test_real_github_cell_padding_spaces_collapsed(self) -> None:
+        result = normalize_whitespace(GITHUB_SPEC_KIT_RAW)
+        # Cell padding (trailing spaces to align columns) is collapsed
+        assert "| Option |" in result
+        assert "| Flag |" in result
+
+    def test_real_github_inline_code_option_names_preserved(self) -> None:
+        result = normalize_whitespace(GITHUB_SPEC_KIT_RAW)
+        # Inline code spans and their content are preserved
+        assert "`--ai`" in result
+        assert "`--script`" in result
+        assert "`claude`" in result
+
+    def test_real_github_no_double_spaces_outside_code(self) -> None:
+        import re
+
+        result = normalize_whitespace(GITHUB_SPEC_KIT_RAW)
+        original_inline_spans = re.findall(r"`[^`]*`", GITHUB_SPEC_KIT_RAW)
+        normalized_inline_spans = re.findall(r"`[^`]*`", result)
+        # Inline code is part of the contract: preserve spans exactly.
+        assert normalized_inline_spans == original_inline_spans
+
+        # Replace inline code with a token so removal does not create artificial
+        # double spaces (e.g., table cell "| `--ai` |" -> "|  |" if deleted).
+        stripped = re.sub(r"`[^`]*`", "CODE", result)
+        assert "  " not in stripped, "Double spaces remain outside inline code after normalization"
+
+    def test_real_github_idempotent(self) -> None:
+        once = normalize_whitespace(GITHUB_SPEC_KIT_RAW)
+        twice = normalize_whitespace(once)
+        assert once == twice
+
+
+class TestRealWorldGeneralHtmlOutput:
+    """General web HTML pipeline: trailing spaces on list-header bullets are stripped.
+
+    Source: alignmentforum.org figure-description list (uuid 6e17bc1e), HTML pipeline.
+    Pattern: Docling emits bullet lines ending '- Header: \\n' (trailing space before newline).
+    """
+
+    def test_real_html_trailing_spaces_stripped(self) -> None:
+        result = normalize_whitespace(ALIGNMENT_FORUM_TRAILING_WS_RAW)
+        for line in result.splitlines():
+            assert line == line.rstrip(), f"Trailing whitespace on line: {line!r}"
+
+    def test_real_html_section_headers_normalized(self) -> None:
+        result = normalize_whitespace(ALIGNMENT_FORUM_TRAILING_WS_RAW)
+        # Trailing space removed from section-header bullets
+        assert "- Activations row (colored emphasis):\n" in result
+        assert "- DFA (blue-highlighted row):\n" in result
+        assert "- Top Logit row (textual):\n" in result
+
+    def test_real_html_list_indentation_preserved(self) -> None:
+        result = normalize_whitespace(ALIGNMENT_FORUM_TRAILING_WS_RAW)
+        assert '  - Under Description: "blackboard: shared black"' in result
+        assert '  - Under Local context: "3. Which pass option"' in result
+
+    def test_real_html_idempotent(self) -> None:
+        once = normalize_whitespace(ALIGNMENT_FORUM_TRAILING_WS_RAW)
+        twice = normalize_whitespace(once)
+        assert once == twice
