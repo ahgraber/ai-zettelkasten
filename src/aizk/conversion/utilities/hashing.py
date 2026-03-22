@@ -11,18 +11,38 @@ import xxhash
 from aizk.conversion.utilities.config import ConversionConfig
 
 
+def _docling_config_payload(config: ConversionConfig) -> dict[str, object]:
+    """Return the subset of config fields that affect Docling output."""
+    return {key: value for key, value in config.model_dump().items() if key.startswith("docling_")}
+
+
+def build_output_config_snapshot(
+    config: ConversionConfig,
+    *,
+    picture_description_enabled: bool,
+) -> dict[str, object]:
+    """Build the canonical replayable config payload for hashing and manifests."""
+    return {
+        **_docling_config_payload(config),
+        "picture_description_enabled": picture_description_enabled,
+    }
+
+
 def compute_idempotency_key(
     aizk_uuid: UUID,
     payload_version: int,
     config: ConversionConfig,
+    *,
+    picture_description_enabled: bool,
 ) -> str:
     """Compute a stable SHA256 idempotency key.
 
     Args:
         aizk_uuid: Bookmark UUID.
         payload_version: Payload version for conversion.
-        docling_version: Docling version string.
         config: Conversion configuration.
+        picture_description_enabled: Whether picture description via chat completions is active.
+            Affects Markdown output (figure alt-text), so must be part of the key.
 
     Returns:
         Hex-encoded SHA256 digest.
@@ -31,10 +51,14 @@ def compute_idempotency_key(
 
     docling_version = version("docling")
 
-    config_payload = {key: value for key, value in config.model_dump().items() if key.startswith("docling_")}
+    config_snapshot = build_output_config_snapshot(
+        config,
+        picture_description_enabled=picture_description_enabled,
+    )
+    config_payload = {key: value for key, value in config_snapshot.items() if key != "picture_description_enabled"}
     config_json = json.dumps(config_payload, sort_keys=True, separators=(",", ":"))
 
-    raw = f"{str(aizk_uuid)}:{payload_version}:{docling_version}:{config_json}"
+    raw = f"{str(aizk_uuid)}:{payload_version}:{docling_version}:{config_json}:{picture_description_enabled}"
 
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
