@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -62,7 +62,13 @@ class ManifestArtifacts(BaseModel):
 
 
 class ManifestConfigSnapshot(BaseModel):
-    """Conversion config fields that affect output, captured for exact replay."""
+    """Conversion config fields that affect output, captured for exact replay.
+
+    Field set must stay in sync with build_output_config_snapshot in hashing.py.
+    The contract is enforced by test_build_output_config_snapshot_matches_manifest_contract.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     docling_pdf_max_pages: int = Field(description="Maximum PDF pages processed by Docling")
     docling_enable_ocr: bool = Field(description="Whether OCR is enabled during conversion")
@@ -164,11 +170,6 @@ def generate_manifest(
         ),
         config_snapshot=config_snapshot,
     )
-
-
-def build_manifest_config_snapshot(config_values: dict[str, Any]) -> ManifestConfigSnapshot:
-    """Build a typed manifest config snapshot from Docling config values."""
-    return ManifestConfigSnapshot(**config_values)
 
 
 def save_manifest(manifest: ConversionManifest, output_path: Path) -> None:

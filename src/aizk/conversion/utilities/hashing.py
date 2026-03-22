@@ -55,10 +55,9 @@ def compute_idempotency_key(
         config,
         picture_description_enabled=picture_description_enabled,
     )
-    config_payload = {key: value for key, value in config_snapshot.items() if key != "picture_description_enabled"}
-    config_json = json.dumps(config_payload, sort_keys=True, separators=(",", ":"))
+    config_json = json.dumps(config_snapshot, sort_keys=True, separators=(",", ":"))
 
-    raw = f"{str(aizk_uuid)}:{payload_version}:{docling_version}:{config_json}:{picture_description_enabled}"
+    raw = f"{str(aizk_uuid)}:{payload_version}:{docling_version}:{config_json}"
 
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 

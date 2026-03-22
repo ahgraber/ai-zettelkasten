@@ -31,7 +31,6 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.hashing import compute_idempotency_key
-from aizk.conversion.workers.converter import _is_picture_description_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +163,7 @@ def submit_job(
         bookmark.aizk_uuid,
         submission.payload_version,
         config,
-        picture_description_enabled=_is_picture_description_enabled(config),
+        picture_description_enabled=config.is_picture_description_enabled(),
     )
 
     existing_job = session.exec(select(ConversionJob).where(ConversionJob.idempotency_key == idempotency_key)).first()

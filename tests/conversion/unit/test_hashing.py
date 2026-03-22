@@ -16,12 +16,12 @@ from aizk.conversion.utilities.hashing import (
 
 def _expected_key(uuid: str, payload_version: int, config: ConversionConfig, picture_description_enabled: bool) -> str:
     docling_version = version("docling")
-    config_json = json.dumps(
-        {k: v for k, v in config.model_dump().items() if k.startswith("docling_")},
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    raw = f"{uuid}:{payload_version}:{docling_version}:{config_json}:{picture_description_enabled}"
+    config_snapshot = {
+        **{k: v for k, v in config.model_dump().items() if k.startswith("docling_")},
+        "picture_description_enabled": picture_description_enabled,
+    }
+    config_json = json.dumps(config_snapshot, sort_keys=True, separators=(",", ":"))
+    raw = f"{uuid}:{payload_version}:{docling_version}:{config_json}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 

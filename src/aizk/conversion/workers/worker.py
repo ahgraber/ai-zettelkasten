@@ -25,7 +25,7 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.db import get_engine
 from aizk.conversion.storage.manifest import (
-    build_manifest_config_snapshot,
+    ManifestConfigSnapshot,
     generate_manifest,
     save_manifest,
 )
@@ -53,7 +53,6 @@ from aizk.conversion.utilities.paths import (
 )
 from aizk.conversion.workers.converter import (
     ConversionError,
-    _is_picture_description_enabled,
     convert_html,
     convert_pdf,
 )
@@ -322,7 +321,7 @@ def _run_conversion(
     markdown_file = markdown_path(workspace, markdown_filename)
     markdown_file.write_text(markdown_text)
     markdown_hash = compute_markdown_hash(markdown_text)
-    picture_description_enabled = _is_picture_description_enabled(config)
+    picture_description_enabled = config.is_picture_description_enabled()
     config_snapshot = build_output_config_snapshot(
         config,
         picture_description_enabled=picture_description_enabled,
@@ -440,7 +439,7 @@ def _upload_converted(job_id: int, workspace: Path) -> None:
             figure_s3_uris=figure_uris,
             docling_version=metadata["docling_version"],
             pipeline_name=metadata["pipeline_name"],
-            config_snapshot=build_manifest_config_snapshot(metadata["config_snapshot"]),
+            config_snapshot=ManifestConfigSnapshot(**metadata["config_snapshot"]),
         )
         manifest_path = workspace / "manifest.json"
         save_manifest(manifest, manifest_path)
