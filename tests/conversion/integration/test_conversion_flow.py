@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+from uuid import UUID
 
 import boto3
 from botocore.stub import ANY, Stubber
@@ -18,6 +19,7 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.db import get_engine
 from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.hashing import compute_idempotency_key
 from aizk.conversion.workers import worker
 from aizk.conversion.workers.worker import ConversionInput
 
@@ -199,3 +201,32 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch, html_bookmark):
 
         output = session.exec(select(ConversionOutput).where(ConversionOutput.job_id == job_id)).first()
         assert output is None
+
+
+def test_submit_job_idempotency_key_disables_picture_description_without_api_key(monkeypatch, db_session) -> None:
+    """Idempotency must reflect actual picture-description runtime enablement."""
+    monkeypatch.setenv("CHAT_COMPLETIONS_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("CHAT_COMPLETIONS_API_KEY", "")
+
+    app = create_app()
+    config = ConversionConfig(_env_file=None)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/jobs",
+            json={
+                "karakeep_id": "bm_missing_picture_api_key",
+            },
+        )
+
+    assert response.status_code == 201
+    payload = response.json()
+
+    expected_key = compute_idempotency_key(
+        UUID(payload["aizk_uuid"]),
+        1,
+        config,
+        picture_description_enabled=False,
+    )
+
+    assert payload["idempotency_key"] == expected_key

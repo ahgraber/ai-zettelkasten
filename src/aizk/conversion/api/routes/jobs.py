@@ -163,6 +163,7 @@ def submit_job(
         bookmark.aizk_uuid,
         submission.payload_version,
         config,
+        picture_description_enabled=config.is_picture_description_enabled(),
     )
 
     existing_job = session.exec(select(ConversionJob).where(ConversionJob.idempotency_key == idempotency_key)).first()

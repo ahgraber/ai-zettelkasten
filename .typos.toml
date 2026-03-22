@@ -40,7 +40,10 @@ extend-ignore-re = [
 
 ## Pattern-match always-valid identifiers
 ## list of regexes
-extend-ignore-identifiers-re = []
+extend-ignore-identifiers-re = [
+  # Ignore identifiers starting using 'ser_' (common in docling)
+  ".*(_)?ser_.*"
+]
 
 ## Corrections for identifiers (https://www.unicode.org/reports/tr31/#Table_Lexical_Classes_for_Identifiers).
 ## When the correction is blank, the identifier is *never* valid.
