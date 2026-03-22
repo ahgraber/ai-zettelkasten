@@ -51,6 +51,7 @@ from aizk.conversion.utilities.paths import (
     markdown_path,
     metadata_path,
 )
+from aizk.conversion.utilities.whitespace import normalize_whitespace
 from aizk.conversion.workers.converter import (
     ConversionError,
     convert_html,
@@ -319,6 +320,8 @@ def _run_conversion(
     _raise_if_cancelled(job.id, engine)
     markdown_filename = OUTPUT_MARKDOWN_FILENAME
     markdown_file = markdown_path(workspace, markdown_filename)
+    # Normalize whitespace before writing and hashing
+    markdown_text = normalize_whitespace(markdown_text)
     markdown_file.write_text(markdown_text)
     markdown_hash = compute_markdown_hash(markdown_text)
     picture_description_enabled = config.is_picture_description_enabled()

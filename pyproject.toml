@@ -46,7 +46,7 @@ dependencies = [
     "pillow>=12.1.1",
     "pydantic>=2.9.2",
     "pydantic-ai-slim[openai,anthropic,huggingface,openrouter,cli,mcp,fastmcp,evals,ag-ui,retries,temporal,ui]",
-    "pydantic-settings>=2.12.0",
+    "pydantic-settings>2.10",
     "pymupdf>=1.26.7",
     "pypandoc>=1.14",
     "python-dateutil>=2.9.0.post0",

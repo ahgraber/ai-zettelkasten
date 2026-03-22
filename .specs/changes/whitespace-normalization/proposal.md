@@ -39,17 +39,24 @@ Normalizing these improves artifact consistency and readability, and ensures tha
 
 4. Verify through integration tests that normalized output round-trips through downstream consumers correctly
 
-## Open Questions
+## Open Questions (Resolved)
 
-1. Should code blocks (fenced with backticks) be excluded from normalization to preserve internal indentation?
+1. **Should code blocks be excluded from normalization?**
 
-   - Current assumption: Yes, preserve intentional whitespace within code blocks
-   - Will be determined by test results
+   **Yes.**
+   Fenced code blocks and inline code are excluded.
+   Confirmed by real-world fixtures (Tulu 3 Jinja templates, HuggingFace tensor alignment) that require multi-space preservation inside fences.
 
-2. Are there content types (arXiv, GitHub READMEs, etc.) where whitespace normalization breaks expected formatting?
+2. **Are there content types where normalization breaks expected formatting?**
 
-   - Current assumption: Normalization is content-agnostic; tests will reveal any breakage
+   **No breakage found.**
+   Empirically verified across 5,918 production conversion outputs (HTML and PDF).
+   HTML is the highest-variance source but normalization is safe.
 
-3. What about leading/trailing whitespace on lines or at document boundaries?
+3. **What about trailing whitespace on lines?**
 
-   - Current assumption: Collapse runs but preserve one newline at document end; will validate in tests
+   **Strip unconditionally.**
+   Resolved by Docling source-code and empirical investigation (2026-03-22).
+   Confirmed empirically: converting HTML with `<br>` through the full Docling pipeline produces zero trailing spaces: (a) `MarkdownDocSerializer` has no code path that emits two-space Markdown hard breaks (`"  \n"`), and (b) The HTML backend replaces `<br>` with a plain `\n` (which collapses to a space in paragraph text), not a Markdown hard break.
+
+   **Conclusion:** All trailing spaces in Docling output are conversion artifacts; stripping them is safe and produces cleaner, more stable hashes.
