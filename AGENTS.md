@@ -106,3 +106,11 @@ For multi-step tasks, state a brief plan defining the step task and associated v
 - Conventional Commits are REQUIRED for commit messages and/or PR titles.
 - Keep a Changelog is REQUIRED; maintain `CHANGELOG.md` following <https://keepachangelog.com>.
 - After the first MINOR release, all changes affecting data/schema/contracts MUST include a migration plan and a deprecation schedule.
+
+## Sandbox Limitations
+
+- The sandbox cannot run `uv sync` or read `.env` / `.env.example` (permission errors).
+- `tests/conversion/conftest.py` imports `aizk.conversion.db` → `pydantic_settings`, which may fail with `ModuleNotFoundError: No module named 'pydantic_settings.sources.providers.secrets'` if the venv is out of sync.
+- **Delegate test runs to the user** when any of the above errors occur.
+  Describe the exact command to run (e.g.
+  `uv run pytest tests/...`).

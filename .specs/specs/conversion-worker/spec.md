@@ -158,6 +158,58 @@ The system SHALL run the appropriate Docling conversion pipeline for the source 
 - **WHEN** the worker inspects the output
 - **THEN** the job is marked permanently failed and any existing successful output is preserved
 
+### Requirement: Normalize whitespace in Markdown output
+
+The system SHALL normalize whitespace in the Markdown output before writing to the output file and computing its content hash.
+Normalization collapses multiple consecutive spaces to a single space and collapses 3 or more consecutive newlines to exactly 2 newlines.
+
+#### Scenario: Multiple spaces collapsed on write
+
+- **GIVEN** Docling conversion produces Markdown with multiple consecutive spaces
+- **WHEN** the worker prepares to write `output.md`
+- **THEN** each run of 2+ spaces is collapsed to a single space
+
+#### Scenario: Multiple newlines collapsed on write
+
+- **GIVEN** Docling conversion produces Markdown with 3 or more consecutive newlines
+- **WHEN** the worker prepares to write `output.md`
+- **THEN** each run of 3+ newlines is collapsed to exactly 2 newlines
+
+#### Scenario: Indentation in code blocks preserved
+
+- **GIVEN** the Markdown contains code blocks with intentional indentation
+- **WHEN** whitespace normalization is applied
+- **THEN** the indentation within code blocks is preserved and not collapsed
+
+#### Scenario: Leading indentation for list nesting preserved
+
+<!-- markdownlint-disable MD038 -->
+
+- **GIVEN** the Markdown contains a nested list where nesting level is encoded by leading spaces (e.g. `- nested item` or `  - deeper item`)
+- **WHEN** whitespace normalization is applied
+- **THEN** the leading spaces on each line are preserved exactly, so list nesting structure is not altered
+
+<!-- markdownlint-enable -->
+
+#### Scenario: Trailing spaces on lines stripped
+
+- **GIVEN** the Markdown contains lines with one or more trailing spaces before the newline
+- **WHEN** whitespace normalization is applied
+- **THEN** all trailing spaces before newlines are removed
+- **AND** no two-space hard line breaks are introduced, because Docling never emits them
+
+#### Scenario: Tab characters expanded to spaces
+
+- **GIVEN** the Markdown contains tab characters outside code blocks
+- **WHEN** whitespace normalization is applied
+- **THEN** each tab is replaced by four spaces, which are then subject to space collapsing
+
+#### Scenario: Hash computed on normalized Markdown
+
+- **GIVEN** normalization modifies the Markdown text
+- **WHEN** the content hash is computed
+- **THEN** the hash is computed over the normalized Markdown, ensuring consistency across reruns with identical input
+
 ### Requirement: Compute a content hash for deduplication
 
 The system SHALL compute a content hash of the normalized Markdown output and store it with the conversion output record.
@@ -381,6 +433,7 @@ manifest, so the conversion can be replayed with identical parameters.
 - **Idempotency key**: hash of `aizk_uuid + payload_version + docling_version + config_hash + picture_description_enabled`
 - **Raw source provenance**: KaraKeep is the authoritative store for raw source content; `karakeep_id` is the durable provenance reference.
   Raw bytes are not archived locally.
+- **Whitespace normalization**: `aizk/conversion/utilities/whitespace.py` → `normalize_whitespace()`; applied in `_run_conversion()` before file write and hash computation; preserves code-fence content, list indentation, and strips trailing spaces
 - **Content hash**: xxhash64 of normalized Markdown (UTF-8, LF line endings) stored in the output record
 - **Manifest config_snapshot**: manifest includes a `config_snapshot` section with all Docling config fields and `picture_description_enabled` to enable exact replay.
 - **S3 layout**: artifacts at `s3://<bucket>/<aizk_uuid>/`; upload verification via ETag match (single-part) or content length (multipart)
