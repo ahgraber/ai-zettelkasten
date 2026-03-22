@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from pathlib import Path
-from typing import NoReturn, Optional
+from typing import ClassVar, NoReturn, Optional
 
 import boto3
 from botocore.exceptions import ClientError
@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 class S3Error(Exception):
     """Base exception for S3 errors."""
 
+    retryable: ClassVar[bool] = True
+
     def __init__(self, message: str, error_code: str):
         super().__init__(message)
         self.error_code = error_code
@@ -25,6 +27,8 @@ class S3Error(Exception):
 
 class S3UploadError(S3Error):
     """Raised when S3 upload fails."""
+
+    retryable: ClassVar[bool] = True
 
     def __init__(self, key: str, message: str):
         super().__init__(f"S3 upload failed for {key}: {message}", "s3_upload_failed")

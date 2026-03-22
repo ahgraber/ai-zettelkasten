@@ -260,19 +260,25 @@ The system SHALL upload all conversion artifacts to S3 and verify each upload be
 
 ### Requirement: Skip S3 overwrite when content hash matches
 
-The system SHALL compare the new content hash against the most recent conversion output and reuse the existing S3 location if the hashes match.
+The system SHALL compare the new content hash against prior conversion outputs for the same bookmark and reuse the existing S3 location if the hashes match, skipping re-upload.
 
 #### Scenario: Matching hash reuses existing artifacts
 
-- **GIVEN** a reprocessed bookmark produces Markdown with the same content hash as the previous output
+- **GIVEN** a reprocessed bookmark produces Markdown with the same content hash as a prior output for the same bookmark
 - **WHEN** the worker completes conversion
-- **THEN** the existing S3 artifacts are reused and a new output record is created pointing to the existing location without overwriting
+- **THEN** the existing S3 artifacts are reused and a new output record is created pointing to the existing location without re-uploading
 
 #### Scenario: Changed hash overwrites artifacts
 
 - **GIVEN** a reprocessed bookmark produces Markdown with a different content hash
 - **WHEN** the worker completes upload
-- **THEN** S3 artifacts are overwritten and a new output record is created
+- **THEN** S3 artifacts are uploaded and a new output record is created
+
+#### Scenario: No prior output skips hash comparison
+
+- **GIVEN** the bookmark has no prior succeeded conversion output
+- **WHEN** the worker completes conversion
+- **THEN** the worker proceeds with a full upload without attempting a hash comparison
 
 ### Requirement: Create a conversion output record on success
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -10,6 +11,8 @@ from sqlmodel import Session
 
 from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.conversion.storage.s3_client import S3Error, S3UploadError
 from aizk.conversion.utilities.bookmark_utils import BookmarkContentError
 from aizk.conversion.workers import converter, fetcher, worker
 from aizk.conversion.workers.worker import ConversionInput
@@ -975,3 +978,191 @@ def test_error_code_and_retryable_mapping() -> None:
     assert getattr(rce_perm, "retryable", True) is False
     rce_retry = worker.ReportedChildError("child failed", "transient", retryable=True)
     assert getattr(rce_retry, "retryable", False) is True
+
+    # S3 errors must carry explicit retryable attribute (not rely on getattr default)
+    s3e = S3Error("bucket not configured", "s3_upload_failed")
+    assert s3e.retryable is True
+    s3_upload_err = S3UploadError("key/obj", "ETag mismatch")
+    assert s3_upload_err.retryable is True
+
+
+def _make_workspace_metadata(tmp_path: Path, *, markdown_hash: str) -> Path:
+    """Write a minimal workspace with metadata.json and output.md."""
+    (tmp_path / "output.md").write_text("# Content")
+    metadata = {
+        "markdown_filename": "output.md",
+        "figure_files": [],
+        "markdown_hash_xx64": markdown_hash,
+        "docling_version": "1.0.0",
+        "pipeline_name": "html",
+        "fetched_at": "2026-01-01T00:00:00+00:00",
+        "config_snapshot": {
+            "docling_pdf_max_pages": 250,
+            "docling_enable_ocr": True,
+            "docling_enable_table_structure": True,
+            "docling_vlm_model": "none",
+            "docling_picture_timeout": 60.0,
+            "picture_description_enabled": False,
+        },
+    }
+    import json
+
+    (tmp_path / "metadata.json").write_text(json.dumps(metadata))
+    return tmp_path
+
+
+def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: Session, tmp_path: Path) -> None:
+    """When content hash matches a prior output, S3 upload is skipped and existing keys are reused."""
+    monkeypatch.setattr(worker, "get_engine", lambda _url=None: db_session.get_bind())
+
+    bookmark = Bookmark(
+        karakeep_id="bm_hash_reuse",
+        url="https://example.com",
+        normalized_url="https://example.com",
+        title="Hash Reuse",
+        content_type="html",
+        source_type="web",
+    )
+    db_session.add(bookmark)
+    db_session.commit()
+    db_session.refresh(bookmark)
+
+    prior_job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title="Hash Reuse",
+        idempotency_key="p" * 64,
+        status=ConversionJobStatus.SUCCEEDED,
+    )
+    db_session.add(prior_job)
+    db_session.commit()
+    db_session.refresh(prior_job)
+
+    known_hash = "abc123def456789a"
+    prior_output = ConversionOutput(
+        job_id=prior_job.id,
+        aizk_uuid=bookmark.aizk_uuid,
+        title="Hash Reuse",
+        payload_version=1,
+        s3_prefix=f"s3://bucket/{bookmark.aizk_uuid}/",
+        markdown_key=f"s3://bucket/{bookmark.aizk_uuid}/output.md",
+        manifest_key=f"s3://bucket/{bookmark.aizk_uuid}/manifest.json",
+        markdown_hash_xx64=known_hash,
+        figure_count=0,
+        docling_version="1.0.0",
+        pipeline_name="html",
+    )
+    db_session.add(prior_output)
+    db_session.commit()
+
+    new_job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title="Hash Reuse",
+        idempotency_key="n" * 64,
+        status=ConversionJobStatus.RUNNING,
+    )
+    db_session.add(new_job)
+    db_session.commit()
+    db_session.refresh(new_job)
+
+    workspace = _make_workspace_metadata(tmp_path, markdown_hash=known_hash)
+
+    upload_calls: list[str] = []
+
+    class _MockS3Client:
+        bucket = "bucket"
+
+        def upload_file(self, local_path, s3_key):
+            upload_calls.append(s3_key)
+            return f"s3://bucket/{s3_key}"
+
+    monkeypatch.setattr(worker, "S3Client", lambda _config: _MockS3Client())
+
+    worker._upload_converted(new_job.id, workspace)
+
+    assert upload_calls == [], "S3 upload should be skipped when hash matches"
+
+    db_session.refresh(new_job)
+    assert new_job.status == ConversionJobStatus.SUCCEEDED
+
+    from sqlmodel import select as _select
+
+    outputs = db_session.exec(_select(ConversionOutput).where(ConversionOutput.job_id == new_job.id)).all()
+    assert len(outputs) == 1
+    assert outputs[0].markdown_key == prior_output.markdown_key
+    assert outputs[0].s3_prefix == prior_output.s3_prefix
+    assert outputs[0].markdown_hash_xx64 == known_hash
+
+
+def test_upload_converted_uploads_when_hash_differs(monkeypatch, db_session: Session, tmp_path: Path) -> None:
+    """When no prior output has a matching hash, the full S3 upload proceeds."""
+    monkeypatch.setattr(worker, "get_engine", lambda _url=None: db_session.get_bind())
+
+    bookmark = Bookmark(
+        karakeep_id="bm_hash_upload",
+        url="https://example.com",
+        normalized_url="https://example.com",
+        title="Hash Upload",
+        content_type="html",
+        source_type="web",
+    )
+    db_session.add(bookmark)
+    db_session.commit()
+    db_session.refresh(bookmark)
+
+    new_job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title="Hash Upload",
+        idempotency_key="u" * 64,
+        status=ConversionJobStatus.RUNNING,
+    )
+    db_session.add(new_job)
+    db_session.commit()
+    db_session.refresh(new_job)
+
+    workspace = _make_workspace_metadata(tmp_path, markdown_hash="newhash00000001a")
+
+    upload_calls: list[str] = []
+
+    class _MockS3Client:
+        bucket = "test-bucket"
+
+        def upload_file(self, local_path, s3_key):
+            upload_calls.append(s3_key)
+            return f"s3://test-bucket/{s3_key}"
+
+    monkeypatch.setattr(worker, "S3Client", lambda _config: _MockS3Client())
+
+    worker._upload_converted(new_job.id, workspace)
+
+    assert any("output.md" in key for key in upload_calls), "Markdown should be uploaded when no hash match"
+
+    db_session.refresh(new_job)
+    assert new_job.status == ConversionJobStatus.SUCCEEDED
+
+
+def test_initialize_running_job_returns_false_for_cancelled_after_running_set(
+    db_session: Session,
+) -> None:
+    """Job cancelled after poll sets RUNNING is detected before subprocess starts."""
+    bookmark = _create_bookmark(db_session)
+    # Simulate the state after poll_and_process_jobs committed RUNNING
+    job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title,
+        idempotency_key="r" * 64,
+        status=ConversionJobStatus.RUNNING,
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+
+    # API cancels the job (happens between poll commit and _initialize_running_job call)
+    job.status = ConversionJobStatus.CANCELLED
+    db_session.add(job)
+    db_session.commit()
+
+    result = worker._initialize_running_job(job.id, db_session.get_bind())
+
+    assert result is False, "Should not proceed when job is CANCELLED"
+    db_session.refresh(job)
+    assert job.status == ConversionJobStatus.CANCELLED, "Status must not be changed back to RUNNING"
