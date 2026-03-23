@@ -25,6 +25,15 @@ class S3Error(Exception):
         self.error_code = error_code
 
 
+class S3NotFoundError(S3Error):
+    """Raised when a requested S3 object does not exist."""
+
+    retryable: ClassVar[bool] = False
+
+    def __init__(self, key: str):
+        super().__init__(f"S3 object not found: {key}", "s3_not_found")
+
+
 class S3UploadError(S3Error):
     """Raised when S3 upload fails."""
 
@@ -52,6 +61,33 @@ class S3Client:
             region_name=config.s3_region,
         )
         self.bucket = config.s3_bucket_name
+
+    def get_object_bytes(self, s3_key: str) -> bytes:
+        """Fetch object bytes from S3.
+
+        Args:
+            s3_key: S3 object key.
+
+        Returns:
+            Object contents as bytes.
+
+        Raises:
+            S3NotFoundError: If the key does not exist (non-retryable).
+            S3Error: For other S3 failures (retryable).
+        """
+        try:
+            response = self.client.get_object(Bucket=self.bucket, Key=s3_key)
+            return response["Body"].read()
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            if error_code in ("NoSuchKey", "404"):
+                raise S3NotFoundError(s3_key) from e
+            error_message = e.response.get("Error", {}).get("Message", str(e))
+            logger.exception("S3 get failed for %s: %s (%s)", s3_key, error_message, error_code)
+            raise S3Error(f"S3 get failed for {s3_key}: {error_code}: {error_message}", error_code) from e
+        except Exception as e:
+            logger.exception("S3 get failed for %s", s3_key)
+            raise S3Error(f"S3 get failed for {s3_key}: {e}", "s3_get_failed") from e
 
     def upload_file(self, local_path: Path, s3_key: str) -> str:
         """Upload a file to S3 with verification.
