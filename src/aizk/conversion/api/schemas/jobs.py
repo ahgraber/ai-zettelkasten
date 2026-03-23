@@ -68,6 +68,26 @@ class JobStatusCounts(BaseModel):
     total: int
 
 
+class OutputResponse(BaseModel):
+    """Response schema for a conversion output record."""
+
+    id: int
+    job_id: int
+    aizk_uuid: UUID
+    title: str
+    payload_version: int
+    s3_prefix: str
+    markdown_key: str
+    manifest_key: str
+    markdown_hash_xx64: str
+    figure_count: int
+    docling_version: str
+    pipeline_name: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class BulkJobActionRequest(BaseModel):
     """Request schema for bulk job actions."""
 
