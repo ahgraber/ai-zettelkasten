@@ -13,7 +13,7 @@ from pathlib import Path
 import queue as queue_module
 import tempfile
 import time
-from typing import Literal
+from typing import ClassVar, Literal
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
@@ -96,19 +96,21 @@ class ConversionArtifactsMissingError(RuntimeError):
     """Raised when expected conversion artifacts are missing."""
 
     error_code = "conversion_artifacts_missing"
+    retryable: ClassVar[bool] = False
 
 
 class ConversionCancelledError(RuntimeError):
     """Raised when a conversion job is cancelled during processing."""
 
     error_code = "conversion_cancelled"
+    retryable: ClassVar[bool] = False
 
 
 class ConversionTimeoutError(RuntimeError):
     """Raised when a conversion job exceeds the configured timeout."""
 
     error_code = "conversion_timeout"
-    retryable = True
+    retryable: ClassVar[bool] = True
 
     def __init__(self, message: str, phase: str) -> None:
         super().__init__(message)
@@ -119,18 +121,20 @@ class ConversionSubprocessError(RuntimeError):
     """Raised when the conversion subprocess exits unexpectedly."""
 
     error_code = "conversion_subprocess_failed"
-    retryable = True
+    retryable: ClassVar[bool] = True
 
 
 class JobDataIntegrityError(RuntimeError):
     """Raised when job data invariants are violated."""
 
     error_code = "job_data_integrity"
-    retryable = False
+    retryable: ClassVar[bool] = False
 
 
 class ReportedChildError(RuntimeError):
     """Raised when a child process reports a failure."""
+
+    retryable: ClassVar[bool] = True
 
     def __init__(self, message: str, error_code: str, *, retryable: bool | None = None) -> None:
         super().__init__(message)
@@ -143,7 +147,7 @@ class PreflightError(RuntimeError):
     """Raised when preflight validation fails unexpectedly."""
 
     error_code = "conversion_preflight_failed"
-    retryable = True
+    retryable: ClassVar[bool] = True
 
 
 def _utcnow() -> dt.datetime:
@@ -541,7 +545,7 @@ def _process_job_subprocess(
         JobDataIntegrityError,
     ) as exc:
         error_code = getattr(exc, "error_code", "conversion_failed")
-        retryable = getattr(exc, "retryable", True)
+        retryable = exc.retryable
         _report_status(
             status_queue,
             event="failed",
@@ -852,8 +856,7 @@ def process_job_supervised(job_id: int, poll_interval_seconds: float = 2.0) -> N
 def handle_job_error(job_id: int, error: Exception) -> None:
     """Persist job failure details and compute retryability.
 
-    Retry decision uses a type-safe `retryable` attribute when available,
-    defaulting to True for backward compatibility.
+    Retry decision uses the `retryable` class attribute on every exception class.
     """
     config = ConversionConfig()
     engine = get_engine(config.database_url)
@@ -862,7 +865,7 @@ def handle_job_error(job_id: int, error: Exception) -> None:
     error_code = getattr(error, "error_code", "conversion_failed")
     message = str(error)
 
-    retryable = getattr(error, "retryable", True)
+    retryable: bool = error.retryable  # type: ignore[attr-defined]
 
     with Session(engine) as session:
         job = session.get(ConversionJob, job_id)
