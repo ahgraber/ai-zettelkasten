@@ -128,7 +128,34 @@ The system SHALL guarantee that the temporary workspace created for a job is rem
 
 ### Requirement: Classify errors as retryable or permanent
 
-The system SHALL classify each error type as retryable or permanent via an explicit `retryable: bool` class attribute on every exception class, and SHALL use this classification to determine the resulting job status without relying on error message matching or `getattr` fallbacks.
+The system SHALL classify each error type as retryable or permanent via an explicit
+`retryable: bool` class attribute on every exception class, and SHALL use this classification
+to determine the resulting job status without relying on error message matching or `getattr`
+fallbacks.
+
+The following exception classes SHALL carry the attribute:
+
+| Class                             | `retryable` value      | Rationale                                                                             |
+| --------------------------------- | ---------------------- | ------------------------------------------------------------------------------------- |
+| `ConversionArtifactsMissingError` | `False`                | Missing artifacts indicate a permanent data failure; retrying will not produce output |
+| `ConversionCancelledError`        | `False`                | Job was explicitly cancelled by the user; retrying is not appropriate                 |
+| `ConversionTimeoutError`          | `True`                 | Transient; fresh timeout window on retry                                              |
+| `ConversionSubprocessError`       | `True`                 | Transient subprocess crash; eligible for retry                                        |
+| `JobDataIntegrityError`           | `False`                | Non-recoverable data invariant violation                                              |
+| `PreflightError`                  | `True`                 | Transient preflight failure; eligible for retry                                       |
+| `ReportedChildError`              | `True` (class default) | Child errors default to retryable; individual instances may override                  |
+| `S3Error`                         | `True`                 | Transient storage error                                                               |
+| `S3UploadError`                   | `True`                 | Transient upload error                                                                |
+
+`handle_job_error()` and `_process_job_subprocess()` SHALL read `error.retryable` directly,
+without a `getattr` fallback.
+
+#### Scenario: Permanent error for missing artifacts
+
+- **GIVEN** conversion output artifacts are missing after the subprocess completes
+- **WHEN** `handle_job_error()` processes the `ConversionArtifactsMissingError`
+- **THEN** the `retryable` attribute is read directly from the exception class (value: `False`),
+  and the job transitions to `FAILED_PERM`
 
 #### Scenario: Retryable error transitions job to FAILED_RETRYABLE
 
@@ -141,6 +168,13 @@ The system SHALL classify each error type as retryable or permanent via an expli
 - **GIVEN** a non-recoverable error occurs (missing content, data integrity violation)
 - **WHEN** the error handler processes it
 - **THEN** the job transitions to FAILED_PERM
+
+#### Scenario: Child-reported error with no explicit retryability uses class default
+
+- **GIVEN** the conversion subprocess reports a failure without specifying retryability
+- **WHEN** `handle_job_error()` processes the resulting `ReportedChildError`
+- **THEN** the class-level `retryable = True` default applies, classifying the job as
+  `FAILED_RETRYABLE`
 
 ## Technical Notes
 

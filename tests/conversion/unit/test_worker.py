@@ -919,8 +919,8 @@ def test_handle_job_error_permanent_sets_failed_perm(monkeypatch, db_session: Se
     assert job.finished_at is not None
 
 
-def test_handle_job_error_defaults_to_retryable_without_attr(monkeypatch, db_session: Session) -> None:
-    """Exceptions without a retryable attribute default to retryable (FAILED_RETRYABLE)."""
+def test_handle_job_error_missing_artifacts_is_permanent(monkeypatch, db_session: Session) -> None:
+    """ConversionArtifactsMissingError is a permanent failure (retryable=False)."""
     monkeypatch.setattr(worker, "get_engine", lambda _database_url=None: db_session.get_bind())
 
     bookmark = _create_bookmark(db_session)
@@ -935,51 +935,65 @@ def test_handle_job_error_defaults_to_retryable_without_attr(monkeypatch, db_ses
     db_session.commit()
     db_session.refresh(job)
 
-    worker.handle_job_error(job.id, RuntimeError("generic error"))
+    worker.handle_job_error(job.id, worker.ConversionArtifactsMissingError("no artifacts"))
 
     db_session.refresh(job)
-    assert job.status == ConversionJobStatus.FAILED_RETRYABLE
-    assert job.earliest_next_attempt_at is not None
+    assert job.status == ConversionJobStatus.FAILED_PERM
+    assert job.finished_at is not None
 
 
 def test_error_code_and_retryable_mapping() -> None:
-    """Verify error_code and retryable combinations for key exception types."""
-    # Worker-defined errors
+    """Every exception class carries an explicit retryable class attribute."""
+    # Worker-defined errors — permanent
     jde = worker.JobDataIntegrityError("bad job")
+    assert jde.error_code == "job_data_integrity"
+    assert jde.retryable is False
+
+    ame = worker.ConversionArtifactsMissingError("no output")
+    assert ame.error_code == "conversion_artifacts_missing"
+    assert ame.retryable is False
+
+    cce = worker.ConversionCancelledError("job cancelled")
+    assert cce.error_code == "conversion_cancelled"
+    assert cce.retryable is False
+
+    # Worker-defined errors — retryable
     cto = worker.ConversionTimeoutError("timeout", phase="converting")
+    assert cto.error_code == "conversion_timeout"
+    assert cto.retryable is True
+
     cse = worker.ConversionSubprocessError("subprocess failed")
+    assert cse.error_code == "conversion_subprocess_failed"
+    assert cse.retryable is True
 
-    assert getattr(jde, "error_code", None) == "job_data_integrity"
-    assert getattr(jde, "retryable", True) is False
+    pfe = worker.PreflightError("preflight failed")
+    assert pfe.error_code == "conversion_preflight_failed"
+    assert pfe.retryable is True
 
-    assert getattr(cto, "error_code", None) == "conversion_timeout"
-    assert getattr(cto, "retryable", False) is True
+    # ReportedChildError: class default is retryable; instance can override
+    rce_default = worker.ReportedChildError("child failed", "transient")
+    assert rce_default.retryable is True  # class-level default
+    rce_perm = worker.ReportedChildError("child failed", "docling_empty_output", retryable=False)
+    assert rce_perm.retryable is False  # instance override
+    rce_retry = worker.ReportedChildError("child failed", "transient", retryable=True)
+    assert rce_retry.retryable is True
 
-    assert getattr(cse, "error_code", None) == "conversion_subprocess_failed"
-    assert getattr(cse, "retryable", False) is True
-
-    # Bookmark content error (permanent)
+    # Bookmark content errors (permanent)
     bce = BookmarkContentError("missing")
-    assert getattr(bce, "error_code", None) == "karakeep_bookmark_missing_contents"
-    assert getattr(bce, "retryable", True) is False
+    assert bce.error_code == "karakeep_bookmark_missing_contents"
+    assert bce.retryable is False
 
     # Converter errors
     deo = converter.DoclingEmptyOutputError()
-    assert getattr(deo, "error_code", None) == "docling_empty_output"
-    assert getattr(deo, "retryable", True) is False
+    assert deo.error_code == "docling_empty_output"
+    assert deo.retryable is False
 
     # Fetcher errors
     fe = fetcher.FetchError("network")
-    assert getattr(fe, "error_code", None) == "fetch_error"
-    assert getattr(fe, "retryable", False) is True
+    assert fe.error_code == "fetch_error"
+    assert fe.retryable is True
 
-    # Reported child error mapping based on error_code
-    rce_perm = worker.ReportedChildError("child failed", "docling_empty_output", retryable=False)
-    assert getattr(rce_perm, "retryable", True) is False
-    rce_retry = worker.ReportedChildError("child failed", "transient", retryable=True)
-    assert getattr(rce_retry, "retryable", False) is True
-
-    # S3 errors must carry explicit retryable attribute (not rely on getattr default)
+    # S3 errors
     s3e = S3Error("bucket not configured", "s3_upload_failed")
     assert s3e.retryable is True
     s3_upload_err = S3UploadError("key/obj", "ETag mismatch")
