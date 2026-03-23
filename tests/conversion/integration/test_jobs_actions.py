@@ -88,9 +88,33 @@ def test_bulk_retry_resets_failed_jobs(db_session) -> None:
     db_session.refresh(job_retryable)
     db_session.refresh(job_cancelled)
     assert job_retryable.status == ConversionJobStatus.QUEUED
-    assert job_retryable.attempts == 1
+    assert job_retryable.attempts == 2
     assert job_cancelled.status == ConversionJobStatus.QUEUED
-    assert job_cancelled.attempts == 2
+    assert job_cancelled.attempts == 3
+
+
+def test_single_retry_increments_attempt_count(db_session) -> None:
+    app = create_app()
+    bookmark = _create_bookmark(db_session, "bm_single_retry", "https://example.com/single", "Single Retry")
+    job = _create_job(
+        db_session,
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title,
+        status=ConversionJobStatus.FAILED_RETRYABLE,
+        idempotency_key="e" * 64,
+        attempts=3,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(f"/v1/jobs/{job.id}/retry")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "QUEUED"
+    assert payload["attempts"] == 4
+
+    db_session.refresh(job)
+    assert job.attempts == 4
 
 
 def test_bulk_cancel_marks_queued_and_running_jobs(db_session) -> None:
