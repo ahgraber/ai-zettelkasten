@@ -136,7 +136,8 @@ def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
         job = response.json()
         job_id = job["id"]
 
-        worker.process_job_supervised(job_id)
+        config = ConversionConfig(_env_file=None)
+        worker.process_job_supervised(job_id, config)
 
         job_response = client.get(f"/v1/jobs/{job_id}")
         assert job_response.status_code == 200
@@ -168,14 +169,14 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch, html_bookmark):
     )
 
     def _run_conversion(**kwargs):
-        engine = get_engine(ConversionConfig().database_url)
+        engine = get_engine(ConversionConfig(_env_file=None).database_url)
         with Session(engine) as session:
             job_record = session.get(ConversionJob, kwargs["job"].id)
             job_record.status = ConversionJobStatus.CANCELLED
             session.add(job_record)
             session.commit()
 
-    def _upload_converted(_job_id, _workspace):
+    def _upload_converted(_job_id, _workspace, _config):
         raise AssertionError("Upload should not run for cancelled jobs")
 
     monkeypatch.setattr("aizk.conversion.workers.worker._run_conversion", _run_conversion)
@@ -192,9 +193,10 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch, html_bookmark):
         job = response.json()
         job_id = job["id"]
 
-        worker.process_job_supervised(job_id)
+        config = ConversionConfig(_env_file=None)
+        worker.process_job_supervised(job_id, config)
 
-    engine = get_engine(ConversionConfig().database_url)
+    engine = get_engine(ConversionConfig(_env_file=None).database_url)
     with Session(engine) as session:
         job_record = session.get(ConversionJob, job_id)
         assert job_record.status == ConversionJobStatus.CANCELLED

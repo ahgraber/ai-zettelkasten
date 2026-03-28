@@ -69,9 +69,10 @@ def mock_s3() -> MagicMock:
 
 @pytest.fixture()
 def client(db_session, mock_s3) -> TestClient:
-    from aizk.conversion.api.dependencies import get_s3_client
+    from aizk.conversion.api.dependencies import get_db_session, get_s3_client
 
     app = create_app()
+    app.dependency_overrides[get_db_session] = lambda: db_session
     app.dependency_overrides[get_s3_client] = lambda: mock_s3
     return TestClient(app)
 

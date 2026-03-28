@@ -8,7 +8,6 @@ from sqlalchemy import Engine, event
 from sqlmodel import Session, SQLModel, create_engine
 
 import aizk.conversion.datamodel  # noqa: F401
-from aizk.conversion.utilities.config import ConversionConfig
 
 
 def _configure_sqlite_pragmas(engine: Engine) -> None:
@@ -27,12 +26,8 @@ def _configure_sqlite_pragmas(engine: Engine) -> None:
 _ENGINE_CACHE: dict[str, Engine] = {}
 
 
-def get_engine(database_url: str | None = None) -> Engine:
+def get_engine(database_url: str) -> Engine:
     """Create a database engine with SQLite tuning when applicable."""
-    if database_url is None:
-        config = ConversionConfig()
-        database_url = config.database_url
-
     if engine := _ENGINE_CACHE.get(database_url):
         return engine
 
@@ -47,14 +42,12 @@ def get_engine(database_url: str | None = None) -> Engine:
     return engine
 
 
-def get_session(engine: Engine | None = None) -> Iterator[Session]:
+def get_session(engine: Engine) -> Iterator[Session]:
     """Yield a SQLModel session for dependency injection."""
-    engine = engine or get_engine()
     with Session(engine) as session:
         yield session
 
 
-def create_db_and_tables(engine: Engine | None = None) -> None:
+def create_db_and_tables(engine: Engine) -> None:
     """Create database tables for conversion service models."""
-    engine = engine or get_engine()
     SQLModel.metadata.create_all(engine)
