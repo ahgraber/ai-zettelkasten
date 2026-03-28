@@ -256,8 +256,9 @@ def test_real_subprocess_spawned_and_terminated(monkeypatch, db_session: Session
 
     # Run the job
     poll_interval_seconds = 0.1
+    config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    worker.process_job_supervised(job.id, poll_interval_seconds=poll_interval_seconds)
+    worker.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
 
     # Verify subprocess was spawned
     assert len(spawned_process) == 1, "Should have spawned one subprocess"
@@ -297,8 +298,9 @@ def test_cancelled_job_terminates_subprocess_with_no_zombies(monkeypatch, db_ses
     monkeypatch.setattr(worker, "_is_job_cancelled", lambda _job_id, _engine: True)
 
     poll_interval_seconds = 1
+    config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    worker.process_job_supervised(job.id, poll_interval_seconds=poll_interval_seconds)
+    worker.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
 
     assert len(spawned_process) == 1
     spawned_pid = spawned_process[0].pid
@@ -335,12 +337,13 @@ def test_timeout_terminates_subprocess(monkeypatch, db_session: Session, html_bo
 
     # Mock handle_job_error to capture timeout error
     errors = []
-    monkeypatch.setattr(worker, "handle_job_error", lambda _job_id, error: errors.append(error))
+    monkeypatch.setattr(worker, "handle_job_error", lambda _job_id, error, _config: errors.append(error))
 
     poll_interval_seconds = 0.1
+    config = ConversionConfig(_env_file=None)
     start = time.monotonic()
     assert job.id is not None
-    worker.process_job_supervised(job.id, poll_interval_seconds=poll_interval_seconds)
+    worker.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
     duration = time.monotonic() - start
 
     # Verify timeout error was raised
@@ -382,7 +385,7 @@ def test_subprocess_completes_normally_no_zombies(
     monkeypatch.setattr(worker, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(worker, "_process_job_subprocess", _test_process_subprocess)
-    monkeypatch.setattr(worker, "_upload_converted", lambda _job_id, _workspace: None)  # Skip upload
+    monkeypatch.setattr(worker, "_upload_converted", lambda _job_id, _workspace, _config: None)  # Skip upload
 
     ctx = worker.mp.get_context("spawn")
     monkeypatch.setattr(ctx, "Process", _track_process)
@@ -407,8 +410,9 @@ def test_subprocess_completes_normally_no_zombies(
     monkeypatch.setattr(worker.tempfile, "TemporaryDirectory", _TrackedTemporaryDirectory)
 
     poll_interval_seconds = 0.1
+    config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    worker.process_job_supervised(job.id, poll_interval_seconds=poll_interval_seconds)
+    worker.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
 
     assert len(spawned_process) == 1
     spawned_pid = spawned_process[0].pid
@@ -457,8 +461,9 @@ def test_process_group_terminates_grandchild(
     monkeypatch.setattr(worker, "_is_job_cancelled", _cancel_when_ready)
 
     poll_interval_seconds = 0.1
+    config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    worker.process_job_supervised(job.id, poll_interval_seconds=poll_interval_seconds)
+    worker.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
 
     assert len(spawned_process) == 1
     spawned_pid = spawned_process[0].pid
@@ -519,8 +524,9 @@ def test_sigterm_graceful_shutdown_within_grace_period(
     monkeypatch.setattr(worker, "_is_job_cancelled", _mock_is_cancelled)
 
     poll_interval_seconds = 0.1
+    config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    worker.process_job_supervised(job.id, poll_interval_seconds=poll_interval_seconds)
+    worker.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
 
     if cancel_state["cancel_time"] is not None:
         cancel_elapsed = time.monotonic() - cancel_state["cancel_time"]
@@ -561,12 +567,13 @@ def test_sigkill_after_sigterm_on_timeout(monkeypatch, db_session: Session, html
     monkeypatch.setattr(worker, "_is_job_cancelled", lambda _job_id, _engine: False)
 
     errors = []
-    monkeypatch.setattr(worker, "handle_job_error", lambda _job_id, error: errors.append(error))
+    monkeypatch.setattr(worker, "handle_job_error", lambda _job_id, error, _config: errors.append(error))
 
     start = time.monotonic()
     poll_interval_seconds = 0.1
+    config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    worker.process_job_supervised(job.id, poll_interval_seconds=poll_interval_seconds)
+    worker.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
     duration = time.monotonic() - start
 
     assert len(errors) == 1
@@ -622,8 +629,9 @@ def test_cancel_mid_execution_terminates_within_poll_interval(
     monkeypatch.setattr(worker, "_is_job_cancelled", _mock_is_cancelled)
 
     poll_interval_seconds = 0.1
+    config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    worker.process_job_supervised(job.id, poll_interval_seconds=poll_interval_seconds)
+    worker.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
 
     assert cancel_state["cancel_time"] is not None
     cancel_elapsed = time.monotonic() - cancel_state["cancel_time"]
@@ -647,7 +655,7 @@ def test_recover_stale_running_job_marks_retryable(monkeypatch, db_session: Sess
     db_session.commit()
     db_session.refresh(job)
 
-    config = ConversionConfig()
+    config = ConversionConfig(_env_file=None)
     recovered = worker.recover_stale_running_jobs(config)
 
     assert recovered == 1

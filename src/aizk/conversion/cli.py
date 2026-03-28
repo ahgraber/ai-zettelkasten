@@ -64,7 +64,7 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
         from aizk.conversion.workers.worker import run_worker
     except ImportError as exc:
         raise RuntimeError("Worker implementation is not available yet.") from exc
-    run_worker()
+    run_worker(config)
     return 0
 
 
