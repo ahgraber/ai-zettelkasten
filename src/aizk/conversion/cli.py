@@ -24,11 +24,9 @@ def _require_karakeep_env() -> None:
 def _cmd_db_init(_args: argparse.Namespace) -> int:
     """Initialize database tables via Alembic migrations."""
     setproctitle("docling-db-init")
-    from alembic import command
-    from alembic.config import Config
+    from aizk.conversion.migrations import run_migrations
 
-    alembic_cfg = Config("alembic.ini")
-    command.upgrade(alembic_cfg, "head")
+    run_migrations()
     return 0
 
 
@@ -63,6 +61,9 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
         experiment_name=config.mlflow_experiment_name,
     )
     LitestreamManager(config, role="worker").start()
+    from aizk.conversion.migrations import run_migrations
+
+    run_migrations()
     try:
         from aizk.conversion.workers.loop import run_worker
     except ImportError as exc:

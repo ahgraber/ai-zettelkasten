@@ -62,12 +62,11 @@ def set_test_env(monkeypatch: pytest.MonkeyPatch, test_db_path: Path) -> None:
 @pytest.fixture()
 def db_engine(test_db_path: Path):
     """Create and initialize a SQLite engine for tests via Alembic migrations."""
-    from alembic import command
-    from alembic.config import Config
+    from aizk.conversion.migrations import run_migrations
 
-    alembic_cfg = Config("alembic.ini")
-    command.upgrade(alembic_cfg, "head")
-    return get_engine(f"sqlite:///{test_db_path}")
+    db_url = f"sqlite:///{test_db_path}"
+    run_migrations(db_url)
+    return get_engine(db_url)
 
 
 @pytest.fixture()
