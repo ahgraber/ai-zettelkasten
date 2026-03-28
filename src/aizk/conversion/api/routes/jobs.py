@@ -12,9 +12,9 @@ from sqlalchemy import func
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import Session, select
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
-from aizk.conversion.api.dependencies import get_db_session
+from aizk.conversion.api.dependencies import get_config, get_db_session
 from aizk.conversion.api.schemas import (
     ArtifactSummary,
     BulkActionResponse,
@@ -29,7 +29,6 @@ from aizk.conversion.api.schemas import (
 from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
-from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.hashing import compute_idempotency_key
 
 logger = logging.getLogger(__name__)
@@ -145,9 +144,10 @@ def submit_job(
     submission: JobSubmission,
     api_response: Response,
     session: Annotated[Session, Depends(get_db_session)],
+    request: Request,
 ) -> JobResponse:
     """Submit a new conversion job."""
-    config = ConversionConfig()
+    config = get_config(request)
 
     bookmark = session.exec(select(Bookmark).where(Bookmark.karakeep_id == submission.karakeep_id)).first()
     if not bookmark:

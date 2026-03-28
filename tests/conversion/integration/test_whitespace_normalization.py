@@ -129,20 +129,22 @@ def test_whitespace_normalization_produces_stable_output(monkeypatch, html_bookm
     monkeypatch.setattr("aizk.conversion.workers.worker.S3Client.upload_file", _upload_file)
 
     with TestClient(app) as client:
+        config = ConversionConfig(_env_file=None)
+
         resp1 = client.post("/v1/jobs", json={"karakeep_id": "bm_ws_stable_001"})
         assert resp1.status_code == 201
-        worker.process_job_supervised(resp1.json()["id"])
+        worker.process_job_supervised(resp1.json()["id"], config)
 
         resp2 = client.post("/v1/jobs", json={"karakeep_id": "bm_ws_stable_002"})
         assert resp2.status_code == 201
-        worker.process_job_supervised(resp2.json()["id"])
+        worker.process_job_supervised(resp2.json()["id"], config)
 
     assert len(captured_markdown_bodies) == 2, "output.md should be uploaded for both jobs"
     assert captured_markdown_bodies[0] == captured_markdown_bodies[1], (
         "output.md is not byte-identical across two conversions with different whitespace artifacts"
     )
 
-    engine = get_engine(ConversionConfig().database_url)
+    engine = get_engine(ConversionConfig(_env_file=None).database_url)
     with Session(engine) as session:
         outputs = session.exec(select(ConversionOutput).order_by(ConversionOutput.id)).all()
     assert len(outputs) == 2
