@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
 from aizk.conversion.api.routes import bookmarks_router, jobs_router, outputs_router, ui_router
-from aizk.conversion.db import create_db_and_tables
+from aizk.conversion.db import create_db_and_tables, get_engine
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.logging import configure_logging
 from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
@@ -25,7 +25,7 @@ async def lifespan(_app: FastAPI):
         tracking_uri=config.mlflow_tracking_uri,
         experiment_name=config.mlflow_experiment_name,
     )
-    create_db_and_tables()
+    create_db_and_tables(get_engine(config.database_url))
     yield
 
 

@@ -8,7 +8,7 @@ from sqlmodel import Session
 
 from fastapi import Request
 
-from aizk.conversion.db import get_session
+from aizk.conversion.db import get_engine, get_session
 from aizk.conversion.storage.s3_client import S3Client
 from aizk.conversion.utilities.config import ConversionConfig
 
@@ -18,9 +18,10 @@ def get_config(request: Request) -> ConversionConfig:
     return request.app.state.config
 
 
-def get_db_session() -> Iterator[Session]:
+def get_db_session(request: Request) -> Iterator[Session]:
     """Provide a database session for request handling."""
-    yield from get_session()
+    config = get_config(request)
+    yield from get_session(get_engine(config.database_url))
 
 
 def get_s3_client(request: Request) -> S3Client:
