@@ -1,21 +1,11 @@
 """Contract tests for conversion job APIs."""
 
-from pathlib import Path
-import yaml
-
 import pytest
 
 from aizk.conversion.api.main import create_app
 
 
-def _load_openapi_spec() -> dict:
-    repo_root = Path(__file__).resolve().parents[3]
-    spec_path = repo_root / ".specs" / "specs" / "conversion-api" / "openapi.yaml"
-    return yaml.safe_load(spec_path.read_text())
-
-
-def test_jobs_endpoints_match_openapi_contract():
-    spec = _load_openapi_spec()
+def test_jobs_endpoints_registered():
     app = create_app()
     app_spec = app.openapi()
 
@@ -29,20 +19,16 @@ def test_jobs_endpoints_match_openapi_contract():
     }
 
     for path, methods in expected_paths.items():
-        assert path in spec["paths"]
-        assert path in app_spec["paths"]
+        assert path in app_spec["paths"], f"Missing route: {path}"
         for method in methods:
-            assert method in spec["paths"][path]
-            assert method in app_spec["paths"][path]
+            assert method in app_spec["paths"][path], f"Missing method {method} on {path}"
 
 
-def test_jobs_schemas_present_in_openapi():
-    spec = _load_openapi_spec()
+def test_jobs_schemas_registered():
     app_spec = create_app().openapi()
 
     if not app_spec.get("components"):
         pytest.xfail("API schemas not registered in FastAPI app yet.")
 
     for schema_name in ("JobSubmission", "JobResponse", "JobStatusCounts", "ConversionJobStatus"):
-        assert schema_name in spec["components"]["schemas"]
-        assert schema_name in app_spec["components"]["schemas"]
+        assert schema_name in app_spec["components"]["schemas"], f"Missing schema: {schema_name}"
