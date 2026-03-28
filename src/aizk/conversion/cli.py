@@ -9,7 +9,7 @@ import sys
 from setproctitle import setproctitle
 import uvicorn
 
-from aizk.conversion.db import create_db_and_tables
+from aizk.conversion.db import create_db_and_tables, get_engine
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.litestream import LitestreamManager
 from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
@@ -25,7 +25,8 @@ def _require_karakeep_env() -> None:
 def _cmd_db_init(_args: argparse.Namespace) -> int:
     """Initialize database tables."""
     setproctitle("docling-db-init")
-    create_db_and_tables()
+    config = ConversionConfig()
+    create_db_and_tables(get_engine(config.database_url))
     return 0
 
 
@@ -64,7 +65,7 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
         from aizk.conversion.workers.worker import run_worker
     except ImportError as exc:
         raise RuntimeError("Worker implementation is not available yet.") from exc
-    run_worker()
+    run_worker(config)
     return 0
 
 

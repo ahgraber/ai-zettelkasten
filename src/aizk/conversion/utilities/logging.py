@@ -48,9 +48,8 @@ class ContextLoggerAdapter(logging.LoggerAdapter):
         return msg, kwargs
 
 
-def configure_logging(config: ConversionConfig | None = None) -> None:
+def configure_logging(config: ConversionConfig) -> None:
     """Configure logging for the conversion service."""
-    config = config or ConversionConfig()
     handler = logging.StreamHandler()
     handler.addFilter(ContextFilter())
     if config.log_format.lower() == "json":

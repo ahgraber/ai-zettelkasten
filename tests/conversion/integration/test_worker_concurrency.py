@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped
 from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers import worker as worker_module
 
 
@@ -45,7 +46,11 @@ def test_poll_and_process_jobs_is_atomic(db_session, monkeypatch):
     db_session.commit()
 
     # Avoid running the full job pipeline; this test only cares about the claim step.
-    monkeypatch.setattr(worker_module, "process_job_supervised", lambda _job_id, poll_interval_seconds=2.0: None)
+    monkeypatch.setattr(
+        worker_module, "process_job_supervised", lambda _job_id, _config, poll_interval_seconds=2.0: None
+    )
+
+    config = ConversionConfig(_env_file=None)
 
     # Two workers start at the same time to contend for the same queued job.
     barrier = threading.Barrier(3)
@@ -54,7 +59,7 @@ def test_poll_and_process_jobs_is_atomic(db_session, monkeypatch):
 
     def _runner() -> None:
         barrier.wait()
-        result = worker_module.poll_and_process_jobs()
+        result = worker_module.poll_and_process_jobs(config)
         with lock:
             results.append(result)
 

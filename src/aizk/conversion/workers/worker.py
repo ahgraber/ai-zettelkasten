@@ -395,9 +395,8 @@ def _convert_job_artifacts(
     )
 
 
-def _upload_converted(job_id: int, workspace: Path) -> None:
+def _upload_converted(job_id: int, workspace: Path, config: ConversionConfig) -> None:
     """Upload artifacts to S3 and record conversion output in the DB."""
-    config = ConversionConfig()
     engine = get_engine(config.database_url)
     metadata_file = metadata_path(workspace)
     if not metadata_file.exists():
@@ -656,6 +655,7 @@ def _supervise_conversion_process(
     poll_interval_seconds: float,
     deadline: float | None,
     timeout_seconds: float,
+    config: ConversionConfig,
 ) -> SupervisionResult:
     """Monitor the subprocess for cancellation or timeout."""
     import signal
@@ -702,6 +702,7 @@ def _supervise_conversion_process(
                     f"Job {job_id} exceeded its runtime during {last_phase}",
                     last_phase,
                 ),
+                config,
             )
             return SupervisionResult(last_phase, reported_error, False, True)
 
@@ -716,12 +717,11 @@ def _supervise_conversion_process(
     return SupervisionResult(last_phase, reported_error, False, False)
 
 
-def process_job_supervised(job_id: int, poll_interval_seconds: float = 2.0) -> None:
+def process_job_supervised(job_id: int, config: ConversionConfig, poll_interval_seconds: float = 2.0) -> None:
     """Run a supervised conversion attempt and upload artifacts on success.
 
     The parent process handles preflight, cancellation, timeout, and uploads.
     """
-    config = ConversionConfig()
     engine = get_engine(config.database_url)
     timeout_seconds = float(config.worker_job_timeout_seconds)
 
@@ -731,10 +731,10 @@ def process_job_supervised(job_id: int, poll_interval_seconds: float = 2.0) -> N
     try:
         bookmark, karakeep_bookmark = _prepare_bookmark_for_job(job_id, engine)
     except (FetchError, BookmarkContentError, JobDataIntegrityError) as exc:
-        handle_job_error(job_id, exc)
+        handle_job_error(job_id, exc, config)
         return
     except Exception as exc:
-        handle_job_error(job_id, PreflightError(f"Job {job_id} preflight failed: {exc}"))
+        handle_job_error(job_id, PreflightError(f"Job {job_id} preflight failed: {exc}"), config)
         return
     with tempfile.TemporaryDirectory() as tmpdirname:
         workspace = Path(tmpdirname)
@@ -759,6 +759,7 @@ def process_job_supervised(job_id: int, poll_interval_seconds: float = 2.0) -> N
             poll_interval_seconds=poll_interval_seconds,
             deadline=deadline,
             timeout_seconds=timeout_seconds,
+            config=config,
         )
 
         if result.cancelled or result.timed_out:
@@ -778,6 +779,7 @@ def process_job_supervised(job_id: int, poll_interval_seconds: float = 2.0) -> N
                     error_code,
                     retryable=retryable,
                 ),
+                config,
             )
             return
 
@@ -785,6 +787,7 @@ def process_job_supervised(job_id: int, poll_interval_seconds: float = 2.0) -> N
             handle_job_error(
                 job_id,
                 ConversionSubprocessError(f"Job {job_id} subprocess exited with code {process.exitcode}"),
+                config,
             )
             return
 
@@ -807,6 +810,7 @@ def process_job_supervised(job_id: int, poll_interval_seconds: float = 2.0) -> N
                     f"Job {job_id} exceeded its runtime during {last_phase}",
                     last_phase,
                 ),
+                config,
             )
             return
 
@@ -833,14 +837,15 @@ def process_job_supervised(job_id: int, poll_interval_seconds: float = 2.0) -> N
                         f"Job {job_id} exceeded its runtime during {last_phase}",
                         last_phase,
                     ),
+                    config,
                 )
                 return
             try:
-                _upload_converted(job_id, workspace)
+                _upload_converted(job_id, workspace, config)
                 break
             except Exception as exc:
                 if attempt == config.retry_max_attempts:
-                    handle_job_error(job_id, exc)
+                    handle_job_error(job_id, exc, config)
                     break
                 delay = config.retry_base_delay_seconds * (2 ** (attempt - 1))
                 logger.warning(
@@ -853,12 +858,11 @@ def process_job_supervised(job_id: int, poll_interval_seconds: float = 2.0) -> N
                 time.sleep(delay)
 
 
-def handle_job_error(job_id: int, error: Exception) -> None:
+def handle_job_error(job_id: int, error: Exception, config: ConversionConfig) -> None:
     """Persist job failure details and compute retryability.
 
     Retry decision uses the `retryable` class attribute on every exception class.
     """
-    config = ConversionConfig()
     engine = get_engine(config.database_url)
     now = _utcnow()
 
@@ -923,9 +927,8 @@ def recover_stale_running_jobs(config: ConversionConfig) -> int:
     return len(jobs)
 
 
-def poll_and_process_jobs(poll_interval_seconds: float = 2.0) -> bool:
+def poll_and_process_jobs(config: ConversionConfig, poll_interval_seconds: float = 2.0) -> bool:
     """Pick up the next eligible job and invoke supervised processing."""
-    config = ConversionConfig()
     engine = get_engine(config.database_url)
     now = _utcnow()
 
@@ -966,14 +969,13 @@ def poll_and_process_jobs(poll_interval_seconds: float = 2.0) -> bool:
     if job_id is None:
         raise RuntimeError("Queued job missing id; cannot process job")
 
-    process_job_supervised(job_id, poll_interval_seconds=poll_interval_seconds)
+    process_job_supervised(job_id, config, poll_interval_seconds=poll_interval_seconds)
     return True
 
 
-def run_worker(poll_interval_seconds: float = 2.0) -> None:
+def run_worker(config: ConversionConfig, poll_interval_seconds: float = 2.0) -> None:
     """Run the worker loop for polling, processing, and recovery."""
     logger.info("Starting conversion worker loop")
-    config = ConversionConfig()
     last_recovery_check = 0.0
     while True:
         now = time.monotonic()
@@ -982,6 +984,6 @@ def run_worker(poll_interval_seconds: float = 2.0) -> None:
             if recovered:
                 logger.warning("Recovered %d stale RUNNING jobs", recovered)
             last_recovery_check = now
-        processed = poll_and_process_jobs(poll_interval_seconds=poll_interval_seconds)
+        processed = poll_and_process_jobs(config, poll_interval_seconds=poll_interval_seconds)
         if not processed:
             time.sleep(poll_interval_seconds)
