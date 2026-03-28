@@ -196,6 +196,8 @@ addopts = '''
     --ignore=setup.py
     --ignore=ci
     --ignore=.eggs
+    --ignore-glob=.env*
+    --ignore-glob=.envrc
     --import-mode=importlib
     --tb=short
 '''
@@ -203,6 +205,8 @@ addopts = '''
 # --doctest-glob=\*.rst
 norecursedirs = [
   ".env",
+  ".env.*",
+  ".envrc",
   ".git",
   ".nox",
   ".pytest_cache",

@@ -85,7 +85,7 @@ repos:
         stages: [pre-commit]
   # renovate: datasource=github-tags depName=gitleaks/gitleaks
   - repo: https://github.com/gitleaks/gitleaks
-    rev: "v8.30.0"
+    rev: "v8.30.1"
     hooks:
       - id: gitleaks
   # renovate: datasource=github-tags depName=stefmolin/exif-stripper
@@ -97,7 +97,7 @@ repos:
         stages: [pre-commit]
   # renovate: datasource=github-tags depName=commitizen-tools/commitizen
   - repo: https://github.com/commitizen-tools/commitizen
-    rev: v4.13.7
+    rev: v4.13.9
     hooks:
       - id: commitizen
         language: python
@@ -135,7 +135,7 @@ repos:
           - mdformat-simple-breaks
   # renovate: datasource=github-tags depName=rvben/rumdl-pre-commit
   - repo: https://github.com/rvben/rumdl-pre-commit
-    rev: v0.1.18
+    rev: v0.1.62
     hooks:
       # - id: rumdl      # Lint only (fails on issues)
       #   stages: [pre-commit]
@@ -143,7 +143,7 @@ repos:
         stages: [pre-commit]
   # renovate: datasource=github-tags depName=astral-sh/ruff-pre-commit
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: "v0.15.1"
+    rev: "v0.15.8"
     hooks:
       - id: ruff-check
         name: Lint with Ruff
@@ -154,7 +154,7 @@ repos:
         stages: [pre-commit]
   # renovate: datasource=github-tags depName=kynan/nbstripout
   - repo: https://github.com/kynan/nbstripout
-    rev: 0.9.0
+    rev: 0.9.1
     hooks:
       - id: nbstripout
         name: Strip metadata and outputs from ipynb files
@@ -179,7 +179,7 @@ repos:
         stages: [pre-commit]
   # renovate: datasource=github-tags depName=scop/pre-commit-shfmt versioning=loose
   - repo: https://github.com/scop/pre-commit-shfmt
-    rev: "v3.12.0-2"
+    rev: "v3.13.0-1"
     hooks:
       - id: shfmt
         name: Format shell scripts
@@ -192,7 +192,7 @@ repos:
         stages: [pre-commit]
   # renovate: datasource=github-tags depName=biomejs/pre-commit
   - repo: https://github.com/biomejs/pre-commit
-    rev: v2.3.14
+    rev: v2.4.9
     hooks:
       - id: biome-check
         stages: [pre-commit]
@@ -209,7 +209,7 @@ repos:
   ### In this case, comment out this block until ".typos.toml" has been committed successfully
   # renovate: datasource=github-tags depName=crate-ci/typos
   - repo: https://github.com/crate-ci/typos
-    rev: "v1.43.4"
+    rev: "v1.44.0"
     hooks:
       - id: typos
         name: Spellcheck with Typos
