@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import queue as queue_module
 
 import boto3
 from botocore.stub import ANY, Stubber
@@ -21,8 +22,8 @@ from aizk.conversion.api.main import create_app
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.db import get_engine
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.workers import worker
-from aizk.conversion.workers.worker import ConversionInput
+from aizk.conversion.workers import orchestrator, uploader
+from aizk.conversion.workers.types import ConversionInput
 
 
 class _InlineProcess:
@@ -57,7 +58,7 @@ class _InlineContext:
     """Provide Queue and inline Process for testing."""
 
     def Queue(self):  # noqa: N802
-        return worker.queue_module.Queue()
+        return queue_module.Queue()
 
     def Process(self, target, args, daemon: bool):  # noqa: N802
         return _InlineProcess(target, args)
@@ -74,7 +75,7 @@ _MARKDOWN_CLEAN = "# Research Summary\n\nThis is the body of the document.\n\nMo
 
 def test_whitespace_normalization_produces_stable_output(monkeypatch, html_bookmark) -> None:
     """Two conversions with different whitespace artifacts produce identical output.md and hash."""
-    monkeypatch.setattr(worker.mp, "get_context", lambda _ctx: _InlineContext())
+    monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
     app = create_app()
 
     markdowns = iter([_MARKDOWN_WITH_ARTIFACTS, _MARKDOWN_CLEAN])
@@ -106,15 +107,15 @@ def test_whitespace_normalization_produces_stable_output(monkeypatch, html_bookm
         return f"s3://{self.bucket}/{s3_key}"
 
     monkeypatch.setattr(
-        "aizk.conversion.workers.worker.fetch_karakeep_bookmark",
+        "aizk.conversion.workers.orchestrator.fetch_karakeep_bookmark",
         lambda _: html_bookmark,
     )
     monkeypatch.setattr(
-        "aizk.conversion.workers.worker.validate_bookmark_content",
+        "aizk.conversion.workers.orchestrator.validate_bookmark_content",
         lambda _: None,
     )
     monkeypatch.setattr(
-        "aizk.conversion.workers.worker._prepare_conversion_input",
+        "aizk.conversion.workers.orchestrator._prepare_conversion_input",
         lambda **_: ConversionInput(
             pipeline="html",
             content_bytes=b"<html><body>test</body></html>",
@@ -122,22 +123,22 @@ def test_whitespace_normalization_produces_stable_output(monkeypatch, html_bookm
         ),
     )
     monkeypatch.setattr(
-        "aizk.conversion.workers.worker.convert_html",
+        "aizk.conversion.workers.orchestrator.convert_html",
         lambda *_, **__: (next(markdowns), []),
     )
-    monkeypatch.setattr("aizk.conversion.workers.worker.S3Client.__init__", _init_s3_client)
-    monkeypatch.setattr("aizk.conversion.workers.worker.S3Client.upload_file", _upload_file)
+    monkeypatch.setattr("aizk.conversion.workers.uploader.S3Client.__init__", _init_s3_client)
+    monkeypatch.setattr("aizk.conversion.workers.uploader.S3Client.upload_file", _upload_file)
 
     with TestClient(app) as client:
         config = ConversionConfig(_env_file=None)
 
         resp1 = client.post("/v1/jobs", json={"karakeep_id": "bm_ws_stable_001"})
         assert resp1.status_code == 201
-        worker.process_job_supervised(resp1.json()["id"], config)
+        orchestrator.process_job_supervised(resp1.json()["id"], config)
 
         resp2 = client.post("/v1/jobs", json={"karakeep_id": "bm_ws_stable_002"})
         assert resp2.status_code == 201
-        worker.process_job_supervised(resp2.json()["id"], config)
+        orchestrator.process_job_supervised(resp2.json()["id"], config)
 
     assert len(captured_markdown_bodies) == 2, "output.md should be uploaded for both jobs"
     assert captured_markdown_bodies[0] == captured_markdown_bodies[1], (
