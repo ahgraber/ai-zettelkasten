@@ -9,7 +9,6 @@ import sys
 from setproctitle import setproctitle
 import uvicorn
 
-from aizk.conversion.db import create_db_and_tables, get_engine
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.litestream import LitestreamManager
 from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
@@ -23,10 +22,13 @@ def _require_karakeep_env() -> None:
 
 
 def _cmd_db_init(_args: argparse.Namespace) -> int:
-    """Initialize database tables."""
+    """Initialize database tables via Alembic migrations."""
     setproctitle("docling-db-init")
-    config = ConversionConfig()
-    create_db_and_tables(get_engine(config.database_url))
+    from alembic import command
+    from alembic.config import Config
+
+    alembic_cfg = Config("alembic.ini")
+    command.upgrade(alembic_cfg, "head")
     return 0
 
 

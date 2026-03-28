@@ -11,7 +11,7 @@ from typing import Iterator
 import pytest
 from sqlmodel import Session
 
-from aizk.conversion.db import create_db_and_tables, get_engine
+from aizk.conversion.db import get_engine
 from karakeep_client.models import Bookmark
 
 
@@ -61,10 +61,13 @@ def set_test_env(monkeypatch: pytest.MonkeyPatch, test_db_path: Path) -> None:
 
 @pytest.fixture()
 def db_engine(test_db_path: Path):
-    """Create and initialize a SQLite engine for tests."""
-    engine = get_engine(f"sqlite:///{test_db_path}")
-    create_db_and_tables(engine)
-    return engine
+    """Create and initialize a SQLite engine for tests via Alembic migrations."""
+    from alembic import command
+    from alembic.config import Config
+
+    alembic_cfg = Config("alembic.ini")
+    command.upgrade(alembic_cfg, "head")
+    return get_engine(f"sqlite:///{test_db_path}")
 
 
 @pytest.fixture()
