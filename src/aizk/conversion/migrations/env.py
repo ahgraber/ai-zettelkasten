@@ -12,11 +12,16 @@ from aizk.conversion.utilities.config import ConversionConfig
 target_metadata = SQLModel.metadata
 
 
+def _database_url() -> str:
+    """Return the database URL, preferring the alembic config override."""
+    alembic_cfg = context.config
+    return alembic_cfg.get_main_option("sqlalchemy.url") or ConversionConfig().database_url
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode for SQL script generation."""
-    config = ConversionConfig()
     context.configure(
-        url=config.database_url,
+        url=_database_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -28,9 +33,8 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations against a live database connection."""
-    config = ConversionConfig()
     connectable = create_engine(
-        config.database_url,
+        _database_url(),
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
