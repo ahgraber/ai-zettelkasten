@@ -18,6 +18,7 @@ from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
 async def lifespan(_app: FastAPI):
     """Initialize resources needed for the API lifespan."""
     config = ConversionConfig()
+    _app.state.config = config
     configure_logging(config)
     configure_mlflow_tracing(
         enabled=config.mlflow_tracing_enabled,
