@@ -14,6 +14,11 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.db import get_engine
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers.orchestrator import process_job_supervised
+from aizk.conversion.workers.shutdown import (
+    is_immediate_shutdown,
+    is_shutdown_requested,
+    register_signal_handlers,
+)
 from aizk.conversion.workers.types import _utcnow
 
 logger = logging.getLogger(__name__)
@@ -99,17 +104,44 @@ def poll_and_process_jobs(config: ConversionConfig, poll_interval_seconds: float
     return True
 
 
-def run_worker(config: ConversionConfig, poll_interval_seconds: float = 2.0) -> None:
-    """Run the worker loop for polling, processing, and recovery."""
-    logger.info("Starting conversion worker loop")
+def run_worker(config: ConversionConfig, poll_interval_seconds: float = 2.0) -> int:
+    """Run the worker loop for polling, processing, and recovery.
+
+    Returns an exit code: 0 for clean shutdown, 1 for forced termination.
+    """
+    register_signal_handlers()
+    logger.info(
+        "Starting conversion worker loop (drain_timeout=%ds)",
+        config.worker_drain_timeout_seconds,
+    )
+
     last_recovery_check = 0.0
-    while True:
+    while not is_shutdown_requested():
         now = time.monotonic()
         if now - last_recovery_check >= config.worker_stale_job_check_seconds:
             recovered = recover_stale_running_jobs(config)
             if recovered:
                 logger.warning("Recovered %d stale RUNNING jobs", recovered)
             last_recovery_check = now
+
         processed = poll_and_process_jobs(config, poll_interval_seconds=poll_interval_seconds)
+
+        # If shutdown was requested during job processing, the supervision
+        # loop already handled the drain (waiting for completion or
+        # force-terminating after drain timeout).  Log and exit.
+        if is_shutdown_requested():
+            if processed:
+                logger.info("Shutdown completed — in-flight job finished during drain")
+            else:
+                logger.info("Shutdown requested — exiting")
+            if is_immediate_shutdown():
+                logger.warning("Forced shutdown — exiting with code 1")
+                return 1
+            return 0
+
         if not processed:
             time.sleep(poll_interval_seconds)
+
+    # Shutdown while idle (signal arrived during sleep).
+    logger.info("Shutdown requested while idle — exiting cleanly")
+    return 0

@@ -33,9 +33,13 @@ class ConversionConfig(BaseSettings):
         default=60.0,
         validation_alias="WORKER_STALE_JOB_CHECK_SECONDS",
     )
-    worker_job_timeout_seconds: int = Field(
+    worker_job_timeout_seconds: float = Field(
         default=7200,
         validation_alias="WORKER_JOB_TIMEOUT_SECONDS",
+    )
+    worker_drain_timeout_seconds: int = Field(
+        default=300,
+        validation_alias="WORKER_DRAIN_TIMEOUT_SECONDS",
     )
 
     docling_pdf_max_pages: int = Field(default=250, validation_alias="DOCLING_PDF_MAX_PAGES")
