@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import queue as queue_module
 from uuid import UUID
 
 import boto3
@@ -20,8 +21,8 @@ from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.db import get_engine
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.hashing import compute_idempotency_key
-from aizk.conversion.workers import worker
-from aizk.conversion.workers.worker import ConversionInput
+from aizk.conversion.workers import orchestrator, uploader
+from aizk.conversion.workers.types import ConversionInput
 
 
 class _InlineProcess:
@@ -56,7 +57,7 @@ class _InlineContext:
     """Context that provides Queue and inline-executing Process for testing."""
 
     def Queue(self):  # noqa: N802
-        return worker.queue_module.Queue()
+        return queue_module.Queue()
 
     def Process(self, target, args, daemon: bool):  # noqa: N802
         return _InlineProcess(target, args)
@@ -64,7 +65,7 @@ class _InlineContext:
 
 def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
     """Exercise API submit + worker processing with stubbed external services."""
-    monkeypatch.setattr(worker.mp, "get_context", lambda _ctx: _InlineContext())
+    monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
     app = create_app()
     if not any(getattr(route, "path", None) == "/v1/jobs" for route in app.router.routes):
         raise AssertionError("Jobs routes not registered in FastAPI app yet.")
@@ -101,16 +102,16 @@ def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
 
     # Avoid KaraKeep network calls; reuse a fixed bookmark payload.
     monkeypatch.setattr(
-        "aizk.conversion.workers.worker.fetch_karakeep_bookmark",
+        "aizk.conversion.workers.orchestrator.fetch_karakeep_bookmark",
         lambda _karakeep_id: html_bookmark,
     )
     monkeypatch.setattr(
-        "aizk.conversion.workers.worker.validate_bookmark_content",
+        "aizk.conversion.workers.orchestrator.validate_bookmark_content",
         lambda _bookmark: None,
     )
     # Bypass real conversion to keep the test focused on the flow mechanics.
     monkeypatch.setattr(
-        "aizk.conversion.workers.worker._prepare_conversion_input",
+        "aizk.conversion.workers.orchestrator._prepare_conversion_input",
         lambda **_kwargs: ConversionInput(
             pipeline="html",
             content_bytes=b"<html><body>test</body></html>",
@@ -118,12 +119,12 @@ def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
         ),
     )
     monkeypatch.setattr(
-        "aizk.conversion.workers.worker.convert_html",
+        "aizk.conversion.workers.orchestrator.convert_html",
         lambda *_args, **_kwargs: ("# Test", []),
     )
     # Route S3Client behavior through our stubbed implementation.
-    monkeypatch.setattr("aizk.conversion.workers.worker.S3Client.__init__", _init_s3_client)
-    monkeypatch.setattr("aizk.conversion.workers.worker.S3Client.upload_file", _upload_file)
+    monkeypatch.setattr("aizk.conversion.workers.uploader.S3Client.__init__", _init_s3_client)
+    monkeypatch.setattr("aizk.conversion.workers.uploader.S3Client.upload_file", _upload_file)
 
     with TestClient(app) as client:
         response = client.post(
@@ -137,7 +138,7 @@ def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
         job_id = job["id"]
 
         config = ConversionConfig(_env_file=None)
-        worker.process_job_supervised(job_id, config)
+        orchestrator.process_job_supervised(job_id, config)
 
         job_response = client.get(f"/v1/jobs/{job_id}")
         assert job_response.status_code == 200
@@ -146,21 +147,21 @@ def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
 
 def test_conversion_flow_cancelled_job_skips_upload(monkeypatch, html_bookmark):
     """Stop processing when a running job is cancelled."""
-    monkeypatch.setattr(worker.mp, "get_context", lambda _ctx: _InlineContext())
+    monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
     app = create_app()
     if not any(getattr(route, "path", None) == "/v1/jobs" for route in app.router.routes):
         raise AssertionError("Jobs routes not registered in FastAPI app yet.")
 
     monkeypatch.setattr(
-        "aizk.conversion.workers.worker.fetch_karakeep_bookmark",
+        "aizk.conversion.workers.orchestrator.fetch_karakeep_bookmark",
         lambda _karakeep_id: html_bookmark,
     )
     monkeypatch.setattr(
-        "aizk.conversion.workers.worker.validate_bookmark_content",
+        "aizk.conversion.workers.orchestrator.validate_bookmark_content",
         lambda _bookmark: None,
     )
     monkeypatch.setattr(
-        "aizk.conversion.workers.worker._prepare_conversion_input",
+        "aizk.conversion.workers.orchestrator._prepare_conversion_input",
         lambda **_kwargs: ConversionInput(
             pipeline="html",
             content_bytes=b"<html><body>cancel</body></html>",
@@ -179,8 +180,8 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch, html_bookmark):
     def _upload_converted(_job_id, _workspace, _config):
         raise AssertionError("Upload should not run for cancelled jobs")
 
-    monkeypatch.setattr("aizk.conversion.workers.worker._run_conversion", _run_conversion)
-    monkeypatch.setattr("aizk.conversion.workers.worker._upload_converted", _upload_converted)
+    monkeypatch.setattr("aizk.conversion.workers.orchestrator._run_conversion", _run_conversion)
+    monkeypatch.setattr("aizk.conversion.workers.orchestrator._upload_converted", _upload_converted)
 
     with TestClient(app) as client:
         response = client.post(
@@ -194,7 +195,7 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch, html_bookmark):
         job_id = job["id"]
 
         config = ConversionConfig(_env_file=None)
-        worker.process_job_supervised(job_id, config)
+        orchestrator.process_job_supervised(job_id, config)
 
     engine = get_engine(ConversionConfig(_env_file=None).database_url)
     with Session(engine) as session:

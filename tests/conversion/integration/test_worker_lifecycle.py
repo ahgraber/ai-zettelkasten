@@ -30,7 +30,7 @@ from sqlmodel import Session
 from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.workers import worker
+from aizk.conversion.workers import errors as errors_mod, loop, orchestrator
 
 # Mark all tests in this module to run in isolated process
 pytestmark = [
@@ -225,7 +225,7 @@ def test_real_subprocess_spawned_and_terminated(monkeypatch, db_session: Session
     # Track subprocess by storing reference
     spawned_process = []
 
-    original_process_class = worker.mp.get_context("spawn").Process
+    original_process_class = orchestrator.mp.get_context("spawn").Process
 
     def _track_process(target, args, daemon):
         proc = original_process_class(target=target, args=args, daemon=daemon)
@@ -233,13 +233,13 @@ def test_real_subprocess_spawned_and_terminated(monkeypatch, db_session: Session
         return proc
 
     # Mock helper functions but let subprocess actually spawn
-    monkeypatch.setattr(worker, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(worker, "validate_bookmark_content", lambda _bm: None)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
-    monkeypatch.setattr(worker, "_process_job_subprocess", _test_process_subprocess)
+    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
 
     # Mock mp.Process to track PID
-    ctx = worker.mp.get_context("spawn")
+    ctx = orchestrator.mp.get_context("spawn")
     monkeypatch.setattr(ctx, "Process", _track_process)
 
     # Cancel job after it starts to trigger termination
@@ -252,13 +252,13 @@ def test_real_subprocess_spawned_and_terminated(monkeypatch, db_session: Session
             return False
         return True
 
-    monkeypatch.setattr(worker, "_is_job_cancelled", _mock_is_cancelled)
+    monkeypatch.setattr(orchestrator, "_is_job_cancelled", _mock_is_cancelled)
 
     # Run the job
     poll_interval_seconds = 0.1
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    worker.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
+    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
 
     # Verify subprocess was spawned
     assert len(spawned_process) == 1, "Should have spawned one subprocess"
@@ -279,28 +279,28 @@ def test_cancelled_job_terminates_subprocess_with_no_zombies(monkeypatch, db_ses
     job = _create_test_job(db_session, bookmark, ConversionJobStatus.QUEUED)
 
     spawned_process = []
-    original_process_class = worker.mp.get_context("spawn").Process
+    original_process_class = orchestrator.mp.get_context("spawn").Process
 
     def _track_process(target, args, daemon):
         proc = original_process_class(target=target, args=args, daemon=daemon)
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(worker, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(worker, "validate_bookmark_content", lambda _bm: None)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
-    monkeypatch.setattr(worker, "_process_job_subprocess", _test_process_subprocess)
+    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
 
-    ctx = worker.mp.get_context("spawn")
+    ctx = orchestrator.mp.get_context("spawn")
     monkeypatch.setattr(ctx, "Process", _track_process)
 
     # Trigger immediate cancellation
-    monkeypatch.setattr(worker, "_is_job_cancelled", lambda _job_id, _engine: True)
+    monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: True)
 
     poll_interval_seconds = 1
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    worker.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
+    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
 
     assert len(spawned_process) == 1
     spawned_pid = spawned_process[0].pid
@@ -318,37 +318,37 @@ def test_timeout_terminates_subprocess(monkeypatch, db_session: Session, html_bo
     job = _create_test_job(db_session, bookmark, ConversionJobStatus.QUEUED)
 
     spawned_process = []
-    original_process_class = worker.mp.get_context("spawn").Process
+    original_process_class = orchestrator.mp.get_context("spawn").Process
 
     def _track_process(target, args, daemon):
         proc = original_process_class(target=target, args=args, daemon=daemon)
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(worker, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(worker, "validate_bookmark_content", lambda _bm: None)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
-    monkeypatch.setattr(worker, "_process_job_subprocess", _test_process_subprocess)
+    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
 
-    ctx = worker.mp.get_context("spawn")
+    ctx = orchestrator.mp.get_context("spawn")
     monkeypatch.setattr(ctx, "Process", _track_process)
 
-    monkeypatch.setattr(worker, "_is_job_cancelled", lambda _job_id, _engine: False)
+    monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
 
     # Mock handle_job_error to capture timeout error
     errors = []
-    monkeypatch.setattr(worker, "handle_job_error", lambda _job_id, error, _config: errors.append(error))
+    monkeypatch.setattr(orchestrator, "handle_job_error", lambda _job_id, error, _config: errors.append(error))
 
     poll_interval_seconds = 0.1
     config = ConversionConfig(_env_file=None)
     start = time.monotonic()
     assert job.id is not None
-    worker.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
+    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
     duration = time.monotonic() - start
 
     # Verify timeout error was raised
     assert len(errors) == 1
-    assert isinstance(errors[0], worker.ConversionTimeoutError)
+    assert isinstance(errors[0], errors_mod.ConversionTimeoutError)
 
     # Verify termination happened close to deadline (5s ± 2s tolerance)
     assert 3.0 <= duration <= 7.0
@@ -374,23 +374,23 @@ def test_subprocess_completes_normally_no_zombies(
     job = _create_test_job(db_session, bookmark, ConversionJobStatus.QUEUED)
 
     spawned_process = []
-    original_process_class = worker.mp.get_context("spawn").Process
+    original_process_class = orchestrator.mp.get_context("spawn").Process
 
     def _track_process(target, args, daemon):
         proc = original_process_class(target=target, args=args, daemon=daemon)
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(worker, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(worker, "validate_bookmark_content", lambda _bm: None)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
-    monkeypatch.setattr(worker, "_process_job_subprocess", _test_process_subprocess)
-    monkeypatch.setattr(worker, "_upload_converted", lambda _job_id, _workspace, _config: None)  # Skip upload
+    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
+    monkeypatch.setattr(orchestrator, "_upload_converted", lambda _job_id, _workspace, _config: None)  # Skip upload
 
-    ctx = worker.mp.get_context("spawn")
+    ctx = orchestrator.mp.get_context("spawn")
     monkeypatch.setattr(ctx, "Process", _track_process)
 
-    monkeypatch.setattr(worker, "_is_job_cancelled", lambda _job_id, _engine: False)
+    monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
 
     created_paths: list[Path] = []
     prefix = "aizk-worker-test-"
@@ -407,12 +407,12 @@ def test_subprocess_completes_normally_no_zombies(
             shutil.rmtree(self.path, ignore_errors=True)
             return False
 
-    monkeypatch.setattr(worker.tempfile, "TemporaryDirectory", _TrackedTemporaryDirectory)
+    monkeypatch.setattr(orchestrator.tempfile, "TemporaryDirectory", _TrackedTemporaryDirectory)
 
     poll_interval_seconds = 0.1
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    worker.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
+    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
 
     assert len(spawned_process) == 1
     spawned_pid = spawned_process[0].pid
@@ -440,30 +440,30 @@ def test_process_group_terminates_grandchild(
     job = _create_test_job(db_session, bookmark, ConversionJobStatus.QUEUED)
 
     spawned_process = []
-    original_process_class = worker.mp.get_context("spawn").Process
+    original_process_class = orchestrator.mp.get_context("spawn").Process
 
     def _track_process(target, args, daemon):
         proc = original_process_class(target=target, args=args, daemon=daemon)
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(worker, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(worker, "validate_bookmark_content", lambda _bm: None)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
-    monkeypatch.setattr(worker, "_process_job_subprocess", _process_job_subprocess_spawn_child)
+    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _process_job_subprocess_spawn_child)
 
-    ctx = worker.mp.get_context("spawn")
+    ctx = orchestrator.mp.get_context("spawn")
     monkeypatch.setattr(ctx, "Process", _track_process)
 
     def _cancel_when_ready(_job_id, _engine):
         return pid_file.exists()
 
-    monkeypatch.setattr(worker, "_is_job_cancelled", _cancel_when_ready)
+    monkeypatch.setattr(orchestrator, "_is_job_cancelled", _cancel_when_ready)
 
     poll_interval_seconds = 0.1
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    worker.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
+    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
 
     assert len(spawned_process) == 1
     spawned_pid = spawned_process[0].pid
@@ -497,19 +497,19 @@ def test_sigterm_graceful_shutdown_within_grace_period(
     job = _create_test_job(db_session, bookmark, ConversionJobStatus.QUEUED)
 
     spawned_process = []
-    original_process_class = worker.mp.get_context("spawn").Process
+    original_process_class = orchestrator.mp.get_context("spawn").Process
 
     def _track_process(target, args, daemon):
         proc = original_process_class(target=target, args=args, daemon=daemon)
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(worker, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(worker, "validate_bookmark_content", lambda _bm: None)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
-    monkeypatch.setattr(worker, "_process_job_subprocess", _process_job_subprocess_graceful_sigterm)
+    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _process_job_subprocess_graceful_sigterm)
 
-    ctx = worker.mp.get_context("spawn")
+    ctx = orchestrator.mp.get_context("spawn")
     monkeypatch.setattr(ctx, "Process", _track_process)
 
     cancel_state = {"cancel_time": None}
@@ -521,12 +521,12 @@ def test_sigterm_graceful_shutdown_within_grace_period(
             return True
         return False
 
-    monkeypatch.setattr(worker, "_is_job_cancelled", _mock_is_cancelled)
+    monkeypatch.setattr(orchestrator, "_is_job_cancelled", _mock_is_cancelled)
 
     poll_interval_seconds = 0.1
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    worker.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
+    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
 
     if cancel_state["cancel_time"] is not None:
         cancel_elapsed = time.monotonic() - cancel_state["cancel_time"]
@@ -549,35 +549,35 @@ def test_sigkill_after_sigterm_on_timeout(monkeypatch, db_session: Session, html
     job = _create_test_job(db_session, bookmark, ConversionJobStatus.QUEUED)
 
     spawned_process = []
-    original_process_class = worker.mp.get_context("spawn").Process
+    original_process_class = orchestrator.mp.get_context("spawn").Process
 
     def _track_process(target, args, daemon):
         proc = original_process_class(target=target, args=args, daemon=daemon)
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(worker, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(worker, "validate_bookmark_content", lambda _bm: None)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
-    monkeypatch.setattr(worker, "_process_job_subprocess", _process_job_subprocess_ignore_sigterm)
+    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _process_job_subprocess_ignore_sigterm)
 
-    ctx = worker.mp.get_context("spawn")
+    ctx = orchestrator.mp.get_context("spawn")
     monkeypatch.setattr(ctx, "Process", _track_process)
 
-    monkeypatch.setattr(worker, "_is_job_cancelled", lambda _job_id, _engine: False)
+    monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
 
     errors = []
-    monkeypatch.setattr(worker, "handle_job_error", lambda _job_id, error, _config: errors.append(error))
+    monkeypatch.setattr(orchestrator, "handle_job_error", lambda _job_id, error, _config: errors.append(error))
 
     start = time.monotonic()
     poll_interval_seconds = 0.1
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    worker.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
+    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
     duration = time.monotonic() - start
 
     assert len(errors) == 1
-    assert isinstance(errors[0], worker.ConversionTimeoutError)
+    assert isinstance(errors[0], errors_mod.ConversionTimeoutError)
     assert duration >= timeout_seconds
     assert duration <= 9.0
 
@@ -601,19 +601,19 @@ def test_cancel_mid_execution_terminates_within_poll_interval(
     job = _create_test_job(db_session, bookmark, ConversionJobStatus.QUEUED)
 
     spawned_process = []
-    original_process_class = worker.mp.get_context("spawn").Process
+    original_process_class = orchestrator.mp.get_context("spawn").Process
 
     def _track_process(target, args, daemon):
         proc = original_process_class(target=target, args=args, daemon=daemon)
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(worker, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(worker, "validate_bookmark_content", lambda _bm: None)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
-    monkeypatch.setattr(worker, "_process_job_subprocess", _test_process_subprocess)
+    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
 
-    ctx = worker.mp.get_context("spawn")
+    ctx = orchestrator.mp.get_context("spawn")
     monkeypatch.setattr(ctx, "Process", _track_process)
 
     cancel_state = {"called": 0, "cancel_time": None}
@@ -626,12 +626,12 @@ def test_cancel_mid_execution_terminates_within_poll_interval(
             return True
         return False
 
-    monkeypatch.setattr(worker, "_is_job_cancelled", _mock_is_cancelled)
+    monkeypatch.setattr(orchestrator, "_is_job_cancelled", _mock_is_cancelled)
 
     poll_interval_seconds = 0.1
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    worker.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
+    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
 
     assert cancel_state["cancel_time"] is not None
     cancel_elapsed = time.monotonic() - cancel_state["cancel_time"]
@@ -656,7 +656,7 @@ def test_recover_stale_running_job_marks_retryable(monkeypatch, db_session: Sess
     db_session.refresh(job)
 
     config = ConversionConfig(_env_file=None)
-    recovered = worker.recover_stale_running_jobs(config)
+    recovered = loop.recover_stale_running_jobs(config)
 
     assert recovered == 1
     db_session.refresh(job)
