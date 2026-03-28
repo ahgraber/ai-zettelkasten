@@ -1,0 +1,348 @@
+"""Unit tests for graceful shutdown integration in supervision and worker loop."""
+
+from __future__ import annotations
+
+import datetime as dt
+import os
+import signal
+import time
+
+import pytest
+from sqlmodel import Session
+
+from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.workers import errors as errors_mod, loop, orchestrator, shutdown
+from aizk.conversion.workers.supervision import _supervise_conversion_process
+from aizk.conversion.workers.types import SupervisionResult
+
+
+@pytest.fixture(autouse=True)
+def _reset_shutdown():
+    shutdown.reset()
+    yield
+    shutdown.reset()
+
+
+def _create_bookmark(db_session: Session) -> Bookmark:
+    bookmark = Bookmark(
+        karakeep_id="bm_shutdown_test",
+        url="https://example.com",
+        normalized_url="https://example.com",
+        title="Shutdown Test",
+        content_type="html",
+        source_type="web",
+    )
+    db_session.add(bookmark)
+    db_session.commit()
+    db_session.refresh(bookmark)
+    return bookmark
+
+
+def _create_running_job(db_session: Session, bookmark: Bookmark) -> ConversionJob:
+    job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title or "",
+        idempotency_key="s" * 64,
+        status=ConversionJobStatus.RUNNING,
+        started_at=dt.datetime.now(dt.timezone.utc),
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+    return job
+
+
+class _StubProcess:
+    """Process stub that stays alive for a number of join cycles.
+
+    Unlike a no-op stub, ``join`` actually sleeps for the requested timeout
+    so that ``time.monotonic()`` advances naturally.  This lets tests use
+    real (short) deadlines instead of mocking the clock.
+    """
+
+    def __init__(self, alive_cycles: int = 3) -> None:
+        self._alive_cycles = alive_cycles
+        self._alive = True
+        self.pid = 99999
+        self.exitcode = 0
+
+    def is_alive(self) -> bool:
+        return self._alive
+
+    def join(self, timeout: float | None = None) -> None:
+        if timeout is not None and self._alive:
+            time.sleep(timeout)
+        if self._alive_cycles > 0:
+            self._alive_cycles -= 1
+        if self._alive_cycles == 0:
+            self._alive = False
+
+    def terminate(self) -> None:
+        self._alive = False
+
+    def kill(self) -> None:
+        self._alive = False
+
+
+# ---------------------------------------------------------------------------
+# Supervision: shutdown drain integration
+# ---------------------------------------------------------------------------
+
+
+class TestSupervisionShutdownDrain:
+    """Tests for shutdown-aware subprocess supervision."""
+
+    def test_shutdown_during_supervision_job_completes_within_drain(self, monkeypatch):
+        """When shutdown is requested but the job finishes before drain timeout, no forced termination."""
+        import queue as queue_module
+
+        # Process completes after 2 join cycles (~10ms with 5ms poll interval)
+        process = _StubProcess(alive_cycles=2)
+        status_queue = queue_module.Queue()
+
+        shutdown.request_shutdown()
+
+        monkeypatch.setattr(os, "getpgrp", lambda: 111)
+
+        result = _supervise_conversion_process(
+            job_id=1,
+            process=process,
+            status_queue=status_queue,
+            poll_interval_seconds=0.005,
+            deadline=None,
+            timeout_seconds=0,
+            is_cancelled_fn=lambda: False,
+            shutdown_requested_fn=shutdown.is_shutdown_requested,
+            drain_timeout_seconds=5.0,  # Long drain — job finishes first
+        )
+
+        assert result.shutdown_terminated is False
+        assert result.timed_out is False
+        assert result.cancelled is False
+
+    def test_drain_timeout_force_terminates_subprocess(self, monkeypatch):
+        """When drain timeout expires, subprocess is force-terminated."""
+        import queue as queue_module
+
+        process = _StubProcess(alive_cycles=100)  # Stays alive long enough
+        status_queue = queue_module.Queue()
+
+        shutdown.request_shutdown()
+
+        killpg_calls = []
+        monkeypatch.setattr(os, "getpgid", lambda _pid: 222)
+        monkeypatch.setattr(os, "getpgrp", lambda: 111)
+        monkeypatch.setattr(os, "killpg", lambda pgid, sig: killpg_calls.append((pgid, sig)))
+
+        # poll_interval=0.005s, drain_timeout=0.01s → drain expires after ~2 join cycles
+        result = _supervise_conversion_process(
+            job_id=1,
+            process=process,
+            status_queue=status_queue,
+            poll_interval_seconds=0.005,
+            deadline=None,
+            timeout_seconds=0,
+            is_cancelled_fn=lambda: False,
+            shutdown_requested_fn=shutdown.is_shutdown_requested,
+            drain_timeout_seconds=0.01,
+        )
+
+        assert result.shutdown_terminated is True
+        assert result.timed_out is False
+        assert len(killpg_calls) >= 1
+        assert killpg_calls[0][1] == signal.SIGTERM
+
+    def test_no_shutdown_fn_means_no_drain(self):
+        """Without shutdown_requested_fn, supervision runs normally even if flag is set."""
+        import queue as queue_module
+
+        process = _StubProcess(alive_cycles=1)
+        status_queue = queue_module.Queue()
+
+        shutdown.request_shutdown()  # Set flag, but no fn passed to supervision
+
+        result = _supervise_conversion_process(
+            job_id=1,
+            process=process,
+            status_queue=status_queue,
+            poll_interval_seconds=0.005,
+            deadline=None,
+            timeout_seconds=0,
+            is_cancelled_fn=lambda: False,
+        )
+
+        assert result.shutdown_terminated is False
+
+    def test_job_timeout_takes_precedence_over_drain(self, monkeypatch):
+        """Job timeout fires before drain timeout."""
+        import queue as queue_module
+
+        process = _StubProcess(alive_cycles=100)
+        status_queue = queue_module.Queue()
+
+        shutdown.request_shutdown()
+
+        killpg_calls = []
+        monkeypatch.setattr(os, "getpgid", lambda _pid: 222)
+        monkeypatch.setattr(os, "getpgrp", lambda: 111)
+        monkeypatch.setattr(os, "killpg", lambda pgid, sig: killpg_calls.append((pgid, sig)))
+
+        # Job deadline already expired; drain timeout is long.
+        # The job timeout check runs before the drain check in the loop,
+        # so it should fire first.
+        result = _supervise_conversion_process(
+            job_id=1,
+            process=process,
+            status_queue=status_queue,
+            poll_interval_seconds=0.005,
+            deadline=time.monotonic() - 1,  # Already expired
+            timeout_seconds=1.0,
+            is_cancelled_fn=lambda: False,
+            shutdown_requested_fn=shutdown.is_shutdown_requested,
+            drain_timeout_seconds=300.0,
+        )
+
+        assert result.timed_out is True
+        assert result.shutdown_terminated is False
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator: shutdown_terminated handling
+# ---------------------------------------------------------------------------
+
+
+class TestOrchestratorShutdownTerminated:
+    """Tests for orchestrator handling of shutdown-terminated supervision results."""
+
+    def test_shutdown_terminated_calls_handle_job_error(self, monkeypatch, db_session, html_bookmark, fp):
+        """Shutdown termination transitions job to FAILED_RETRYABLE via handle_job_error."""
+        fp.allow_unregistered(False)
+
+        bookmark = _create_bookmark(db_session)
+        job = _create_running_job(db_session, bookmark)
+
+        monkeypatch.setattr(
+            orchestrator,
+            "_supervise_conversion_process",
+            lambda **_kwargs: SupervisionResult("converting", None, False, False, shutdown_terminated=True),
+        )
+        monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+        monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
+        monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
+        monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
+
+        import queue as queue_module
+
+        class _StubProc:
+            pid = 123
+            exitcode = 0
+
+            def is_alive(self):
+                return False
+
+        monkeypatch.setattr(
+            orchestrator, "_spawn_conversion_subprocess", lambda **_kwargs: (_StubProc(), queue_module.Queue())
+        )
+
+        errors: list[Exception] = []
+        monkeypatch.setattr(orchestrator, "handle_job_error", lambda _job_id, error, _config: errors.append(error))
+
+        config = ConversionConfig(_env_file=None)
+        orchestrator.process_job_supervised(job.id, config)
+
+        assert len(errors) == 1
+        assert isinstance(errors[0], errors_mod.ConversionTimeoutError)
+        assert "shutdown drain" in str(errors[0]).lower()
+
+
+# ---------------------------------------------------------------------------
+# Worker loop: shutdown integration
+# ---------------------------------------------------------------------------
+
+
+class TestRunWorkerShutdown:
+    """Tests for run_worker graceful shutdown behavior."""
+
+    def test_shutdown_while_idle_exits_zero(self, monkeypatch):
+        """Signal during idle sleep exits with code 0."""
+        # Request shutdown before first poll
+        shutdown.request_shutdown()
+
+        monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
+
+        config = ConversionConfig(_env_file=None)
+        exit_code = loop.run_worker(config, poll_interval_seconds=0.01)
+
+        assert exit_code == 0
+
+    def test_shutdown_after_job_completes_exits_zero(self, monkeypatch):
+        """Signal during job processing; job finishes; exits 0."""
+        poll_count = {"n": 0}
+
+        def _fake_poll(_config, poll_interval_seconds=2.0):
+            poll_count["n"] += 1
+            if poll_count["n"] == 1:
+                # Simulate shutdown during job processing
+                shutdown.request_shutdown()
+                return True  # Job processed
+            return False
+
+        monkeypatch.setattr(loop, "poll_and_process_jobs", _fake_poll)
+        monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
+        monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
+
+        config = ConversionConfig(_env_file=None)
+        exit_code = loop.run_worker(config, poll_interval_seconds=0.01)
+
+        assert exit_code == 0
+        assert poll_count["n"] == 1
+
+    def test_immediate_shutdown_exits_one(self, monkeypatch):
+        """Second signal (immediate shutdown) exits with code 1."""
+        poll_count = {"n": 0}
+
+        def _fake_poll(_config, poll_interval_seconds=2.0):
+            poll_count["n"] += 1
+            if poll_count["n"] == 1:
+                # Simulate two signals (immediate shutdown)
+                shutdown._handle_signal(signal.SIGTERM, None)
+                shutdown._handle_signal(signal.SIGTERM, None)
+                return True
+            return False
+
+        monkeypatch.setattr(loop, "poll_and_process_jobs", _fake_poll)
+        monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
+        monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
+
+        config = ConversionConfig(_env_file=None)
+        exit_code = loop.run_worker(config, poll_interval_seconds=0.01)
+
+        assert exit_code == 1
+
+    def test_no_running_jobs_after_shutdown(self, monkeypatch, db_session):
+        """After shutdown, no jobs should be in RUNNING state."""
+        bookmark = _create_bookmark(db_session)
+        job = _create_running_job(db_session, bookmark)
+
+        def _fake_poll(_config, poll_interval_seconds=2.0):
+            # Simulate: process the job, then mark it FAILED_RETRYABLE
+            # (as would happen after drain timeout forced termination)
+            with Session(db_session.get_bind()) as session:
+                j = session.get(ConversionJob, job.id)
+                j.status = ConversionJobStatus.FAILED_RETRYABLE
+                session.add(j)
+                session.commit()
+            shutdown.request_shutdown()
+            return True
+
+        monkeypatch.setattr(loop, "poll_and_process_jobs", _fake_poll)
+        monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
+        monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
+
+        config = ConversionConfig(_env_file=None)
+        loop.run_worker(config, poll_interval_seconds=0.01)
+
+        db_session.refresh(job)
+        assert job.status != ConversionJobStatus.RUNNING

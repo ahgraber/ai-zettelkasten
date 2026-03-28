@@ -60,6 +60,7 @@ from aizk.conversion.workers.fetcher import (
     fetch_github_readme,
     fetch_karakeep_asset,
 )
+from aizk.conversion.workers.shutdown import is_shutdown_requested
 from aizk.conversion.workers.supervision import _supervise_conversion_process
 from aizk.conversion.workers.types import (
     ConversionArtifacts,
@@ -428,6 +429,8 @@ def process_job_supervised(job_id: int, config: ConversionConfig, poll_interval_
             deadline=deadline,
             timeout_seconds=timeout_seconds,
             is_cancelled_fn=lambda: _is_job_cancelled(job_id, engine),
+            shutdown_requested_fn=is_shutdown_requested,
+            drain_timeout_seconds=float(config.worker_drain_timeout_seconds),
         )
 
         if result.timed_out:
@@ -435,6 +438,17 @@ def process_job_supervised(job_id: int, config: ConversionConfig, poll_interval_
                 job_id,
                 ConversionTimeoutError(
                     f"Job {job_id} exceeded its runtime during {result.last_phase}",
+                    result.last_phase,
+                ),
+                config,
+            )
+            return
+
+        if result.shutdown_terminated:
+            handle_job_error(
+                job_id,
+                ConversionTimeoutError(
+                    f"Job {job_id} terminated during shutdown drain in {result.last_phase}",
                     result.last_phase,
                 ),
                 config,
