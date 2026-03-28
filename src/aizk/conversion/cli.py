@@ -64,7 +64,7 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
     )
     LitestreamManager(config, role="worker").start()
     try:
-        from aizk.conversion.workers.worker import run_worker
+        from aizk.conversion.workers.loop import run_worker
     except ImportError as exc:
         raise RuntimeError("Worker implementation is not available yet.") from exc
     run_worker(config)
