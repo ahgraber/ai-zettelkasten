@@ -16,8 +16,7 @@ from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Initialize resources needed for the API lifespan."""
-    from alembic import command
-    from alembic.config import Config
+    from aizk.conversion.migrations import run_migrations
 
     config = ConversionConfig()
     _app.state.config = config
@@ -27,8 +26,7 @@ async def lifespan(_app: FastAPI):
         tracking_uri=config.mlflow_tracking_uri,
         experiment_name=config.mlflow_experiment_name,
     )
-    alembic_cfg = Config("alembic.ini")
-    command.upgrade(alembic_cfg, "head")
+    run_migrations()
     yield
 
 
