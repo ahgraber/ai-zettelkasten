@@ -37,6 +37,7 @@ class SupervisionResult:
     reported_error: dict[str, str] | None
     cancelled: bool
     timed_out: bool
+    shutdown_terminated: bool = False
 
 
 def _utcnow() -> dt.datetime:

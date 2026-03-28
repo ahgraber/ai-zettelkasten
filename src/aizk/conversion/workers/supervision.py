@@ -61,6 +61,18 @@ def _collect_status_messages(
     return last_phase, reported_error
 
 
+def _terminate_and_wait(
+    process: mp.Process,
+    parent_pgid: int | None,
+) -> None:
+    """SIGTERM → wait 5s → SIGKILL → wait 5s."""
+    _terminate_child_process(process, parent_pgid, signal.SIGTERM)
+    process.join(timeout=5.0)
+    if process.is_alive() and process.pid:
+        _terminate_child_process(process, parent_pgid, signal.SIGKILL)
+        process.join(timeout=5.0)
+
+
 def _supervise_conversion_process(
     *,
     job_id: int,
@@ -70,15 +82,19 @@ def _supervise_conversion_process(
     deadline: float | None,
     timeout_seconds: float,
     is_cancelled_fn: Callable[[], bool],
+    shutdown_requested_fn: Callable[[], bool] | None = None,
+    drain_timeout_seconds: float = 300.0,
 ) -> SupervisionResult:
-    """Monitor the subprocess for cancellation or timeout.
+    """Monitor the subprocess for cancellation, timeout, or shutdown.
 
     Returns a ``SupervisionResult`` describing how the subprocess ended.
-    The caller is responsible for acting on ``timed_out`` or ``cancelled``.
+    The caller is responsible for acting on ``timed_out``, ``cancelled``,
+    or ``shutdown_terminated``.
     """
     last_phase = "starting"
     reported_error: dict[str, str] | None = None
     parent_pgid = _get_parent_pgid()
+    drain_deadline: float | None = None
 
     while process.is_alive():
         last_phase, reported_error = _collect_status_messages(
@@ -89,30 +105,45 @@ def _supervise_conversion_process(
         )
 
         if is_cancelled_fn():
-            _terminate_child_process(process, parent_pgid, signal.SIGTERM)
-            process.join(timeout=5.0)
-            if process.is_alive() and process.pid:
-                _terminate_child_process(process, parent_pgid, signal.SIGKILL)
-                process.join(timeout=5.0)
+            _terminate_and_wait(process, parent_pgid)
             logger.info("Job %s cancelled during %s", job_id, last_phase)
             return SupervisionResult(last_phase, reported_error, True, False)
 
         if deadline and time.monotonic() >= deadline:
-            _terminate_child_process(process, parent_pgid, signal.SIGTERM)
-            process.join(timeout=5.0)
-            if process.is_alive() and process.pid:
-                _terminate_child_process(process, parent_pgid, signal.SIGKILL)
-                process.join(timeout=5.0)
-            elapsed = None
-            if deadline is not None:
-                elapsed = time.monotonic() - (deadline - timeout_seconds)
+            _terminate_and_wait(process, parent_pgid)
+            elapsed = time.monotonic() - (deadline - timeout_seconds)
             logger.info(
                 "Job %s timed out during %s after %s seconds",
                 job_id,
                 last_phase,
-                round(elapsed, 3) if elapsed is not None else "unknown",
+                round(elapsed, 3),
             )
             return SupervisionResult(last_phase, reported_error, False, True)
+
+        # Shutdown drain: on first detection, set a drain deadline.
+        if shutdown_requested_fn is not None and shutdown_requested_fn():
+            if drain_deadline is None:
+                drain_deadline = time.monotonic() + drain_timeout_seconds
+                logger.info(
+                    "Shutdown requested — draining job %s (timeout=%ds)",
+                    job_id,
+                    drain_timeout_seconds,
+                )
+            if time.monotonic() >= drain_deadline:
+                _terminate_and_wait(process, parent_pgid)
+                logger.warning(
+                    "Job %s force-terminated during %s after drain timeout (%ds)",
+                    job_id,
+                    last_phase,
+                    drain_timeout_seconds,
+                )
+                return SupervisionResult(
+                    last_phase,
+                    reported_error,
+                    False,
+                    False,
+                    shutdown_terminated=True,
+                )
 
         process.join(timeout=poll_interval_seconds)
 
