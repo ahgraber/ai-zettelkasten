@@ -24,3 +24,9 @@ def test_config_reads_env_vars(monkeypatch):
     assert config.mlflow_tracing_enabled is True
     assert config.mlflow_tracking_uri == mlflow_tracking_uri
     assert config.mlflow_experiment_name == mlflow_experiment_name
+
+
+def test_api_reload_defaults_to_false(monkeypatch):
+    monkeypatch.delenv("API_RELOAD", raising=False)
+    config = ConversionConfig(_env_file=None)
+    assert config.api_reload is False
