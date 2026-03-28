@@ -1,7 +1,7 @@
 # Conversion API Specification
 
-> Translated from Spec Kit on 2026-03-21
-> Source: specs/001-docling-conversion-service/spec.md
+> Generated from code analysis on 2026-03-23
+> Source files: src/aizk/conversion/api/main.py, src/aizk/conversion/api/routers/jobs.py, src/aizk/conversion/api/routers/bookmarks.py, src/aizk/conversion/api/routers/outputs.py, src/aizk/conversion/api/schemas.py
 
 ## Purpose
 
@@ -15,11 +15,19 @@ It also surfaces conversion outputs and aggregate job status metrics.
 
 The system SHALL accept bookmark conversion job submissions via a REST endpoint receiving a KaraKeep bookmark identifier and optional payload version and idempotency key, and SHALL enqueue the job without invoking any external services during request handling.
 
+**Schema reference:** `POST /v1/jobs` · request: `JobSubmission` · response: `JobResponse`
+
 #### Scenario: Submit single bookmark for conversion
 
 - **GIVEN** a valid KaraKeep bookmark identifier
 - **WHEN** a client submits a conversion job via the API
 - **THEN** the system creates a job record, returns the job identifier and initial status, and the bookmark URL, title, and content type may be null until the worker processes the job
+
+#### Scenario: New job returns 201; duplicate returns 200
+
+- **GIVEN** a job submission is received
+- **WHEN** the API handler processes the request
+- **THEN** a newly created job returns HTTP 201 and a duplicate (idempotent) submission returns HTTP 200 with the existing job record
 
 #### Scenario: Submission does not call external services
 
@@ -41,6 +49,8 @@ The system SHALL reject job submissions whose computed idempotency key matches a
 
 The system SHALL expose an endpoint to retrieve the status, timestamps, attempt count, error details, and artifact summary for a single job.
 
+**Schema reference:** `GET /v1/jobs/{job_id}` · response: `JobResponse`
+
 #### Scenario: Get status of succeeded job
 
 - **GIVEN** a job has completed successfully
@@ -56,6 +66,8 @@ The system SHALL expose an endpoint to retrieve the status, timestamps, attempt 
 ### Requirement: List jobs with filters and pagination
 
 The system SHALL expose an endpoint to list conversion jobs filterable by status, internal bookmark identifier, KaraKeep identifier, and supporting pagination.
+
+**Schema reference:** `GET /v1/jobs` · query params: status, aizk_uuid, karakeep_id, created_after, created_before, limit (1–1000, default 50), offset (≥0, default 0) · response: `JobList`
 
 #### Scenario: Filter jobs by status
 
@@ -73,6 +85,8 @@ The system SHALL expose an endpoint to list conversion jobs filterable by status
 
 The system SHALL expose an endpoint returning the count of jobs grouped by status.
 
+**Schema reference:** `GET /v1/jobs/status-counts` · response: `JobStatusCounts`
+
 #### Scenario: Status counts returned
 
 - **GIVEN** jobs exist in various statuses
@@ -83,6 +97,8 @@ The system SHALL expose an endpoint returning the count of jobs grouped by statu
 
 The system SHALL expose an endpoint to retry a failed or permanently failed job by resetting its status to QUEUED and incrementing its attempt count.
 
+**Schema reference:** `POST /v1/jobs/{job_id}/retry` · response: `JobResponse`
+
 #### Scenario: Retry a failed-retryable job
 
 - **GIVEN** a job has status FAILED_RETRYABLE or FAILED_PERM
@@ -92,6 +108,8 @@ The system SHALL expose an endpoint to retry a failed or permanently failed job 
 ### Requirement: Cancel jobs
 
 The system SHALL expose an endpoint to cancel queued or running jobs on a best-effort basis.
+
+**Schema reference:** `POST /v1/jobs/{job_id}/cancel` · response: `JobResponse`
 
 #### Scenario: Cancel a queued job
 
@@ -105,25 +123,11 @@ The system SHALL expose an endpoint to cancel queued or running jobs on a best-e
 - **WHEN** a client posts a cancel request for that job
 - **THEN** the system attempts best-effort cancellation and updates the job status to CANCELLED
 
-### Requirement: Submit batch of jobs
-
-The system SHALL expose an endpoint accepting an array of job submissions and processing each independently, returning per-item results.
-
-#### Scenario: Batch with all valid submissions
-
-- **GIVEN** a batch of valid job submissions is sent
-- **WHEN** the API processes the batch
-- **THEN** each job is created independently and the response includes per-item job identifiers and status
-
-#### Scenario: Batch with mixed valid and invalid submissions
-
-- **GIVEN** a batch contains both valid and duplicate-idempotency-key submissions
-- **WHEN** the API processes the batch
-- **THEN** valid entries produce new job records and duplicate entries return the existing job details, all reported per-item
-
 ### Requirement: Apply bulk actions across multiple jobs
 
-The system SHALL expose an endpoint accepting a list of job identifiers and a bulk action (retry or cancel) to apply to all specified jobs.
+The system SHALL expose an endpoint accepting a list of job identifiers and a bulk action (retry or cancel) to apply to all specified jobs, accepting between 1 and 100 job identifiers.
+
+**Schema reference:** `POST /v1/jobs/actions` · request: `BulkJobActionRequest` · response: `BulkActionResponse`
 
 #### Scenario: Bulk retry
 
@@ -141,6 +145,8 @@ The system SHALL expose an endpoint accepting a list of job identifiers and a bu
 
 The system SHALL expose an endpoint returning all conversion output records for a bookmark ordered by creation time descending, with an option to return only the most recent output.
 
+**Schema reference:** `GET /v1/bookmarks/{aizk_uuid}/outputs` · query param: latest (bool, default false) · response: list of `OutputResponse`
+
 #### Scenario: Retrieve all outputs
 
 - **GIVEN** a bookmark has multiple successful conversions
@@ -156,6 +162,8 @@ The system SHALL expose an endpoint returning all conversion output records for 
 ### Requirement: Serve raw manifest JSON for a conversion output
 
 The system SHALL expose an endpoint that retrieves and returns the raw manifest JSON for a conversion output record directly from object storage without re-parsing or transforming the content.
+
+**Schema reference:** `GET /v1/outputs/{output_id}/manifest` · response: `application/json` raw bytes
 
 #### Scenario: Retrieve manifest for a known output
 
@@ -173,6 +181,8 @@ The system SHALL expose an endpoint that retrieves and returns the raw manifest 
 
 The system SHALL expose an endpoint that retrieves and returns the converted markdown text for a conversion output record directly from object storage.
 
+**Schema reference:** `GET /v1/outputs/{output_id}/markdown` · response: `text/markdown; charset=utf-8` raw bytes
+
 #### Scenario: Retrieve markdown for a known output
 
 - **GIVEN** a conversion output record exists with a valid markdown key
@@ -182,6 +192,8 @@ The system SHALL expose an endpoint that retrieves and returns the converted mar
 ### Requirement: Serve figure images for a conversion output
 
 The system SHALL expose an endpoint that retrieves and returns individual figure images for a conversion output record by filename, and SHALL reject filenames that could escape the figures storage prefix.
+
+**Schema reference:** `GET /v1/outputs/{output_id}/figures/{filename}`
 
 #### Scenario: Retrieve a valid figure
 
@@ -213,6 +225,18 @@ The system SHALL return a 502 response when object storage returns an unexpected
 
 ## Technical Notes
 
-- **Implementation**: `aizk/conversion/api/`
+- **Implementation**: `src/aizk/conversion/api/`
+- **Routes**:
+  - `POST /v1/jobs` — submit job
+  - `GET /v1/jobs` — list jobs (filters: status, aizk_uuid, karakeep_id, created_after, created_before; pagination: limit, offset)
+  - `GET /v1/jobs/status-counts` — aggregate counts by status
+  - `GET /v1/jobs/{job_id}` — get single job
+  - `POST /v1/jobs/{job_id}/retry` — retry failed/cancelled job
+  - `POST /v1/jobs/{job_id}/cancel` — cancel queued/running job
+  - `POST /v1/jobs/actions` — bulk retry or cancel (1–100 job IDs)
+  - `GET /v1/bookmarks/{aizk_uuid}/outputs` — list conversion outputs for a bookmark
+  - `GET /v1/outputs/{output_id}/manifest` — raw manifest JSON from S3
+  - `GET /v1/outputs/{output_id}/markdown` — markdown text from S3
+  - `GET /v1/outputs/{output_id}/figures/{filename}` — figure image from S3
 - **Dependencies**: conversion-worker (data model); conversion-ui (served under same process)
 - **Idempotency key**: computed by the worker as a hash of bookmark identifier, payload version, Docling version, and config hash; the API surface accepts a client-supplied key as an override
