@@ -1,0 +1,7 @@
+# Schema source manifest — tracks when each snapshot was generated and from what.
+
+conversion-api-openapi.json:
+  type: openapi
+  generated: 2026-03-28
+  source: uv run python -c 'from aizk.conversion.api.main import create_app; ...'
+  change: health-endpoints
