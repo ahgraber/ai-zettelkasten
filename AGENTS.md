@@ -107,6 +107,13 @@ For multi-step tasks, state a brief plan defining the step task and associated v
 - Keep a Changelog is REQUIRED; maintain `CHANGELOG.md` following <https://keepachangelog.com>.
 - After the first MINOR release, all changes affecting data/schema/contracts MUST include a migration plan and a deprecation schedule.
 
+## Testing
+
+- Run tests via `uv run pytest tests/`.
+- For parallel execution, use `pytest-xdist`: `uv run pytest -n auto -m "not integration_lifecycle" tests/`.
+- Tests marked `integration_lifecycle` (subprocess lifecycle with `pytest-isolate`) are incompatible with xdist; run them separately: `uv run pytest -m integration_lifecycle tests/`.
+- Do not use `pytest-run-parallel` — it is a thread-safety stress tester (runs the same test N times in N threads), not a test suite parallelizer.
+
 ## Sandbox Limitations
 
 - The sandbox cannot run `uv sync` or read `.env` / `.env.example` (permission errors).
