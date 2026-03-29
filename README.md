@@ -130,6 +130,32 @@ podman-compose -f containers/podman-compose.yaml up -d --build
 This project uses spec-driven development to allow AI coding assistance to work on well-specified features.
 See the `sdd-*` family of [ahgraber/skills: Agent skills](https://github.com/ahgraber/skills).
 
+## Testing
+
+Run tests with uv:
+
+```sh
+uv run pytest tests/
+```
+
+Run tests in parallel across CPU cores using [pytest-xdist](https://pytest-xdist.readthedocs.io/en/stable/):
+
+```sh
+uv run pytest -n auto -m "not integration_lifecycle" tests/
+```
+
+Subprocess lifecycle tests (`integration_lifecycle`) are incompatible with xdist and must be run separately:
+
+```sh
+uv run pytest -m integration_lifecycle tests/
+```
+
+With coverage:
+
+```sh
+uv run pytest -n auto -m "not integration_lifecycle" --cov=src --cov-report=term-missing tests/
+```
+
 ## Development and Contributing
 
 Contributions and fixes are welcome.
