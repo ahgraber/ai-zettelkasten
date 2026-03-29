@@ -25,6 +25,7 @@ class ConversionConfig(BaseSettings):
 
     queue_max_depth: int = Field(default=1000, validation_alias="QUEUE_MAX_DEPTH")
     worker_concurrency: int = Field(default=4, validation_alias="WORKER_CONCURRENCY")
+    worker_gpu_concurrency: int = Field(default=1, validation_alias="WORKER_GPU_CONCURRENCY")
     fetch_timeout_seconds: int = Field(default=30, validation_alias="FETCH_TIMEOUT_SECONDS")
     retry_max_attempts: int = Field(default=3, validation_alias="RETRY_MAX_ATTEMPTS")
     retry_base_delay_seconds: int = Field(default=60, validation_alias="RETRY_BASE_DELAY_SECONDS")

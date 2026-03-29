@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 import datetime as dt
 import logging
 import time
@@ -13,7 +14,7 @@ from sqlmodel import Session, select
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.db import get_engine
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.workers.orchestrator import process_job_supervised
+from aizk.conversion.workers.orchestrator import configure_gpu_semaphore, process_job_supervised
 from aizk.conversion.workers.shutdown import (
     is_immediate_shutdown,
     is_shutdown_requested,
@@ -58,8 +59,12 @@ def recover_stale_running_jobs(config: ConversionConfig) -> int:
     return len(jobs)
 
 
-def poll_and_process_jobs(config: ConversionConfig, poll_interval_seconds: float = 2.0) -> bool:
-    """Pick up the next eligible job and invoke supervised processing."""
+def claim_next_job(config: ConversionConfig) -> int | None:
+    """Atomically claim the next eligible job and transition it to RUNNING.
+
+    Returns the job id, or None if no eligible job exists or the database
+    is locked.
+    """
     engine = get_engine(config.database_url)
     now = _utcnow()
 
@@ -79,15 +84,15 @@ def poll_and_process_jobs(config: ConversionConfig, poll_interval_seconds: float
         except OperationalError as exc:
             session.rollback()
             logger.warning("Job poll skipped due to database lock: %s", exc)
-            return False
+            return None
         except DBAPIError:
             session.rollback()
             logger.exception("Job poll failed due to database error")
-            return False
+            return None
 
         if not job:
             session.rollback()
-            return False
+            return None
 
         job_id = job.id
         job.status = ConversionJobStatus.RUNNING
@@ -100,8 +105,56 @@ def poll_and_process_jobs(config: ConversionConfig, poll_interval_seconds: float
     if job_id is None:
         raise RuntimeError("Queued job missing id; cannot process job")
 
+    return job_id
+
+
+def poll_and_process_jobs(config: ConversionConfig, poll_interval_seconds: float = 2.0) -> bool:
+    """Pick up the next eligible job and invoke supervised processing."""
+    job_id = claim_next_job(config)
+    if job_id is None:
+        return False
     process_job_supervised(job_id, config, poll_interval_seconds=poll_interval_seconds)
     return True
+
+
+def _reap_completed(futures: dict[Future, int]) -> None:
+    """Remove completed futures and log any unexpected exceptions."""
+    done = [f for f in futures if f.done()]
+    for f in done:
+        job_id = futures.pop(f)
+        exc = f.exception()
+        if exc is not None:
+            logger.error("Job %d raised unexpected exception: %s", job_id, exc)
+
+
+def _drain_in_flight(futures: dict[Future, int], config: ConversionConfig) -> bool:
+    """Wait for in-flight jobs during shutdown.
+
+    Returns True if any job did not complete within the drain window
+    (exit code should be 1).
+    """
+    if not futures:
+        return False
+
+    # Per-job supervision loops enforce their own drain deadlines.
+    # Add a 15-second buffer so the outer wait outlasts them.
+    outer_timeout = config.worker_drain_timeout_seconds + 15.0
+    done, not_done = wait(futures.keys(), timeout=outer_timeout)
+
+    if not_done:
+        logger.warning(
+            "Drain timeout expired with %d jobs still running",
+            len(not_done),
+        )
+        return True
+
+    # Check for exceptions in completed futures.
+    for f in done:
+        exc = f.exception()
+        if exc is not None:
+            logger.error("Job %d raised unexpected exception during drain: %s", futures[f], exc)
+
+    return False
 
 
 def run_worker(config: ConversionConfig, poll_interval_seconds: float = 2.0) -> int:
@@ -110,38 +163,57 @@ def run_worker(config: ConversionConfig, poll_interval_seconds: float = 2.0) -> 
     Returns an exit code: 0 for clean shutdown, 1 for forced termination.
     """
     register_signal_handlers()
+    configure_gpu_semaphore(config.worker_gpu_concurrency)
+
+    max_workers = config.worker_concurrency
     logger.info(
-        "Starting conversion worker loop (drain_timeout=%ds)",
+        "Starting conversion worker loop (concurrency=%d, gpu_concurrency=%d, drain_timeout=%ds)",
+        max_workers,
+        config.worker_gpu_concurrency,
         config.worker_drain_timeout_seconds,
     )
 
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+    futures: dict[Future, int] = {}
     last_recovery_check = 0.0
-    while not is_shutdown_requested():
-        now = time.monotonic()
-        if now - last_recovery_check >= config.worker_stale_job_check_seconds:
-            recovered = recover_stale_running_jobs(config)
-            if recovered:
-                logger.warning("Recovered %d stale RUNNING jobs", recovered)
-            last_recovery_check = now
+    force_terminated = False
 
-        processed = poll_and_process_jobs(config, poll_interval_seconds=poll_interval_seconds)
+    try:
+        while not is_shutdown_requested():
+            now = time.monotonic()
+            if now - last_recovery_check >= config.worker_stale_job_check_seconds:
+                recovered = recover_stale_running_jobs(config)
+                if recovered:
+                    logger.warning("Recovered %d stale RUNNING jobs", recovered)
+                last_recovery_check = now
 
-        # If shutdown was requested during job processing, the supervision
-        # loop already handled the drain (waiting for completion or
-        # force-terminating after drain timeout).  Log and exit.
-        if is_shutdown_requested():
-            if processed:
-                logger.info("Shutdown completed — in-flight job finished during drain")
-            else:
-                logger.info("Shutdown requested — exiting")
-            if is_immediate_shutdown():
-                logger.warning("Forced shutdown — exiting with code 1")
-                return 1
-            return 0
+            _reap_completed(futures)
 
-        if not processed:
+            # Fill worker slots greedily.
+            if len(futures) < max_workers:
+                job_id = claim_next_job(config)
+                if job_id is not None:
+                    future = executor.submit(
+                        process_job_supervised,
+                        job_id,
+                        config,
+                        poll_interval_seconds=poll_interval_seconds,
+                    )
+                    futures[future] = job_id
+                    continue  # Try to fill more slots immediately.
+
             time.sleep(poll_interval_seconds)
 
-    # Shutdown while idle (signal arrived during sleep).
-    logger.info("Shutdown requested while idle — exiting cleanly")
+        # Shutdown requested — drain in-flight jobs.
+        logger.info("Shutdown requested — draining %d in-flight jobs", len(futures))
+        force_terminated = _drain_in_flight(futures, config)
+
+    finally:
+        executor.shutdown(wait=False)
+
+    if is_immediate_shutdown() or force_terminated:
+        logger.warning("Forced shutdown — exiting with code 1")
+        return 1
+
+    logger.info("Shutdown complete — exiting cleanly")
     return 0
