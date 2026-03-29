@@ -35,6 +35,7 @@ class ConversionJob(SQLModel, table=True):
     attempts: int = Field(default=0, nullable=False)
     error_code: Optional[str] = Field(default=None, max_length=50)
     error_message: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    error_detail: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     idempotency_key: str = Field(max_length=64, nullable=False, unique=True, index=True)
     earliest_next_attempt_at: Optional[datetime.datetime] = Field(default=None, index=True)
     last_error_at: Optional[datetime.datetime] = Field(default=None)
