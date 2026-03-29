@@ -49,9 +49,17 @@ class ReportedChildError(RuntimeError):
 
     retryable: ClassVar[bool] = True
 
-    def __init__(self, message: str, error_code: str, *, retryable: bool | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        error_code: str,
+        *,
+        retryable: bool | None = None,
+        traceback: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.error_code = error_code
+        self.traceback = traceback
         if retryable is not None:
             self.retryable = retryable
 
