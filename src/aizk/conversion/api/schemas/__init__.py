@@ -1,5 +1,6 @@
 """Shared conversion service schemas."""
 
+from .health import CheckResult, HealthResponse
 from .jobs import (
     ArtifactSummary,
     BulkActionResponse,
@@ -19,6 +20,8 @@ __all__ = [
     "BulkActionResult",
     "BulkActionSummary",
     "BulkJobActionRequest",
+    "CheckResult",
+    "HealthResponse",
     "JobList",
     "JobResponse",
     "JobStatusCounts",
