@@ -117,6 +117,7 @@ def _report_status(
     message: str,
     error_code: str | None = None,
     retryable: bool | None = None,
+    traceback_text: str | None = None,
 ) -> None:
     """Send a structured event from the subprocess to the parent."""
     if not status_queue:
@@ -126,6 +127,8 @@ def _report_status(
         payload["error_code"] = error_code
     if retryable is not None:
         payload["retryable"] = "true" if retryable else "false"
+    if traceback_text:
+        payload["traceback"] = traceback_text
     try:
         status_queue.put_nowait(payload)
     except Exception:
@@ -325,6 +328,8 @@ def _process_job_subprocess(
     status_queue: mp.Queue,
 ) -> None:
     """Subprocess entrypoint that reports conversion events to the parent."""
+    import traceback as tb_mod
+
     os.setpgrp()  # Create new process group for cleanup of all descendants
     try:
         _convert_job_artifacts(
@@ -351,6 +356,7 @@ def _process_job_subprocess(
             message=str(exc),
             error_code=error_code,
             retryable=retryable,
+            traceback_text=tb_mod.format_exc(),
         )
         raise
     except Exception as exc:
@@ -360,6 +366,7 @@ def _process_job_subprocess(
             message=str(exc),
             error_code="conversion_failed",
             retryable=True,
+            traceback_text=tb_mod.format_exc(),
         )
         raise
 
@@ -514,6 +521,7 @@ def process_job_supervised(job_id: int, config: ConversionConfig, poll_interval_
                     error_message,
                     error_code,
                     retryable=retryable,
+                    traceback=result.reported_error.get("traceback"),
                 ),
                 config,
             )
@@ -604,8 +612,18 @@ def handle_job_error(job_id: int, error: Exception, config: ConversionConfig) ->
 
     error_code = getattr(error, "error_code", "conversion_failed")
     message = str(error)
+    error_detail = getattr(error, "traceback", None)
 
     retryable: bool = error.retryable  # type: ignore[attr-defined]
+
+    logger.error(
+        "Job %s failed: %s (code=%s, retryable=%s)",
+        job_id,
+        message,
+        error_code,
+        retryable,
+        extra={"job_id": job_id, "error_code": error_code, "error_detail": error_detail},
+    )
 
     with Session(engine) as session:
         job = session.get(ConversionJob, job_id)
@@ -623,6 +641,7 @@ def handle_job_error(job_id: int, error: Exception, config: ConversionConfig) ->
             job.finished_at = now
         job.error_code = error_code
         job.error_message = message
+        job.error_detail = error_detail
         job.last_error_at = now
         job.updated_at = now
         session.add(job)
