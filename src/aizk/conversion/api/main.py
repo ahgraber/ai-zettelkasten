@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
-from aizk.conversion.api.routes import bookmarks_router, jobs_router, outputs_router, ui_router
+from aizk.conversion.api.routes import bookmarks_router, health_router, jobs_router, outputs_router, ui_router
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.logging import configure_logging
 from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
@@ -33,6 +33,7 @@ async def lifespan(_app: FastAPI):
 def create_app() -> FastAPI:
     """Create the FastAPI application instance."""
     app = FastAPI(title="Docling Conversion Service", lifespan=lifespan)
+    app.include_router(health_router)
     app.include_router(jobs_router)
     app.include_router(bookmarks_router)
     app.include_router(outputs_router)
