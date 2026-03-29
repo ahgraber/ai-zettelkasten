@@ -32,7 +32,8 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers import errors as errors_mod, loop, orchestrator
 
-# Mark all tests in this module to run in isolated process
+# Mark all tests in this module to run in isolated process.
+# Incompatible with xdist — use -m "not integration_lifecycle" when running with -n auto.
 pytestmark = [
     pytest.mark.isolate,  # Requires pytest-isolate: pip install pytest-isolate
     pytest.mark.integration_lifecycle,  # Custom marker for selective running
