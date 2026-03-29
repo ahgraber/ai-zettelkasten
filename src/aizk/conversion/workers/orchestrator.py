@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 import datetime as dt
 import json
 import logging
@@ -10,6 +11,7 @@ import multiprocessing as mp
 import os
 from pathlib import Path
 import tempfile
+import threading
 import time
 from typing import Literal
 
@@ -65,6 +67,7 @@ from aizk.conversion.workers.supervision import _supervise_conversion_process
 from aizk.conversion.workers.types import (
     ConversionArtifacts,
     ConversionInput,
+    SupervisionResult,
     _utcnow,
 )
 from aizk.conversion.workers.uploader import _upload_converted
@@ -73,6 +76,16 @@ from aizk.utilities.url_utils import normalize_url
 from karakeep_client.models import Bookmark as KarakeepBookmark
 
 logger = logging.getLogger(__name__)
+
+# Module-level GPU semaphore.  Limits concurrent conversion subprocesses
+# to prevent GPU OOM when multiple jobs run in parallel.
+_gpu_semaphore: threading.Semaphore | None = None
+
+
+def configure_gpu_semaphore(gpu_concurrency: int) -> None:
+    """Set the GPU concurrency limit.  Called once at worker startup."""
+    global _gpu_semaphore  # noqa: PLW0603
+    _gpu_semaphore = threading.Semaphore(gpu_concurrency)
 
 
 def _docling_version() -> str:
@@ -387,6 +400,48 @@ def _initialize_running_job(job_id: int, engine: Engine) -> bool:
     return True
 
 
+def _spawn_and_supervise(
+    *,
+    job_id: int,
+    workspace: Path,
+    payload_path: Path,
+    poll_interval_seconds: float,
+    timeout_seconds: float,
+    is_cancelled_fn: Callable[[], bool],
+    config: ConversionConfig,
+) -> tuple[mp.Process, SupervisionResult, float | None]:
+    """Spawn a conversion subprocess under the GPU semaphore and supervise it."""
+    sem = _gpu_semaphore
+    if sem is not None:
+        sem.acquire()
+    try:
+        process, status_queue = _spawn_conversion_subprocess(
+            job_id=job_id,
+            workspace=workspace,
+            payload_path=payload_path,
+        )
+
+        deadline = None
+        if timeout_seconds > 0:
+            deadline = time.monotonic() + timeout_seconds
+
+        result = _supervise_conversion_process(
+            job_id=job_id,
+            process=process,
+            status_queue=status_queue,
+            poll_interval_seconds=poll_interval_seconds,
+            deadline=deadline,
+            timeout_seconds=timeout_seconds,
+            is_cancelled_fn=is_cancelled_fn,
+            shutdown_requested_fn=is_shutdown_requested,
+            drain_timeout_seconds=float(config.worker_drain_timeout_seconds),
+        )
+    finally:
+        if sem is not None:
+            sem.release()
+    return process, result, deadline
+
+
 def process_job_supervised(job_id: int, config: ConversionConfig, poll_interval_seconds: float = 2.0) -> None:
     """Run a supervised conversion attempt and upload artifacts on success.
 
@@ -411,26 +466,14 @@ def process_job_supervised(job_id: int, config: ConversionConfig, poll_interval_
         payload_path = workspace / "karakeep_bookmark.json"
         payload_path.write_text(json.dumps(karakeep_bookmark.model_dump(mode="json"), indent=2))
 
-        process, status_queue = _spawn_conversion_subprocess(
+        process, result, deadline = _spawn_and_supervise(
             job_id=job_id,
             workspace=workspace,
             payload_path=payload_path,
-        )
-
-        deadline = None
-        if timeout_seconds > 0:
-            deadline = time.monotonic() + timeout_seconds
-
-        result = _supervise_conversion_process(
-            job_id=job_id,
-            process=process,
-            status_queue=status_queue,
             poll_interval_seconds=poll_interval_seconds,
-            deadline=deadline,
             timeout_seconds=timeout_seconds,
             is_cancelled_fn=lambda: _is_job_cancelled(job_id, engine),
-            shutdown_requested_fn=is_shutdown_requested,
-            drain_timeout_seconds=float(config.worker_drain_timeout_seconds),
+            config=config,
         )
 
         if result.timed_out:
