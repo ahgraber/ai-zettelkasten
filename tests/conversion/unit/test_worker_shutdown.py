@@ -267,10 +267,10 @@ class TestRunWorkerShutdown:
 
     def test_shutdown_while_idle_exits_zero(self, monkeypatch):
         """Signal during idle sleep exits with code 0."""
-        # Request shutdown before first poll
         shutdown.request_shutdown()
 
         monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
+        monkeypatch.setattr(loop, "configure_gpu_semaphore", lambda _n: None)
 
         config = ConversionConfig(_env_file=None)
         exit_code = loop.run_worker(config, poll_interval_seconds=0.01)
@@ -279,41 +279,47 @@ class TestRunWorkerShutdown:
 
     def test_shutdown_after_job_completes_exits_zero(self, monkeypatch):
         """Signal during job processing; job finishes; exits 0."""
-        poll_count = {"n": 0}
+        claim_count = {"n": 0}
 
-        def _fake_poll(_config, poll_interval_seconds=2.0):
-            poll_count["n"] += 1
-            if poll_count["n"] == 1:
-                # Simulate shutdown during job processing
-                shutdown.request_shutdown()
-                return True  # Job processed
-            return False
+        def _fake_claim(_config):
+            claim_count["n"] += 1
+            if claim_count["n"] == 1:
+                return 1
+            shutdown.request_shutdown()
+            return None
 
-        monkeypatch.setattr(loop, "poll_and_process_jobs", _fake_poll)
+        def _fake_process(_job_id, _config, poll_interval_seconds=2.0):
+            pass  # Job completes immediately.
+
+        monkeypatch.setattr(loop, "claim_next_job", _fake_claim)
+        monkeypatch.setattr(loop, "process_job_supervised", _fake_process)
         monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
+        monkeypatch.setattr(loop, "configure_gpu_semaphore", lambda _n: None)
         monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
 
         config = ConversionConfig(_env_file=None)
         exit_code = loop.run_worker(config, poll_interval_seconds=0.01)
 
         assert exit_code == 0
-        assert poll_count["n"] == 1
 
     def test_immediate_shutdown_exits_one(self, monkeypatch):
         """Second signal (immediate shutdown) exits with code 1."""
-        poll_count = {"n": 0}
+        claim_count = {"n": 0}
 
-        def _fake_poll(_config, poll_interval_seconds=2.0):
-            poll_count["n"] += 1
-            if poll_count["n"] == 1:
-                # Simulate two signals (immediate shutdown)
-                shutdown._handle_signal(signal.SIGTERM, None)
-                shutdown._handle_signal(signal.SIGTERM, None)
-                return True
-            return False
+        def _fake_claim(_config):
+            claim_count["n"] += 1
+            if claim_count["n"] == 1:
+                return 1
+            return None
 
-        monkeypatch.setattr(loop, "poll_and_process_jobs", _fake_poll)
+        def _fake_process(_job_id, _config, poll_interval_seconds=2.0):
+            shutdown._handle_signal(signal.SIGTERM, None)
+            shutdown._handle_signal(signal.SIGTERM, None)
+
+        monkeypatch.setattr(loop, "claim_next_job", _fake_claim)
+        monkeypatch.setattr(loop, "process_job_supervised", _fake_process)
         monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
+        monkeypatch.setattr(loop, "configure_gpu_semaphore", lambda _n: None)
         monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
 
         config = ConversionConfig(_env_file=None)
@@ -326,19 +332,26 @@ class TestRunWorkerShutdown:
         bookmark = _create_bookmark(db_session)
         job = _create_running_job(db_session, bookmark)
 
-        def _fake_poll(_config, poll_interval_seconds=2.0):
-            # Simulate: process the job, then mark it FAILED_RETRYABLE
-            # (as would happen after drain timeout forced termination)
+        claim_count = {"n": 0}
+
+        def _fake_claim(_config):
+            claim_count["n"] += 1
+            if claim_count["n"] == 1:
+                return job.id
+            shutdown.request_shutdown()
+            return None
+
+        def _fake_process(_job_id, _config, poll_interval_seconds=2.0):
             with Session(db_session.get_bind()) as session:
-                j = session.get(ConversionJob, job.id)
+                j = session.get(ConversionJob, _job_id)
                 j.status = ConversionJobStatus.FAILED_RETRYABLE
                 session.add(j)
                 session.commit()
-            shutdown.request_shutdown()
-            return True
 
-        monkeypatch.setattr(loop, "poll_and_process_jobs", _fake_poll)
+        monkeypatch.setattr(loop, "claim_next_job", _fake_claim)
+        monkeypatch.setattr(loop, "process_job_supervised", _fake_process)
         monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
+        monkeypatch.setattr(loop, "configure_gpu_semaphore", lambda _n: None)
         monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
 
         config = ConversionConfig(_env_file=None)
