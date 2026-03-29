@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import os
+import logging
 import sys
 
 from setproctitle import setproctitle
@@ -11,14 +11,10 @@ import uvicorn
 
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.litestream import LitestreamManager
+from aizk.conversion.utilities.startup import StartupValidationError, validate_startup
 from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
 
-
-def _require_karakeep_env() -> None:
-    required_keys = ("KARAKEEP_API_KEY", "KARAKEEP_BASE_URL")
-    missing = [key for key in required_keys if not os.environ.get(key)]
-    if missing:
-        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
+logger = logging.getLogger(__name__)
 
 
 def _cmd_db_init(_args: argparse.Namespace) -> int:
@@ -32,9 +28,13 @@ def _cmd_db_init(_args: argparse.Namespace) -> int:
 
 def _cmd_serve(_args: argparse.Namespace) -> int:
     """Run the FastAPI server."""
-    _require_karakeep_env()
     setproctitle("docling-api")
     config = ConversionConfig()
+    try:
+        validate_startup(config, role="api")
+    except StartupValidationError:
+        logger.exception("startup validation failed", extra={"role": "api"})
+        return 1
     configure_mlflow_tracing(
         enabled=config.mlflow_tracing_enabled,
         tracking_uri=config.mlflow_tracking_uri,
@@ -52,9 +52,13 @@ def _cmd_serve(_args: argparse.Namespace) -> int:
 
 def _cmd_worker(_args: argparse.Namespace) -> int:
     """Run the background worker."""
-    _require_karakeep_env()
     setproctitle("docling-worker")
     config = ConversionConfig()
+    try:
+        validate_startup(config, role="worker")
+    except StartupValidationError:
+        logger.exception("startup validation failed", extra={"role": "worker"})
+        return 1
     configure_mlflow_tracing(
         enabled=config.mlflow_tracing_enabled,
         tracking_uri=config.mlflow_tracking_uri,
