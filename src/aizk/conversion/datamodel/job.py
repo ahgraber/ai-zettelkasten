@@ -5,7 +5,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
-from sqlalchemy import Column, Text
+from sqlalchemy import Column, Index, Text
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -26,6 +26,14 @@ class ConversionJob(SQLModel, table=True):
     """Represents a single conversion attempt with retry tracking."""
 
     __tablename__ = "conversion_jobs"
+    __table_args__ = (
+        Index(
+            "ix_conversion_jobs_status_next_attempt_queued",
+            "status",
+            "earliest_next_attempt_at",
+            "queued_at",
+        ),
+    )
 
     id: int | None = Field(default=None, primary_key=True, nullable=False)
     aizk_uuid: UUID = Field(foreign_key="bookmarks.aizk_uuid", nullable=False, index=True)

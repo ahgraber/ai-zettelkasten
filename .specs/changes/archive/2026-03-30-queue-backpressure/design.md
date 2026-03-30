@@ -33,17 +33,20 @@ Including them would make the depth limit meaningless — a system that has proc
 - Count all non-terminal statuses (including `RUNNING`): would make the limit sensitive to in-flight work, not just queued depth.
   Rejected because the intent is backpressure on _queued_ work, and `worker_concurrency` already bounds in-flight work.
 
-### Decision: Use `Retry-After` header with configurable value
+### Decision: Static configured `Retry-After` value
 
-**Chosen:** Return a `Retry-After` header with the worker poll interval as a reasonable floor, giving clients a concrete signal for when to retry.
+**Chosen:** Return a `Retry-After` header with a static operator-configured value (`queue_retry_after_seconds`, default 30).
+No attempt to predict drain rate.
 
-**Rationale:** RFC 7231 recommends `Retry-After` with 503 responses.
-Using the poll interval aligns with how fast the queue can drain.
+**Rationale:** Queue drain rate depends on job duration (seconds to 2 hours), concurrency utilization, and retry backoff state — none of which the API knows at submission time.
+A static value is honest, tunable, and gives clients useful guidance without false precision.
+RFC 7231 recommends `Retry-After` with 503 responses.
 
 **Alternatives considered:**
 
 - No `Retry-After`: simpler, but clients have no guidance on retry timing and may hammer the endpoint.
-- Dynamic calculation based on queue drain rate: over-engineered for the current single-worker architecture.
+- Worker poll interval (2s): too aggressive — clients would retry immediately and get rejected again.
+- Dynamic estimate from average job duration and concurrency slots: unreliable (PDF vs HTML drain rates differ by orders of magnitude) and the API has no visibility into worker state.
 
 ### Decision: Composite index covers worker poll query
 
