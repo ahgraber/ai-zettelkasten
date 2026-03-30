@@ -13,6 +13,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import Session, select
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import JSONResponse
 
 from aizk.conversion.api.dependencies import get_config, get_db_session
 from aizk.conversion.api.schemas import (
@@ -156,15 +157,20 @@ def submit_job(
     config = get_config(request)
 
     bookmark = session.exec(select(Bookmark).where(Bookmark.karakeep_id == submission.karakeep_id)).first()
-    if not bookmark:
+    is_new_bookmark = bookmark is None
+    if is_new_bookmark:
+        # Create in memory only.  aizk_uuid is set by the Python default
+        # factory (uuid4), so it is available before the row is persisted.
+        # The INSERT is deferred to after the queue-depth check so a
+        # rejected submission does not leave an orphan bookmark row.
         bookmark = Bookmark(
             karakeep_id=submission.karakeep_id,
             created_at=_utcnow(),
             updated_at=_utcnow(),
         )
-        session.add(bookmark)
-        session.commit()
-        session.refresh(bookmark)
+
+    # End the auto-begun read transaction so BEGIN IMMEDIATE can start clean.
+    session.commit()
 
     # BEGIN IMMEDIATE acquires the write lock upfront so the subsequent
     # read-then-write sequence (idempotency check → queue depth → INSERT)
@@ -192,11 +198,16 @@ def submit_job(
         select(func.count()).select_from(ConversionJob).where(ConversionJob.status.in_(actionable_statuses))
     ).one()
     if queue_depth >= config.queue_max_depth:
-        raise HTTPException(
+        session.rollback()
+        return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Queue is at capacity",
+            content={"detail": "Queue is at capacity", "retry_after": config.queue_retry_after_seconds},
             headers={"Retry-After": str(config.queue_retry_after_seconds)},
         )
+
+    if is_new_bookmark:
+        session.add(bookmark)
+        session.flush()
 
     now = _utcnow()
     job = ConversionJob(
@@ -213,6 +224,7 @@ def submit_job(
     session.add(job)
     session.commit()
     session.refresh(job)
+    session.refresh(bookmark)
 
     job_response = _job_to_response(job, bookmark, None)
     return job_response

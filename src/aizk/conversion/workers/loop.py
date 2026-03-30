@@ -5,6 +5,7 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 import datetime as dt
 import logging
+import os
 import time
 
 from sqlalchemy import text
@@ -213,7 +214,11 @@ def run_worker(config: ConversionConfig, poll_interval_seconds: float = 2.0) -> 
 
     if is_immediate_shutdown() or force_terminated:
         logger.warning("Forced shutdown — exiting with code 1")
-        return 1
+        # ThreadPoolExecutor threads are not daemon threads.  A normal
+        # return / sys.exit still waits for them during interpreter
+        # shutdown, so a stuck task would keep the process alive
+        # indefinitely.  os._exit bypasses that join.
+        os._exit(1)
 
     logger.info("Shutdown complete — exiting cleanly")
     return 0

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from sqlmodel import select
+
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
@@ -67,6 +69,24 @@ def test_submit_rejected_when_queue_at_capacity(db_session, monkeypatch) -> None
     assert response.status_code == 503
     body = response.json()
     assert "capacity" in body["detail"].lower()
+    # Response body must match QueueFullResponse schema (detail + retry_after).
+    assert "retry_after" in body
+    assert isinstance(body["retry_after"], int)
+
+
+def test_rejected_submission_does_not_create_orphan_bookmark(db_session, monkeypatch) -> None:
+    """A queue-full rejection must not leave a bookmark row for the new karakeep_id."""
+    monkeypatch.setenv("QUEUE_MAX_DEPTH", "1")
+    app = create_app()
+    existing_bm = _create_bookmark(db_session, "bp-orphan-fill")
+    _fill_queue(db_session, existing_bm, 1)
+
+    with TestClient(app) as client:
+        response = client.post("/v1/jobs", json={"karakeep_id": "bp-orphan-new"})
+
+    assert response.status_code == 503
+    orphan = db_session.exec(select(Bookmark).where(Bookmark.karakeep_id == "bp-orphan-new")).first()
+    assert orphan is None, "Rejected submission should not persist a bookmark row"
 
 
 def test_submit_accepted_when_queue_below_capacity(db_session, monkeypatch) -> None:
