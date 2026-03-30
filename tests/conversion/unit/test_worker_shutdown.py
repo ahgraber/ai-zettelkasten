@@ -302,8 +302,8 @@ class TestRunWorkerShutdown:
 
         assert exit_code == 0
 
-    def test_immediate_shutdown_exits_one(self, monkeypatch):
-        """Second signal (immediate shutdown) exits with code 1."""
+    def test_immediate_shutdown_calls_os_exit(self, monkeypatch):
+        """Second signal (immediate shutdown) calls os._exit(1) to bypass thread join."""
         claim_count = {"n": 0}
 
         def _fake_claim(_config):
@@ -316,16 +316,18 @@ class TestRunWorkerShutdown:
             shutdown._handle_signal(signal.SIGTERM, None)
             shutdown._handle_signal(signal.SIGTERM, None)
 
+        exit_calls: list[int] = []
         monkeypatch.setattr(loop, "claim_next_job", _fake_claim)
         monkeypatch.setattr(loop, "process_job_supervised", _fake_process)
         monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
         monkeypatch.setattr(loop, "configure_gpu_semaphore", lambda _n: None)
         monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
+        monkeypatch.setattr(os, "_exit", lambda code: exit_calls.append(code))
 
         config = ConversionConfig(_env_file=None)
-        exit_code = loop.run_worker(config, poll_interval_seconds=0.01)
+        loop.run_worker(config, poll_interval_seconds=0.01)
 
-        assert exit_code == 1
+        assert exit_calls == [1]
 
     def test_no_running_jobs_after_shutdown(self, monkeypatch, db_session):
         """After shutdown, no jobs should be in RUNNING state."""
