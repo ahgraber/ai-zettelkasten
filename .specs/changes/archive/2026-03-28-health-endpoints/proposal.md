@@ -5,7 +5,7 @@
 The conversion API has no health surface.
 Orchestrators (Docker, K8s, systemd) cannot distinguish a healthy instance from one with a broken database connection or unreachable S3 bucket.
 This forces operators to discover failures indirectly — when data is missing or requests error — rather than through proactive health monitoring.
-Adding liveness and readiness probes closes this gap (remediation plan P0 #3, items 2d + 2e).
+Adding liveness and readiness probes closes this gap.
 
 ## Scope
 
@@ -19,8 +19,8 @@ Adding liveness and readiness probes closes this gap (remediation plan P0 #3, it
 **Out of scope:**
 
 - Worker health signaling (separate concern — worker has no HTTP surface)
-- Startup validation / fail-fast on misconfiguration (Phase 3, item 3b)
-- Container HEALTHCHECK instruction (Phase 3, item 3d)
+- Startup validation / fail-fast on misconfiguration (separate change)
+- Container HEALTHCHECK instruction (separate change)
 - Deep dependency health (e.g., KaraKeep reachability, Litestream status)
 
 ## Approach

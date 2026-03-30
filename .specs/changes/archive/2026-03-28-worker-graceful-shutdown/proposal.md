@@ -17,8 +17,8 @@ During routine deployments, container restarts, or systemd stops, the worker loo
 **Out of scope:**
 
 - API process shutdown (uvicorn handles SIGTERM with its own drain)
-- Worker concurrency model (separate item 2c)
-- Health check endpoints (separate item 2d/2e)
+- Worker concurrency model (separate change)
+- Health check endpoints (separate change)
 - Changes to job-level subprocess termination (already spec'd)
 
 ## Approach
