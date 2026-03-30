@@ -25,6 +25,7 @@ from aizk.conversion.api.schemas import (
     JobResponse,
     JobStatusCounts,
     JobSubmission,
+    QueueFullResponse,
 )
 from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
@@ -139,7 +140,12 @@ def _apply_job_delete(session: Session, job: ConversionJob) -> None:
     session.delete(job)
 
 
-@router.post("", response_model=JobResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=JobResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={503: {"model": QueueFullResponse, "description": "Queue is at capacity"}},
+)
 def submit_job(
     submission: JobSubmission,
     api_response: Response,
@@ -174,6 +180,17 @@ def submit_job(
         api_response.status_code = status.HTTP_200_OK
         job_response = _job_to_response(existing_job, bookmark, output)
         return job_response
+
+    actionable_statuses = [ConversionJobStatus.QUEUED, ConversionJobStatus.FAILED_RETRYABLE]
+    queue_depth = session.exec(
+        select(func.count()).select_from(ConversionJob).where(ConversionJob.status.in_(actionable_statuses))
+    ).one()
+    if queue_depth >= config.queue_max_depth:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Queue is at capacity",
+            headers={"Retry-After": str(config.queue_retry_after_seconds)},
+        )
 
     now = _utcnow()
     job = ConversionJob(

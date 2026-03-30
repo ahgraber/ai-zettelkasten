@@ -24,6 +24,7 @@ Under sustained load, the job queue grows without bound — clients receive no s
 ## Approach
 
 Add a queue depth check to the job submission endpoint: count jobs with actionable statuses (`QUEUED`, `FAILED_RETRYABLE`) and reject with HTTP 503 + `Retry-After` header when the count meets or exceeds `queue_max_depth`.
+The `Retry-After` value is a static operator-configured setting (`queue_retry_after_seconds`, default 30) — no attempt to predict drain rate.
 The check runs inside the existing submission transaction to avoid TOCTOU races on SQLite.
 
 Add a composite index on `(status, earliest_next_attempt_at, queued_at)` via Alembic migration to cover the worker's `claim_next_job` query, which currently requires scanning the full `status` index and then filtering/sorting on the other columns.

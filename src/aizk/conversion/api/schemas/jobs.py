@@ -88,6 +88,13 @@ class OutputResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class QueueFullResponse(BaseModel):
+    """Response schema when the job queue is at capacity."""
+
+    detail: str
+    retry_after: int
+
+
 class BulkJobActionRequest(BaseModel):
     """Request schema for bulk job actions."""
 

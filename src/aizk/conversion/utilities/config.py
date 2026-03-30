@@ -24,6 +24,7 @@ class ConversionConfig(BaseSettings):
     s3_region: str = Field(default="us-east-1", validation_alias="S3_REGION")
 
     queue_max_depth: int = Field(default=1000, validation_alias="QUEUE_MAX_DEPTH")
+    queue_retry_after_seconds: int = Field(default=30, validation_alias="QUEUE_RETRY_AFTER_SECONDS")
     worker_concurrency: int = Field(default=4, validation_alias="WORKER_CONCURRENCY")
     worker_gpu_concurrency: int = Field(default=1, validation_alias="WORKER_GPU_CONCURRENCY")
     fetch_timeout_seconds: int = Field(default=30, validation_alias="FETCH_TIMEOUT_SECONDS")
