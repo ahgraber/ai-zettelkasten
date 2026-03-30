@@ -15,11 +15,28 @@ def _configure_sqlite_pragmas(engine: Engine) -> None:
 
     @event.listens_for(engine, "connect")
     def _set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:
+        """Set SQLite PRAGMAs for WAL mode and concurrency.
+
+        Each pragma should include justifying comment.
+        """
         cursor = dbapi_connection.cursor()
+        # WAL mode allows concurrent readers + a single writer without blocking.
+        # Required by Litestream for replication.
         cursor.execute("PRAGMA journal_mode=WAL;")
+        # NORMAL syncs only at checkpoint (not every commit), balancing durability
+        # and write throughput.  Safe with WAL — the WAL file provides crash recovery.
         cursor.execute("PRAGMA synchronous=NORMAL;")
+        # Wait up to 5 s for the write lock before returning SQLITE_BUSY.
+        # Covers brief contention between API and worker writes.
         cursor.execute("PRAGMA busy_timeout=5000;")
+        # Referential integrity is off by default in SQLite; enable per-connection.
         cursor.execute("PRAGMA foreign_keys=ON;")
+        # Disable SQLite's automatic checkpointing so Litestream is the sole
+        # checkpoint controller.  Without this, SQLite's autocheckpoint (every
+        # 1000 WAL pages) races with Litestream's own checkpoints, causing
+        # Litestream to detect a WAL discontinuity and trigger an expensive
+        # full-snapshot re-upload.
+        cursor.execute("PRAGMA wal_autocheckpoint=0;")
         cursor.close()
 
 
