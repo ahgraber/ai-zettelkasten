@@ -7,7 +7,7 @@ import datetime as dt
 from pathlib import Path
 from typing import Annotated, Any
 
-from sqlalchemy import String, cast, func, or_
+from sqlalchemy import String, cast, func, or_, text
 from sqlmodel import Session, select
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
@@ -210,6 +210,7 @@ def ui_job_actions(
     offset: Annotated[int, Form(ge=0)] = 0,
 ):
     """Apply retry, cancel, or delete actions from the Web UI."""
+    session.exec(text("BEGIN IMMEDIATE"))
     if action not in {"retry", "cancel", "delete"}:
         raise HTTPException(status_code=400, detail={"error": "invalid_action", "message": "Invalid action"})
 
