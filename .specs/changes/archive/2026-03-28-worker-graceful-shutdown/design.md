@@ -10,7 +10,7 @@ The worker is deployed as a container process (Docker/systemd), where SIGTERM is
 Container orchestrators send SIGTERM, wait a grace period (typically 30s for Docker, configurable in K8s), then SIGKILL.
 The drain timeout must fit within the orchestrator's grace period.
 
-Currently the worker processes one job at a time (item 2c will add concurrency).
+Currently the worker processes one job at a time (worker concurrency will be added separately).
 The shutdown design must work for both single-job and future multi-job scenarios.
 
 ## Decisions
@@ -100,6 +100,6 @@ This is consistent with how the existing spec handles timeout-terminated jobs.
 - **Second signal during drain:** A second SIGTERM/SIGINT during drain could mean "stop waiting, exit now."
   Mitigation: treat a second signal as an immediate forced termination (skip remaining drain, terminate subprocesses, exit).
   This matches common Unix daemon behavior.
-- **Future concurrency interaction:** Item 2c will add parallel job processing.
+- **Future concurrency interaction:** Worker concurrency will add parallel job processing.
   The drain logic must wait for all in-flight jobs, not just one.
   Mitigation: design the shutdown flag and drain loop to be concurrency-agnostic — check "any in-flight work remains" rather than "the single job is done."

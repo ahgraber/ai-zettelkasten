@@ -727,7 +727,7 @@ def test_cancelled_before_upload_skips_upload(monkeypatch, db_session: Session, 
     assert f"Job {job.id} cancelled before upload" in messages
 
 
-# Phase 1: Process Group Management Tests
+# Process Group Management Tests
 
 
 def test_process_group_creation_called_in_subprocess(monkeypatch) -> None:
