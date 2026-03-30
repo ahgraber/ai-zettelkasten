@@ -8,7 +8,7 @@ from typing import Annotated
 from uuid import UUID
 
 from pydantic import AnyUrl
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import Session, select
 
@@ -172,6 +172,12 @@ def submit_job(
     # End the auto-begun read transaction so BEGIN IMMEDIATE can start clean.
     session.commit()
 
+    # BEGIN IMMEDIATE acquires the write lock upfront so the subsequent
+    # read-then-write sequence (idempotency check → queue depth → INSERT)
+    # cannot hit a non-retriable SQLITE_BUSY_SNAPSHOT on lock upgrade.
+    # Mirrors the worker's claim_next_job pattern in loop.py.
+    session.exec(text("BEGIN IMMEDIATE"))
+
     idempotency_key = submission.idempotency_key or compute_idempotency_key(
         bookmark.aizk_uuid,
         submission.payload_version,
@@ -313,6 +319,7 @@ def retry_job(
     session: Annotated[Session, Depends(get_db_session)],
 ) -> JobResponse:
     """Retry a failed or cancelled job."""
+    session.exec(text("BEGIN IMMEDIATE"))
     job = session.get(ConversionJob, job_id)
     if not job:
         raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
@@ -338,6 +345,7 @@ def cancel_job(
     session: Annotated[Session, Depends(get_db_session)],
 ) -> JobResponse:
     """Cancel a queued or running job."""
+    session.exec(text("BEGIN IMMEDIATE"))
     job = session.get(ConversionJob, job_id)
     if not job:
         raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
@@ -363,6 +371,7 @@ def bulk_job_actions(
     session: Annotated[Session, Depends(get_db_session)],
 ) -> BulkActionResponse:
     """Apply retry or cancel actions across multiple jobs."""
+    session.exec(text("BEGIN IMMEDIATE"))
     now = _utcnow()
     results: list[BulkActionResult] = []
     success = 0
