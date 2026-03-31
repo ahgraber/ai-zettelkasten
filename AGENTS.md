@@ -114,6 +114,16 @@ For multi-step tasks, state a brief plan defining the step task and associated v
 - Tests marked `integration_lifecycle` (subprocess lifecycle with `pytest-isolate`) are incompatible with xdist; run them separately: `uv run pytest -m integration_lifecycle tests/`.
 - Do not use `pytest-run-parallel` — it is a thread-safety stress tester (runs the same test N times in N threads), not a test suite parallelizer.
 
+### Resource leak detection with pyleak
+
+Use [pyleak](https://github.com/deepankarm/pyleak) to guard against leaked asyncio tasks and threads.
+When writing tests for code that spawns concurrent work, wrap the act phase with the appropriate pyleak context manager:
+
+- `no_task_leaks(action="raise")` — for code using `asyncio.create_task`, `asyncio.gather`, `asyncio.to_thread`, or `TaskGroup`.
+- `no_thread_leaks(action="raise")` — for code using `ThreadPoolExecutor`, `threading.Thread`, or `subprocess.Popen` lifecycle management.
+
+Existing examples: `test_fetcher.py`, `test_async_utils.py`, `test_limiters.py`, `test_health_checks.py`, `test_worker_shutdown.py`.
+
 ## Sandbox Limitations
 
 - The sandbox cannot run `uv sync` or read `.env` / `.env.example` (permission errors).
