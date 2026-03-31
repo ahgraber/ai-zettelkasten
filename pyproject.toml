@@ -153,6 +153,7 @@ plot = [
 package = true
 default-groups = [ "dev", "ipynb", "lint", "test", "type" ]
 python-preference = "managed"
+exclude-newer = "3 days"
 
 [tool.uv.build-backend]
 module-name = "aizk"
