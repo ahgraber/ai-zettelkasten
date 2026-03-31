@@ -5,8 +5,10 @@ from __future__ import annotations
 import datetime as dt
 import os
 import signal
+import threading
 import time
 
+from pyleak import no_thread_leaks
 import pytest
 from sqlmodel import Session
 
@@ -326,6 +328,50 @@ class TestRunWorkerShutdown:
 
         config = ConversionConfig(_env_file=None)
         loop.run_worker(config, poll_interval_seconds=0.01)
+
+        assert exit_calls == [1]
+
+    def test_forced_shutdown_with_real_executor_thread(self, monkeypatch):
+        """Real ThreadPoolExecutor thread that outlives drain triggers os._exit(1).
+
+        Unlike test_immediate_shutdown_calls_os_exit (which uses an instant
+        fake), this test submits a blocking task to a real executor so a
+        genuine non-daemon thread is alive when drain reports timeout.
+        pyleak's no_thread_leaks verifies no thread survives the test.
+        """
+        stop = threading.Event()
+        claim_count = {"n": 0}
+        exit_calls: list[int] = []
+
+        def _fake_claim(_config):
+            claim_count["n"] += 1
+            if claim_count["n"] == 1:
+                return 1
+            shutdown.request_shutdown()
+            return None
+
+        def _blocking_process(_job_id, _config, poll_interval_seconds=2.0):
+            stop.wait(timeout=30)  # Block until cleanup
+
+        def _mock_exit(code: int) -> None:
+            exit_calls.append(code)
+            stop.set()  # Unblock the thread (simulates os._exit killing all threads)
+
+        monkeypatch.setattr(loop, "claim_next_job", _fake_claim)
+        monkeypatch.setattr(loop, "process_job_supervised", _blocking_process)
+        monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
+        monkeypatch.setattr(loop, "configure_gpu_semaphore", lambda _n: None)
+        monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
+        # Mock _drain_in_flight to return True immediately — the real drain
+        # has a 15-second buffer that would make this test unacceptably slow.
+        # Drain behaviour itself is tested in TestDrainInFlight.
+        monkeypatch.setattr(loop, "_drain_in_flight", lambda futures, config: bool(futures))
+        monkeypatch.setattr(os, "_exit", _mock_exit)
+
+        config = ConversionConfig(_env_file=None)
+
+        with no_thread_leaks(action="raise", grace_period=0.5):
+            loop.run_worker(config, poll_interval_seconds=0.01)
 
         assert exit_calls == [1]
 
