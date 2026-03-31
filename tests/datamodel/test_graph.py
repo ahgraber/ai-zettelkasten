@@ -14,6 +14,7 @@ import json
 from unittest.mock import AsyncMock, Mock, patch
 
 from pydantic import ValidationError
+from pyleak import no_task_leaks
 import pytest
 import xxhash
 
@@ -403,7 +404,8 @@ class TestNodeFactory:
         factory = NodeFactory(processors)
 
         # Act
-        node = await factory.create_node("Test content")
+        async with no_task_leaks(action="raise"):
+            node = await factory.create_node("Test content")
 
         # Assert
         assert node.embedding == [0.1, 0.2, 0.3]
@@ -421,7 +423,8 @@ class TestNodeFactory:
 
         # Act
         with patch("builtins.print") as mock_print:
-            node = await factory.create_node("Test content")
+            async with no_task_leaks(action="raise"):
+                node = await factory.create_node("Test content")
 
         # Assert
         assert isinstance(node, Node)
@@ -1110,8 +1113,9 @@ class TestEdgeCasesAndErrorHandling:
         texts = [f"Concurrent node {i}" for i in range(10)]
 
         # Act
-        tasks = [factory.create_node(text) for text in texts]
-        nodes = await asyncio.gather(*tasks)
+        async with no_task_leaks(action="raise"):
+            tasks = [factory.create_node(text) for text in texts]
+            nodes = await asyncio.gather(*tasks)
 
         # Assert
         assert len(nodes) == 10
