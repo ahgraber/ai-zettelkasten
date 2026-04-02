@@ -38,6 +38,14 @@ SOCIAL_MEDIA_DOMAINS = frozenset(
     }
 )
 
+GITHUB_DOMAINS = frozenset(
+    {
+        "github.com",
+        "gist.github.com",
+        "raw.githubusercontent.com",
+    }
+)
+
 
 # --- Core URL Extraction ----------------------------------------------------
 def fix_url_from_markdown(url: str) -> str:
@@ -56,6 +64,31 @@ def fix_url_from_markdown(url: str) -> str:
         return url
     else:
         return fixed
+
+
+def extract_domain(url: str) -> str:
+    """Extract the domain from a URL.
+
+    Args:
+        url: The URL to extract domain from
+
+    Returns:
+        The domain portion of the URL (e.g., "example.com")
+
+    Raises:
+        ValueError: If the URL is invalid or has no domain
+    """
+    if not url or url.strip() == "":
+        raise ValueError(f"Invalid URL: {url}")
+
+    try:
+        parsed = urlparse(url)
+    except Exception as e:
+        raise ValueError(f"Invalid URL: {url}") from e
+    else:
+        if not parsed.netloc:
+            raise ValueError(f"No domain found in URL: {url}")
+        return parsed.netloc
 
 
 def clean_markdown_title(title: str) -> str:
@@ -80,13 +113,54 @@ def clean_markdown_title(title: str) -> str:
 
 
 def extract_urls(text: str) -> List[str]:
-    """Extract all URLs from text using the validated URL_REGEX."""
+    """Extract all URLs from text using two-phase approach.
+
+    Phase 1: Extract URLs from markdown link syntax [text](url)
+    Phase 2: Extract bare URLs from remaining text
+
+    Args:
+        text: Text to search for URLs
+
+    Returns:
+        List of extracted URLs
+
+    Raises:
+        ValueError: If text is empty
+    """
     if not text:
         raise ValueError("Text cannot be empty")
 
+    urls: List[str] = []
+    seen_spans: List[tuple[int, int]] = []
+    seen_urls: set[str] = set()
+
+    # Phase 1: Extract URLs from markdown links (precise boundaries).
+    # Regex matches: [text](url) where text can contain nested brackets (one level)
+    # and url can contain balanced parens
+    md_link_pattern = re.compile(
+        r"\[(?:[^\[\]]|\[(?:[^\[\]])*\])*\]"  # [text] (one level nesting)
+        r"\("  # opening (
+        r"((?:[^()\s]|\([^()\s]*\))+)"  # URL with balanced parens
+        r"\)"  # closing )
+    )
+    for match in md_link_pattern.finditer(text):
+        url = match.group(1).strip()
+        if url and url not in seen_urls:
+            urls.append(url)
+            seen_spans.append(match.span())
+            seen_urls.add(url)
+
+    # Phase 2: Extract bare URLs from text outside markdown links.
     pattern = re.compile(URL_REGEX, re.IGNORECASE | re.UNICODE)
-    urls = pattern.findall(text)
-    urls = [fix_url_from_markdown(url) for url in urls if url.strip()]
+    for match in pattern.finditer(text):
+        start, end = match.span()
+        # Skip if this URL was already captured inside a markdown link.
+        if any(s <= start and end <= e for s, e in seen_spans):
+            continue
+        url = fix_url_from_markdown(match.group(0))
+        if url.strip() and url not in seen_urls:
+            urls.append(url)
+            seen_urls.add(url)
 
     return urls
 
@@ -118,6 +192,11 @@ def validate_url(url: str) -> str:
     return url
 
 
+def _strip_www(netloc: str) -> str:
+    """Remove leading 'www.' from a network location string."""
+    return netloc[4:] if netloc.startswith("www.") else netloc
+
+
 def normalize_url(url: str) -> str:
     """Normalize a URL for deduplication.
 
@@ -125,14 +204,21 @@ def normalize_url(url: str) -> str:
         url: Input URL.
 
     Returns:
-        A normalized URL with lowercased domain, sorted query params, and no fragment.
+        A normalized URL with lowercased scheme and domain, ``www.`` prefix
+        removed, trailing path slashes stripped, sorted query params, and no
+        fragment.
     """
     validated = validate_url(url)
     parsed = urlparse(strip_utm_params(validated))
     query_pairs = sorted(parse_qsl(parsed.query, keep_blank_values=True))
     normalized_query = urlencode(query_pairs, doseq=True)
+    path = parsed.path
+    if path != "/" and path.endswith("/"):
+        path = path.rstrip("/")
     normalized = parsed._replace(
-        netloc=parsed.netloc.lower(),
+        scheme=parsed.scheme.lower(),
+        netloc=_strip_www(parsed.netloc.lower()),
+        path=path,
         query=normalized_query,
         fragment="",
     )
@@ -243,3 +329,42 @@ def safelink_to_url(url: str) -> str:
         return matches[0]
     else:
         raise ValueError(f"Could not extract URL from SafeLink: {decoded}")
+
+
+def standardize_github(url: str) -> str:
+    """Standardize GitHub URLs to repository root when possible.
+
+    Converts raw.githubusercontent.com → github.com, strips branch/ref info,
+    and normalizes to repo root (owner/repo).
+
+    Args:
+        url: The URL to standardize
+
+    Returns:
+        Canonicalized URL or original if not GitHub
+    """
+    if not any(domain in url for domain in ["githubusercontent.com", "github.com"]):
+        return url
+
+    pattern = re.compile(
+        r"/(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+)(?:/(?:refs/heads|blob|tree)/(?P<branch>[\w./-]+))?",
+        re.IGNORECASE,
+    )
+
+    parsed = urlparse(url)
+    match = pattern.match(parsed.path)
+
+    if not match or not match.group("owner") or not match.group("repo"):
+        return url
+
+    owner = match.group("owner")
+    repo = match.group("repo")
+
+    if parsed.netloc == "gist.github.com":
+        return urlunparse((parsed.scheme, parsed.netloc, f"/{owner}/{repo}", None, None, None))
+    elif parsed.netloc == "raw.githubusercontent.com":
+        return urlunparse((parsed.scheme, "github.com", f"/{owner}/{repo}", None, None, None))
+    elif parsed.netloc == "github.com":
+        return urlunparse((parsed.scheme, parsed.netloc, f"/{owner}/{repo}", None, None, None))
+
+    return url
