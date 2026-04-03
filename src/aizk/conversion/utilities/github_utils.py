@@ -10,6 +10,48 @@ from aizk.utilities.url_utils import validate_url
 GITHUB_DOMAINS = frozenset({"github.com", "gist.github.com", "raw.githubusercontent.com"})
 
 
+def standardize_github_to_repo(url: str) -> str:
+    """Standardize GitHub URLs to repository root for deduplication.
+
+    Converts raw.githubusercontent.com → github.com and strips all path
+    segments beyond owner/repo (branches, files, issues, PRs, etc.).
+    This function is intentionally lossy — it exists to group all URLs
+    referencing the same repository.
+
+    Args:
+        url: URL string to normalize.
+
+    Returns:
+        Repository-root URL (``https://github.com/owner/repo``) or the
+        original URL if not a recognised GitHub domain.
+    """
+    if not any(domain in url for domain in ["githubusercontent.com", "github.com"]):
+        return url
+
+    pattern = re.compile(
+        r"/(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+)(?:/(?:refs/heads|blob|tree)/(?P<branch>[\w./-]+))?",
+        re.IGNORECASE,
+    )
+
+    parsed = urlparse(url)
+    match = pattern.match(parsed.path)
+
+    if not match or not match.group("owner") or not match.group("repo"):
+        return url
+
+    owner = match.group("owner")
+    repo = match.group("repo")
+
+    if parsed.netloc == "gist.github.com":
+        return urlunparse((parsed.scheme, parsed.netloc, f"/{owner}/{repo}", None, None, None))
+    elif parsed.netloc == "raw.githubusercontent.com":
+        return urlunparse((parsed.scheme, "github.com", f"/{owner}/{repo}", None, None, None))
+    elif parsed.netloc == "github.com":
+        return urlunparse((parsed.scheme, parsed.netloc, f"/{owner}/{repo}", None, None, None))
+
+    return url
+
+
 def is_github_url(url: str) -> bool:
     """Check if URL is from a GitHub domain.
 
@@ -28,49 +70,6 @@ def is_github_url(url: str) -> bool:
     else:
         netloc = parsed.netloc.lower()
         return netloc in GITHUB_DOMAINS or any(netloc.endswith("." + domain) for domain in GITHUB_DOMAINS)
-
-
-def standardize_github(url: str) -> str:
-    """Standardize GitHub URLs to repository root when possible.
-
-    Args:
-        url: URL string to normalize.
-
-    Returns:
-        Normalized GitHub repository URL or the original URL if not applicable.
-    """
-    if not any(domain in url for domain in ["githubusercontent.com", "github.com"]):
-        return url
-
-    pattern = re.compile(
-        r"/(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+)(?:/(?:refs/heads|blob|tree)/(?P<branch>[\w./-]+))?",
-        re.IGNORECASE,
-    )
-
-    parsed = urlparse(url)
-    match = pattern.match(parsed.path)
-
-    if not match or not match.group("owner") or not match.group("repo"):
-        return url
-
-    owner = match.group("owner")
-    repo = match.group("repo")
-    branch = match.group("branch")
-
-    if parsed.netloc == "gist.github.com":
-        return urlunparse((parsed.scheme, parsed.netloc, f"{owner}/{repo}", None, None, None))
-    if parsed.netloc == "raw.githubusercontent.com":
-        path = f"{owner}/{repo}"
-        if branch:
-            path += f"/tree/{branch}"
-        return urlunparse((parsed.scheme, "github.com", path, None, None, None))
-    if parsed.netloc == "github.com":
-        path = f"{owner}/{repo}"
-        if branch:
-            path += f"/tree/{branch}"
-        return urlunparse((parsed.scheme, parsed.netloc, path, None, None, None))
-
-    return url
 
 
 def is_github_repo_root(source_url: str) -> bool:
@@ -111,7 +110,7 @@ def parse_github_owner_repo(source_url: str) -> tuple[str, str]:
     Raises:
         ValueError: If the URL cannot be parsed into owner/repo.
     """
-    std_url = standardize_github(source_url)
+    std_url = standardize_github_to_repo(source_url)
     if not std_url.startswith("https://github.com/"):
         raise ValueError(f"Invalid GitHub URL: {source_url}")
 

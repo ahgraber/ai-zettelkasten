@@ -86,39 +86,6 @@ The system SHALL provide a utility function to extract the domain portion of a U
 
 ---
 
-### Requirement: Standardize GitHub URLs to repository root
-
-The system SHALL collapse GitHub URLs to their repository root (`owner/repo`) for deduplication.
-Issue URLs, PR URLs, release URLs, blob URLs, and raw file URLs all normalize to the same repo-root form.
-This function is intentionally lossy — it exists to group all URLs referencing the same repository.
-For branch- and file-preserving canonicalization, see `conversion.utilities.github_utils.standardize_github`.
-
-#### Scenario: Canonicalize raw.githubusercontent.com URLs
-
-- **GIVEN** a GitHub URL from `raw.githubusercontent.com`
-- **WHEN** `standardize_github_to_repo(url)` is called
-- **THEN** the URL is converted to `https://github.com/owner/repo`
-
-#### Scenario: Strip all path segments beyond owner/repo
-
-- **GIVEN** a GitHub URL with branch, blob, tree, issues, pull, or release path info
-- **WHEN** `standardize_github_to_repo(url)` is called
-- **THEN** the URL is normalized to the repository root (`owner/repo` only)
-
-#### Scenario: Canonicalize GitHub gist URLs
-
-- **GIVEN** a GitHub gist URL
-- **WHEN** `standardize_github_to_repo(url)` is called
-- **THEN** the URL is normalized to canonical gist form (`owner/gist_id`)
-
-#### Scenario: Pass through non-GitHub URLs unchanged
-
-- **GIVEN** a URL not from a GitHub domain
-- **WHEN** `standardize_github_to_repo(url)` is called
-- **THEN** the original URL is returned unchanged
-
----
-
 ### Requirement: Validate URLs before processing
 
 The system SHALL validate URLs against regex pattern and Pydantic's `HttpUrl` type, rejecting malformed or empty URLs early.

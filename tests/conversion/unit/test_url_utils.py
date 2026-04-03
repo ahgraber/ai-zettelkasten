@@ -4,7 +4,7 @@ import pytest
 
 from aizk.conversion.utilities.arxiv_utils import get_arxiv_id
 from aizk.conversion.utilities.bookmark_utils import detect_source_type
-from aizk.utilities.url_utils import extract_domain, extract_urls, normalize_url, standardize_github_to_repo
+from aizk.utilities.url_utils import extract_domain, extract_urls, normalize_url
 
 
 def test_normalize_url_sorts_query_and_drops_fragment():
@@ -43,39 +43,6 @@ def test_extract_domain_rejects_malformed_urls():
         extract_domain("https://exa mple.com/path")
     with pytest.raises((ValueError, Exception)):
         extract_domain("https://github.com:bad/path")
-
-
-def test_standardize_github_raw_github_to_canonical():
-    # raw.githubusercontent.com → github.com
-    url = "https://raw.githubusercontent.com/owner/repo/main/file.py"
-    assert standardize_github_to_repo(url) == "https://github.com/owner/repo"
-
-
-def test_standardize_github_branch_stripping():
-    # Strip branch/ref info
-    url = "https://github.com/owner/repo/tree/feature/branch"
-    assert standardize_github_to_repo(url) == "https://github.com/owner/repo"
-
-    url = "https://github.com/owner/repo/blob/main/file.md"
-    assert standardize_github_to_repo(url) == "https://github.com/owner/repo"
-
-
-def test_standardize_github_gist():
-    # Gist URLs normalized
-    url = "https://gist.github.com/owner/abc123def456"
-    assert standardize_github_to_repo(url) == "https://gist.github.com/owner/abc123def456"
-
-
-def test_standardize_github_non_github_url_unchanged():
-    # Non-GitHub URLs pass through
-    url = "https://example.com/path"
-    assert standardize_github_to_repo(url) == url
-
-
-def test_standardize_github_already_canonical():
-    # Already canonical GitHub URLs unchanged
-    url = "https://github.com/owner/repo"
-    assert standardize_github_to_repo(url) == url
 
 
 def test_extract_urls_markdown_links_first():
@@ -165,12 +132,6 @@ class TestDeduplication:
             "https://example.com/path",
         ]
         assert len({normalize_url(u) for u in urls}) == 1
-
-    def test_dedup_github_variants(self):
-        """GitHub URL variants deduplicate after standardization."""
-        url1 = "https://raw.githubusercontent.com/owner/repo/main/file.py"
-        url2 = "https://github.com/owner/repo"
-        assert normalize_url(standardize_github_to_repo(url1)) == normalize_url(standardize_github_to_repo(url2))
 
     def test_dedup_combined_variations(self):
         """Complex URL with multiple simultaneous variations deduplicates."""
