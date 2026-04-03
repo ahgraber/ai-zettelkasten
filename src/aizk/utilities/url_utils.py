@@ -81,14 +81,11 @@ def extract_domain(url: str) -> str:
     if not url or url.strip() == "":
         raise ValueError(f"Invalid URL: {url}")
 
-    try:
-        parsed = urlparse(url)
-    except Exception as e:
-        raise ValueError(f"Invalid URL: {url}") from e
-    else:
-        if not parsed.netloc:
-            raise ValueError(f"No domain found in URL: {url}")
-        return parsed.netloc
+    validated = validate_url(url)
+    parsed = urlparse(validated)
+    if not parsed.netloc:
+        raise ValueError(f"No domain found in URL: {url}")
+    return parsed.netloc
 
 
 def clean_markdown_title(title: str) -> str:
@@ -331,17 +328,18 @@ def safelink_to_url(url: str) -> str:
         raise ValueError(f"Could not extract URL from SafeLink: {decoded}")
 
 
-def standardize_github(url: str) -> str:
-    """Standardize GitHub URLs to repository root when possible.
+def standardize_github_to_repo(url: str) -> str:
+    """Standardize GitHub URLs to repository root for deduplication.
 
-    Converts raw.githubusercontent.com → github.com, strips branch/ref info,
-    and normalizes to repo root (owner/repo).
+    Converts raw.githubusercontent.com → github.com and strips all path
+    segments beyond owner/repo (branches, files, issues, PRs, etc.).
 
     Args:
         url: The URL to standardize
 
     Returns:
-        Canonicalized URL or original if not GitHub
+        Repository-root URL (``https://github.com/owner/repo``) or the
+        original URL if not a recognised GitHub domain.
     """
     if not any(domain in url for domain in ["githubusercontent.com", "github.com"]):
         return url

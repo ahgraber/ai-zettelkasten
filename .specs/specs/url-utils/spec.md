@@ -80,38 +80,41 @@ The system SHALL provide a utility function to extract the domain portion of a U
 
 #### Scenario: Reject invalid or malformed URLs
 
-- **GIVEN** an invalid URL with no domain
+- **GIVEN** an empty string, a schemeless string, or a URL with a malformed domain (e.g., spaces in hostname, non-numeric port)
 - **WHEN** `extract_domain(url)` is called
-- **THEN** a `ValueError` is raised
+- **THEN** a `ValueError` is raised (input is validated via `validate_url` before parsing)
 
 ---
 
-### Requirement: Standardize GitHub URLs
+### Requirement: Standardize GitHub URLs to repository root
 
-The system SHALL canonicalize GitHub URLs so that multiple URL formats pointing to the same resource normalize to the same canonical form.
+The system SHALL collapse GitHub URLs to their repository root (`owner/repo`) for deduplication.
+Issue URLs, PR URLs, release URLs, blob URLs, and raw file URLs all normalize to the same repo-root form.
+This function is intentionally lossy — it exists to group all URLs referencing the same repository.
+For branch- and file-preserving canonicalization, see `conversion.utilities.github_utils.standardize_github`.
 
 #### Scenario: Canonicalize raw.githubusercontent.com URLs
 
 - **GIVEN** a GitHub URL from `raw.githubusercontent.com`
-- **WHEN** `standardize_github(url)` is called
-- **THEN** the URL is converted to canonical `github.com` form
+- **WHEN** `standardize_github_to_repo(url)` is called
+- **THEN** the URL is converted to `https://github.com/owner/repo`
 
-#### Scenario: Normalize GitHub repository URLs to root
+#### Scenario: Strip all path segments beyond owner/repo
 
-- **GIVEN** a GitHub URL with branch, blob, or tree path info
-- **WHEN** `standardize_github(url)` is called
-- **THEN** the URL is normalized to the repository root (owner/repo only)
+- **GIVEN** a GitHub URL with branch, blob, tree, issues, pull, or release path info
+- **WHEN** `standardize_github_to_repo(url)` is called
+- **THEN** the URL is normalized to the repository root (`owner/repo` only)
 
 #### Scenario: Canonicalize GitHub gist URLs
 
 - **GIVEN** a GitHub gist URL
-- **WHEN** `standardize_github(url)` is called
-- **THEN** the URL is normalized to canonical gist form
+- **WHEN** `standardize_github_to_repo(url)` is called
+- **THEN** the URL is normalized to canonical gist form (`owner/gist_id`)
 
 #### Scenario: Pass through non-GitHub URLs unchanged
 
 - **GIVEN** a URL not from a GitHub domain
-- **WHEN** `standardize_github(url)` is called
+- **WHEN** `standardize_github_to_repo(url)` is called
 - **THEN** the original URL is returned unchanged
 
 ---
