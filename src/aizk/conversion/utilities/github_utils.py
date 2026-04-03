@@ -5,9 +5,14 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse, urlunparse
 
-from aizk.utilities.url_utils import validate_url
+from aizk.utilities.url_utils import _netloc_in_domains
 
 GITHUB_DOMAINS = frozenset({"github.com", "gist.github.com", "raw.githubusercontent.com"})
+
+_GITHUB_PATH_PATTERN = re.compile(
+    r"/(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+)(?:/(?:refs/heads|blob|tree)/(?P<branch>[\w./-]+))?",
+    re.IGNORECASE,
+)
 
 
 def standardize_github_to_repo(url: str) -> str:
@@ -25,31 +30,19 @@ def standardize_github_to_repo(url: str) -> str:
         Repository-root URL (``https://github.com/owner/repo``) or the
         original URL if not a recognised GitHub domain.
     """
-    if not any(domain in url for domain in ["githubusercontent.com", "github.com"]):
+    parsed = urlparse(url)
+    netloc = parsed.netloc.lower()
+    if netloc not in GITHUB_DOMAINS and not any(netloc.endswith("." + d) for d in GITHUB_DOMAINS):
         return url
 
-    pattern = re.compile(
-        r"/(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+)(?:/(?:refs/heads|blob|tree)/(?P<branch>[\w./-]+))?",
-        re.IGNORECASE,
-    )
-
-    parsed = urlparse(url)
-    match = pattern.match(parsed.path)
-
+    match = _GITHUB_PATH_PATTERN.match(parsed.path)
     if not match or not match.group("owner") or not match.group("repo"):
         return url
 
     owner = match.group("owner")
     repo = match.group("repo")
-
-    if parsed.netloc == "gist.github.com":
-        return urlunparse((parsed.scheme, parsed.netloc, f"/{owner}/{repo}", None, None, None))
-    elif parsed.netloc == "raw.githubusercontent.com":
-        return urlunparse((parsed.scheme, "github.com", f"/{owner}/{repo}", None, None, None))
-    elif parsed.netloc == "github.com":
-        return urlunparse((parsed.scheme, parsed.netloc, f"/{owner}/{repo}", None, None, None))
-
-    return url
+    target_netloc = "github.com" if parsed.netloc == "raw.githubusercontent.com" else parsed.netloc
+    return urlunparse((parsed.scheme, target_netloc, f"/{owner}/{repo}", "", "", ""))
 
 
 def is_github_url(url: str) -> bool:
@@ -61,15 +54,7 @@ def is_github_url(url: str) -> bool:
     Returns:
         True when the URL belongs to a GitHub domain.
     """
-    validated = validate_url(url)
-
-    try:
-        parsed = urlparse(str(validated))
-    except Exception:
-        return False
-    else:
-        netloc = parsed.netloc.lower()
-        return netloc in GITHUB_DOMAINS or any(netloc.endswith("." + domain) for domain in GITHUB_DOMAINS)
+    return _netloc_in_domains(url, GITHUB_DOMAINS)
 
 
 def is_github_repo_root(source_url: str) -> bool:
@@ -114,10 +99,10 @@ def parse_github_owner_repo(source_url: str) -> tuple[str, str]:
     if not std_url.startswith("https://github.com/"):
         raise ValueError(f"Invalid GitHub URL: {source_url}")
 
-    parts = std_url.rstrip("/").split("/")
-    if len(parts) < 5:
+    parts = [p for p in urlparse(std_url).path.split("/") if p]
+    if len(parts) < 2:
         raise ValueError(f"Cannot parse owner/repo from URL: {source_url}")
-    return parts[3], parts[4]
+    return parts[0], parts[1]
 
 
 def is_github_pages_url(source_url: str) -> bool:

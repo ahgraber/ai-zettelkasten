@@ -1,7 +1,6 @@
 import logging
 import re
-from typing import List, Optional, Tuple
-from urllib.parse import parse_qs, parse_qsl, unquote, unquote_plus, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, unquote, urlencode, urlparse, urlunparse
 
 from pydantic import HttpUrl, ValidationError as PydanticValidationError
 import validators
@@ -23,6 +22,27 @@ URL_REGEX = (
     r"(?:[/?#]\S*)?"  # path
 )
 
+_URL_PATTERN = re.compile(URL_REGEX, re.IGNORECASE | re.UNICODE)
+
+# Compiled patterns for markdown extraction
+_WHITESPACE_PATTERN = re.compile(r"\s+")
+_MD_LINK_EXTRACT_PATTERN = re.compile(
+    r"\[(?:[^\[\]]|\[(?:[^\[\]])*\])*\]"
+    r"\("
+    r"((?:[^()\s]|\([^()\s]*\))+)"
+    r"\)"
+)
+_INLINE_LINK_PATTERN = re.compile(
+    rf'\[(?P<title>(?:\\.|[^\[\]])+?)\]\((?P<url>{URL_REGEX})(?:\s+"[^"]*")?\)', re.UNICODE
+)
+_REF_DEF_PATTERN = re.compile(rf"^\s{{0,3}}\[(?P<ref>[^\]]+)\]:\s*(?P<url>{URL_REGEX})", re.MULTILINE)
+_REFERENCE_LINK_PATTERN = re.compile(r"\[(?P<title>(?:\\.|[^\[\]])+?)\]\[(?P<ref>[^\[\]]+)\]")
+_ANGLE_BRACKET_PATTERN = re.compile(rf"<(?P<url>{URL_REGEX})>")
+_HTML_LINK_PATTERN = re.compile(
+    rf'<a\s+[^>]*href=[\'"](?P<url>{URL_REGEX})[\'"][^>]*>(?P<title>.*?)</a>', re.IGNORECASE
+)
+_SAFELINK_PATTERN = re.compile(r"safelinks\.protection\.outlook\.com/\?url=(.*?)&data=")
+
 # Domain constants for URL detection
 SOCIAL_MEDIA_DOMAINS = frozenset(
     {
@@ -42,14 +62,12 @@ SOCIAL_MEDIA_DOMAINS = frozenset(
 # --- Core URL Extraction ----------------------------------------------------
 def fix_url_from_markdown(url: str) -> str:
     """Clean up URLs that may have dangling parens from markdown parsing."""
-    # Remove trailing characters until brackets are balanced
     fixed = url.strip()
     while not check_balanced_brackets(fixed):
         fixed = fixed[:-1]
 
     fixed = fixed.rstrip(".,;:!'`*")
 
-    # Verify the trimmed URL is still valid
     try:
         validate_url(fixed)
     except (PydanticValidationError, URLValidatorValidationError, ValueError):
@@ -85,23 +103,17 @@ def clean_markdown_title(title: str) -> str:
     if not title:
         raise ValueError("Title cannot be empty")
 
-    # leading/trailing whitespace
     title = title.strip()
-
-    # replace multiple spaces with a single space
-    title = re.sub(r"\s+", " ", title).strip()
-
-    # Replace extra escapes
+    title = _WHITESPACE_PATTERN.sub(" ", title).strip()
     title = title.replace("\\", "")
 
-    # any surrounding brackets
     if title.startswith("[") and title.endswith("]"):
         title = title[1:-1]
 
     return title
 
 
-def extract_urls(text: str) -> List[str]:
+def extract_urls(text: str) -> list[str]:
     """Extract all URLs from text using two-phase approach.
 
     Phase 1: Extract URLs from markdown link syntax [text](url)
@@ -119,20 +131,14 @@ def extract_urls(text: str) -> List[str]:
     if not text:
         raise ValueError("Text cannot be empty")
 
-    urls: List[str] = []
-    seen_spans: List[tuple[int, int]] = []
+    urls: list[str] = []
+    seen_spans: list[tuple[int, int]] = []
     seen_urls: set[str] = set()
 
     # Phase 1: Extract URLs from markdown links (precise boundaries).
     # Regex matches: [text](url) where text can contain nested brackets (one level)
     # and url can contain balanced parens
-    md_link_pattern = re.compile(
-        r"\[(?:[^\[\]]|\[(?:[^\[\]])*\])*\]"  # [text] (one level nesting)
-        r"\("  # opening (
-        r"((?:[^()\s]|\([^()\s]*\))+)"  # URL with balanced parens
-        r"\)"  # closing )
-    )
-    for match in md_link_pattern.finditer(text):
+    for match in _MD_LINK_EXTRACT_PATTERN.finditer(text):
         url = match.group(1).strip()
         if url and url not in seen_urls:
             urls.append(url)
@@ -140,8 +146,7 @@ def extract_urls(text: str) -> List[str]:
             seen_urls.add(url)
 
     # Phase 2: Extract bare URLs from text outside markdown links.
-    pattern = re.compile(URL_REGEX, re.IGNORECASE | re.UNICODE)
-    for match in pattern.finditer(text):
+    for match in _URL_PATTERN.finditer(text):
         start, end = match.span()
         # Skip if this URL was already captured inside a markdown link.
         if any(s <= start and end <= e for s, e in seen_spans):
@@ -166,9 +171,7 @@ def validate_url(url: str) -> str:
     if not url or url.strip() == "":
         raise ValueError("URL cannot be empty")
 
-    # First check if URL matches our regex pattern
-    pattern = re.compile(URL_REGEX, re.IGNORECASE | re.UNICODE)
-    if not pattern.match(url.strip()):
+    if not _URL_PATTERN.match(url.strip()):
         raise ValueError(f"URL does not match expected url regex: {url}")
 
     validated = HttpUrl(url)
@@ -214,82 +217,66 @@ def normalize_url(url: str) -> str:
     return urlunparse(normalized)
 
 
-def extract_markdown_urls(text: str) -> List[Tuple[Optional[str], str]]:
+def extract_markdown_urls(text: str) -> list[tuple[str | None, str]]:
     """Extract all URLs from markdown text, returning (title, url) pairs.
 
     Returns:
         List of (title, url) tuples where:
         - title is the link text for markdown links [title](url)
-        - title is empty string for plain URLs
+        - title is None for plain URLs
     """
-    pattern = re.compile(URL_REGEX, re.IGNORECASE | re.UNICODE).pattern
-
     if not text:
         raise ValueError("Text cannot be empty")
 
     results = []
 
     # Inline markdown links: [title](url)
-    inline_link_pattern = re.compile(
-        rf'\[(?P<title>(?:\\.|[^\[\]])+?)\]\((?P<url>{pattern})(?:\s+"[^"]*")?\)', re.UNICODE
-    )
-    results += [(m.group("title"), m.group("url")) for m in inline_link_pattern.finditer(text)]
+    results += [(m.group("title"), m.group("url")) for m in _INLINE_LINK_PATTERN.finditer(text)]
 
     # Reference link definitions: [ref]: url
-    ref_def_pattern = re.compile(rf"^\s{{0, 3}}\[(?P<ref>[^\]]+)\]:\s*(?P<url>{pattern})", re.MULTILINE)
-    ref_map = {m.group("ref"): m.group("url") for m in ref_def_pattern.finditer(text)}
+    ref_map = {m.group("ref"): m.group("url") for m in _REF_DEF_PATTERN.finditer(text)}
 
     # Reference links: [title][ref]
-    reference_link_pattern = re.compile(r"\[(?P<title>(?:\\.|[^\[\]])+?)\]\[(?P<ref>[^\[\]]+)\]")
-    for m in reference_link_pattern.finditer(text):
-        ref = m.group("ref")
-        url = ref_map.get(ref)
+    for m in _REFERENCE_LINK_PATTERN.finditer(text):
+        url = ref_map.get(m.group("ref"))
         if url:
             results.append((m.group("title"), url))
 
     # Raw URLs in angle brackets: <https://example.com>
-    angle_bracket_pattern = re.compile(rf"<(?P<url>{pattern})>")
-    results += [(None, m.group("url")) for m in angle_bracket_pattern.finditer(text)]
+    results += [(None, m.group("url")) for m in _ANGLE_BRACKET_PATTERN.finditer(text)]
 
     # HTML <a href=""> tags
-    html_link_pattern = re.compile(
-        rf'<a\s+[^>]*href=[\'"](?P<url>{pattern})[\'"][^>]*>(?P<title>.*?)</a>', re.IGNORECASE
-    )
-    results += [(m.group("title"), m.group("url")) for m in html_link_pattern.finditer(text)]
+    results += [(m.group("title"), m.group("url")) for m in _HTML_LINK_PATTERN.finditer(text)]
 
     results = [(clean_markdown_title(title) if title else None, fix_url_from_markdown(url)) for title, url in results]
     return results
 
 
 # --- URL Detection/Classification -------------------------------------------
+def _netloc_in_domains(url: str, domains: frozenset[str]) -> bool:
+    """Return True when the URL's netloc matches a domain or is a subdomain of one."""
+    validated = validate_url(url)
+    netloc = urlparse(validated).netloc.lower()
+    return netloc in domains or any(netloc.endswith("." + d) for d in domains)
+
+
 def is_social_url(url: str) -> bool:
     """Check if URL is from a social media domain."""
-    validated = validate_url(url)
-
-    try:
-        parsed = urlparse(str(validated))
-    except Exception:
-        return False
-    else:
-        netloc = parsed.netloc.lower()
-        # Check exact match first, then subdomains
-        return netloc in SOCIAL_MEDIA_DOMAINS or any(netloc.endswith("." + domain) for domain in SOCIAL_MEDIA_DOMAINS)
+    return _netloc_in_domains(url, SOCIAL_MEDIA_DOMAINS)
 
 
 # --- URL Processing/Standardization -----------------------------------------
 def strip_utm_params(url: str) -> str:
     """Remove UTM tracking parameters from URL."""
     parsed = urlparse(url)
-    params = parse_qs(parsed.query)
-    cleaned_params = {k: v[0] for k, v in params.items() if not k.startswith("utm_")}
-
+    pairs = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if not k.startswith("utm_")]
     cleaned = urlunparse(
         (
             parsed.scheme,
             parsed.netloc,
             parsed.path,
             parsed.params,
-            urlencode(cleaned_params),
+            urlencode(pairs),
             parsed.fragment,
         )
     )
@@ -302,17 +289,11 @@ def strip_utm_params(url: str) -> str:
 
 def safelink_to_url(url: str) -> str:
     """Decode Microsoft SafeLinks URLs to original URLs."""
-    safelinks_str = "safelinks.protection.outlook.com"
-    if safelinks_str not in url:
+    if "safelinks.protection.outlook.com" not in url:
         return url
 
-    try:
-        decoded = unquote(url)
-    except ValueError:
-        decoded = unquote_plus(url)
-
-    pattern = re.compile(f"{safelinks_str}\\/\\?url=(.*?)&data=")
-    matches = pattern.findall(decoded)
+    decoded = unquote(url)
+    matches = _SAFELINK_PATTERN.findall(decoded)
 
     if matches:
         return matches[0]
