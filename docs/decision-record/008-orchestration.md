@@ -69,63 +69,7 @@ The throughput ceiling of SQLite is not a constraint for personal/internal use.
 
 ### Alternatives Considered
 
-#### Option 1: Prefect.io _(original selection — not pursued)_
-
-**Description**: Python-native workflow orchestration platform with a self-hosted server and worker pools
-
-**Pros**:
-
-- Python-native with strong developer ergonomics
-- Built-in scheduling, retries, observability dashboard
-- Good documentation and active ecosystem
-
-**Cons**:
-
-- Requires running a separate Prefect server process (plus its own backend database)
-- Operational overhead is disproportionate to current workflow complexity
-- More infrastructure to maintain for a personal/internal project
-
-**Reason for not selecting**: The actual workflows fit comfortably within a simple job table.
-The operational cost of Prefect is not justified.
-
-#### Option 2: Temporal.io
-
-**Description**: Event-sourced workflow engine with strong durability guarantees
-
-**Pros**:
-
-- Extremely robust exactly-once workflows with deterministic replay
-- Rich primitives: signals, timers, retries, compensation
-- Best-in-class durability for complex long-running state machines
-
-**Cons**:
-
-- Requires running the Temporal Server cluster (multiple services)
-- Steep learning curve with a different programming model
-- Significant infrastructure overhead — overkill for current scope
-
-**Reason for not selecting**: Operational and conceptual overhead is not justified for a personal/internal document processing project.
-
-#### Option 3: Windmill.dev
-
-**Description**: UI-driven automation platform with visual workflow building
-
-**Pros**:
-
-- Fast setup for UI-driven automation
-- Good for human-in-the-loop and operator-facing workflows
-- Low-code/no-code capabilities
-
-**Cons**:
-
-- Not suited for heavy, code-driven, long-running pipelines
-- More constrained Python integration
-- Weaker programmatic workflow definition
-
-**Reason for not selecting**: Better suited as a complementary tool for administrative flows.
-May be revisited for operator-facing dashboards if needed.
-
-#### Option 4: absurd _(preferred if migrating to Postgres)_
+#### Option 1: absurd _(preferred if migrating to Postgres)_
 
 **Description**: Postgres-native durable workflow system.
 The engine lives entirely in a single `.sql` schema applied to the database; thin SDKs handle worker logic in Python, TypeScript, or Go.
@@ -150,6 +94,62 @@ The engine lives entirely in a single `.sql` schema applied to the database; thi
 **When to select**: If the project migrates to Postgres for any reason, absurd is the preferred next step before considering Prefect or Temporal.
 It extends the "Postgres as infrastructure" philosophy and avoids introducing a separate orchestration server.
 Installation is `uv add absurd-sdk`; schema setup is `uvx absurdctl init -d <database>`.
+
+#### Option 2: Prefect.io _(original selection — not pursued)_
+
+**Description**: Python-native workflow orchestration platform with a self-hosted server and worker pools
+
+**Pros**:
+
+- Python-native with strong developer ergonomics
+- Built-in scheduling, retries, observability dashboard
+- Good documentation and active ecosystem
+
+**Cons**:
+
+- Requires running a separate Prefect server process (plus its own backend database)
+- Operational overhead is disproportionate to current workflow complexity
+- More infrastructure to maintain for a personal/internal project
+
+**Reason for not selecting**: The actual workflows fit comfortably within a simple job table.
+The operational cost of Prefect is not justified.
+
+#### Option 3: Temporal.io
+
+**Description**: Event-sourced workflow engine with strong durability guarantees
+
+**Pros**:
+
+- Extremely robust exactly-once workflows with deterministic replay
+- Rich primitives: signals, timers, retries, compensation
+- Best-in-class durability for complex long-running state machines
+
+**Cons**:
+
+- Requires running the Temporal Server cluster (multiple services)
+- Steep learning curve with a different programming model
+- Significant infrastructure overhead — overkill for current scope
+
+**Reason for not selecting**: Operational and conceptual overhead is not justified for a personal/internal document processing project.
+
+#### Option 4: Windmill.dev
+
+**Description**: UI-driven automation platform with visual workflow building
+
+**Pros**:
+
+- Fast setup for UI-driven automation
+- Good for human-in-the-loop and operator-facing workflows
+- Low-code/no-code capabilities
+
+**Cons**:
+
+- Not suited for heavy, code-driven, long-running pipelines
+- More constrained Python integration
+- Weaker programmatic workflow definition
+
+**Reason for not selecting**: Better suited as a complementary tool for administrative flows.
+May be revisited for operator-facing dashboards if needed.
 
 ## Implementation Details
 
