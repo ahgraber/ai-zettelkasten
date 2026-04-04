@@ -3,8 +3,6 @@
 Deliver exactly what was requested.
 Avoid speculative extras, but include the minimum tests, documentation, and safeguards needed to keep behavior correct and prevent regressions.
 
-Review available python skills when writing python code.
-
 ## Directive Priority
 
 If directives conflict, prioritize:
@@ -76,6 +74,9 @@ For multi-step tasks, state a brief plan defining the step task and associated v
 
 ## Defaults
 
+- Review available skills for relevance before writing code.
+- If intermediate, user-aligned work is needed before final output, surface in ._scratch/.
+- If worktrees are warranted use a local .worktrees/ directory.
 - Use descriptive, consistent naming conventions.
 - Write docstrings or comments for public contracts and non-obvious behavior.
 - Use type annotations where the language supports them.
@@ -126,6 +127,9 @@ Existing examples: `test_fetcher.py`, `test_async_utils.py`, `test_limiters.py`,
 
 ## Sandbox Limitations
 
+- You may add files but must ask the user to commit (hint: give them a commit message) so they can use their signing key.
+  Commit format: `type(scope): summary` (e.g., `feat(zsh): …`, `fix(vscode): …`).
+  Scope should reflect directories or logical surfaces.
 - The sandbox cannot run `uv sync` or read `.env` / `.env.example` (permission errors).
 - `tests/conversion/conftest.py` imports `aizk.conversion.db` → `pydantic_settings`, which may fail with `ModuleNotFoundError: No module named 'pydantic_settings.sources.providers.secrets'` if sandbox permissions are too strict.
 - **Delegate test runs to the user** when any of the above errors occur.
