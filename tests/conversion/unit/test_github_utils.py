@@ -10,104 +10,49 @@ from aizk.conversion.utilities.github_utils import (
     is_github_url,
     parse_github_owner_repo,
     source_mentions_readme,
-    standardize_github,
+    standardize_github_to_repo,
 )
+from aizk.utilities.url_utils import normalize_url
 
 
-class TestStandardizeGithub:
-    @pytest.mark.parametrize(
-        "input_url,expected",
-        [
-            # Non-GitHub URLs should remain unchanged
-            ("https://example.com/path", "https://example.com/path"),
-            # GitHub main site URLs
-            ("https://github.com/owner/repo", "https://github.com/owner/repo"),
-            # Various branches
-            (
-                "https://github.com/owner/repo/tree/main",
-                "https://github.com/owner/repo/tree/main",
-            ),
-            (
-                "https://github.com/owner/repo/tree/feature-1234",
-                "https://github.com/owner/repo/tree/feature-1234",
-            ),
-            (
-                "https://github.com/owner/repo/tree/feature/item-1234",
-                "https://github.com/owner/repo/tree/feature/item-1234",
-            ),
-            (
-                "https://github.com/owner/repo/tree/v1.2.34",
-                "https://github.com/owner/repo/tree/v1.2.34",
-            ),
-            # Specific files
-            (
-                "https://github.com/owner/repo/blob/main/file.py",
-                "https://github.com/owner/repo/tree/main/file.py",
-            ),
-            (
-                "https://github.com/owner/repo/blob/feature-1234/file.py",
-                "https://github.com/owner/repo/tree/feature-1234/file.py",
-            ),
-            # Raw URLs should convert to github.com
-            (
-                "https://raw.githubusercontent.com/owner/repo/refs/heads/main/README.md",
-                "https://github.com/owner/repo/tree/main/README.md",
-            ),
-            (
-                "https://raw.githubusercontent.com/owner/repo/refs/heads/main/file.py",
-                "https://github.com/owner/repo/tree/main/file.py",
-            ),
-            (
-                "https://raw.githubusercontent.com/owner/repo/refs/heads/master/path/file.txt",
-                "https://github.com/owner/repo/tree/master/path/file.txt",
-            ),
-            # Gist URLs
-            ("https://gist.github.com/owner/12345", "https://gist.github.com/owner/12345"),
-            # Edge cases
-            ("", ""),  # Empty URL
-            ("https://github.com", "https://github.com"),  # No path
-            ("https://github.com/owner/repo/main", "https://github.com/owner/repo"),  # false branch
-            ("https://github.com/invalid@user/repo", "https://github.com/invalid@user/repo"),  # Invalid characters
-        ],
-    )
-    def test_standardize_github(self, input_url: str, expected: str):
-        assert standardize_github(input_url) == expected
+def test_standardize_github_raw_github_to_canonical():
+    # raw.githubusercontent.com → github.com
+    url = "https://raw.githubusercontent.com/owner/repo/main/file.py"
+    assert standardize_github_to_repo(url) == "https://github.com/owner/repo"
 
-    def test_different_schemes(self):
-        assert standardize_github("http://github.com/owner/repo") == "http://github.com/owner/repo"
-        assert standardize_github("git://github.com/owner/repo") == "git://github.com/owner/repo"
 
-    def test_with_query_params(self):
-        input_url = "https://github.com/owner/repo?ref=main"
-        expected = "https://github.com/owner/repo"
-        assert standardize_github(input_url) == expected
+def test_standardize_github_branch_stripping():
+    # Strip branch/ref info
+    url = "https://github.com/owner/repo/tree/feature/branch"
+    assert standardize_github_to_repo(url) == "https://github.com/owner/repo"
 
-    def test_with_fragments(self):
-        input_url = "https://github.com/owner/repo#readme"
-        expected = "https://github.com/owner/repo"
-        assert standardize_github(input_url) == expected
+    url = "https://github.com/owner/repo/blob/main/file.md"
+    assert standardize_github_to_repo(url) == "https://github.com/owner/repo"
 
-    def test_malformed_urls(self):
-        malformed_urls = [
-            "not_a_url",
-            "github.com/no/scheme",
-            "https://github.com/only-owner",
-        ]
-        for url in malformed_urls:
-            assert standardize_github(url) == url
 
-    @pytest.mark.parametrize(
-        "input_url",
-        [
-            "https://github.com/owner/repo/refs/heads/feature",
-            "https://raw.githubusercontent.com/owner/repo/refs/heads/feature/file.txt",
-            "https://gist.github.com/owner/repo/refs/heads/feature",
-        ],
-    )
-    def test_refs_heads_urls(self, input_url):
-        result = standardize_github(input_url)
-        assert "refs/heads" not in result
-        assert "/owner/repo" in result
+def test_standardize_github_gist():
+    # Gist URLs normalized
+    url = "https://gist.github.com/owner/abc123def456"
+    assert standardize_github_to_repo(url) == "https://gist.github.com/owner/abc123def456"
+
+
+def test_standardize_github_non_github_url_unchanged():
+    # Non-GitHub URLs pass through
+    url = "https://example.com/path"
+    assert standardize_github_to_repo(url) == url
+
+
+def test_standardize_github_already_canonical():
+    # Already canonical GitHub URLs unchanged
+    url = "https://github.com/owner/repo"
+    assert standardize_github_to_repo(url) == url
+
+
+def test_dedup_github_variants():
+    """GitHub URL variants deduplicate after standardization."""
+    url1 = "https://raw.githubusercontent.com/owner/repo/main/file.py"
+    url2 = "https://github.com/owner/repo"
+    assert normalize_url(standardize_github_to_repo(url1)) == normalize_url(standardize_github_to_repo(url2))
 
 
 class TestIsGithubUrl:
