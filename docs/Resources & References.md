@@ -13,7 +13,7 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [Lex Fridman on X: similar setup — Obsidian + Cursor + vibe-coded web terminals](https://x.com/lexfridman/status/2039841897066414291)
 - [Karpathy Just Described the Product I've Been Building — LLM Knowledge Bases and YARNNN | yarnnn](https://www.yarnnn.com/blog/karpathy-just-described-the-product-ive-been-building)
 
-## ingest
+## Ingest / Archiving
 
 - [ArchiveBox | 🗃 Open source self-hosted web archiving. Takes URLs/browser history/bookmarks/Pocket/Pinboard/etc., saves HTML, JS, PDFs, media, and more…](https://archivebox.io/)
 - [dgtlmoon/changedetection.io: The best and simplest free open source web page change detection, website watcher, restock monitor and notification service.](https://github.com/dgtlmoon/changedetection.io/tree/master)
@@ -26,7 +26,13 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [databridge-org/databridge-core: Multi-modal modular data ingestion and retrieval](https://github.com/databridge-org/databridge-core)
 - [List of Chromium Command Line Switches](https://peter.sh/experiments/chromium-command-line-switches/)
 
-## parse
+- [chonkie-inc/chonkie - RAG chunking library](https://github.com/chonkie-inc/chonkie)
+- [Dense X Retrieval: What Retrieval Granularity Should We Use?](https://arxiv.org/abs/2312.06648)
+- [Claimify: Extracting Claims from LM Outputs (Microsoft Research)](https://www.microsoft.com/en-us/research/blog/claimify-extracting-high-quality-claims-from-language-model-outputs/)
+- [Claim Extraction from LLM Outputs](https://arxiv.org/abs/2502.10855)
+- [Contextual Retrieval (Anthropic)](https://www.anthropic.com/news/contextual-retrieval)
+- [Late Chunking in Long-Context Embedding Models (Jina)](https://jina.ai/news/late-chunking-in-long-context-embedding-models/)
+- [Decoupling Retrieval vs. Synthesis Chunks (LlamaIndex)](https://docs.llamaindex.ai/en/stable/optimizing/production_rag/#decoupling-chunks-used-for-retrieval-vs-chunks-used-for-synthesis)
 
 - [Optimize parsing costs with LlamaParse auto mode — LlamaIndex](https://www.llamaindex.ai/blog/optimize-parsing-costs-with-llamaparse-auto-mode)
 - [DS4SD/docling: Get your documents ready for gen AI](https://github.com/DS4SD/docling) and [DS4SD/docling-serve: Running Docling as an API service](https://github.com/DS4SD/docling-serve)
@@ -57,7 +63,12 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [getomni-ai/benchmark: OCR Benchmark](https://github.com/getomni-ai/benchmark)
 - [allenai/olmocr bench](https://github.com/allenai/olmocr/tree/main/olmocr/bench)
 
-## chunk
+- [OpenAI text-embedding-3-small](https://platform.openai.com/docs/models/text-embedding-3-small)
+- [OpenAI text-embedding-3-large](https://platform.openai.com/docs/models/text-embedding-3-large)
+- [Cohere Embed](https://cohere.com/embed)
+- [Cohere Rerank](https://cohere.com/rerank)
+- [Voyage AI Embeddings](https://docs.voyageai.com/docs/embeddings)
+- [Jina Embeddings](https://jina.ai/embeddings/)
 
 - [chonkie-ai/chonkie: 🦛 CHONK your texts with Chonkie ✨ - The no-nonsense RAG chunking library](https://github.com/chonkie-ai/chonkie)
 - [[2312.06648] Dense X Retrieval: What Retrieval Granularity Should We Use?](https://arxiv.org/abs/2312.06648) — deconstruct text blobs into propositions (complete factoids)
@@ -65,21 +76,33 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [Late Chunking in Long-Context Embedding Models](https://jina.ai/news/late-chunking-in-long-context-embedding-models/)
 - [Decoupled chunk representations — LlamaIndex](https://docs.llamaindex.ai/en/stable/optimizing/production_rag/#decoupling-chunks-used-for-retrieval-vs-chunks-used-for-synthesis) — separate retrieval chunks from synthesis chunks
 
-## index
+- [PyLate - Late Interaction Models](https://lightonai.github.io/pylate/)
+  - [lightonai/pylate (GitHub)](https://github.com/lightonai/pylate)
+  - [lightonai/fast-plaid](https://github.com/lightonai/fast-plaid)
+- [LlamaIndex](https://docs.llamaindex.ai/en/stable/)
+- [Late Interaction: Efficient Multi-Modal Retrievers (LanceDB)](https://lancedb.com/blog/late-interaction-efficient-multi-modal-retrievers-need-more-than-just-a-vector-index/)
+- [Late Interaction Overview (Weaviate)](https://weaviate.io/blog/late-interaction-overview)
 
-- [PyLate](https://lightonai.github.io/pylate/)
-- [LlamaIndex - LlamaIndex](https://docs.llamaindex.ai/en/stable/)
-- [Introducing the Semantic Graph](https://neuml.hashnode.dev/introducing-the-semantic-graph)
-- [TrustGraph | TrustGraph](https://trustgraph.ai/docs/TrustGraph)
+### Sparse Retrieval
 
-### wiki
+- [naver/splade - sparse neural search](https://github.com/naver/splade)
+- [From grep to SPLADE: a journey through semantic search (Elicit)](https://blog.elicit.com/semantic-search/)
+- [SPLADE for Sparse Vector Search Explained (Pinecone)](https://www.pinecone.io/learn/splade/)
+- [TILDE: Fast Passage Re-ranking with Contextualized Exact Term Matching](https://arxiv.org/abs/2108.08513)
+- [Context-Aware Document Term Weighting for Ad-Hoc Search](https://dl.acm.org/doi/pdf/10.1145/3366423.3380258)
 
 If building a concept graph, it would be useful to be able to use it as a human in addition to have it be searchable for RAG.
 
-- [Logseq: A privacy-first, open-source knowledge base](https://logseq.com/)
-- [Obsidian - Sharpen your thinking](https://obsidian.md/)
+- [SQLite Viewer](https://alpha.sqliteviewer.app)
+- [Beekeeper Studio](https://www.beekeeperstudio.io/)
+- [DuckDB](https://duckdb.org/)
+  - [DuckDB VSS extension](https://duckdb.org/docs/stable/core_extensions/vss.html)
+- [Turso - edge SQLite](https://turso.tech/)
+- [Meilisearch](https://www.meilisearch.com/)
+- [Litestream - SQLite replication](https://litestream.io/)
+- [slaily/aiosqlitepool - async SQLite connection pool](https://github.com/slaily/aiosqlitepool)
 
-### retrievers
+## Model Providers / Frameworks
 
 - bm25
 - Learned Sparse Retrieval
@@ -91,7 +114,7 @@ If building a concept graph, it would be useful to be able to use it as a human 
   - [Context-Aware Document Term Weighting for Ad-Hoc Search](https://dl.acm.org/doi/pdf/10.1145/3366423.3380258)
 - vector
 
-## serve
+## Orchestration
 
 - [Cinnamon/kotaemon: An open-source RAG-based tool for chatting with your documents.](https://github.com/Cinnamon/kotaemon)
 - [Chainlit/chainlit: Build Conversational AI in minutes ⚡️](https://github.com/Chainlit/chainlit)
@@ -114,9 +137,9 @@ If building a concept graph, it would be useful to be able to use it as a human 
 - [foambubble/foam: A personal knowledge management and sharing system for VSCode](https://github.com/foambubble/foam)
 - [lightonai/pylate: Late Interaction Models Training & Retrieval](https://github.com/lightonai/pylate)
 
-## plugins
+- [theJayTea/WritingTools - system-wide grammar assistant](https://github.com/theJayTea/WritingTools)
 
-- [theJayTea/WritingTools: The world's smartest system-wide grammar assistant; a better version of the Apple Intelligence Writing Tools. Works on Windows, Linux, & macOS, with the free Gemini API, local LLMs, & more.](https://github.com/theJayTea/WritingTools)
+## Papers
 
 ## annotation tools
 
