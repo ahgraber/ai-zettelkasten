@@ -1,5 +1,8 @@
 """Unit tests for conversion configuration loading."""
 
+from pydantic import ValidationError
+import pytest
+
 from aizk.conversion.utilities.config import ConversionConfig
 
 
@@ -17,6 +20,8 @@ def test_config_reads_env_vars(monkeypatch):
     monkeypatch.setenv("MLFLOW_TRACING_ENABLED", mlflow_tracing_enabled)
     monkeypatch.setenv("MLFLOW_TRACKING_URI", mlflow_tracking_uri)
     monkeypatch.setenv("MLFLOW_EXPERIMENT_NAME", mlflow_experiment_name)
+    monkeypatch.setenv("CHAT_COMPLETIONS_BASE_URL", "")
+    monkeypatch.setenv("CHAT_COMPLETIONS_API_KEY", "")
     config = ConversionConfig(_env_file=None)
     assert config.database_url == database_url
     assert config.s3_bucket_name == s3_bucket_name
@@ -28,5 +33,37 @@ def test_config_reads_env_vars(monkeypatch):
 
 def test_api_reload_defaults_to_false(monkeypatch):
     monkeypatch.delenv("API_RELOAD", raising=False)
+    monkeypatch.setenv("CHAT_COMPLETIONS_BASE_URL", "")
+    monkeypatch.setenv("CHAT_COMPLETIONS_API_KEY", "")
     config = ConversionConfig(_env_file=None)
     assert config.api_reload is False
+
+
+def test_chat_completions_fields_expand_placeholders_from_environment(monkeypatch):
+    monkeypatch.setenv("_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("CHAT_COMPLETIONS_BASE_URL", "${_OPENROUTER_BASE_URL}")
+    monkeypatch.setenv("CHAT_COMPLETIONS_API_KEY", "$OPENROUTER_API_KEY")
+
+    config = ConversionConfig(_env_file=None)
+
+    assert config.chat_completions_base_url == "https://openrouter.ai/api/v1"
+    assert config.chat_completions_api_key == "test-key"
+    assert config.is_picture_description_enabled() is True
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("CHAT_COMPLETIONS_BASE_URL", "${AIZK_TEST_MISSING_BASE_URL}"),
+        ("CHAT_COMPLETIONS_API_KEY", "$AIZK_TEST_MISSING_API_KEY"),
+    ],
+)
+def test_chat_completions_fields_reject_unresolved_placeholders(monkeypatch, field, value):
+    monkeypatch.setenv("CHAT_COMPLETIONS_BASE_URL", "")
+    monkeypatch.setenv("CHAT_COMPLETIONS_API_KEY", "")
+    monkeypatch.delenv("AIZK_TEST_MISSING_BASE_URL", raising=False)
+    monkeypatch.delenv("AIZK_TEST_MISSING_API_KEY", raising=False)
+    monkeypatch.setenv(field, value)
+    with pytest.raises(ValidationError, match="contains unresolved env placeholder syntax"):
+        ConversionConfig(_env_file=None)

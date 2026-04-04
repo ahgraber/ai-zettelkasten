@@ -39,7 +39,7 @@ The system SHALL normalize bookmark URLs by removing fragments, sorting query pa
 ### Requirement: Create conversion jobs with idempotency protection
 
 The system SHALL create a conversion job record with a computed idempotency key and SHALL reject submissions whose key matches an existing record.
-The idempotency key is a hash of `aizk_uuid + payload_version + docling_version + config_hash + picture_description_enabled`, where `picture_description_enabled` is a boolean derived from whether a chat completions endpoint is configured.
+The idempotency key is a hash of `aizk_uuid + payload_version + docling_version + config_hash + picture_description_enabled`, where `config_hash` includes all `docling_`-prefixed configuration fields (including `docling_enable_picture_classification`) and `picture_description_enabled` is a boolean derived from whether a chat completions endpoint is configured.
 
 #### Scenario: New job created for unique parameters
 
@@ -52,6 +52,12 @@ The idempotency key is a hash of `aizk_uuid + payload_version + docling_version 
 - **GIVEN** an existing job has the same idempotency key
 - **WHEN** a duplicate submission is received
 - **THEN** the submission is rejected and the existing job details are returned without creating a new record
+
+#### Scenario: Key differs when picture classification enabled vs disabled
+
+- **GIVEN** two conversion submissions for the same bookmark with identical other config
+- **WHEN** one has `DOCLING_ENABLE_PICTURE_CLASSIFICATION=true` and the other `false`
+- **THEN** the two submissions produce different idempotency keys and are treated as distinct jobs
 
 ### Requirement: Validate source content before conversion
 
@@ -139,6 +145,8 @@ The system SHALL extract the repository owner and name from a GitHub URL and fet
 ### Requirement: Convert documents to Markdown and extract figures
 
 The system SHALL run the appropriate Docling conversion pipeline for the source content type and extract figures as individual image files with sequential naming.
+When picture classification is enabled (`DOCLING_ENABLE_PICTURE_CLASSIFICATION`, default: `True`) and a VLM endpoint is configured, the PDF pipeline enables the DocumentFigureClassifier and performs a post-conversion enrichment pass: each figure is inspected for its classification label, an appropriate task-tagged prompt is selected (`<chart2summary>` for chart types, `<tables_html>` for table types, generic alt-text otherwise), and the VLM API is called to inject a `PictureDescriptionData` annotation.
+When classification is disabled, the pipeline falls back to Docling's built-in single-prompt picture description.
 
 #### Scenario: HTML document converted to Markdown
 
@@ -157,6 +165,51 @@ The system SHALL run the appropriate Docling conversion pipeline for the source 
 - **GIVEN** Docling conversion produces empty or invalid Markdown
 - **WHEN** the worker inspects the output
 - **THEN** the job is marked permanently failed and any existing successful output is preserved
+
+#### Scenario: Chart figure described with chart2summary prompt
+
+- **GIVEN** a PDF figure is classified as a chart type by DocumentFigureClassifier
+- **WHEN** the post-conversion enrichment pass runs
+- **THEN** the enrichment loop calls the VLM with a `<chart2summary>` prompt for that figure
+- **AND** the resulting description is injected as a `PictureDescriptionData` annotation
+
+#### Scenario: Table-image figure described with tables_html prompt
+
+- **GIVEN** a PDF figure is classified as a table type by DocumentFigureClassifier
+- **WHEN** the post-conversion enrichment pass runs
+- **THEN** the enrichment loop calls the VLM with a `<tables_html>` prompt for that figure
+- **AND** the resulting description is injected as a `PictureDescriptionData` annotation
+
+#### Scenario: Unclassified or photo figure uses generic prompt
+
+- **GIVEN** a PDF figure has no classification label, or is classified as photograph/logo/other
+- **WHEN** the post-conversion enrichment pass runs
+- **THEN** the enrichment loop calls the VLM with the existing generic alt-text prompt
+- **AND** the resulting description is injected as a `PictureDescriptionData` annotation
+
+#### Scenario: Picture classification disabled via config
+
+- **GIVEN** `DOCLING_ENABLE_PICTURE_CLASSIFICATION=false`
+- **WHEN** the PDF pipeline is configured
+- **THEN** `do_picture_classification=False` and the enrichment pass falls back to the existing single-prompt Docling built-in description (no classification-based routing)
+
+### Requirement: Serialize Markdown output with figure annotations
+
+When serializing a `PictureItem` to Markdown, the system SHALL append annotation blocks as HTML comments following the image placeholder.
+If a `PictureDescriptionData` annotation is present, the serializer emits a `<!-- Figure Description -->` comment block containing the description text.
+If a `PictureClassificationData` annotation is also present, the serializer prepends a `<!-- Figure Type: <label> -->` comment immediately before the description block, enabling downstream consumers to filter or route by figure type.
+
+#### Scenario: Classification label included in serialized output
+
+- **GIVEN** a `PictureItem` has both a `PictureClassificationData` and a `PictureDescriptionData` annotation
+- **WHEN** the item is serialized to Markdown
+- **THEN** the output contains `<!-- Figure Type: <label> -->` followed by the description block
+
+#### Scenario: No classification label when classifier disabled
+
+- **GIVEN** `do_picture_classification=False` and no `PictureClassificationData` annotation exists
+- **WHEN** the item is serialized to Markdown
+- **THEN** the output contains only the description block, unchanged from prior behavior
 
 ### Requirement: Normalize whitespace in Markdown output
 
@@ -386,6 +439,22 @@ The system SHALL load all configuration (S3 credentials, KaraKeep endpoint, conc
 - **WHEN** the worker starts
 - **THEN** all configuration is read from the environment without requiring code changes
 
+### Requirement: Load picture classification configuration from environment
+
+The system SHALL expose `DOCLING_ENABLE_PICTURE_CLASSIFICATION` as a boolean environment variable (default: `True`) that controls whether the DocumentFigureClassifier runs during PDF conversion and whether the post-conversion enrichment pass performs classification-based prompt routing.
+
+#### Scenario: Classification enabled by default
+
+- **GIVEN** `DOCLING_ENABLE_PICTURE_CLASSIFICATION` is not set
+- **WHEN** the worker starts
+- **THEN** the PDF pipeline runs with `do_picture_classification=True`
+
+#### Scenario: Classification disabled via environment
+
+- **GIVEN** `DOCLING_ENABLE_PICTURE_CLASSIFICATION=false`
+- **WHEN** the worker starts
+- **THEN** the PDF pipeline runs with `do_picture_classification=False` and the enrichment pass does not attempt classification-based routing
+
 ### Requirement: Validate required external services on startup
 
 The system SHALL probe required external services (S3 storage and KaraKeep API) at process startup and SHALL refuse to start if any required service is unreachable.
@@ -418,6 +487,8 @@ Probes SHALL use bounded timeouts to avoid hanging on unresponsive services.
 ### Requirement: Log optional feature status summary on startup
 
 The system SHALL log a structured summary of all optional feature states on startup, indicating which features are enabled and which are disabled with the reason (missing configuration).
+Optional features include picture descriptions, picture classification, MLflow tracing, and Litestream replication.
+Picture classification reports as enabled only when both `DOCLING_ENABLE_PICTURE_CLASSIFICATION=true` and a VLM endpoint is configured; otherwise it reports as disabled with a specific reason.
 
 #### Scenario: All optional features enabled
 
@@ -436,6 +507,24 @@ The system SHALL log a structured summary of all optional feature states on star
 - **GIVEN** MLflow tracing and Litestream replication are both unconfigured
 - **WHEN** the process starts
 - **THEN** the startup summary log entry lists both features as disabled with their respective reasons
+
+#### Scenario: Picture classification enabled in startup summary
+
+- **GIVEN** `DOCLING_ENABLE_PICTURE_CLASSIFICATION=true` and a chat completions endpoint is configured
+- **WHEN** the process starts
+- **THEN** the startup summary log entry lists picture classification as enabled
+
+#### Scenario: Picture classification disabled due to config flag
+
+- **GIVEN** `DOCLING_ENABLE_PICTURE_CLASSIFICATION=false`
+- **WHEN** the process starts
+- **THEN** the startup summary log entry lists picture classification as disabled with reason "DOCLING_ENABLE_PICTURE_CLASSIFICATION=false"
+
+#### Scenario: Picture classification implicitly disabled due to no VLM endpoint
+
+- **GIVEN** no chat completions endpoint is configured (picture description is disabled)
+- **WHEN** the process starts
+- **THEN** the startup summary log entry lists picture classification as disabled with reason "picture description not enabled"
 
 ### Requirement: Identify process role for operator monitoring
 
@@ -496,8 +585,14 @@ manifest, so the conversion can be replayed with identical parameters.
 - **GIVEN** a conversion completes successfully
 - **WHEN** the manifest is written to the ephemeral workspace
 - **THEN** the manifest includes all Docling configuration fields (OCR settings, table structure,
-  VLM model, page limit, picture timeout) and the picture description enabled flag as a config
-  snapshot section
+  VLM model, page limit, picture timeout, picture classification enabled) and the picture
+  description enabled flag as a config snapshot section
+
+#### Scenario: Manifest captures picture classification flag
+
+- **GIVEN** a conversion completes with `docling_enable_picture_classification=True`
+- **WHEN** the manifest is written
+- **THEN** the config snapshot section includes `"docling_enable_picture_classification": true`
 
 #### Scenario: Config snapshot matches idempotency key inputs
 
@@ -511,15 +606,16 @@ manifest, so the conversion can be replayed with identical parameters.
 - **Implementation**: `aizk/conversion/`
 - **Dependencies**: conversion-api (shared data model); mlflow-llm-tracing (optional instrumentation); worker-process-management (subprocess lifecycle)
 - **Data model**: Bookmark (karakeep_id unique key, aizk_uuid internal identifier), ConversionJob (status, idempotency_key unique, retry scheduling), ConversionOutput (artifact locations, content hash, pipeline metadata)
-- **Idempotency key**: hash of `aizk_uuid + payload_version + docling_version + config_hash + picture_description_enabled`
+- **Idempotency key**: hash of `aizk_uuid + payload_version + docling_version + config_hash + picture_description_enabled`; `config_hash` includes all `docling_`-prefixed fields including `docling_enable_picture_classification`
 - **Raw source provenance**: KaraKeep is the authoritative store for raw source content; `karakeep_id` is the durable provenance reference.
   Raw bytes are not archived locally.
 - **Whitespace normalization**: `aizk/conversion/utilities/whitespace.py` → `normalize_whitespace()`; applied in `_run_conversion()` before file write and hash computation; preserves code-fence content, list indentation, and strips trailing spaces
 - **Content hash**: xxhash64 of normalized Markdown (UTF-8, LF line endings) stored in the output record
-- **Manifest config_snapshot**: manifest includes a `config_snapshot` section with all Docling config fields and `picture_description_enabled` to enable exact replay.
+- **Manifest config_snapshot**: manifest includes a `config_snapshot` section with all Docling config fields (including `docling_enable_picture_classification`) and `picture_description_enabled` to enable exact replay.
 - **S3 layout**: artifacts at `s3://<bucket>/<aizk_uuid>/`; upload verification via ETag match (single-part) or content length (multipart)
 - **Database**: SQLite in WAL mode with foreign keys, synchronous=NORMAL, and busy timeout; indexes on job status/scheduling, bookmark URL, and output lookup by bookmark identifier
 - **Workspace**: ephemeral temp directory cleaned up via context manager; figures named figure-001.png, figure-002.png, etc.
 - **arXiv client**: `aizk.utilities.arxiv_utils`; URL parsing: `aizk.utilities.url_utils`
 - **Process role labeling**: implemented via `setproctitle`
-- **Startup validation**: `aizk/conversion/utilities/startup.py` → `validate_startup()`; probes S3 (HEAD bucket) and KaraKeep (GET bookmarks?limit=1) with 10s timeouts; logs feature summary for picture descriptions, MLflow, and Litestream
+- **Startup validation**: `aizk/conversion/utilities/startup.py` → `validate_startup()`; probes S3 (HEAD bucket) and KaraKeep (GET bookmarks?limit=1) with 10s timeouts; logs feature summary for picture descriptions, picture classification, MLflow, and Litestream
+- **Picture classification**: `DOCLING_ENABLE_PICTURE_CLASSIFICATION` (default: `True`); controls `ThreadedPdfPipelineOptions.do_picture_classification` and the post-conversion enrichment loop in `converter.py`; prompt routing table `_LABEL_TO_PROMPT` maps classifier labels to `<chart2summary>` / `<tables_html>` / generic alt-text

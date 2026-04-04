@@ -32,7 +32,7 @@ import tempfile
 
 from PIL import Image, ImageDraw
 from postprocessing import extract_classes_bboxes, postprocess_text, transform_bbox_to_original
-import pymupdf  # modern PyMuPDF
+import pypdfium2 as pdfium
 
 import torch
 from transformers import AutoConfig, AutoImageProcessor, AutoModel, AutoProcessor, AutoTokenizer, GenerationConfig
@@ -75,15 +75,11 @@ def pdf_to_image(pdf_path: Path, dpi=300):
         list[PIL.Image.Image]: List of PIL Image objects for each page.
     """
     images = []
-    doc = pymupdf.open(pdf_path)
-    try:
-        for i in range(doc.page_count):
-            page = doc.load_page(i)
-            pix = page.get_pixmap(dpi=dpi, alpha=False)
-            image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+    scale = dpi / 72.0
+    with pdfium.PdfDocument(str(pdf_path)) as doc:
+        for page in doc:
+            image = page.render(scale=scale).to_pil().convert("RGB")
             images.append(image)
-    finally:
-        doc.close()
 
     return images
 

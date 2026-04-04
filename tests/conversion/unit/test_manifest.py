@@ -50,13 +50,18 @@ def _make_job(
 _FETCHED_AT = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 
-def _config_snapshot(*, picture_description_enabled: bool = False) -> ManifestConfigSnapshot:
+def _config_snapshot(
+    *,
+    picture_description_enabled: bool = False,
+    docling_enable_picture_classification: bool = True,
+) -> ManifestConfigSnapshot:
     return ManifestConfigSnapshot(
         docling_pdf_max_pages=250,
         docling_enable_ocr=True,
         docling_enable_table_structure=True,
         docling_vlm_model="openai/gpt-5-nano",
         docling_picture_timeout=180.0,
+        docling_enable_picture_classification=docling_enable_picture_classification,
         picture_description_enabled=picture_description_enabled,
     )
 
@@ -100,6 +105,23 @@ def test_manifest_config_snapshot_contains_docling_fields():
     assert manifest.config_snapshot.docling_picture_timeout == 180.0
 
 
+def test_manifest_config_snapshot_contains_docling_enable_picture_classification():
+    manifest = _base_manifest()
+    assert manifest.config_snapshot.docling_enable_picture_classification is True
+    manifest_off = generate_manifest(
+        bookmark=_make_bookmark(),
+        job=_make_job(),
+        fetched_at=_FETCHED_AT,
+        markdown_s3_uri="s3://bucket/output.md",
+        markdown_hash="abcd1234",
+        figure_s3_uris=[],
+        docling_version="2.0.0",
+        pipeline_name="html",
+        config_snapshot=_config_snapshot(docling_enable_picture_classification=False),
+    )
+    assert manifest_off.config_snapshot.docling_enable_picture_classification is False
+
+
 def test_manifest_config_snapshot_serialises_to_json():
     manifest = _base_manifest(picture_description_enabled=True)
     data = manifest.model_dump()
@@ -111,6 +133,8 @@ def test_manifest_config_snapshot_serialises_to_json():
         "docling_enable_table_structure",
         "docling_vlm_model",
         "docling_picture_timeout",
+        "docling_enable_picture_classification",
         "picture_description_enabled",
     }
     assert snapshot["picture_description_enabled"] is True
+    assert snapshot["docling_enable_picture_classification"] is True

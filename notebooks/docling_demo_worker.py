@@ -105,6 +105,9 @@ def convert_to_markdown(
     source_url: str | None = None,
 ) -> None:
     """Convert source content bytes to Markdown and save to output directory."""
+    # ConversionConfig reads DOCLING_ENABLE_PICTURE_CLASSIFICATION from the environment
+    # (default: True). Set it to "false" to disable classification-based prompt routing
+    # and fall back to a single generic alt-text prompt for all figures.
     config = ConversionConfig()
     workspace = output_dir / bookmark_id
     workspace.mkdir(parents=True, exist_ok=True)

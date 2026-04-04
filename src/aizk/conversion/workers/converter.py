@@ -5,11 +5,11 @@ from __future__ import annotations
 import base64
 from io import BytesIO
 import logging
-import os
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
+import httpx
 from PIL import Image
 from pydantic import AnyUrl, HttpUrl
 
@@ -38,7 +38,12 @@ from docling_core.transforms.serializer.markdown import (
     MarkdownPictureSerializer,
 )
 from docling_core.types.doc.base import ImageRefMode
-from docling_core.types.doc.document import DoclingDocument, PictureItem
+from docling_core.types.doc.document import (
+    DoclingDocument,
+    PictureClassificationData,
+    PictureDescriptionData,
+    PictureItem,
+)
 from docling_core.types.io import DocumentStream
 
 from aizk.conversion.utilities.config import ConversionConfig
@@ -46,6 +51,33 @@ from aizk.conversion.utilities.paths import figure_dir
 from aizk.utilities.mlflow_tracing import trace_model_call
 
 logger = logging.getLogger(__name__)
+
+# Generic alt-text prompt used for figures without a recognized classifier label.
+_ALT_TEXT_PROMPT = """
+Provide a detailed description for this figure that captures the main subject, action, and any critical visual information including key components, relationships, and outcomes shown with the goal that someone who reads the description would be able to redraw the figure. Prioritize detail over brevity.
+
+- Do not rely on phrases like "shown above" or "as seen"
+- Do not say "image of," "picture of," "figure of," or "graphic of", etc.
+- Do not describe purely visual styling unless meaningful
+- Do not guess emotions, identities, or intent unless clearly conveyed
+
+Respond ONLY with the description, no other text.
+""".strip()
+
+# Label-to-prompt routing table for DocumentFigureClassifier v2.5.
+# Label vocabulary is empirically confirmed; unknown labels fall back to _ALT_TEXT_PROMPT.
+# Log unknown labels at DEBUG so the actual vocabulary can be confirmed during deployment.
+_LABEL_TO_PROMPT: dict[str, str] = {
+    # Chart-type labels
+    "chart": "<chart2summary>",
+    "bar_chart": "<chart2summary>",
+    "line_chart": "<chart2summary>",
+    "pie_chart": "<chart2summary>",
+    "scatter_chart": "<chart2summary>",
+    "area_chart": "<chart2summary>",
+    # Table-type labels
+    "table": "<tables_html>",
+}
 
 
 class ConversionError(Exception):
@@ -97,17 +129,6 @@ def _get_picture_description_options(config: ConversionConfig) -> Optional[Pictu
     model_name = config.docling_vlm_model
     timeout = float(config.docling_picture_timeout)
 
-    alt_text_prompt = """
-Provide a detailed description for this figure that captures the main subject, action, and any critical visual information including key components, relationships, and outcomes shown with the goal that someone who reads the description would be able to redraw the figure. Prioritize detail over brevity.
-
-- Do not rely on phrases like "shown above" or "as seen"
-- Do not say "image of," "picture of," "figure of," or "graphic of", etc.
-- Do not describe purely visual styling unless meaningful
-- Do not guess emotions, identities, or intent unless clearly conveyed
-
-Respond ONLY with the description, no other text.
-""".strip()
-
     return PictureDescriptionApiOptions(
         url=HttpUrl(f"{base_url}/chat/completions"),
         params={
@@ -116,7 +137,7 @@ Respond ONLY with the description, no other text.
             "reasoning_effort": "low",
         },
         headers={"Authorization": f"Bearer {api_key}"},
-        prompt=alt_text_prompt,
+        prompt=_ALT_TEXT_PROMPT,
         timeout=timeout,
     )
 
@@ -128,12 +149,19 @@ def _create_document_converter(
     """Create a DocumentConverter with HTML and PDF format options."""
     picture_opts = _get_picture_description_options(config)
 
+    # Two-phase approach: when classification is enabled and VLM is configured,
+    # suppress Docling's built-in description; the enrichment loop handles it instead.
+    classification_active = config.docling_enable_picture_classification and bool(picture_opts)
+    builtin_description_active = bool(picture_opts) and not classification_active
+
     # HTML format options
     html_pipeline_opts = ConvertPipelineOptions()
     html_pipeline_opts.enable_remote_services = bool(picture_opts)
-    html_pipeline_opts.do_picture_description = bool(picture_opts)
-    if picture_opts:
+    if builtin_description_active:
+        html_pipeline_opts.do_picture_description = True
         html_pipeline_opts.picture_description_options = picture_opts
+    else:
+        html_pipeline_opts.do_picture_description = False
 
     html_backend_opts = HTMLBackendOptions(
         kind="html",
@@ -166,10 +194,12 @@ def _create_document_converter(
     pdf_pipeline_opts.do_code_enrichment = True
     pdf_pipeline_opts.do_formula_enrichment = True
     pdf_pipeline_opts.generate_page_images = True
-    pdf_pipeline_opts.do_picture_classification = False
-    pdf_pipeline_opts.do_picture_description = bool(picture_opts)
-    if picture_opts:
+    pdf_pipeline_opts.do_picture_classification = config.docling_enable_picture_classification
+    if builtin_description_active:
+        pdf_pipeline_opts.do_picture_description = True
         pdf_pipeline_opts.picture_description_options = picture_opts
+    else:
+        pdf_pipeline_opts.do_picture_description = False
     pdf_pipeline_opts.generate_picture_images = True
     pdf_pipeline_opts.images_scale = 2
     pdf_pipeline_opts.do_table_structure = config.docling_enable_table_structure
@@ -184,6 +214,105 @@ def _create_document_converter(
             InputFormat.PDF: pdf_format,
         }
     )
+
+
+def _get_classification_label(pic: PictureItem) -> str | None:
+    """Return the top classification label for a picture, or None if absent."""
+    for annotation in pic.annotations:
+        if isinstance(annotation, PictureClassificationData) and annotation.predicted_classes:
+            label = annotation.predicted_classes[0].class_name
+            logger.debug("Figure %s classification: %s", pic.self_ref, label)
+            return label
+    return None
+
+
+def _call_vlm_api(image: Image.Image, prompt: str, config: ConversionConfig) -> str:
+    """Call the VLM chat completions API with an image and prompt.
+
+    Args:
+        image: PIL image to describe.
+        prompt: Task-specific prompt string.
+        config: Conversion config with endpoint and auth settings.
+
+    Returns:
+        Response content string from the VLM.
+
+    Raises:
+        DoclingError: On HTTP or timeout error (retryable).
+    """
+    buf = BytesIO()
+    image.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+
+    base_url = config.chat_completions_base_url.strip().rstrip("/")
+    api_key = config.chat_completions_api_key.strip()
+
+    payload = {
+        "model": config.docling_vlm_model,
+        "seed": 42,
+        "reasoning_effort": "low",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ],
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    url = f"{base_url}/chat/completions"
+
+    try:
+        response = httpx.post(url, json=payload, headers=headers, timeout=config.docling_picture_timeout)
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"]
+    except (httpx.HTTPError, httpx.TimeoutException) as exc:
+        raise DoclingError(f"VLM API call failed: {exc}") from exc
+
+
+def _enrich_picture_descriptions(doc: DoclingDocument, config: ConversionConfig) -> None:
+    """Post-conversion enrichment: classify each figure and call VLM with task-specific prompt.
+
+    Only runs when both picture description and picture classification are enabled.
+    Appends PictureDescriptionData to each figure's annotations, replacing Docling's
+    built-in description pass.
+
+    Args:
+        doc: DoclingDocument after conversion (figures already classified).
+        config: Conversion config.
+    """
+    if not config.is_picture_description_enabled():
+        return
+    if not config.docling_enable_picture_classification:
+        return
+
+    with trace_model_call(
+        name="llm.chat.completions.docling_picture_description",
+        span_type="CHAT_MODEL",
+        attributes={
+            "model": config.docling_vlm_model,
+            "pipeline": "enrichment",
+            "provider_endpoint": "/chat/completions",
+        },
+    ):
+        for pic in doc.pictures:
+            label = _get_classification_label(pic)
+            if label is not None and label not in _LABEL_TO_PROMPT:
+                logger.debug("Figure %s: unknown classifier label %r, using generic prompt", pic.self_ref, label)
+            prompt = _LABEL_TO_PROMPT.get(label, _ALT_TEXT_PROMPT)
+
+            image = pic.get_image(doc)
+            if image is None:
+                logger.debug("Figure %s: no image available, skipping description", pic.self_ref)
+                continue
+
+            result = _call_vlm_api(image, prompt, config)
+            pic.annotations.append(PictureDescriptionData(text=result, provenance="aizk:vlm_enrichment"))
 
 
 def _docling_to_markdown(doc: DoclingDocument) -> str:
@@ -211,10 +340,15 @@ def _docling_to_markdown(doc: DoclingDocument) -> str:
             )
             text_parts.append(parent_res.text)
 
+            # Prepend figure type label if classification annotation is present
+            for annotation in item.annotations:
+                if isinstance(annotation, PictureClassificationData) and annotation.predicted_classes:
+                    label = annotation.predicted_classes[0].class_name
+                    text_parts.append(f"<!-- Figure Type: {label} -->")
+                    break
+
             # Append alt text as HTML comment
             for annotation in item.annotations:
-                from docling_core.types.doc.document import PictureDescriptionData
-
                 if isinstance(annotation, PictureDescriptionData):
                     text_parts.append(
                         f"""
@@ -310,7 +444,8 @@ def convert_html(
     try:
         converter = _create_document_converter(config, source_url=source_url)
         source = DocumentStream(name="document.html", stream=BytesIO(html_bytes))
-        if config.is_picture_description_enabled():
+        if config.is_picture_description_enabled() and not config.docling_enable_picture_classification:
+            # Fallback: built-in Docling description (classification disabled)
             with trace_model_call(
                 name="llm.chat.completions.docling_picture_description",
                 span_type="CHAT_MODEL",
@@ -325,6 +460,7 @@ def convert_html(
             conv_result = converter.convert(source)
         doc = conv_result.document
 
+        _enrich_picture_descriptions(doc, config)
         markdown = _docling_to_markdown(doc)
 
     except DoclingEmptyOutputError:
@@ -359,7 +495,8 @@ def convert_pdf(
     try:
         converter = _create_document_converter(config)
         source = DocumentStream(name="document.pdf", stream=BytesIO(pdf_bytes))
-        if config.is_picture_description_enabled():
+        if config.is_picture_description_enabled() and not config.docling_enable_picture_classification:
+            # Fallback: built-in Docling description (classification disabled)
             with trace_model_call(
                 name="llm.chat.completions.docling_picture_description",
                 span_type="CHAT_MODEL",
@@ -374,6 +511,7 @@ def convert_pdf(
             conv_result = converter.convert(source)
         doc = conv_result.document
 
+        _enrich_picture_descriptions(doc, config)
         markdown = _docling_to_markdown(doc)
 
     except DoclingEmptyOutputError:

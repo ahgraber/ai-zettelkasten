@@ -74,6 +74,8 @@ def test_build_output_config_snapshot_matches_manifest_contract():
         "docling_enable_table_structure",
         "docling_vlm_model",
         "docling_picture_timeout",
+        "docling_enable_picture_classification",
         "picture_description_enabled",
     }
     assert snapshot["picture_description_enabled"] is True
+    assert snapshot["docling_enable_picture_classification"] is True
