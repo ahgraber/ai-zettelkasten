@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import re
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_UNRESOLVED_ENV_PATTERN = re.compile(r"\$\{[^}]+\}|\$[A-Za-z_][A-Za-z0-9_]*")
 
 
 class ConversionConfig(BaseSettings):
@@ -58,6 +62,10 @@ class ConversionConfig(BaseSettings):
         default=180.0,
         validation_alias="DOCLING_PICTURE_TIMEOUT",
     )
+    docling_enable_picture_classification: bool = Field(
+        default=True,
+        validation_alias="DOCLING_ENABLE_PICTURE_CLASSIFICATION",
+    )
 
     chat_completions_base_url: str = Field(
         default="",
@@ -106,6 +114,21 @@ class ConversionConfig(BaseSettings):
     api_host: str = Field(default="0.0.0.0", validation_alias="API_HOST")  # NOQA: S104
     api_port: int = Field(default=8000, validation_alias="API_PORT")
     api_reload: bool = Field(default=False, validation_alias="API_RELOAD")
+
+    @model_validator(mode="after")
+    def validate_chat_completions_fields(self) -> ConversionConfig:
+        """Expand env placeholders once, then fail fast if any remain unresolved."""
+        for field_name in ("chat_completions_base_url", "chat_completions_api_key"):
+            value = getattr(self, field_name).strip()
+            if value:
+                value = os.path.expandvars(value).strip()
+                setattr(self, field_name, value)
+            if value and _UNRESOLVED_ENV_PATTERN.search(value):
+                raise ValueError(
+                    f"{field_name} contains unresolved env placeholder syntax: {value!r}. "
+                    "Set a concrete value before constructing ConversionConfig."
+                )
+        return self
 
     def is_picture_description_enabled(self) -> bool:
         """Return whether upstream picture-description chat calls are enabled."""

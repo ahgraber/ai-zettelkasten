@@ -156,13 +156,29 @@ With coverage:
 uv run pytest -n auto -m "not integration_lifecycle" --cov=src --cov-report=term-missing tests/
 ```
 
-## Development and Contributing
+## Contributing
 
 Contributions and fixes are welcome.
 Please open issues or pull requests with clear descriptions and tests where appropriate.
 
-Publishing is supported using [floRaths/uv-ship: a CLI-tool for shipping with uv](https://github.com/floRaths/uv-ship)
+### Releasing
 
-## License
+This project uses [uv-ship](https://github.com/floRaths/uv-ship) to manage releases.
+Install it as a uv tool:
 
-[AGPL-3.0](https://github.com/ahgraber/karakeep-client/blob/main/LICENSE)
+```bash
+uv tool install uv-ship
+```
+
+To cut a release:
+
+```bash
+# do a dry run first!
+uv-ship --dry-run next <major | minor | patch>
+
+# if everything looks good, ship it
+uv-ship next <major | minor | patch>
+```
+
+This bumps the version in `pyproject.toml`, updates `CHANGELOG`, commits, tags, and pushes.
+See `[tool.uv-ship]` in `pyproject.toml` for configuration.

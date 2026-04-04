@@ -26,5 +26,11 @@ huggingface-cli download microsoft/Phi-4 \
   --local-dir "${MODELS_DIR}/microsoft--Phi-4" \
   --local-dir-use-symlinks False
 
+# Download Granite 4.0 3B Vision (supports task-tagged prompts: chart2summary, tables_html)
+echo "Downloading ibm-granite/granite-4.0-3b-vision..."
+huggingface-cli download ibm-granite/granite-4.0-3b-vision \
+  --local-dir "${MODELS_DIR}/ibm-granite--granite-4.0-3b-vision" \
+  --local-dir-use-symlinks False
+
 echo "Models downloaded! Update your Docker container environment:"
 echo "DOCLING_SERVE_ARTIFACTS_PATH=/opt/app-root/src/models"

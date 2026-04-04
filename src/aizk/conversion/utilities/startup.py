@@ -96,6 +96,20 @@ def log_feature_summary(config: ConversionConfig, role: str) -> None:
             "reason": "chat completions endpoint not configured",
         }
 
+    # Picture classification (requires both the config flag and a VLM endpoint)
+    if not config.is_picture_description_enabled():
+        features["picture_classification"] = {
+            "status": "disabled",
+            "reason": "picture description not enabled",
+        }
+    elif not config.docling_enable_picture_classification:
+        features["picture_classification"] = {
+            "status": "disabled",
+            "reason": "DOCLING_ENABLE_PICTURE_CLASSIFICATION=false",
+        }
+    else:
+        features["picture_classification"] = {"status": "enabled"}
+
     # MLflow tracing
     if config.mlflow_tracing_enabled:
         features["mlflow_tracing"] = {"status": "enabled"}

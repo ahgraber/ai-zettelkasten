@@ -56,6 +56,7 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 
 ### parse benchmarks
 
+- [[2410.09871] A Comparative Study of PDF Parsing Tools Across Diverse Document Categories](https://arxiv.org/abs/2410.09871)
 - [[2412.02592] OCR Hinders RAG: Evaluating the Cascading Impact of OCR on Retrieval-Augmented Generation](https://arxiv.org/abs/2412.02592)
 - [[2412.07626] OmniDocBench: Benchmarking Diverse PDF Document Parsing with Comprehensive Annotations](https://arxiv.org/abs/2412.07626)
 - [[2501.00321] OCRBench v2: An Improved Benchmark for Evaluating Large Multimodal Models on Visual Text Localization and Reasoning](https://arxiv.org/abs/2501.00321)

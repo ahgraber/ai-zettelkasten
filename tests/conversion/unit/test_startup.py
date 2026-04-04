@@ -174,10 +174,24 @@ def test_log_feature_summary_all_disabled(config: ConversionConfig, caplog: pyte
 @pytest.mark.parametrize(
     ("base_url", "api_key", "mlflow", "litestream_enabled", "litestream_bucket", "expected_disabled"),
     [
-        ("", "", False, False, "", {"picture_descriptions", "mlflow_tracing", "litestream_replication"}),
+        (
+            "",
+            "",
+            False,
+            False,
+            "",
+            {"picture_descriptions", "picture_classification", "mlflow_tracing", "litestream_replication"},
+        ),
         ("http://llm", "key", True, True, "bucket", set()),
-        ("http://llm", "", False, True, "", {"picture_descriptions", "mlflow_tracing", "litestream_replication"}),
-        ("", "key", True, True, "bucket", {"picture_descriptions"}),
+        (
+            "http://llm",
+            "",
+            False,
+            True,
+            "",
+            {"picture_descriptions", "picture_classification", "mlflow_tracing", "litestream_replication"},
+        ),
+        ("", "key", True, True, "bucket", {"picture_descriptions", "picture_classification"}),
     ],
     ids=["all-disabled", "all-enabled", "mixed-disabled", "only-picture-disabled"],
 )

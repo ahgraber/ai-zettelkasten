@@ -25,6 +25,7 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from dotenv import load_dotenv
+import httpx
 from pydantic import AnyUrl
 from setproctitle import setproctitle
 from tqdm.auto import tqdm
@@ -189,6 +190,18 @@ Provide a detailed description for this figure that captures the main subject, a
 Respond ONLY with the description, no other text.
 """.strip()
 
+# Label-to-prompt routing for DocumentFigureClassifier v2.5.
+# Unknown labels fall back to ALT_TEXT_INSTRUCTIONS.
+_LABEL_TO_PROMPT: dict[str, str] = {
+    "chart": "<chart2summary>",
+    "bar_chart": "<chart2summary>",
+    "line_chart": "<chart2summary>",
+    "pie_chart": "<chart2summary>",
+    "scatter_chart": "<chart2summary>",
+    "area_chart": "<chart2summary>",
+    "table": "<tables_html>",
+}
+
 
 def build_picture_description_options() -> PictureDescriptionApiOptions:
     """Configure picture descriptions to use the OpenRouter endpoint."""
@@ -281,14 +294,14 @@ def build_pdf_format_options(
     pipeline_options.do_code_enrichment = True
     pipeline_options.do_formula_enrichment = True
     pipeline_options.generate_page_images = True
-    pipeline_options.do_picture_classification = False
-    pipeline_options.do_picture_description = True
+    # Two-phase approach: classify first, then enrich via enrich_picture_descriptions()
+    pipeline_options.do_picture_classification = True
+    pipeline_options.do_picture_description = False  # enrichment loop handles descriptions
     pipeline_options.generate_picture_images = True
     pipeline_options.images_scale = 2
     pipeline_options.do_table_structure = True
     pipeline_options.generate_table_images = True
     pipeline_options.table_structure_options.do_cell_matching = True
-    pipeline_options.picture_description_options = picture_description_options
 
     return PdfFormatOption(pipeline_options=pipeline_options)
 
@@ -313,6 +326,72 @@ def create_docling_converter(
     )
 
 
+def enrich_picture_descriptions(
+    doc: DoclingDocument,
+    picture_description_options: PictureDescriptionApiOptions,
+) -> None:
+    """Post-conversion enrichment: classify each figure and call VLM with task-specific prompt.
+
+    Mirrors the production _enrich_picture_descriptions() logic in converter.py.
+    """
+    base_url = os.environ.get("_OPENROUTER_BASE_URL", "").rstrip("/")
+    api_key = os.environ.get("_OPENROUTER_API_KEY", "")
+    model_name = os.environ.get("DOCLING_VLM_MODEL", "openai/gpt-5.4-nano")
+    timeout = float(os.environ.get("DOCLING_PICTURE_TIMEOUT", "180"))
+
+    if not base_url or not api_key:
+        logger.warning("enrich_picture_descriptions: VLM endpoint not configured, skipping")
+        return
+
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    url = f"{base_url}/chat/completions"
+
+    for pic in doc.pictures:
+        # Determine classification label
+        label: Optional[str] = None
+        for ann in pic.annotations:
+            if isinstance(ann, PictureClassificationData) and ann.predicted_classes:
+                label = ann.predicted_classes[0].class_name
+                logger.debug("Figure %s classification: %s", pic.self_ref, label)
+                break
+
+        if label is not None and label not in _LABEL_TO_PROMPT:
+            logger.debug("Figure %s: unknown label %r, using generic prompt", pic.self_ref, label)
+        prompt = _LABEL_TO_PROMPT.get(label or "", ALT_TEXT_INSTRUCTIONS)
+
+        image = pic.get_image(doc)
+        if image is None:
+            logger.debug("Figure %s: no image, skipping", pic.self_ref)
+            continue
+
+        buf = BytesIO()
+        image.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+
+        payload = {
+            "model": model_name,
+            "seed": 42,
+            "reasoning_effort": "low",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
+        }
+
+        try:
+            response = httpx.post(url, json=payload, headers=headers, timeout=timeout)
+            response.raise_for_status()
+            result = response.json()["choices"][0]["message"]["content"]
+            pic.annotations.append(PictureDescriptionData(text=result))
+        except httpx.HTTPError as exc:
+            logger.warning("VLM call failed for figure %s: %s", pic.self_ref, exc)
+
+
 # %%
 class AnnotationPictureSerializer(MarkdownPictureSerializer):
     @override
@@ -335,6 +414,13 @@ class AnnotationPictureSerializer(MarkdownPictureSerializer):
             **kwargs,
         )
         text_parts.append(parent_res.text)
+
+        # Prepend figure type label if classification annotation is present
+        for annotation in item.annotations:
+            if isinstance(annotation, PictureClassificationData) and annotation.predicted_classes:
+                label = annotation.predicted_classes[0].class_name
+                text_parts.append(f"<!-- Figure Type: {label} -->")
+                break
 
         # appending annotations:
         for annotation in item.annotations:
@@ -472,6 +558,7 @@ if bookmark_type == "asset" and content_type == "asset":
     source = DocumentStream(name=f"{bookmark.id}.pdf", stream=BytesIO(asset_bytes))
     conv_result = converter.convert(source)
     doc = conv_result.document
+    enrich_picture_descriptions(doc, picture_description_options)
 
 if bookmark_type == "link" and content_type == "link":
     content = resolve_bookmark_content_text(bookmark)
@@ -482,6 +569,7 @@ if bookmark_type == "link" and content_type == "link":
     source = DocumentStream(name=f"{bookmark.id}.html", stream=BytesIO(content.encode("utf-8")))
     conv_result = converter.convert(source)
     doc = conv_result.document
+    enrich_picture_descriptions(doc, picture_description_options)
 
 if doc is None:
     raise ValueError(f"Unsupported bookmark type {bookmark_type!r} with content {content_type!r}")
