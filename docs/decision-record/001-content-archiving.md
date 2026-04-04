@@ -2,14 +2,14 @@
 
 ## Status
 
-10 December 2024 - Accepted
-9 July 2025 - Updated
+10 December 2024 - Accepted 9 July 2025 - Updated
 
 <!-- Proposed/Accepted/Revised/Deprecated/Superseded -->
 
 ## Context
 
-In order to run RAG, the system must have access to content. Most of the content I'm interested in is content from the web.
+In order to run RAG, the system must have access to content.
+Most of the content I'm interested in is content from the web.
 
 Is the code to handle content collection and archiving part of this project, or should it leverage other existing projects?
 
@@ -22,7 +22,9 @@ Fall back to [Jina Reader](https://jina.ai/reader/) or [Exa Contents API](https:
 
 ### Rationale
 
-Karakeep is self-hostable and has a strong dev community. The application supports archiving (via [monolith](https://github.com/Y2Z/monolith)), and has an accessible API (and [community-led python SDK](https://github.com/thiswillbeyourgithub/karakeep_python_api)) for accessing content. Additionally, Karakeep supports webhook for triggering external services when bookmarks are created, changed or crawled.
+Karakeep is self-hostable and has a strong dev community.
+The application supports archiving (via [monolith](https://github.com/Y2Z/monolith)), and has an accessible API (and [community-led python SDK](https://github.com/thiswillbeyourgithub/karakeep_python_api)) for accessing content.
+Additionally, Karakeep supports webhook for triggering external services when bookmarks are created, changed or crawled.
 
 ### Alternative Considered
 
@@ -31,7 +33,8 @@ Karakeep is self-hostable and has a strong dev community. The application suppor
 Pros:
 
 - All-in-one tool provides pretty much every scraping technique I could possibly need.
-- Runs as CLI tool, python package, and browser. Hostable with Docker.
+- Runs as CLI tool, python package, and browser.
+  Hostable with Docker.
 
 Cons:
 
@@ -71,7 +74,8 @@ Pros:
 Cons:
 
 - Free version is rate-limited
-- This is an extractor more than an archiver. If the idea is to archive the exact content, then parse (so as parsing improves I don't have to re-scrape), Jina Reader (and services like it) do not fit the archiving requirement.
+- This is an extractor more than an archiver.
+  If the idea is to archive the exact content, then parse (so as parsing improves I don't have to re-scrape), Jina Reader (and services like it) do not fit the archiving requirement.
 
 #### Option 4: [Exa Contents API](https://docs.exa.ai/reference/get-contents)
 
@@ -87,7 +91,8 @@ Cons:
 
 - Personal version is rate-limited (5 RPS / 12 RPM)
 - No free / selfhosted version; [not inexpensive](https://exa.ai/pricing)
-- Like Jina, this is an extractor more than an archiver. If the idea is to archive the exact content, then parse (so as parsing improves I don't have to re-scrape), Jina Reader (and services like it) do not fit the archiving requirement.
+- Like Jina, this is an extractor more than an archiver.
+  If the idea is to archive the exact content, then parse (so as parsing improves I don't have to re-scrape), Jina Reader (and services like it) do not fit the archiving requirement.
 
 ## Implementation Details
 
@@ -99,14 +104,3 @@ Key implementation steps -->
 ## Related ADRs
 
 - [002 - Content Parsing](./002-content-parsing.md)
-
-## Additional Notes
-
-- [List of Chromium Command Line Switches « Peter Beverloo](https://peter.sh/experiments/chromium-command-line-switches/)
-- [postlight/parser: 📜 Extract meaningful content from the chaos of a web page](https://github.com/postlight/parser)
-- [gildas-lormeau/SingleFile: Web Extension for saving a faithful copy of a complete web page in a single HTML file](https://github.com/gildas-lormeau/SingleFile)
-- [Y2Z/monolith: ⬛️ CLI tool for saving complete web pages as a single HTML file](https://github.com/Y2Z/monolith)
-- [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox)
-- [cyclotruc/gitingest: Replace 'hub' with 'ingest' in any github url to get a prompt-friendly extract of a codebase](https://github.com/cyclotruc/gitingest/tree/main)
-- [databridge-org/databridge-core: Multi-modal modular data ingestion and retrieval](https://github.com/databridge-org/databridge-core)
-- [hoarder-app/hoarder: A self-hostable bookmark-everything app (links, notes and images) with AI-based automatic tagging and full text search](https://github.com/hoarder-app/hoarder) - uses monolith for archiving
