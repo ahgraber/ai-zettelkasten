@@ -208,7 +208,7 @@ def build_picture_description_options() -> PictureDescriptionApiOptions:
 
     base_url = os.environ["_OPENROUTER_BASE_URL"].rstrip("/")
     api_key = os.environ["_OPENROUTER_API_KEY"]
-    model_name = os.environ.get("DOCLING_VLM_MODEL", "openai/gpt-5.4-nano")
+    model_name = os.environ.get("DOCLING_PICTURE_DESCRIPTION_MODEL", "openai/gpt-4.1-nano")
     timeout = float(os.environ.get("DOCLING_PICTURE_TIMEOUT", "180"))
     return PictureDescriptionApiOptions(
         url=AnyUrl(f"{base_url}/chat/completions"),
@@ -336,7 +336,7 @@ def enrich_picture_descriptions(
     """
     base_url = os.environ.get("_OPENROUTER_BASE_URL", "").rstrip("/")
     api_key = os.environ.get("_OPENROUTER_API_KEY", "")
-    model_name = os.environ.get("DOCLING_VLM_MODEL", "openai/gpt-5.4-nano")
+    model_name = os.environ.get("DOCLING_PICTURE_DESCRIPTION_MODEL", "openai/gpt-4.1-nano")
     timeout = float(os.environ.get("DOCLING_PICTURE_TIMEOUT", "180"))
 
     if not base_url or not api_key:

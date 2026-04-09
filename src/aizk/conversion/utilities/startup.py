@@ -78,6 +78,34 @@ def probe_karakeep() -> None:
         raise StartupValidationError(f"KaraKeep API unreachable at {url}: {exc}") from exc
 
 
+def probe_picture_description(config: ConversionConfig) -> None:
+    """Verify the picture description endpoint is reachable via GET /models.
+
+    No-op when the endpoint is not configured (picture description disabled).
+
+    Raises:
+        StartupValidationError: If the endpoint returns non-2xx or is unreachable.
+    """
+    base_url = config.docling_picture_description_base_url.strip().rstrip("/")
+    api_key = config.docling_picture_description_api_key.strip()
+
+    if not base_url or not api_key:
+        return
+
+    url = f"{base_url}/models"
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    try:
+        response = httpx.get(url, headers=headers, timeout=_PROBE_TIMEOUT_SECONDS)
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise StartupValidationError(
+            f"Picture description endpoint returned HTTP {exc.response.status_code}: {url}"
+        ) from exc
+    except httpx.RequestError as exc:
+        raise StartupValidationError(f"Picture description endpoint unreachable at {url}: {exc}") from exc
+
+
 def log_feature_summary(config: ConversionConfig, role: str) -> None:
     """Log a structured summary of optional feature states.
 
@@ -93,7 +121,7 @@ def log_feature_summary(config: ConversionConfig, role: str) -> None:
     else:
         features["picture_descriptions"] = {
             "status": "disabled",
-            "reason": "chat completions endpoint not configured",
+            "reason": "DOCLING_PICTURE_DESCRIPTION_BASE_URL not configured",
         }
 
     # Picture classification (requires both the config flag and a VLM endpoint)
@@ -141,7 +169,8 @@ def log_feature_summary(config: ConversionConfig, role: str) -> None:
 def validate_startup(config: ConversionConfig, role: str) -> None:
     """Run all startup validation checks.
 
-    Probes required services (S3, KaraKeep) and logs optional feature status.
+    Probes required services (S3, KaraKeep) and the optional picture description
+    endpoint (when configured), then logs optional feature status.
     Raises on the first required service failure.
 
     Args:
@@ -158,5 +187,9 @@ def validate_startup(config: ConversionConfig, role: str) -> None:
 
     probe_karakeep()
     logger.info("KaraKeep probe passed", extra={"role": role})
+
+    probe_picture_description(config)
+    if config.is_picture_description_enabled():
+        logger.info("picture description endpoint probe passed", extra={"role": role})
 
     log_feature_summary(config, role)

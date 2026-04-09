@@ -14,6 +14,7 @@ from aizk.conversion.utilities.startup import (
     StartupValidationError,
     log_feature_summary,
     probe_karakeep,
+    probe_picture_description,
     probe_s3,
     validate_startup,
 )
@@ -148,8 +149,8 @@ def test_probe_karakeep_raises_on_connection_error(monkeypatch: pytest.MonkeyPat
 
 def test_log_feature_summary_all_enabled(config: ConversionConfig, caplog: pytest.LogCaptureFixture) -> None:
     config.mlflow_tracing_enabled = True
-    config.chat_completions_base_url = "http://llm.local/v1"
-    config.chat_completions_api_key = "key"
+    config.docling_picture_description_base_url = "http://llm.local/v1"
+    config.docling_picture_description_api_key = "key"
     config.litestream_enabled = True
     config.litestream_s3_bucket_name = "backup-bucket"
 
@@ -161,8 +162,8 @@ def test_log_feature_summary_all_enabled(config: ConversionConfig, caplog: pytes
 
 def test_log_feature_summary_all_disabled(config: ConversionConfig, caplog: pytest.LogCaptureFixture) -> None:
     config.mlflow_tracing_enabled = False
-    config.chat_completions_base_url = ""
-    config.chat_completions_api_key = ""
+    config.docling_picture_description_base_url = ""
+    config.docling_picture_description_api_key = ""
     config.litestream_enabled = False
 
     with caplog.at_level(logging.INFO):
@@ -204,8 +205,8 @@ def test_log_feature_summary_combinations(
     litestream_bucket: str,
     expected_disabled: set[str],
 ) -> None:
-    config.chat_completions_base_url = base_url
-    config.chat_completions_api_key = api_key
+    config.docling_picture_description_base_url = base_url
+    config.docling_picture_description_api_key = api_key
     config.mlflow_tracing_enabled = mlflow
     config.litestream_enabled = litestream_enabled
     config.litestream_s3_bucket_name = litestream_bucket
@@ -255,3 +256,56 @@ def test_validate_startup_raises_on_karakeep_failure(config: ConversionConfig) -
         pytest.raises(StartupValidationError, match="kk down"),
     ):
         validate_startup(config, "api")
+
+
+# ---------------------------------------------------------------------------
+# probe_picture_description
+# ---------------------------------------------------------------------------
+
+
+def test_probe_picture_description_noop_when_not_configured(config: ConversionConfig) -> None:
+    config.docling_picture_description_base_url = ""
+    config.docling_picture_description_api_key = ""
+    # Should complete without making any HTTP calls
+    probe_picture_description(config)
+
+
+def test_probe_picture_description_noop_when_only_url_set(config: ConversionConfig) -> None:
+    config.docling_picture_description_base_url = "http://vllm.local/v1"
+    config.docling_picture_description_api_key = ""
+    probe_picture_description(config)
+
+
+def test_probe_picture_description_succeeds_on_200(config: ConversionConfig) -> None:
+    config.docling_picture_description_base_url = "http://vllm.local/v1"
+    config.docling_picture_description_api_key = "test-key"
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    with patch("aizk.conversion.utilities.startup.httpx.get", return_value=mock_response):
+        probe_picture_description(config)
+
+
+def test_probe_picture_description_raises_on_non_2xx(config: ConversionConfig) -> None:
+    config.docling_picture_description_base_url = "http://vllm.local/v1"
+    config.docling_picture_description_api_key = "test-key"
+    with (
+        patch(
+            "aizk.conversion.utilities.startup.httpx.get",
+            side_effect=httpx.HTTPStatusError("401", request=MagicMock(), response=MagicMock(status_code=401)),
+        ),
+        pytest.raises(StartupValidationError, match="401"),
+    ):
+        probe_picture_description(config)
+
+
+def test_probe_picture_description_raises_on_connection_error(config: ConversionConfig) -> None:
+    config.docling_picture_description_base_url = "http://vllm.local/v1"
+    config.docling_picture_description_api_key = "test-key"
+    with (
+        patch(
+            "aizk.conversion.utilities.startup.httpx.get",
+            side_effect=httpx.ConnectError("refused"),
+        ),
+        pytest.raises(StartupValidationError, match="unreachable"),
+    ):
+        probe_picture_description(config)

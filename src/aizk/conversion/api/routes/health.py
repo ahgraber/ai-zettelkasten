@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import httpx
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
@@ -41,6 +42,26 @@ async def _check_db(engine: Engine) -> CheckResult:
     return CheckResult(name="database", status="ok")
 
 
+async def _check_picture_description(config) -> CheckResult:
+    """Verify picture description endpoint reachability via GET /models."""
+    base_url = config.docling_picture_description_base_url.strip().rstrip("/")
+    api_key = config.docling_picture_description_api_key.strip()
+    url = f"{base_url}/models"
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    def _get() -> None:
+        response = httpx.get(url, headers=headers, timeout=_CHECK_TIMEOUT_SECONDS)
+        response.raise_for_status()
+
+    try:
+        await asyncio.wait_for(asyncio.to_thread(_get), timeout=_CHECK_TIMEOUT_SECONDS)
+    except TimeoutError:
+        return CheckResult(name="picture_description", status="unavailable", detail="timeout")
+    except Exception as exc:
+        return CheckResult(name="picture_description", status="unavailable", detail=str(exc))
+    return CheckResult(name="picture_description", status="ok")
+
+
 async def _check_s3(s3_client: S3Client) -> CheckResult:
     """Verify S3 reachability with HEAD bucket."""
 
@@ -72,10 +93,11 @@ async def readiness(request: Request, response: Response) -> HealthResponse:
     engine = get_engine(config.database_url)
     s3_client = S3Client(config)
 
-    checks = await asyncio.gather(
-        _check_db(engine),
-        _check_s3(s3_client),
-    )
+    check_coros = [_check_db(engine), _check_s3(s3_client)]
+    if config.is_picture_description_enabled():
+        check_coros.append(_check_picture_description(config))
+
+    checks = await asyncio.gather(*check_coros)
 
     all_ok = all(c.status == "ok" for c in checks)
     if not all_ok:

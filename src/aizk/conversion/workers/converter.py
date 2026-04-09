@@ -117,16 +117,18 @@ class DoclingEmptyOutputError(ConversionError):
 def _get_picture_description_options(config: ConversionConfig) -> Optional[PictureDescriptionApiOptions]:
     """Build picture description options from environment.
 
-    Uses OpenRouter-compatible endpoint if configured.
+    Uses any OpenAI-compatible endpoint (OpenRouter, vLLM, Ollama, etc.) if configured.
     """
-    base_url = config.chat_completions_base_url.rstrip("/")
-    api_key = config.chat_completions_api_key
+    base_url = config.docling_picture_description_base_url.rstrip("/")
+    api_key = config.docling_picture_description_api_key
 
     if not base_url or not api_key:
-        logger.warning("Picture description disabled: CHAT_COMPLETIONS_BASE_URL or CHAT_COMPLETIONS_API_KEY not set")
+        logger.warning(
+            "Picture description disabled: DOCLING_PICTURE_DESCRIPTION_BASE_URL or DOCLING_PICTURE_DESCRIPTION_API_KEY not set"
+        )
         return None
 
-    model_name = config.docling_vlm_model
+    model_name = config.docling_picture_description_model
     timeout = float(config.docling_picture_timeout)
 
     return PictureDescriptionApiOptions(
@@ -244,11 +246,11 @@ def _call_vlm_api(image: Image.Image, prompt: str, config: ConversionConfig) -> 
     image.save(buf, format="PNG")
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
-    base_url = config.chat_completions_base_url.strip().rstrip("/")
-    api_key = config.chat_completions_api_key.strip()
+    base_url = config.docling_picture_description_base_url.strip().rstrip("/")
+    api_key = config.docling_picture_description_api_key.strip()
 
     payload = {
-        "model": config.docling_vlm_model,
+        "model": config.docling_picture_description_model,
         "seed": 42,
         "reasoning_effort": "low",
         "messages": [
@@ -295,7 +297,7 @@ def _enrich_picture_descriptions(doc: DoclingDocument, config: ConversionConfig)
         name="llm.chat.completions.docling_picture_description",
         span_type="CHAT_MODEL",
         attributes={
-            "model": config.docling_vlm_model,
+            "model": config.docling_picture_description_model,
             "pipeline": "enrichment",
             "provider_endpoint": "/chat/completions",
         },
@@ -450,7 +452,7 @@ def convert_html(
                 name="llm.chat.completions.docling_picture_description",
                 span_type="CHAT_MODEL",
                 attributes={
-                    "model": config.docling_vlm_model,
+                    "model": config.docling_picture_description_model,
                     "pipeline": "html",
                     "provider_endpoint": "/chat/completions",
                 },
@@ -501,7 +503,7 @@ def convert_pdf(
                 name="llm.chat.completions.docling_picture_description",
                 span_type="CHAT_MODEL",
                 attributes={
-                    "model": config.docling_vlm_model,
+                    "model": config.docling_picture_description_model,
                     "pipeline": "pdf",
                     "provider_endpoint": "/chat/completions",
                 },

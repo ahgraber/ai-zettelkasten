@@ -54,9 +54,9 @@ class ConversionConfig(BaseSettings):
         default=True,
         validation_alias="DOCLING_ENABLE_TABLE_STRUCTURE",
     )
-    docling_vlm_model: str = Field(
-        default="openai/gpt-5-nano",
-        validation_alias="DOCLING_VLM_MODEL",
+    docling_picture_description_model: str = Field(
+        default="openai/gpt-4.1-nano",
+        validation_alias="DOCLING_PICTURE_DESCRIPTION_MODEL",
     )
     docling_picture_timeout: float = Field(
         default=180.0,
@@ -67,13 +67,13 @@ class ConversionConfig(BaseSettings):
         validation_alias="DOCLING_ENABLE_PICTURE_CLASSIFICATION",
     )
 
-    chat_completions_base_url: str = Field(
+    docling_picture_description_base_url: str = Field(
         default="",
-        validation_alias="CHAT_COMPLETIONS_BASE_URL",
+        validation_alias="DOCLING_PICTURE_DESCRIPTION_BASE_URL",
     )
-    chat_completions_api_key: str = Field(
+    docling_picture_description_api_key: str = Field(
         default="",
-        validation_alias="CHAT_COMPLETIONS_API_KEY",
+        validation_alias="DOCLING_PICTURE_DESCRIPTION_API_KEY",
     )
     mlflow_tracing_enabled: bool = Field(default=False, validation_alias="MLFLOW_TRACING_ENABLED")
     mlflow_tracking_uri: str = Field(default="", validation_alias="MLFLOW_TRACKING_URI")
@@ -116,9 +116,9 @@ class ConversionConfig(BaseSettings):
     api_reload: bool = Field(default=False, validation_alias="API_RELOAD")
 
     @model_validator(mode="after")
-    def validate_chat_completions_fields(self) -> ConversionConfig:
+    def validate_picture_description_fields(self) -> ConversionConfig:
         """Expand env placeholders once, then fail fast if any remain unresolved."""
-        for field_name in ("chat_completions_base_url", "chat_completions_api_key"):
+        for field_name in ("docling_picture_description_base_url", "docling_picture_description_api_key"):
             value = getattr(self, field_name).strip()
             if value:
                 value = os.path.expandvars(value).strip()
@@ -132,4 +132,4 @@ class ConversionConfig(BaseSettings):
 
     def is_picture_description_enabled(self) -> bool:
         """Return whether upstream picture-description chat calls are enabled."""
-        return bool(self.chat_completions_base_url.rstrip("/") and self.chat_completions_api_key)
+        return bool(self.docling_picture_description_base_url.rstrip("/") and self.docling_picture_description_api_key)

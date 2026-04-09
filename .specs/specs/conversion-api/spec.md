@@ -237,7 +237,9 @@ The system SHALL expose a liveness endpoint that returns HTTP 200 when the API p
 
 ### Requirement: Expose readiness probe with dependency checks
 
-The system SHALL expose a readiness endpoint that validates database connectivity and S3 reachability, returning HTTP 200 when all checks pass and HTTP 503 when any check fails.
+The system SHALL expose a readiness endpoint that validates database connectivity, S3 reachability, and — when the picture description endpoint is configured — picture description endpoint reachability, returning HTTP 200 when all checks pass and HTTP 503 when any check fails.
+When the picture description endpoint is configured, the probe issues `GET {base_url}/models` with an `Authorization: Bearer` header and a 5-second timeout.
+If the picture description endpoint is not configured, it is omitted from the check results entirely.
 
 **Schema reference:** `GET /health/ready` · response: `HealthResponse`
 
@@ -264,6 +266,24 @@ The system SHALL expose a readiness endpoint that validates database connectivit
 - **GIVEN** both the database and S3 are unreachable
 - **WHEN** a client requests the readiness endpoint
 - **THEN** the system returns HTTP 503 with all failing check results reported — checks are not short-circuited
+
+#### Scenario: Picture description endpoint included when configured
+
+- **GIVEN** `DOCLING_PICTURE_DESCRIPTION_BASE_URL` and `DOCLING_PICTURE_DESCRIPTION_API_KEY` are set
+- **WHEN** a client requests `/health/ready`
+- **THEN** the response includes a `picture_description` check result alongside `database` and `s3`
+
+#### Scenario: Picture description check fails after startup
+
+- **GIVEN** the picture description endpoint was reachable at startup but is now unreachable
+- **WHEN** a client requests `/health/ready`
+- **THEN** the `picture_description` check result has status `"unavailable"`, the overall response status is `"unavailable"`, and the HTTP status is 503
+
+#### Scenario: Picture description omitted when not configured
+
+- **GIVEN** `DOCLING_PICTURE_DESCRIPTION_BASE_URL` is not set
+- **WHEN** a client requests `/health/ready`
+- **THEN** the response contains only `database` and `s3` check results, with no `picture_description` entry
 
 ### Requirement: Bound readiness check duration
 
@@ -319,6 +339,6 @@ The system SHALL maintain a composite index on `(status, earliest_next_attempt_a
   - `GET /v1/outputs/{output_id}/markdown` — markdown text from S3
   - `GET /v1/outputs/{output_id}/figures/{filename}` — figure image from S3
   - `GET /health/live` — liveness probe (no dependency checks)
-  - `GET /health/ready` — readiness probe (DB + S3 health checks)
+  - `GET /health/ready` — readiness probe (DB + S3 + optional picture description health checks)
 - **Dependencies**: conversion-worker (data model); conversion-ui (served under same process)
 - **Idempotency key**: computed by the worker as a hash of bookmark identifier, payload version, Docling version, and config hash; the API surface accepts a client-supplied key as an override
