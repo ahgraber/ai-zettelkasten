@@ -9,10 +9,12 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock, patch
 
+import httpx
 from pyleak import no_task_leaks
 import pytest
 
-from aizk.conversion.api.routes.health import _check_db, _check_s3
+from aizk.conversion.api.routes.health import _check_db, _check_picture_description, _check_s3
+from aizk.conversion.utilities.config import ConversionConfig
 
 
 @pytest.mark.asyncio
@@ -103,3 +105,46 @@ async def test_check_s3_timeout_no_task_leaks() -> None:
 
     assert result.status == "unavailable"
     assert result.detail == "timeout"
+
+
+def _make_picture_description_config(base_url: str = "http://vllm.local/v1", api_key: str = "key") -> ConversionConfig:
+    return ConversionConfig(
+        DOCLING_PICTURE_DESCRIPTION_BASE_URL=base_url,
+        DOCLING_PICTURE_DESCRIPTION_API_KEY=api_key,
+        _env_file=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_check_picture_description_ok() -> None:
+    config = _make_picture_description_config()
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    with patch("aizk.conversion.api.routes.health.httpx.get", return_value=mock_response):
+        result = await _check_picture_description(config)
+    assert result.name == "picture_description"
+    assert result.status == "ok"
+
+
+@pytest.mark.asyncio
+async def test_check_picture_description_unavailable_on_non_2xx() -> None:
+    config = _make_picture_description_config()
+    with patch(
+        "aizk.conversion.api.routes.health.httpx.get",
+        side_effect=httpx.HTTPStatusError("401", request=MagicMock(), response=MagicMock()),
+    ):
+        result = await _check_picture_description(config)
+    assert result.name == "picture_description"
+    assert result.status == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_check_picture_description_unavailable_on_connection_error() -> None:
+    config = _make_picture_description_config()
+    with patch(
+        "aizk.conversion.api.routes.health.httpx.get",
+        side_effect=httpx.ConnectError("refused"),
+    ):
+        result = await _check_picture_description(config)
+    assert result.name == "picture_description"
+    assert result.status == "unavailable"

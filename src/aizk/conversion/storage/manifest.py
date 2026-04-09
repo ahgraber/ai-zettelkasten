@@ -73,7 +73,7 @@ class ManifestConfigSnapshot(BaseModel):
     docling_pdf_max_pages: int = Field(description="Maximum PDF pages processed by Docling")
     docling_enable_ocr: bool = Field(description="Whether OCR is enabled during conversion")
     docling_enable_table_structure: bool = Field(description="Whether table structure extraction is enabled")
-    docling_vlm_model: str = Field(description="Configured VLM model for picture descriptions")
+    docling_picture_description_model: str = Field(description="Configured model for picture descriptions")
     docling_picture_timeout: float = Field(description="Timeout for picture description generation")
     docling_enable_picture_classification: bool = Field(
         description="Whether figure classification and task-tagged prompting was active"

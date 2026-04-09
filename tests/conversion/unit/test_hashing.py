@@ -72,7 +72,7 @@ def test_build_output_config_snapshot_matches_manifest_contract():
         "docling_pdf_max_pages",
         "docling_enable_ocr",
         "docling_enable_table_structure",
-        "docling_vlm_model",
+        "docling_picture_description_model",
         "docling_picture_timeout",
         "docling_enable_picture_classification",
         "picture_description_enabled",

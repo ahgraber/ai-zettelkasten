@@ -39,7 +39,7 @@ The system SHALL normalize bookmark URLs by removing fragments, sorting query pa
 ### Requirement: Create conversion jobs with idempotency protection
 
 The system SHALL create a conversion job record with a computed idempotency key and SHALL reject submissions whose key matches an existing record.
-The idempotency key is a hash of `aizk_uuid + payload_version + docling_version + config_hash + picture_description_enabled`, where `config_hash` includes all `docling_`-prefixed configuration fields (including `docling_enable_picture_classification`) and `picture_description_enabled` is a boolean derived from whether a chat completions endpoint is configured.
+The idempotency key is a hash of `aizk_uuid + payload_version + docling_version + config_hash + picture_description_enabled`, where `config_hash` includes all `docling_`-prefixed configuration fields (including `docling_enable_picture_classification`) and `picture_description_enabled` is a boolean derived from whether `DOCLING_PICTURE_DESCRIPTION_BASE_URL` and `DOCLING_PICTURE_DESCRIPTION_API_KEY` are configured.
 
 #### Scenario: New job created for unique parameters
 
@@ -145,7 +145,7 @@ The system SHALL extract the repository owner and name from a GitHub URL and fet
 ### Requirement: Convert documents to Markdown and extract figures
 
 The system SHALL run the appropriate Docling conversion pipeline for the source content type and extract figures as individual image files with sequential naming.
-When picture classification is enabled (`DOCLING_ENABLE_PICTURE_CLASSIFICATION`, default: `True`) and a VLM endpoint is configured, the PDF pipeline enables the DocumentFigureClassifier and performs a post-conversion enrichment pass: each figure is inspected for its classification label, an appropriate task-tagged prompt is selected (`<chart2summary>` for chart types, `<tables_html>` for table types, generic alt-text otherwise), and the VLM API is called to inject a `PictureDescriptionData` annotation.
+When picture classification is enabled (`DOCLING_ENABLE_PICTURE_CLASSIFICATION`, default: `True`) and a VLM endpoint is configured, the PDF pipeline enables the DocumentFigureClassifier and performs a post-conversion enrichment pass: each figure is inspected for its classification label, an appropriate task-tagged prompt is selected (`<chart2summary>` for chart types, `<tables_html>` for table types, generic alt-text otherwise), and the VLM API configured via `DOCLING_PICTURE_DESCRIPTION_BASE_URL` and `DOCLING_PICTURE_DESCRIPTION_MODEL` is called to inject a `PictureDescriptionData` annotation.
 When classification is disabled, the pipeline falls back to Docling's built-in single-prompt picture description.
 
 #### Scenario: HTML document converted to Markdown
@@ -432,6 +432,7 @@ The system SHALL emit metrics for queue depth, job duration, job status counts, 
 ### Requirement: Load configuration from environment variables
 
 The system SHALL load all configuration (S3 credentials, KaraKeep endpoint, concurrency limits, timeouts) from environment variables with sensible defaults for local development, and SHALL validate required service reachability before entering the main processing loop.
+The picture description endpoint is configured via `DOCLING_PICTURE_DESCRIPTION_BASE_URL`, `DOCLING_PICTURE_DESCRIPTION_API_KEY`, and `DOCLING_PICTURE_DESCRIPTION_MODEL`.
 
 #### Scenario: Configuration loaded on startup
 
@@ -457,7 +458,9 @@ The system SHALL expose `DOCLING_ENABLE_PICTURE_CLASSIFICATION` as a boolean env
 
 ### Requirement: Validate required external services on startup
 
-The system SHALL probe required external services (S3 storage and KaraKeep API) at process startup and SHALL refuse to start if any required service is unreachable.
+The system SHALL probe required external services (S3 storage, KaraKeep API, and — when configured — the picture description endpoint) at process startup and SHALL refuse to start if any required service is unreachable.
+When `DOCLING_PICTURE_DESCRIPTION_BASE_URL` and `DOCLING_PICTURE_DESCRIPTION_API_KEY` are both set, the probe issues `GET {base_url}/models` with an `Authorization: Bearer` header and a 10-second timeout; a non-2xx response or connection error prevents startup.
+If neither field is set, the picture description probe is a no-op.
 Probes SHALL use bounded timeouts to avoid hanging on unresponsive services.
 
 #### Scenario: S3 reachable at startup
@@ -484,23 +487,41 @@ Probes SHALL use bounded timeouts to avoid hanging on unresponsive services.
 - **WHEN** the worker or API process starts
 - **THEN** the process logs a structured error identifying the KaraKeep failure and exits with a non-zero exit code
 
+#### Scenario: Picture description endpoint reachable at startup
+
+- **GIVEN** `DOCLING_PICTURE_DESCRIPTION_BASE_URL` and `DOCLING_PICTURE_DESCRIPTION_API_KEY` are configured
+- **WHEN** the worker or API process starts
+- **THEN** `GET {base_url}/models` is called with an Authorization header and the process continues if it returns 2xx
+
+#### Scenario: Picture description endpoint unreachable at startup
+
+- **GIVEN** `DOCLING_PICTURE_DESCRIPTION_BASE_URL` is configured but the endpoint is unreachable or returns non-2xx
+- **WHEN** the worker or API process starts
+- **THEN** the process logs a structured error identifying the failure and exits with a non-zero exit code
+
+#### Scenario: Picture description not configured — probe skipped
+
+- **GIVEN** `DOCLING_PICTURE_DESCRIPTION_BASE_URL` is not set
+- **WHEN** the worker or API process starts
+- **THEN** no probe is made for the picture description endpoint and startup proceeds normally
+
 ### Requirement: Log optional feature status summary on startup
 
 The system SHALL log a structured summary of all optional feature states on startup, indicating which features are enabled and which are disabled with the reason (missing configuration).
 Optional features include picture descriptions, picture classification, MLflow tracing, and Litestream replication.
-Picture classification reports as enabled only when both `DOCLING_ENABLE_PICTURE_CLASSIFICATION=true` and a VLM endpoint is configured; otherwise it reports as disabled with a specific reason.
+Picture classification reports as enabled only when both `DOCLING_ENABLE_PICTURE_CLASSIFICATION=true` and `DOCLING_PICTURE_DESCRIPTION_BASE_URL` is configured; otherwise it reports as disabled with a specific reason.
 
 #### Scenario: All optional features enabled
 
-- **GIVEN** chat completions, MLflow tracing, and Litestream replication are all configured
+- **GIVEN** picture description, MLflow tracing, and Litestream replication are all configured
 - **WHEN** the process starts
 - **THEN** the startup summary log entry lists all three features as enabled
 
 #### Scenario: Optional feature disabled due to missing config
 
-- **GIVEN** the chat completions base URL or API key is not configured
+- **GIVEN** `DOCLING_PICTURE_DESCRIPTION_BASE_URL` or `DOCLING_PICTURE_DESCRIPTION_API_KEY` is not configured
 - **WHEN** the process starts
-- **THEN** the startup summary log entry lists picture descriptions as disabled with the reason "chat completions endpoint not configured"
+- **THEN** the startup summary log entry lists picture descriptions as disabled with the reason `"DOCLING_PICTURE_DESCRIPTION_BASE_URL not configured"`
 
 #### Scenario: Multiple features disabled
 
@@ -510,7 +531,7 @@ Picture classification reports as enabled only when both `DOCLING_ENABLE_PICTURE
 
 #### Scenario: Picture classification enabled in startup summary
 
-- **GIVEN** `DOCLING_ENABLE_PICTURE_CLASSIFICATION=true` and a chat completions endpoint is configured
+- **GIVEN** `DOCLING_ENABLE_PICTURE_CLASSIFICATION=true` and `DOCLING_PICTURE_DESCRIPTION_BASE_URL` is configured
 - **WHEN** the process starts
 - **THEN** the startup summary log entry lists picture classification as enabled
 
@@ -522,7 +543,7 @@ Picture classification reports as enabled only when both `DOCLING_ENABLE_PICTURE
 
 #### Scenario: Picture classification implicitly disabled due to no VLM endpoint
 
-- **GIVEN** no chat completions endpoint is configured (picture description is disabled)
+- **GIVEN** `DOCLING_PICTURE_DESCRIPTION_BASE_URL` is not configured (picture description is disabled)
 - **WHEN** the process starts
 - **THEN** the startup summary log entry lists picture classification as disabled with reason "picture description not enabled"
 
@@ -558,14 +579,14 @@ Local copies of raw bytes are not required provided KaraKeep access is stable an
 ### Requirement: Include picture description capability in the idempotency key
 
 The system SHALL include whether picture description is enabled (derived from the presence of a
-configured chat completions endpoint) as an input to the idempotency key, so that jobs processed
+configured `DOCLING_PICTURE_DESCRIPTION_BASE_URL` and `DOCLING_PICTURE_DESCRIPTION_API_KEY`) as an input to the idempotency key, so that jobs processed
 with and without LLM figure descriptions produce distinct keys.
 
 #### Scenario: Key differs when picture description enabled vs disabled
 
 - **GIVEN** two conversion submissions for the same bookmark with identical Docling config and
   payload version
-- **WHEN** one submission has a chat completions endpoint configured and the other does not
+- **WHEN** one submission has `DOCLING_PICTURE_DESCRIPTION_BASE_URL` and `DOCLING_PICTURE_DESCRIPTION_API_KEY` configured and the other does not
 - **THEN** the two submissions produce different idempotency keys and are treated as distinct jobs
 
 #### Scenario: Key stable when picture description capability unchanged
@@ -585,7 +606,7 @@ manifest, so the conversion can be replayed with identical parameters.
 - **GIVEN** a conversion completes successfully
 - **WHEN** the manifest is written to the ephemeral workspace
 - **THEN** the manifest includes all Docling configuration fields (OCR settings, table structure,
-  VLM model, page limit, picture timeout, picture classification enabled) and the picture
+  picture description model (`docling_picture_description_model`), page limit, picture timeout, picture classification enabled) and the picture
   description enabled flag as a config snapshot section
 
 #### Scenario: Manifest captures picture classification flag
@@ -617,5 +638,5 @@ manifest, so the conversion can be replayed with identical parameters.
 - **Workspace**: ephemeral temp directory cleaned up via context manager; figures named figure-001.png, figure-002.png, etc.
 - **arXiv client**: `aizk.utilities.arxiv_utils`; URL parsing: `aizk.utilities.url_utils`
 - **Process role labeling**: implemented via `setproctitle`
-- **Startup validation**: `aizk/conversion/utilities/startup.py` → `validate_startup()`; probes S3 (HEAD bucket) and KaraKeep (GET bookmarks?limit=1) with 10s timeouts; logs feature summary for picture descriptions, picture classification, MLflow, and Litestream
+- **Startup validation**: `aizk/conversion/utilities/startup.py` → `validate_startup()`; probes S3 (HEAD bucket), KaraKeep (GET bookmarks?limit=1), and — when configured — picture description endpoint (GET /models) with 10s timeouts; logs feature summary for picture descriptions, picture classification, MLflow, and Litestream
 - **Picture classification**: `DOCLING_ENABLE_PICTURE_CLASSIFICATION` (default: `True`); controls `ThreadedPdfPipelineOptions.do_picture_classification` and the post-conversion enrichment loop in `converter.py`; prompt routing table `_LABEL_TO_PROMPT` maps classifier labels to `<chart2summary>` / `<tables_html>` / generic alt-text

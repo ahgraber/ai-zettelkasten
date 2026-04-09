@@ -208,8 +208,8 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch, html_bookmark):
 
 def test_submit_job_idempotency_key_disables_picture_description_without_api_key(monkeypatch, db_session) -> None:
     """Idempotency must reflect actual picture-description runtime enablement."""
-    monkeypatch.setenv("CHAT_COMPLETIONS_BASE_URL", "https://openrouter.ai/api/v1")
-    monkeypatch.setenv("CHAT_COMPLETIONS_API_KEY", "")
+    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_API_KEY", "")
 
     app = create_app()
     config = ConversionConfig(_env_file=None)

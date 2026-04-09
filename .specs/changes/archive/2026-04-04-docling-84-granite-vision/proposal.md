@@ -6,10 +6,8 @@ Docling has released a series of improvements since we locked to `>=2.75`, and I
 This change advances our Docling integration on three fronts:
 
 1. **Bump the version floor to `>=2.84`** to pick up TableFormer v2 (structured table extraction),
-   Unicode ligature normalization, PDF hyperlink propagation, and the DocumentFigureClassifier v2.5
-   model.
-2. **Add `granite-4.0-3b-vision` to the docling-serve deployment** so it is available as a local
-   VLM option alongside the existing granite-vision-3.3-2b and Qwen models.
+   Unicode ligature normalization, PDF hyperlink propagation, and the DocumentFigureClassifier v2.5 model.
+2. **Add `granite-4.0-3b-vision` to the docling-serve deployment** so it is available as a local VLM option alongside the existing granite-vision-3.3-2b and Qwen models.
 3. **Enable figure classification and task-tagged prompting** — enable `do_picture_classification=True`, then perform a post-conversion enrichment pass that issues task-specific prompts to the configured VLM (`<chart2summary>` for charts, `<tables_html>` for table images) rather than a single generic alt-text prompt for all figure types.
    Unclassified or non-chart/table figures fall back to the existing generic prompt.
 

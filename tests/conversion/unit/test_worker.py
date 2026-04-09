@@ -980,7 +980,7 @@ def _make_workspace_metadata(tmp_path: Path, *, markdown_hash: str) -> Path:
             "docling_pdf_max_pages": 250,
             "docling_enable_ocr": True,
             "docling_enable_table_structure": True,
-            "docling_vlm_model": "none",
+            "docling_picture_description_model": "none",
             "docling_picture_timeout": 60.0,
             "docling_enable_picture_classification": True,
             "picture_description_enabled": False,

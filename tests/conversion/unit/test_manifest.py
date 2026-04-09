@@ -59,7 +59,7 @@ def _config_snapshot(
         docling_pdf_max_pages=250,
         docling_enable_ocr=True,
         docling_enable_table_structure=True,
-        docling_vlm_model="openai/gpt-5-nano",
+        docling_picture_description_model="openai/gpt-5-nano",
         docling_picture_timeout=180.0,
         docling_enable_picture_classification=docling_enable_picture_classification,
         picture_description_enabled=picture_description_enabled,
@@ -101,7 +101,7 @@ def test_manifest_config_snapshot_contains_docling_fields():
     assert manifest.config_snapshot.docling_pdf_max_pages == 250
     assert manifest.config_snapshot.docling_enable_ocr is True
     assert manifest.config_snapshot.docling_enable_table_structure is True
-    assert manifest.config_snapshot.docling_vlm_model == "openai/gpt-5-nano"
+    assert manifest.config_snapshot.docling_picture_description_model == "openai/gpt-5-nano"
     assert manifest.config_snapshot.docling_picture_timeout == 180.0
 
 
@@ -131,7 +131,7 @@ def test_manifest_config_snapshot_serialises_to_json():
         "docling_pdf_max_pages",
         "docling_enable_ocr",
         "docling_enable_table_structure",
-        "docling_vlm_model",
+        "docling_picture_description_model",
         "docling_picture_timeout",
         "docling_enable_picture_classification",
         "picture_description_enabled",

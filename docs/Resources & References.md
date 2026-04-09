@@ -9,9 +9,11 @@
 Alternative to RAG: use LLMs to maintain an evolving markdown library as a personal knowledge base.
 
 - [Andrej Karpathy on X: "LLM Knowledge Bases..."](https://x.com/karpathy/status/2039805659525644595) — original thread
+- [llm-wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
 - [Karpathy shares 'LLM Knowledge Base' architecture that bypasses RAG with an evolving markdown library maintained by AI | VentureBeat](https://venturebeat.com/data/karpathy-shares-llm-knowledge-base-architecture-that-bypasses-rag-with-an)
 - [Lex Fridman on X: similar setup — Obsidian + Cursor + vibe-coded web terminals](https://x.com/lexfridman/status/2039841897066414291)
 - [Karpathy Just Described the Product I've Been Building — LLM Knowledge Bases and YARNNN | yarnnn](https://www.yarnnn.com/blog/karpathy-just-described-the-product-ive-been-building)
+- [Your File System Is Already a Graph Database](https://rumproarious.com/2026/04/04/your-file-system-is-already-a-graph-database/)
 
 ## Ingest / Archiving
 
