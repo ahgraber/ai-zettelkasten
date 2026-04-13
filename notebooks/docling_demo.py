@@ -204,10 +204,10 @@ _LABEL_TO_PROMPT: dict[str, str] = {
 
 
 def build_picture_description_options() -> PictureDescriptionApiOptions:
-    """Configure picture descriptions to use the OpenRouter endpoint."""
+    """Configure picture descriptions to use the configured OpenAI-compatible endpoint."""
 
-    base_url = os.environ["_OPENROUTER_BASE_URL"].rstrip("/")
-    api_key = os.environ["_OPENROUTER_API_KEY"]
+    base_url = os.environ["DOCLING_PICTURE_DESCRIPTION_BASE_URL"].rstrip("/")
+    api_key = os.environ["DOCLING_PICTURE_DESCRIPTION_API_KEY"]
     model_name = os.environ.get("DOCLING_PICTURE_DESCRIPTION_MODEL", "openai/gpt-4.1-nano")
     timeout = float(os.environ.get("DOCLING_PICTURE_TIMEOUT", "180"))
     return PictureDescriptionApiOptions(
@@ -334,8 +334,8 @@ def enrich_picture_descriptions(
 
     Mirrors the production _enrich_picture_descriptions() logic in converter.py.
     """
-    base_url = os.environ.get("_OPENROUTER_BASE_URL", "").rstrip("/")
-    api_key = os.environ.get("_OPENROUTER_API_KEY", "")
+    base_url = os.environ.get("DOCLING_PICTURE_DESCRIPTION_BASE_URL", "").rstrip("/")
+    api_key = os.environ.get("DOCLING_PICTURE_DESCRIPTION_API_KEY", "")
     model_name = os.environ.get("DOCLING_PICTURE_DESCRIPTION_MODEL", "openai/gpt-4.1-nano")
     timeout = float(os.environ.get("DOCLING_PICTURE_TIMEOUT", "180"))
 
@@ -387,7 +387,7 @@ def enrich_picture_descriptions(
             response = httpx.post(url, json=payload, headers=headers, timeout=timeout)
             response.raise_for_status()
             result = response.json()["choices"][0]["message"]["content"]
-            pic.annotations.append(PictureDescriptionData(text=result))
+            pic.annotations.append(PictureDescriptionData(text=result, provenance="aizk:vlm_enrichment"))
         except httpx.HTTPError as exc:
             logger.warning("VLM call failed for figure %s: %s", pic.self_ref, exc)
 
