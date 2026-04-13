@@ -14,6 +14,7 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [Lex Fridman on X: similar setup — Obsidian + Cursor + vibe-coded web terminals](https://x.com/lexfridman/status/2039841897066414291)
 - [Karpathy Just Described the Product I've Been Building — LLM Knowledge Bases and YARNNN | yarnnn](https://www.yarnnn.com/blog/karpathy-just-described-the-product-ive-been-building)
 - [Your File System Is Already a Graph Database](https://rumproarious.com/2026/04/04/your-file-system-is-already-a-graph-database/)
+- [safishamsi/graphify: AI coding assistant skill (Claude Code, Codex, OpenCode, Cursor, Gemini CLI, OpenClaw, Factory Droid, Trae). Turn any folder of code, docs, papers, images, videos, or YouTube links into a queryable knowledge graph](https://github.com/safishamsi/graphify)
 
 ## Ingest / Archiving
 
@@ -27,7 +28,6 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [cyclotruc/gitingest: Replace 'hub' with 'ingest' in any github url to get a prompt-friendly extract of a codebase](https://github.com/cyclotruc/gitingest/tree/main)
 - [databridge-org/databridge-core: Multi-modal modular data ingestion and retrieval](https://github.com/databridge-org/databridge-core)
 - [List of Chromium Command Line Switches](https://peter.sh/experiments/chromium-command-line-switches/)
-
 - [chonkie-inc/chonkie - RAG chunking library](https://github.com/chonkie-inc/chonkie)
 - [Dense X Retrieval: What Retrieval Granularity Should We Use?](https://arxiv.org/abs/2312.06648)
 - [Claimify: Extracting Claims from LM Outputs (Microsoft Research)](https://www.microsoft.com/en-us/research/blog/claimify-extracting-high-quality-claims-from-language-model-outputs/)
@@ -35,7 +35,6 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [Contextual Retrieval (Anthropic)](https://www.anthropic.com/news/contextual-retrieval)
 - [Late Chunking in Long-Context Embedding Models (Jina)](https://jina.ai/news/late-chunking-in-long-context-embedding-models/)
 - [Decoupling Retrieval vs. Synthesis Chunks (LlamaIndex)](https://docs.llamaindex.ai/en/stable/optimizing/production_rag/#decoupling-chunks-used-for-retrieval-vs-chunks-used-for-synthesis)
-
 - [Optimize parsing costs with LlamaParse auto mode — LlamaIndex](https://www.llamaindex.ai/blog/optimize-parsing-costs-with-llamaparse-auto-mode)
 - [DS4SD/docling: Get your documents ready for gen AI](https://github.com/DS4SD/docling) and [DS4SD/docling-serve: Running Docling as an API service](https://github.com/DS4SD/docling-serve)
 - [getomni-ai/zerox: PDF to Markdown with vision models](https://github.com/getomni-ai/zerox)
@@ -65,20 +64,17 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [Intelligent Document Processing Leaderboard](https://idp-leaderboard.org/)
 - [getomni-ai/benchmark: OCR Benchmark](https://github.com/getomni-ai/benchmark)
 - [allenai/olmocr bench](https://github.com/allenai/olmocr/tree/main/olmocr/bench)
-
 - [OpenAI text-embedding-3-small](https://platform.openai.com/docs/models/text-embedding-3-small)
 - [OpenAI text-embedding-3-large](https://platform.openai.com/docs/models/text-embedding-3-large)
 - [Cohere Embed](https://cohere.com/embed)
 - [Cohere Rerank](https://cohere.com/rerank)
 - [Voyage AI Embeddings](https://docs.voyageai.com/docs/embeddings)
 - [Jina Embeddings](https://jina.ai/embeddings/)
-
 - [chonkie-ai/chonkie: 🦛 CHONK your texts with Chonkie ✨ - The no-nonsense RAG chunking library](https://github.com/chonkie-ai/chonkie)
 - [[2312.06648] Dense X Retrieval: What Retrieval Granularity Should We Use?](https://arxiv.org/abs/2312.06648) — deconstruct text blobs into propositions (complete factoids)
 - [Contextual Retrieval — Anthropic](https://www.anthropic.com/news/contextual-retrieval)
 - [Late Chunking in Long-Context Embedding Models](https://jina.ai/news/late-chunking-in-long-context-embedding-models/)
 - [Decoupled chunk representations — LlamaIndex](https://docs.llamaindex.ai/en/stable/optimizing/production_rag/#decoupling-chunks-used-for-retrieval-vs-chunks-used-for-synthesis) — separate retrieval chunks from synthesis chunks
-
 - [PyLate - Late Interaction Models](https://lightonai.github.io/pylate/)
   - [lightonai/pylate (GitHub)](https://github.com/lightonai/pylate)
   - [lightonai/fast-plaid](https://github.com/lightonai/fast-plaid)
@@ -101,9 +97,11 @@ If building a concept graph, it would be useful to be able to use it as a human 
 - [DuckDB](https://duckdb.org/)
   - [DuckDB VSS extension](https://duckdb.org/docs/stable/core_extensions/vss.html)
 - [Turso - edge SQLite](https://turso.tech/)
+- [GitHub - colliery-io/graphqlite: A SQLite extension that adds graph database capabilities with Cypher query language support and built-in graph algorithms. · GitHub](https://github.com/colliery-io/graphqlite)
 - [Meilisearch](https://www.meilisearch.com/)
 - [Litestream - SQLite replication](https://litestream.io/)
 - [slaily/aiosqlitepool - async SQLite connection pool](https://github.com/slaily/aiosqlitepool)
+- [mr-fatalyst/oxyde: Oxyde ORM — Pydantic-centric async ORM with Rust core](https://github.com/mr-fatalyst/oxyde) — type-safe, async-first ORM with Django-style query API and native Pydantic v2 models; supports PostgreSQL, SQLite, MySQL; young project (beta, v0.6.x as of 2026-03) — potential SQLModel alternative worth watching but lacks SQLAlchemy/Alembic ecosystem compatibility
 
 ## Model Providers / Frameworks
 
@@ -139,7 +137,6 @@ If building a concept graph, it would be useful to be able to use it as a human 
 - [superlinear-ai/raglite: 🥤 RAGLite is a Python toolkit for Retrieval-Augmented Generation (RAG) with PostgreSQL or SQLite](https://github.com/superlinear-ai/raglite)
 - [foambubble/foam: A personal knowledge management and sharing system for VSCode](https://github.com/foambubble/foam)
 - [lightonai/pylate: Late Interaction Models Training & Retrieval](https://github.com/lightonai/pylate)
-
 - [theJayTea/WritingTools - system-wide grammar assistant](https://github.com/theJayTea/WritingTools)
 
 ## Papers
@@ -150,6 +147,7 @@ If building a concept graph, it would be useful to be able to use it as a human 
 - [doccano/doccano: Open source annotation tool for machine learning practitioners.](https://github.com/doccano/doccano)
 - [inception-project/inception: INCEpTION provides a semantic annotation platform offering intelligent annotation assistance and knowledge management.](https://github.com/inception-project/inception)
 - [Termboard - Knowledge Graphs Made Simple](https://termboard.com/) - ontology designer
+- [microsoft/Ontology-Playground: Free, open-source web app for learning about ontologies and Microsoft Fabric IQ. Explore a catalogue of pre-built ontologies, design your own visually, export as RDF/XML, and share interactive diagrams. Zero backend, fully st](https://github.com/microsoft/Ontology-Playground)
 
 ## graphrag
 
