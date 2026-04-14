@@ -10,19 +10,19 @@ Provide robust URL extraction, validation, and normalization for the ai-zettelka
 
 ### Requirement: Extract URLs from text with robust boundary detection
 
-The system SHALL extract both markdown links and bare URLs from text using a two-phase approach that minimizes false positives.
+The system SHALL extract both markdown links and bare URLs from free text such that URL boundaries are correctly detected when URLs are adjacent to markdown syntax, punctuation, or balanced brackets, and such that URLs appearing inside markdown links are not also reported as bare URLs.
 
-#### Scenario: Extract markdown links with precise boundaries
+#### Scenario: Extract markdown link with precise boundaries
 
-- **GIVEN** text containing markdown links `[text](url)`
+- **GIVEN** text containing a markdown link of the form `[text](url)`
 - **WHEN** `extract_urls()` is called on the text
-- **THEN** the URLs are extracted first, before bare URL extraction, ensuring unambiguous boundaries
+- **THEN** the returned URL is the full content inside the parentheses, with no characters from the surrounding markdown syntax included or omitted
 
 #### Scenario: Extract bare URLs outside markdown links
 
-- **GIVEN** text containing bare URLs not in markdown syntax
+- **GIVEN** text containing bare URLs not enclosed in markdown link syntax
 - **WHEN** `extract_urls()` is called on the text
-- **THEN** bare URLs are extracted from regions not already captured in Phase 1, reducing boundary ambiguity
+- **THEN** each bare URL is returned with correct start and end boundaries, and URLs that appear inside markdown links are not double-reported as bare URLs
 
 #### Scenario: Clean up URLs from markdown parsing artifacts
 

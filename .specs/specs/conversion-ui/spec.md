@@ -26,9 +26,9 @@ The system SHALL render a job table at the `/ui/jobs` path showing all conversio
 - **WHEN** the operator loads the jobs page
 - **THEN** the page renders within 2 seconds
 
-### Requirement: Filter and search jobs server-side
+### Requirement: Filter and search jobs across the full job set
 
-The system SHALL provide server-side status and text filters that operate across all jobs, not just the current page.
+The system SHALL provide status and text filters that operate across all jobs in the system, not only those visible on the current page.
 
 #### Scenario: Filter by status
 
@@ -42,21 +42,33 @@ The system SHALL provide server-side status and text filters that operate across
 - **WHEN** an operator enters a text search term
 - **THEN** the table updates to show only jobs whose internal identifier, KaraKeep identifier, or title matches the search term
 
+#### Scenario: Search term matches no jobs
+
+- **GIVEN** no job's internal identifier, KaraKeep identifier, or title matches the operator's search term
+- **WHEN** the operator submits the search
+- **THEN** the table renders an empty result state rather than a stale or unfiltered list
+
 ### Requirement: Retry and cancel jobs via bulk actions
 
-The system SHALL provide multi-select checkboxes and Retry and Cancel action buttons that apply to all selected jobs and display a result summary.
+The system SHALL allow an operator to select multiple jobs from the job table and apply a Retry or Cancel action to all selected jobs, and SHALL display a summary identifying which jobs the action was applied to and which were skipped.
 
 #### Scenario: Retry selected failed jobs
 
-- **GIVEN** an operator selects one or more failed jobs
-- **WHEN** the operator clicks Retry
+- **GIVEN** an operator has selected one or more failed jobs
+- **WHEN** the operator submits the Retry bulk action
 - **THEN** the selected jobs are reset to queued status and a confirmation summary is displayed
 
 #### Scenario: Cancel selected running jobs
 
-- **GIVEN** an operator selects one or more running or queued jobs
-- **WHEN** the operator clicks Cancel
+- **GIVEN** an operator has selected one or more running or queued jobs
+- **WHEN** the operator submits the Cancel bulk action
 - **THEN** the system attempts cancellation on all selected jobs and displays a result summary
+
+#### Scenario: Bulk action with mixed eligibility
+
+- **GIVEN** an operator has selected a set of jobs in which some are eligible for the chosen action and some are not
+- **WHEN** the operator submits the bulk action
+- **THEN** the result summary distinguishes jobs that the action was applied to from jobs that were skipped as ineligible, and no ineligible job's status is altered
 
 #### Scenario: Bulk action confirmed within acceptable time
 

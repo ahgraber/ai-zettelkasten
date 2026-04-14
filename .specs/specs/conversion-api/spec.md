@@ -237,9 +237,8 @@ The system SHALL expose a liveness endpoint that returns HTTP 200 when the API p
 
 ### Requirement: Expose readiness probe with dependency checks
 
-The system SHALL expose a readiness endpoint that validates database connectivity, S3 reachability, and — when the picture description endpoint is configured — picture description endpoint reachability, returning HTTP 200 when all checks pass and HTTP 503 when any check fails.
-When the picture description endpoint is configured, the probe issues `GET {base_url}/models` with an `Authorization: Bearer` header and a 5-second timeout.
-If the picture description endpoint is not configured, it is omitted from the check results entirely.
+The system SHALL expose a readiness endpoint that reports whether each required external dependency (database, S3, and — when configured — the picture description endpoint) is reachable, returning HTTP 200 when all checks pass and HTTP 503 when any check fails.
+When the picture description endpoint is not configured, it SHALL be omitted from the check results entirely.
 
 **Schema reference:** `GET /health/ready` · response: `HealthResponse`
 
@@ -319,10 +318,6 @@ The system SHALL reject job submissions with HTTP 503 when the number of actiona
 - **WHEN** a client submits a job whose idempotency key matches an existing job
 - **THEN** the system returns HTTP 200 with the existing job record (idempotency takes precedence over backpressure)
 
-### Requirement: Optimize job selection query with composite index
-
-The system SHALL maintain a composite index on `(status, earliest_next_attempt_at, queued_at)` on the conversion jobs table to support efficient job claiming and queue depth counting without full table scans.
-
 ## Technical Notes
 
 - **Implementation**: `src/aizk/conversion/api/`
@@ -342,3 +337,5 @@ The system SHALL maintain a composite index on `(status, earliest_next_attempt_a
   - `GET /health/ready` — readiness probe (DB + S3 + optional picture description health checks)
 - **Dependencies**: conversion-worker (data model); conversion-ui (served under same process)
 - **Idempotency key**: computed by the worker as a hash of bookmark identifier, payload version, Docling version, and config hash; the API surface accepts a client-supplied key as an override
+- **Readiness probe shape**: database check via a short-lived connection; S3 check via HEAD bucket; picture description check issues `GET {base_url}/models` with an `Authorization: Bearer` header and a 5-second per-check timeout
+- **Indexes**: composite index on `(status, earliest_next_attempt_at, queued_at)` on the conversion jobs table supports job claiming and queue-depth counting without full table scans
