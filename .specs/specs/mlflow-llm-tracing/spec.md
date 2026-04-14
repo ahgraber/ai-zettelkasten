@@ -52,15 +52,21 @@ The system MUST record only model, latency, and status as required attributes fo
 - **WHEN** an embedding span is emitted
 - **THEN** the required attributes include model identifier, duration/latency, and operation status and do not require additional GenAI payload fields
 
-### Requirement: LLM tracing captures robust GenAI spans
+### Requirement: LLM tracing captures GenAI execution context
 
-The system SHALL capture robust LLM tracing spans that include essential GenAI execution context in addition to base timing and status data.
+Every emitted LLM span SHALL carry the model identifier, operation timing, and final operation status; and SHALL additionally carry, whenever the underlying call exposes them, token usage and provider/request metadata sufficient to reconstruct the call for debugging.
 
-#### Scenario: LLM span context richness
+#### Scenario: LLM span includes required core attributes
 
 - **GIVEN** a chat completion operation is executed with MLflow tracing enabled
-- **WHEN** an LLM call span is emitted
-- **THEN** it includes model identifier, timing, final status, and sanitized GenAI context needed for debugging (for example token usage and provider/request metadata when available)
+- **WHEN** the LLM call span is emitted
+- **THEN** the span carries the model identifier, operation timing, and final operation status
+
+#### Scenario: LLM span carries provider context when available
+
+- **GIVEN** a chat completion call returns token usage and provider/request metadata
+- **WHEN** the LLM call span is emitted
+- **THEN** the span additionally carries those fields in a form suitable for debugging
 
 ### Requirement: Tracing is optional and non-disruptive
 

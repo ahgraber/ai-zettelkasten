@@ -28,18 +28,18 @@ The system SHALL assign or look up a stable internal identifier for each bookmar
 
 ### Requirement: Normalize URLs for deduplication
 
-The system SHALL normalize bookmark URLs by removing fragments, sorting query parameters, and lowercasing the domain before storing them.
+The system SHALL store bookmark URLs in a normalized form such that URLs differing only by fragment, query-parameter ordering, or domain casing share an identical stored representation.
 
 #### Scenario: Normalized URL stored on worker fetch
 
-- **GIVEN** the worker fetches bookmark metadata from KaraKeep
-- **WHEN** a URL is recorded for the bookmark
-- **THEN** the stored URL has its domain lowercased, fragments removed, and query parameters sorted
+- **GIVEN** two bookmarks whose URLs differ only in domain casing, fragment, or query-parameter order
+- **WHEN** each URL is recorded by the worker
+- **THEN** both URLs are stored as the same string
 
 ### Requirement: Create conversion jobs with idempotency protection
 
-The system SHALL create a conversion job record with a computed idempotency key and SHALL reject submissions whose key matches an existing record.
-The idempotency key is a hash of `aizk_uuid + payload_version + docling_version + config_hash + picture_description_enabled`, where `config_hash` includes all `docling_`-prefixed configuration fields (including `docling_enable_picture_classification`) and `picture_description_enabled` is a boolean derived from whether `DOCLING_PICTURE_DESCRIPTION_BASE_URL` and `DOCLING_PICTURE_DESCRIPTION_API_KEY` are configured.
+The system SHALL assign each conversion job an idempotency key that is stable across resubmissions with identical contributing inputs and distinct whenever any contributing input differs, and SHALL reject submissions whose key matches an existing record.
+Contributing inputs are: the internal bookmark identifier, the payload version, the Docling version, all `docling_`-prefixed Docling configuration fields (including `docling_enable_picture_classification`), and whether picture description is enabled (derived from whether `DOCLING_PICTURE_DESCRIPTION_BASE_URL` and `DOCLING_PICTURE_DESCRIPTION_API_KEY` are both configured).
 
 #### Scenario: New job created for unique parameters
 
@@ -144,9 +144,9 @@ The system SHALL extract the repository owner and name from a GitHub URL and fet
 
 ### Requirement: Convert documents to Markdown and extract figures
 
-The system SHALL run the appropriate Docling conversion pipeline for the source content type and extract figures as individual image files with sequential naming.
-When picture classification is enabled (`DOCLING_ENABLE_PICTURE_CLASSIFICATION`, default: `True`) and a VLM endpoint is configured, the PDF pipeline enables the DocumentFigureClassifier and performs a post-conversion enrichment pass: each figure is inspected for its classification label, an appropriate task-tagged prompt is selected (`<chart2summary>` for chart types, `<tables_html>` for table types, generic alt-text otherwise), and the VLM API configured via `DOCLING_PICTURE_DESCRIPTION_BASE_URL` and `DOCLING_PICTURE_DESCRIPTION_MODEL` is called to inject a `PictureDescriptionData` annotation.
-When classification is disabled, the pipeline falls back to Docling's built-in single-prompt picture description.
+The system SHALL convert each source document to Markdown and SHALL extract every embedded figure as an individually addressable image file with a sequentially determined name.
+When picture classification is enabled and a picture-description endpoint is configured, each extracted figure SHALL receive a description whose form matches its figure type: chart-type figures receive chart summaries, table-type figures receive tabular-form descriptions, and all other figures receive generic alt-text.
+When picture classification is disabled, each figure SHALL receive a single generic description.
 
 #### Scenario: HTML document converted to Markdown
 
@@ -367,8 +367,8 @@ The system SHALL update job status to SUCCEEDED, FAILED_RETRYABLE, or FAILED_PER
 
 ### Requirement: Process jobs with bounded concurrency in FIFO order
 
-The system SHALL process conversion jobs with a configurable number of parallel worker threads (default: 4) in first-in-first-out order by queue time.
-The main thread claims jobs atomically and dispatches them to worker threads.
+The system SHALL process conversion jobs in first-in-first-out order by queue time, with the number of concurrently processing jobs bounded by a configurable limit.
+Job claiming SHALL be atomic — the same job SHALL NOT be claimed and processed by two workers concurrently.
 
 #### Scenario: Concurrent jobs processed up to limit
 
@@ -382,10 +382,10 @@ The main thread claims jobs atomically and dispatches them to worker threads.
 - **WHEN** the main thread polls for work
 - **THEN** it claims and dispatches jobs until all worker slots are filled or no more jobs are eligible
 
-### Requirement: Limit concurrent GPU subprocess spawning
+### Requirement: Bound concurrency of GPU-consuming conversion phases
 
-The system SHALL limit the number of concurrently running conversion subprocesses to a configurable maximum (default: 1) to prevent GPU memory exhaustion.
-Job phases that do not use the GPU (preflight, upload) SHALL run without this limit, enabling pipeline parallelism.
+The system SHALL bound the number of conversion phases running concurrently on the GPU by a configurable limit, to prevent GPU memory exhaustion.
+Phases that do not use the GPU (preflight, upload) SHALL NOT count against this limit, so they proceed concurrently with GPU-bound conversion phases.
 
 #### Scenario: GPU concurrency limit enforced
 

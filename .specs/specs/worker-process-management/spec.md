@@ -10,25 +10,25 @@ It covers subprocess isolation for crash containment, reliable cancellation and 
 
 ## Requirements
 
-### Requirement: Run each job's conversion phase in an isolated subprocess
+### Requirement: Isolate job conversion from the worker process
 
-The system SHALL run each job's document conversion phase in a subprocess to isolate crashes, enable forceful termination, and reclaim memory after completion.
+The system SHALL isolate each job's document conversion phase such that a crash or hang during conversion does not affect the worker process or any other in-flight job, and such that any memory and OS resources acquired during conversion are fully released on completion.
 
-#### Scenario: Conversion subprocess isolates crash from parent
+#### Scenario: Conversion crash does not affect other jobs
 
-- **GIVEN** a conversion subprocess crashes or hangs
-- **WHEN** the parent worker detects the subprocess exit
-- **THEN** the parent marks the job as retryable-failed and continues processing other jobs without crashing
+- **GIVEN** a job's conversion phase crashes or hangs
+- **WHEN** the worker observes the failure
+- **THEN** that job is marked as retryable-failed and other in-flight jobs continue processing without disruption
 
-### Requirement: Terminate entire process groups including descendants
+### Requirement: Leave no descendant processes behind when stopping a job
 
-The system SHALL start conversion subprocesses in their own process groups and terminate the entire group when stopping a job, ensuring no orphan or grandchild processes remain.
+When stopping a job, the system SHALL ensure that no processes spawned — directly or transitively — by the conversion phase remain running.
 
-#### Scenario: Grandchild processes terminated with parent
+#### Scenario: Descendant processes terminated with the job
 
-- **GIVEN** a conversion subprocess has spawned child processes of its own
-- **WHEN** the worker terminates the job
-- **THEN** all processes in the subprocess group are killed, leaving no orphan processes
+- **GIVEN** the conversion phase has spawned child processes of its own
+- **WHEN** the worker stops the job
+- **THEN** no process descended from that job's conversion remains running
 
 ### Requirement: Detect and respond to job cancellation within 2 seconds
 
@@ -96,19 +96,19 @@ The system SHALL log phase transitions as a job progresses through its execution
 
 ### Requirement: Attempt graceful termination before forceful termination
 
-The system SHALL send a graceful termination signal to a subprocess and wait before escalating to a forceful kill if the process does not exit.
+When stopping a subprocess, the system SHALL first request a graceful exit and allow a bounded grace period for the subprocess to exit cleanly before escalating to a forceful termination.
 
-#### Scenario: Graceful termination succeeds
+#### Scenario: Graceful stop succeeds within the grace period
 
 - **GIVEN** a subprocess must be stopped
-- **WHEN** a graceful termination signal is sent
-- **THEN** the process exits within 5 seconds
+- **WHEN** the worker requests a graceful stop
+- **THEN** the subprocess exits within the grace period without forceful termination
 
-#### Scenario: Forceful kill escalated after grace period
+#### Scenario: Forceful termination escalated after grace period
 
-- **GIVEN** a subprocess does not exit within 5 seconds of receiving a graceful termination signal
+- **GIVEN** a subprocess has not exited within the grace period of a graceful stop request
 - **WHEN** the grace period elapses
-- **THEN** the worker sends a forceful kill signal and waits up to 5 additional seconds for the process to exit
+- **THEN** the worker forcefully terminates the subprocess and waits a further bounded period for the process to exit
 
 ### Requirement: Clean up temporary workspace on all job outcomes
 
@@ -128,53 +128,36 @@ The system SHALL guarantee that the temporary workspace created for a job is rem
 
 ### Requirement: Classify errors as retryable or permanent
 
-The system SHALL classify each error type as retryable or permanent via an explicit
-`retryable: bool` class attribute on every exception class, and SHALL use this classification
-to determine the resulting job status without relying on error message matching or `getattr`
-fallbacks.
+Every failure mode SHALL be classified as either retryable or permanent, and the job SHALL transition to `FAILED_RETRYABLE` for retryable failures and `FAILED_PERM` for permanent failures.
+Classification SHALL be a fixed property of the failure mode — it SHALL NOT depend on error-message text, runtime introspection of error objects, or caller context.
 
-The following exception classes SHALL carry the attribute:
-
-| Class                             | `retryable` value      | Rationale                                                                             |
-| --------------------------------- | ---------------------- | ------------------------------------------------------------------------------------- |
-| `ConversionArtifactsMissingError` | `False`                | Missing artifacts indicate a permanent data failure; retrying will not produce output |
-| `ConversionCancelledError`        | `False`                | Job was explicitly cancelled by the user; retrying is not appropriate                 |
-| `ConversionTimeoutError`          | `True`                 | Transient; fresh timeout window on retry                                              |
-| `ConversionSubprocessError`       | `True`                 | Transient subprocess crash; eligible for retry                                        |
-| `JobDataIntegrityError`           | `False`                | Non-recoverable data invariant violation                                              |
-| `PreflightError`                  | `True`                 | Transient preflight failure; eligible for retry                                       |
-| `ReportedChildError`              | `True` (class default) | Child errors default to retryable; individual instances may override                  |
-| `S3Error`                         | `True`                 | Transient storage error                                                               |
-| `S3UploadError`                   | `True`                 | Transient upload error                                                                |
-
-`handle_job_error()` and `_process_job_subprocess()` SHALL read `error.retryable` directly,
-without a `getattr` fallback.
+Missing conversion artifacts, explicit cancellation, and data-integrity violations SHALL be classified as permanent.
+Transient fetch failures, conversion-subprocess crashes, preflight failures, upload failures, and storage failures SHALL be classified as retryable.
+A child-reported failure that carries no explicit classification SHALL be treated as retryable.
 
 #### Scenario: Permanent error for missing artifacts
 
-- **GIVEN** conversion output artifacts are missing after the subprocess completes
-- **WHEN** `handle_job_error()` processes the `ConversionArtifactsMissingError`
-- **THEN** the `retryable` attribute is read directly from the exception class (value: `False`),
-  and the job transitions to `FAILED_PERM`
+- **GIVEN** conversion output artifacts are missing after the conversion phase completes
+- **WHEN** the error handler processes the failure
+- **THEN** the job transitions to `FAILED_PERM`
 
 #### Scenario: Retryable error transitions job to FAILED_RETRYABLE
 
-- **GIVEN** a transient error occurs (network failure, S3 error, timeout)
+- **GIVEN** a transient error occurs (network failure, storage error, timeout, subprocess crash)
 - **WHEN** the error handler processes it
-- **THEN** the job transitions to FAILED_RETRYABLE
+- **THEN** the job transitions to `FAILED_RETRYABLE`
 
 #### Scenario: Permanent error transitions job to FAILED_PERM
 
-- **GIVEN** a non-recoverable error occurs (missing content, data integrity violation)
+- **GIVEN** a non-recoverable error occurs (missing content, data-integrity violation, explicit cancellation)
 - **WHEN** the error handler processes it
-- **THEN** the job transitions to FAILED_PERM
+- **THEN** the job transitions to `FAILED_PERM`
 
-#### Scenario: Child-reported error with no explicit retryability uses class default
+#### Scenario: Child-reported error with no explicit retryability is treated as retryable
 
 - **GIVEN** the conversion subprocess reports a failure without specifying retryability
-- **WHEN** `handle_job_error()` processes the resulting `ReportedChildError`
-- **THEN** the class-level `retryable = True` default applies, classifying the job as
-  `FAILED_RETRYABLE`
+- **WHEN** the error handler processes the failure
+- **THEN** the job transitions to `FAILED_RETRYABLE`
 
 ### Requirement: Handle SIGTERM and SIGINT by draining in-flight work before exiting
 
@@ -239,15 +222,30 @@ The worker process SHALL log structured messages at each stage of the shutdown s
 ## Technical Notes
 
 - **Implementation**: `aizk/conversion/worker/`
+
 - **Dependencies**: conversion-worker (job data model and status transitions)
+
 - **Subprocess model**: spawn context for clean child state; child runs conversion only; parent runs preflight and upload
+
 - **Process group management**: subprocess sets its own process group on start; termination targets the entire group; ESRCH (group already gone) is handled gracefully
+
 - **Cancellation polling**: parent polls database every 2 seconds using `process.join(timeout=poll_interval)`; child checks for cancellation at phase boundaries
+
 - **Timeout tracking**: wall-clock deadline computed after job enters RUNNING state; covers all phases including upload retry delays
+
 - **Phase values**: `starting`, `preparing_input`, `converting`, `uploading` — communicated from child to parent via inter-process queue; not persisted to database
+
 - **Termination sequence**: SIGTERM → wait 5s → SIGKILL → wait 5s → log error if still alive
+
 - **Workspace**: `tempfile.TemporaryDirectory` context manager in parent; path passed as string argument to subprocess; OS-level cleanup handles leaks from worker crashes
-- **Error retryability**: `retryable: ClassVar[bool]` attribute on every exception class (including `S3Error` and `S3UploadError`); `handle_job_error()` reads this attribute directly rather than matching error type strings or relying on `getattr` fallbacks
+
+- **Error retryability**: `retryable: ClassVar[bool]` attribute on every exception class; `handle_job_error()` and `_process_job_subprocess()` read this attribute directly rather than matching error type strings or relying on `getattr` fallbacks.
+  Per-class values:
+
+  | Class                             | `retryable`            | Rationale                                                                             | | --------------------------------- | ---------------------- | ------------------------------------------------------------------------------------- | | `ConversionArtifactsMissingError` | `False`                | Missing artifacts indicate a permanent data failure; retrying will not produce output | | `ConversionCancelledError`        | `False`                | Job was explicitly cancelled by the user; retrying is not appropriate                 | | `ConversionTimeoutError`          | `True`                 | Transient; fresh timeout window on retry                                              | | `ConversionSubprocessError`       | `True`                 | Transient subprocess crash; eligible for retry                                        | | `JobDataIntegrityError`           | `False`                | Non-recoverable data invariant violation                                              | | `PreflightError`                  | `True`                 | Transient preflight failure; eligible for retry                                       | | `ReportedChildError`              | `True` (class default) | Child errors default to retryable; individual instances may override                  | | `S3Error`                         | `True`                 | Transient storage error                                                               | | `S3UploadError`                   | `True`                 | Transient upload error                                                                |
+
 - **Concurrency**: main thread polls and dispatches jobs to a ThreadPoolExecutor (`worker_concurrency`, default 4); GPU subprocess spawning gated by a semaphore (`worker_gpu_concurrency`, default 1) to prevent GPU OOM; preflight and upload phases run outside the semaphore
+
 - **Graceful shutdown**: signal handlers set a flag; main loop checks it before each poll; drain waits for all in-flight jobs up to `worker_drain_timeout_seconds` (default 300) plus a 15-second buffer; second signal forces immediate termination; force-terminated jobs transition to FAILED_RETRYABLE
+
 - **Platform**: POSIX only (Linux, macOS); Windows not supported
