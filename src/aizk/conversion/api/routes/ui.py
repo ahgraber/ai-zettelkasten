@@ -196,6 +196,20 @@ def ui_jobs(
     return _TEMPLATES.TemplateResponse(request, template, {"page": page})
 
 
+def _format_bulk_notice(
+    applied: int,
+    ineligible: int,
+    action_label: str,
+    selected_ids: list[int],
+) -> str:
+    if not selected_ids:
+        return "Select at least one job."
+    parts: list[str] = [f"{applied} jobs {action_label}"]
+    if ineligible:
+        parts.append(f"{ineligible} skipped as ineligible")
+    return "; ".join(parts) + "."
+
+
 @router.post("/jobs/actions")
 def ui_job_actions(
     request: Request,
@@ -216,13 +230,13 @@ def ui_job_actions(
 
     now = dt.datetime.now(dt.timezone.utc)
     selected_ids = job_ids or []
-    success = 0
-    errors = 0
+    applied = 0
+    ineligible = 0
 
     for job_id in selected_ids:
         job = session.get(ConversionJob, job_id)
         if not job:
-            errors += 1
+            ineligible += 1
             continue
         try:
             if action == "retry":
@@ -233,14 +247,14 @@ def ui_job_actions(
                 session.add(job)
             else:
                 _apply_job_delete(session, job)
-            success += 1
+            applied += 1
         except ValueError:
-            errors += 1
+            ineligible += 1
 
     session.commit()
 
     action_label = {"retry": "retried", "cancel": "cancelled", "delete": "deleted"}[action]
-    notice = f"{success} jobs {action_label}; {errors} failed." if selected_ids else "Select at least one job."
+    notice = _format_bulk_notice(applied, ineligible, action_label, selected_ids)
     normalized_search = search.strip() if search else None
     page = _load_jobs_page(
         session=session,
