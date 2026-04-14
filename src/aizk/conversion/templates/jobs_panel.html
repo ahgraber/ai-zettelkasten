@@ -177,7 +177,13 @@ desc {%- endif -%} {%- endmacro %}
         </tr>
         {% endfor %} {% else %}
         <tr class="empty-row">
-          <td colspan="12" class="empty">No jobs yet. Submit a bookmark to get started.</td>
+          {% if page.search or page.status_filter %}
+          <td colspan="12" class="empty" aria-live="polite">
+            No jobs match your filters. Try clearing the search or status filter.
+          </td>
+          {% else %}
+          <td colspan="12" class="empty" aria-live="polite">No jobs yet. Submit a bookmark to get started.</td>
+          {% endif %}
         </tr>
         {% endif %}
       </tbody>
