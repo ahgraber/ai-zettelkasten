@@ -10,10 +10,26 @@ import xxhash
 
 from aizk.conversion.utilities.config import ConversionConfig
 
+_OUTPUT_IRRELEVANT_DOCLING_FIELDS = frozenset(
+    {
+        "docling_picture_description_base_url",
+        "docling_picture_description_api_key",
+    }
+)
+
 
 def _docling_config_payload(config: ConversionConfig) -> dict[str, object]:
-    """Return the subset of config fields that affect Docling output."""
-    return {key: value for key, value in config.model_dump().items() if key.startswith("docling_")}
+    """Return the subset of config fields that affect Docling output.
+
+    Excludes endpoint URL and API key: these identify the picture-description provider
+    but do not affect replayable output, and the API key is a secret that must not be
+    persisted into the manifest.
+    """
+    return {
+        key: value
+        for key, value in config.model_dump().items()
+        if key.startswith("docling_") and key not in _OUTPUT_IRRELEVANT_DOCLING_FIELDS
+    }
 
 
 def build_output_config_snapshot(

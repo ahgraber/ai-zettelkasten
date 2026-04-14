@@ -55,7 +55,7 @@ class ConversionConfig(BaseSettings):
         validation_alias="DOCLING_ENABLE_TABLE_STRUCTURE",
     )
     docling_picture_description_model: str = Field(
-        default="openai/gpt-4.1-nano",
+        default="openai/gpt-5.4-nano",
         validation_alias="DOCLING_PICTURE_DESCRIPTION_MODEL",
     )
     docling_picture_timeout: float = Field(
