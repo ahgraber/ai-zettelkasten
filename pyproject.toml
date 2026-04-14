@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 name = "aizk"
 description = "AI-driven zettelkasten mindmap"
-version = "0.0.1"
+version = "0.1.0"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11,<3.15"
@@ -160,6 +160,7 @@ package = true
 default-groups = [ "dev", "ipynb", "lint", "test", "type" ]
 python-preference = "managed"
 exclude-newer = "3 days"
+exclude-newer-package = { torch = false, torchvision = false }
 
 [tool.uv.build-backend]
 module-name = "aizk"
