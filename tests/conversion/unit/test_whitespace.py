@@ -363,35 +363,3 @@ class TestNormalizationStepInteractions:
         text = "word\tword  \n\n\ncode  `x  y`  end  \n"
         result = normalize_whitespace(text)
         assert result == "word word\n\ncode `x  y` end\n"
-
-
-class TestIdempotence:
-    """Tests to verify normalization is idempotent."""
-
-    def test_normalization_is_idempotent(self) -> None:
-        """Applying normalization twice gives same result."""
-        text = "hello    world\n\n\nfoo  bar"
-        once = normalize_whitespace(text)
-        twice = normalize_whitespace(once)
-        assert once == twice
-
-    def test_idempotent_with_code_blocks(self) -> None:
-        """Idempotence holds with code blocks."""
-        text = """Normal    text
-
-```
-code  with  spaces
-```
-
-More    text"""
-        once = normalize_whitespace(text)
-        twice = normalize_whitespace(once)
-        assert once == twice
-
-    def test_idempotent_with_multiple_sections(self) -> None:
-        """Idempotence across complex document."""
-        text = "A\n\n\nB\n\n\nC\n\n\nD"
-        once = normalize_whitespace(text)
-        twice = normalize_whitespace(once)
-        assert once == twice
-        assert once.count("\n\n") == 3

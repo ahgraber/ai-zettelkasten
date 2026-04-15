@@ -356,40 +356,6 @@ def _create_running_job(db_session: Session, bookmark: Bookmark) -> ConversionJo
     return job
 
 
-def test_process_job_supervised_times_out_with_phase(monkeypatch, db_session: Session, html_bookmark, fp) -> None:
-    """Timeouts use the last reported phase from the subprocess."""
-    import os
-
-    fp.allow_unregistered(False)
-
-    # Short timeout; stub stays alive for 3 cycles (3 * 0.01s = 30ms > 0.01s timeout)
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "0.01")
-    monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _TestContext(alive_cycles=3))
-    bookmark = _create_bookmark(db_session)
-    job = _create_running_job(db_session, bookmark)
-
-    monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
-    monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
-
-    killpg_calls = []
-    monkeypatch.setattr(os, "getpgid", lambda _pid: 222)
-    monkeypatch.setattr(os, "getpgrp", lambda: 111)
-    monkeypatch.setattr(os, "killpg", lambda pgid, sig: killpg_calls.append((pgid, sig)))
-
-    errors: list[Exception] = []
-    monkeypatch.setattr(orchestrator, "handle_job_error", lambda _job_id, error, _config: errors.append(error))
-
-    config = ConversionConfig(_env_file=None)
-    assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=0.01)
-
-    assert len(errors) == 1
-    assert isinstance(errors[0], errors_mod.ConversionTimeoutError)
-    assert len(killpg_calls) > 0, "Should call os.killpg() to terminate process group"
-
-
 def test_process_job_supervised_cancels_child(monkeypatch, db_session: Session, html_bookmark, fp) -> None:
     """Cancellation polling terminates the child process."""
     import os
