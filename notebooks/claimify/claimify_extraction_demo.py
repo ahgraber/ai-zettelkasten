@@ -28,8 +28,8 @@ from _claimify.io import (
 )
 from _claimify.models import ClaimRecord, FailedRecord, SkippedRecord
 from _claimify.pipeline import (
-    default_question,
     extract_claims,
+    extraction_question,
     make_decomposition_runner,
     make_disambiguation_runner,
     make_selection_runner,
@@ -142,7 +142,7 @@ async def _run_extraction(doc) -> Path:
         decomposition=decomposition_runner,
         p=5,
         f=5,
-        question_for=default_question,
+        question_for=extraction_question,
     )
     path = write_extraction_jsonl(doc.aizk_uuid, records)
     n_claim = sum(1 for r in records if isinstance(r, ClaimRecord))

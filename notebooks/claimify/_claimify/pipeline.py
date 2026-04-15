@@ -196,6 +196,17 @@ def default_question(doc: LoadedDoc, section: Section) -> str:
     return f"What does '{doc.title}' describe?"
 
 
+def extraction_question(doc: LoadedDoc, section: Section, context_str: str) -> str:
+    """Compose the per-section `{{question}}` value for Claimify extraction prompts.
+
+    Matches design §3.2: fold the contextualizer's summary into the question so
+    each stage's prompt inherits the same section context.
+    """
+    return (
+        f"This section of '{doc.title}' discusses {context_str}.\n\nWhat are the key claims in the following excerpt?"
+    )
+
+
 async def _process_sentence(
     doc: LoadedDoc,
     ctx: SentenceContext,
@@ -216,17 +227,29 @@ async def _process_sentence(
         if not sel.contains_proposition:
             return []
 
+        ctx_after_selection = (
+            ctx.model_copy(update={"sentence": sel.rewritten_sentence})
+            if sel.rewritten_sentence and sel.rewritten_sentence != ctx.sentence
+            else ctx
+        )
+
         try:
-            dis = await disambiguation(ctx, question)
+            dis = await disambiguation(ctx_after_selection, question)
         except Exception as exc:
-            return [_fail_record(doc, ctx, "disambiguation", exc)]
+            return [_fail_record(doc, ctx_after_selection, "disambiguation", exc)]
         if not dis.can_be_disambiguated or dis.decontextualized_sentence is None:
             return []
 
+        ctx_after_disambig = (
+            ctx_after_selection.model_copy(update={"sentence": dis.decontextualized_sentence})
+            if dis.decontextualized_sentence != ctx_after_selection.sentence
+            else ctx_after_selection
+        )
+
         try:
-            dec = await decomposition(ctx, question)
+            dec = await decomposition(ctx_after_disambig, question)
         except Exception as exc:
-            return [_fail_record(doc, ctx, "decomposition", exc)]
+            return [_fail_record(doc, ctx_after_disambig, "decomposition", exc)]
 
         return [
             ClaimRecord(
@@ -235,7 +258,7 @@ async def _process_sentence(
                     heading_path=heading_path,
                     section_idx=ctx.section_idx,
                     sentence_idx=ctx.sentence_idx,
-                    sentence=ctx.sentence,
+                    sentence=ctx_after_disambig.sentence,
                     claim=claim,
                     context_str=context_str,
                 )
@@ -278,13 +301,16 @@ async def extract_claims(
     decomposition: DecompositionRunner,
     p: int = 5,
     f: int = 5,
-    question_for: Callable[[LoadedDoc, Section], str] = default_question,
+    question_for: Callable[[LoadedDoc, Section, str], str] = extraction_question,
     max_parallel_sentences: int = 8,
 ) -> list[ExtractionRecord]:
     """Run the full Claimify extraction pipeline for one document.
 
     Sections run serially to keep the contextualizer's system prompt cache
     warm; sentences within a section fan out under a per-section semaphore.
+
+    `question_for` receives `(doc, section, context_str)` so the contextualizer
+    output flows into every per-sentence prompt (design §3.2).
 
     TODO(claimify-tabular): extract claims from table content + caption
     TODO(claimify-code):    extract claims from code + language + surrounding prose
@@ -295,7 +321,6 @@ async def extract_claims(
     sem = asyncio.Semaphore(max_parallel_sentences)
 
     for section_idx, section in enumerate(sections):
-        question = question_for(doc, section)
         try:
             context_str = await contextualize_section(context_agent, doc, section)
         except Exception as exc:
@@ -317,6 +342,8 @@ async def extract_claims(
                 )
             )
             continue
+
+        question = question_for(doc, section, context_str)
 
         contexts = build_sentence_contexts(section, section_idx, p=p, f=f)
         heading_path = list(section.heading_path)

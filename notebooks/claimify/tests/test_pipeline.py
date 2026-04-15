@@ -121,6 +121,80 @@ def test_extract_claims_full_path_produces_claim_records(monkeypatch):
     claim_rec = cast(ClaimRecord, records[0])
     assert claim_rec.claim.heading_path == ["Top"]
     assert claim_rec.claim.context_str.startswith("ctx-for-Top")
+    # The final form handed to decomposition (and persisted) is the
+    # decontextualized sentence — verifies chaining, not a fixed string.
+    assert claim_rec.claim.sentence == "Alpha decontextualized."
+
+
+def test_extract_claims_chains_rewritten_and_decontextualized_sentences(monkeypatch):
+    """Selection.rewritten_sentence feeds disambiguation; disambig output feeds decomposition."""
+    monkeypatch.setattr("_claimify.pipeline.contextualize_section", _fake_contextualize_section)
+    doc = _doc("# Top\nAlpha sentence.\n")
+
+    seen: dict[str, str] = {}
+
+    async def sel_r(ctx, question):
+        seen["selection"] = ctx.sentence
+        return SelectionResult(contains_proposition=True, rewritten_sentence="Alpha rewritten.", reasoning="")
+
+    async def dis_r(ctx, question):
+        seen["disambiguation"] = ctx.sentence
+        return DisambigResult(
+            can_be_disambiguated=True, decontextualized_sentence="Alpha decontextualized.", reasoning=""
+        )
+
+    async def dec_r(ctx, question):
+        seen["decomposition"] = ctx.sentence
+        return DecompositionResult(claims=[AtomicClaim(proposition="Alpha is a thing.", essential_context=None)])
+
+    asyncio.run(
+        extract_claims(
+            doc,
+            context_agent=_StubContextAgent(),
+            selection=sel_r,
+            disambiguation=dis_r,
+            decomposition=dec_r,
+            p=1,
+            f=1,
+        )
+    )
+    assert seen["selection"] == "Alpha sentence."
+    assert seen["disambiguation"] == "Alpha rewritten."
+    assert seen["decomposition"] == "Alpha decontextualized."
+
+
+def test_extract_claims_question_receives_context_str(monkeypatch):
+    """`question_for` runs after contextualization and receives context_str."""
+    monkeypatch.setattr("_claimify.pipeline.contextualize_section", _fake_contextualize_section)
+    doc = _doc("# Top\nAlpha sentence.\n")
+
+    captured: dict[str, str] = {}
+
+    def q_for(doc_, section_, context_str_):
+        captured["context_str"] = context_str_
+        return f"Q[{context_str_}]"
+
+    async def sel_r(ctx, question):
+        captured["question"] = question
+        return SelectionResult(contains_proposition=False, rewritten_sentence=None, reasoning="")
+
+    async def _boom(ctx, question):
+        raise AssertionError("should not run")
+
+    asyncio.run(
+        extract_claims(
+            doc,
+            context_agent=_StubContextAgent(),
+            selection=sel_r,
+            disambiguation=_boom,
+            decomposition=_boom,
+            p=1,
+            f=1,
+            question_for=q_for,
+        )
+    )
+    assert captured["context_str"] == "ctx-for-Top"
+    assert captured["question"] == "Q[ctx-for-Top]"
 
 
 def test_extract_claims_skips_when_selection_false(monkeypatch):
