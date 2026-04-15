@@ -85,6 +85,7 @@ nemotron-parse = [
 # e.g., cannot do `uv add aizk[dev]`
 dev = [
     "uv-ship>=0.3.0",
+    "chonkie[viz]",
     "gravis>=0.1.0",
     "lingua>=4.15.0",
     "pandas>=2.2",

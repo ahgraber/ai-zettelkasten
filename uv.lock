@@ -17,7 +17,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-04-12T00:20:32.679557Z"
+exclude-newer = "2026-04-12T11:17:09.927476Z"
 exclude-newer-span = "P3D"
 
 [options.exclude-newer-package]
@@ -273,6 +273,7 @@ nemotron-parse = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "chonkie", extra = ["viz"] },
     { name = "gravis" },
     { name = "lingua" },
     { name = "pandas" },
@@ -405,6 +406,7 @@ provides-extras = ["eval", "nemotron-parse"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "chonkie", extras = ["viz"] },
     { name = "gravis", specifier = ">=0.1.0" },
     { name = "lingua", specifier = ">=4.15.0" },
     { name = "pandas", specifier = ">=2.2" },
