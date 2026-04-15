@@ -29,6 +29,20 @@ for _d in (CACHE_DIR, EXTRACTION_DIR, EVALUATION_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 
+def ensure_punkt_tab() -> None:
+    """Download NLTK's punkt_tab once if absent; no-op otherwise.
+
+    Kept out of module import so hermetic tests can import `io` without
+    touching the network.
+    """
+    import nltk
+
+    try:
+        nltk.data.find("tokenizers/punkt_tab")
+    except LookupError:
+        nltk.download("punkt_tab", quiet=True)
+
+
 def resolve_doc(
     karakeep_id: str,
     session: Session,
