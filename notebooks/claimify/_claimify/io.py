@@ -11,7 +11,7 @@ from uuid import UUID
 from pydantic import TypeAdapter
 from sqlmodel import Session, select
 
-from _claimify.models import ExtractionRecord, LoadedDoc
+from _claimify.models import EvalRecord, ExtractionRecord, LoadedDoc
 from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.db import get_engine
@@ -123,4 +123,33 @@ def read_extraction_jsonl(doc_uuid: UUID) -> list[ExtractionRecord]:
             if not line:
                 continue
             records.append(_EXTRACTION_ADAPTER.validate_json(line))
+    return records
+
+
+_EVAL_ADAPTER: TypeAdapter[EvalRecord] = TypeAdapter(EvalRecord)
+
+
+def evaluation_path(doc_uuid: UUID) -> Path:
+    return EVALUATION_DIR / f"{doc_uuid}.jsonl"
+
+
+def write_evaluation_jsonl(doc_uuid: UUID, records: Iterable[EvalRecord]) -> Path:
+    """Write one JSON line per eval verdict; each line carries `kind="verdict"`."""
+    path = evaluation_path(doc_uuid)
+    with path.open("w", encoding="utf-8") as fh:
+        for record in records:
+            fh.write(_EVAL_ADAPTER.dump_json(record).decode("utf-8"))
+            fh.write("\n")
+    return path
+
+
+def read_evaluation_jsonl(doc_uuid: UUID) -> list[EvalRecord]:
+    path = evaluation_path(doc_uuid)
+    records: list[EvalRecord] = []
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            records.append(_EVAL_ADAPTER.validate_json(line))
     return records
