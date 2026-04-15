@@ -1,4 +1,7 @@
-"""Unit tests for Litestream configuration generation and lifecycle."""
+"""Unit tests for Litestream configuration generation and lifecycle.
+
+Marked `internal`: covers infrastructure helpers without a declared spec contract.
+"""
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -8,6 +11,8 @@ from pyleak import no_thread_leaks
 import pytest
 
 from aizk.conversion.utilities.litestream import LitestreamManager, _write_config_file
+
+pytestmark = pytest.mark.internal
 
 
 def test_write_config_file_emits_expected_yaml(tmp_path: Path) -> None:

@@ -1,10 +1,15 @@
-"""Unit tests for re_search.py module."""
+"""Unit tests for re_search.py module.
+
+Marked `internal`: covers a utility helper without a declared spec contract.
+"""
 
 import re
 
 import pytest
 
 from aizk.ai.tools.re_search import re_search_text
+
+pytestmark = pytest.mark.internal
 
 
 class TestReSearchText:

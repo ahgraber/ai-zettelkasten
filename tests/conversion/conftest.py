@@ -124,12 +124,23 @@ def set_test_env(monkeypatch: pytest.MonkeyPatch, test_db_path: Path) -> None:
 
 @pytest.fixture()
 def db_engine(test_db_path: Path):
-    """Create and initialize a SQLite engine for tests via Alembic migrations."""
+    """Create and initialize a SQLite engine for tests via Alembic migrations.
+
+    Disposes the engine and drops it from `_ENGINE_CACHE` at teardown so SQLite
+    connection-pool file handles (db + WAL + SHM) don't accumulate across the
+    session and exhaust the macOS FD soft limit during long suite runs.
+    """
+    from aizk.conversion.db import _ENGINE_CACHE
     from aizk.conversion.migrations import run_migrations
 
     db_url = f"sqlite:///{test_db_path}"
     run_migrations(db_url)
-    return get_engine(db_url)
+    engine = get_engine(db_url)
+    try:
+        yield engine
+    finally:
+        engine.dispose()
+        _ENGINE_CACHE.pop(db_url, None)
 
 
 @pytest.fixture()

@@ -238,6 +238,7 @@ testpaths = [ "tests" ]
 markers = [
     "isolate: run test in isolated subprocess (requires pytest-isolate)",
     "integration_lifecycle: worker lifecycle integration tests with real processes",
+    "internal: tests for internal helpers without direct spec coverage",
 ]
 
 [tool.coverage.paths]
