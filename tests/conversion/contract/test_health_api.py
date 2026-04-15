@@ -122,3 +122,63 @@ class TestReadiness:
         checks_by_name = {c["name"]: c for c in body["checks"]}
         assert checks_by_name["s3"]["status"] == "unavailable"
         assert checks_by_name["s3"]["detail"] == "timeout"
+
+
+class TestReadinessPictureDescription:
+    """picture_description probe appears in readiness only when configured."""
+
+    @pytest.fixture()
+    def _client_with_pd(self, monkeypatch):
+        monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_BASE_URL", "http://vlm.local/v1")
+        monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_API_KEY", "test-key")
+        app = create_app()
+        with TestClient(app) as tc:
+            yield tc
+
+    @pytest.fixture()
+    def _client_without_pd(self, monkeypatch):
+        # Explicitly clear so config resolves is_picture_description_enabled() == False.
+        monkeypatch.delenv("DOCLING_PICTURE_DESCRIPTION_BASE_URL", raising=False)
+        monkeypatch.delenv("DOCLING_PICTURE_DESCRIPTION_API_KEY", raising=False)
+        app = create_app()
+        with TestClient(app) as tc:
+            yield tc
+
+    @pytest.mark.usefixtures("_mock_s3_healthy")
+    def test_included_when_configured_and_reachable(self, _client_with_pd):
+        async def _ok(_config):
+            from aizk.conversion.api.schemas import CheckResult
+
+            return CheckResult(name="picture_description", status="ok")
+
+        with patch("aizk.conversion.api.routes.health._check_picture_description", _ok):
+            resp = _client_with_pd.get("/health/ready")
+
+        assert resp.status_code == 200
+        names = {c["name"] for c in resp.json()["checks"]}
+        assert "picture_description" in names
+
+    @pytest.mark.usefixtures("_mock_s3_healthy")
+    def test_omitted_when_not_configured(self, _client_without_pd):
+        resp = _client_without_pd.get("/health/ready")
+
+        assert resp.status_code == 200
+        names = {c["name"] for c in resp.json()["checks"]}
+        assert "picture_description" not in names
+
+    @pytest.mark.usefixtures("_mock_s3_healthy")
+    def test_failing_probe_returns_503_with_failure_in_body(self, _client_with_pd):
+        async def _fail(_config):
+            from aizk.conversion.api.schemas import CheckResult
+
+            return CheckResult(name="picture_description", status="unavailable", detail="connection refused")
+
+        with patch("aizk.conversion.api.routes.health._check_picture_description", _fail):
+            resp = _client_with_pd.get("/health/ready")
+
+        assert resp.status_code == 503
+        body = resp.json()
+        assert body["status"] == "unavailable"
+        pd = next(c for c in body["checks"] if c["name"] == "picture_description")
+        assert pd["status"] == "unavailable"
+        assert "connection refused" in pd["detail"]

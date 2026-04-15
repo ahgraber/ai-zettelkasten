@@ -7,6 +7,7 @@ jobs before exiting on SIGTERM or SIGINT.
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import threading
 from types import FrameType
@@ -62,6 +63,13 @@ def register_signal_handlers() -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
     logger.debug("Registered SIGTERM/SIGINT handlers for graceful shutdown")
+
+
+def force_exit(code: int = 1) -> None:
+    # Seam for tests: patchable wrapper around os._exit. os._exit bypasses
+    # non-daemon ThreadPoolExecutor worker joins that would otherwise keep
+    # a stuck task alive indefinitely during interpreter shutdown.
+    os._exit(code)
 
 
 def reset() -> None:

@@ -1,4 +1,7 @@
-"""Tests for Alembic migration integrity."""
+"""Tests for Alembic migration integrity.
+
+Covers the `schema-migrations` spec contracts.
+"""
 
 from __future__ import annotations
 

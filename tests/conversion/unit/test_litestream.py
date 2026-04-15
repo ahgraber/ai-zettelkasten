@@ -1,4 +1,7 @@
-"""Unit tests for Litestream configuration generation and lifecycle."""
+"""Unit tests for Litestream configuration generation and lifecycle.
+
+Covers the `sqlite-replication` spec contracts.
+"""
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch

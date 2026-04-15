@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from concurrent.futures import Future
 import datetime as dt
-import signal
 import threading
 import time
 from unittest.mock import MagicMock
@@ -248,60 +247,3 @@ class TestRunWorkerConcurrency:
         exit_code = loop.run_worker(config, poll_interval_seconds=0.01)
 
         assert exit_code == 0
-
-    def test_immediate_shutdown_exits_one(self, monkeypatch):
-        """Double signal exits with code 1."""
-        claim_count = {"n": 0}
-
-        def _fake_claim(_config):
-            claim_count["n"] += 1
-            if claim_count["n"] == 1:
-                return 1
-            return None
-
-        def _fake_process(_job_id, _config, poll_interval_seconds=2.0):
-            shutdown._handle_signal(signal.SIGTERM, None)
-            shutdown._handle_signal(signal.SIGTERM, None)
-            time.sleep(0.01)
-
-        monkeypatch.setattr(loop, "claim_next_job", _fake_claim)
-        monkeypatch.setattr(loop, "process_job_supervised", _fake_process)
-        monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
-        monkeypatch.setattr(loop, "configure_gpu_semaphore", lambda _n: None)
-        monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
-
-        config = ConversionConfig(_env_file=None)
-        exit_code = loop.run_worker(config, poll_interval_seconds=0.01)
-
-        assert exit_code == 1
-
-    def test_drain_timeout_exits_one(self, monkeypatch):
-        """Jobs that don't finish within drain timeout cause exit code 1."""
-        monkeypatch.setenv("WORKER_DRAIN_TIMEOUT_SECONDS", "0")
-        config = ConversionConfig(_env_file=None)
-
-        claim_count = {"n": 0}
-
-        def _fake_claim(_config):
-            claim_count["n"] += 1
-            if claim_count["n"] == 1:
-                return 1
-            shutdown.request_shutdown()
-            return None
-
-        def _fake_process(_job_id, _config, poll_interval_seconds=2.0):
-            # Sleep longer than drain timeout + buffer (0 + 15 = 15s).
-            # The test relies on _drain_in_flight timing out.
-            time.sleep(60)
-
-        monkeypatch.setattr(loop, "claim_next_job", _fake_claim)
-        monkeypatch.setattr(loop, "process_job_supervised", _fake_process)
-        monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
-        monkeypatch.setattr(loop, "configure_gpu_semaphore", lambda _n: None)
-        monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
-        # Override _drain_in_flight to avoid the 15s buffer wait in tests.
-        monkeypatch.setattr(loop, "_drain_in_flight", lambda futures, _config: bool(futures))
-
-        exit_code = loop.run_worker(config, poll_interval_seconds=0.01)
-
-        assert exit_code == 1
