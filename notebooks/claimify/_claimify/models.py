@@ -82,6 +82,13 @@ class LoadedDoc(BaseModel):
     source: Literal["cache", "s3"]
 
 
+class InvalidSentenceVerdict(BaseModel):
+    """Per-sentence invalidity verdict from the invalid_sentences prompt."""
+
+    is_invalid: bool
+    reasoning: str
+
+
 class InvalidSentencesResult(BaseModel):
     per_sentence_invalid: list[bool]
 
@@ -101,6 +108,13 @@ class EntailmentResult(BaseModel):
 
 class DecontextResult(BaseModel):
     c_max_text: str
+    reasoning: str
+
+
+class InvalidClaimVerdict(BaseModel):
+    """Per-claim invalidity verdict from the invalid_claims prompt."""
+
+    is_invalid: bool
     reasoning: str
 
 

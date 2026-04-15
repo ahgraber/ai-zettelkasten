@@ -16,8 +16,14 @@ from pydantic import BaseModel
 
 from _claimify.models import (
     AtomicClaim,
+    CoverageResult,
     DecompositionResult,
+    DecontextResult,
     DisambigResult,
+    ElementResult,
+    EntailmentResult,
+    InvalidClaimVerdict,
+    InvalidSentenceVerdict,
     SelectionResult,
 )
 
@@ -168,6 +174,114 @@ def parse_decomposition(raw: str) -> DecompositionResult:
         essential = "; ".join(b.strip() for b in brackets) if brackets else None
         claims.append(AtomicClaim(proposition=text, essential_context=essential))
     return DecompositionResult(claims=claims)
+
+
+_INVALID_SENT_CANNOT_RE = re.compile(
+    r"S cannot be interpreted as a complete,?\s*declarative sentence",
+    re.IGNORECASE,
+)
+_INVALID_SENT_CAN_RE = re.compile(
+    r"S can be interpreted as a complete,?\s*declarative sentence",
+    re.IGNORECASE,
+)
+
+
+def parse_invalid_sentence(raw: str) -> InvalidSentenceVerdict:
+    """Parse the invalid_sentences prompt into a per-sentence verdict.
+
+    The prompt prints either "S can be interpreted as a complete, declarative
+    sentence" or "S cannot be interpreted...". "cannot" is checked first so it
+    doesn't collide with "can".
+    """
+    if _INVALID_SENT_CANNOT_RE.search(raw):
+        return InvalidSentenceVerdict(is_invalid=True, reasoning=raw.strip())
+    if _INVALID_SENT_CAN_RE.search(raw):
+        return InvalidSentenceVerdict(is_invalid=False, reasoning=raw.strip())
+    raise AdapterParseError("invalid_sentences output missing can/cannot-be-interpreted verdict")
+
+
+_ELEMENTS_MARKER = "What are ALL elements"
+
+
+def parse_element(raw: str) -> ElementResult:
+    """Parse the element prompt into an `ElementResult`.
+
+    The prompt emits a bracketed list of `"<element> -> <verifiability>"`
+    strings after the marker "What are ALL elements". We preserve each quoted
+    entry verbatim; downstream coverage parsing keeps the verifiability hint.
+    """
+    idx = raw.rfind(_ELEMENTS_MARKER)
+    if idx < 0:
+        raise AdapterParseError("element output missing 'What are ALL elements' marker")
+    items = _extract_list_after(raw, idx + len(_ELEMENTS_MARKER))
+    return ElementResult(elements=items)
+
+
+_COVERAGE_VERDICT_RE = re.compile(r"\bnot fully covered by C\b|\bfully covered by C\b", re.IGNORECASE)
+
+
+def parse_coverage(raw: str, *, n_elements: int) -> CoverageResult:
+    """Parse the coverage prompt into per-element covered booleans.
+
+    The prompt emits one verdict per element in order ("fully covered by C" or
+    "not fully covered by C"). `n_elements` is the expected element count so
+    callers can fail fast if the model skipped or duplicated an element.
+    """
+    verdicts = [m.group(0).lower() for m in _COVERAGE_VERDICT_RE.finditer(raw)]
+    if len(verdicts) != n_elements:
+        raise AdapterParseError(f"coverage output expected {n_elements} verdicts, found {len(verdicts)}")
+    return CoverageResult(per_element_covered=[v == "fully covered by c" for v in verdicts])
+
+
+_ENTAILMENT_RE = re.compile(
+    r"S\s+(does not\s+)?entails?\s+all\s+elements\s+of\s+C",
+    re.IGNORECASE,
+)
+
+
+def parse_entailment(raw: str) -> EntailmentResult:
+    """Parse the entailment prompt into `EntailmentResult`."""
+    m = _ENTAILMENT_RE.search(raw)
+    if m is None:
+        raise AdapterParseError("entailment output missing 'S (does not )?entail(s) all elements of C' verdict")
+    return EntailmentResult(entailed=m.group(1) is None, reasoning=raw.strip())
+
+
+_CMAX_RE = re.compile(r"^C_max\s*=\s*(.+?)\s*$", re.MULTILINE)
+
+
+def parse_decontextualization(raw: str, *, claim: str) -> DecontextResult:
+    """Parse the decontextualization prompt into `DecontextResult`.
+
+    The prompt emits `C_max = <text>` on its own line; `C_max = C` means no
+    change, which we materialize by echoing the input claim.
+    """
+    matches = list(_CMAX_RE.finditer(raw))
+    if not matches:
+        raise AdapterParseError("decontextualization output missing 'C_max =' line")
+    text = matches[-1].group(1).strip()
+    if text == "C":
+        text = claim
+    return DecontextResult(c_max_text=text, reasoning=raw.strip())
+
+
+_INVALID_CLAIM_NOT_RE = re.compile(
+    r"C is not a complete,?\s*declarative sentence",
+    re.IGNORECASE,
+)
+_INVALID_CLAIM_IS_RE = re.compile(
+    r"C is a complete,?\s*declarative sentence",
+    re.IGNORECASE,
+)
+
+
+def parse_invalid_claim(raw: str) -> InvalidClaimVerdict:
+    """Parse the invalid_claims prompt into a per-claim verdict."""
+    if _INVALID_CLAIM_NOT_RE.search(raw):
+        return InvalidClaimVerdict(is_invalid=True, reasoning=raw.strip())
+    if _INVALID_CLAIM_IS_RE.search(raw):
+        return InvalidClaimVerdict(is_invalid=False, reasoning=raw.strip())
+    raise AdapterParseError("invalid_claims output missing is/is-not-a-complete-declarative-sentence verdict")
 
 
 T = TypeVar("T", bound=BaseModel)
