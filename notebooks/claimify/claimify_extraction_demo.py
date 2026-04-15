@@ -26,7 +26,7 @@ from _claimify.io import (
     read_extraction_jsonl,
     write_extraction_jsonl,
 )
-from _claimify.models import ClaimRecord, FailedRecord, SkippedRecord
+from _claimify.models import ClaimRecord, FailedRecord
 from _claimify.pipeline import (
     extract_claims,
     extraction_question,
@@ -146,9 +146,9 @@ async def _run_extraction(doc) -> Path:
     )
     path = write_extraction_jsonl(doc.aizk_uuid, records)
     n_claim = sum(1 for r in records if isinstance(r, ClaimRecord))
-    n_skip = sum(1 for r in records if isinstance(r, SkippedRecord))
     n_fail = sum(1 for r in records if isinstance(r, FailedRecord))
-    print(f"{doc.title[:60]:60s}  claims={n_claim}  skipped={n_skip}  failed={n_fail}  -> {path.name}")
+    # SkippedRecord (non-text artifacts) is deferred — see pipeline TODOs.
+    print(f"{doc.title[:60]:60s}  claims={n_claim}  failed={n_fail}  -> {path.name}")
     return path
 
 
@@ -171,9 +171,8 @@ def _load_all() -> dict:
 by_doc = _load_all()
 for title, records in by_doc.items():
     claims = [r for r in records if isinstance(r, ClaimRecord)]
-    skipped = [r for r in records if isinstance(r, SkippedRecord)]
     failed = [r for r in records if isinstance(r, FailedRecord)]
-    print(f"{title[:60]:60s}  claims={len(claims)}  skipped={len(skipped)}  failed={len(failed)}")
+    print(f"{title[:60]:60s}  claims={len(claims)}  failed={len(failed)}")
 
 # %%
 # Random claim sample across all docs.
@@ -189,14 +188,11 @@ if all_claims:
         print()
 
 # %%
-# Failure / skipped detail for debugging.
+# Failure detail for debugging.
 for title, records in by_doc.items():
     for r in records:
         if isinstance(r, FailedRecord):
             f = r.failure
             print(f"FAIL [{title[:40]}] section={f.section_idx} sent={f.sentence_idx} stage={f.stage}: {f.error}")
-        elif isinstance(r, SkippedRecord):
-            a = r.artifact
-            print(f"SKIP [{title[:40]}] kind={a.kind} pos={a.position}: {a.note}")
 
 # %%
