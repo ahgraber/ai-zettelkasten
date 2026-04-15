@@ -1,6 +1,6 @@
 """Unit tests for Litestream configuration generation and lifecycle.
 
-Marked `internal`: covers infrastructure helpers without a declared spec contract.
+Covers the `sqlite-replication` spec contracts.
 """
 
 from pathlib import Path
@@ -11,8 +11,6 @@ from pyleak import no_thread_leaks
 import pytest
 
 from aizk.conversion.utilities.litestream import LitestreamManager, _write_config_file
-
-pytestmark = pytest.mark.internal
 
 
 def test_write_config_file_emits_expected_yaml(tmp_path: Path) -> None:

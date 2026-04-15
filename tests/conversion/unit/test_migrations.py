@@ -1,6 +1,6 @@
 """Tests for Alembic migration integrity.
 
-Marked `internal`: covers migration plumbing without a declared spec contract.
+Covers the `schema-migrations` spec contracts.
 """
 
 from __future__ import annotations
@@ -9,13 +9,10 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-import pytest
 from sqlmodel import SQLModel, create_engine, inspect
 
 import aizk.conversion.datamodel  # noqa: F401
 from aizk.conversion.migrations import run_migrations
-
-pytestmark = pytest.mark.internal
 
 
 def _alembic_cfg(database_url: str) -> Config:
