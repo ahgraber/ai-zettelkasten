@@ -1,9 +1,9 @@
-"""Prompt-output adapters: prose parsers (Path A) + structured-output helper (Path B).
+"""Prompt-output adapters: prose parsers + structured-output helper.
 
 The extraction prompts in `aizk.ai.claimify.prompts.extraction.*` ship as
-labeled prose. Path A parses that prose into the typed result models. Path B
-bolts a JSON-schema tail onto the prompt and lets pydantic-ai's
-`output_type=BaseModel` do the parsing. M5.5 picks a winner per-prompt.
+labeled prose. The "prose" path parses that text into the typed result
+models; the "structured" path bolts a JSON-schema tail onto the prompt and
+lets pydantic-ai's `output_type=BaseModel` do the parsing.
 """
 
 from __future__ import annotations
@@ -24,6 +24,17 @@ from _claimify.models import (
 
 class AdapterParseError(ValueError):
     """Raised when an LLM output can't be coerced into the expected result model."""
+
+
+def render_template(template: str, **values: str) -> str:
+    """Handlebars-rendered `{{name}}` substitution for the Claimify USER_TEMPLATE files.
+
+    Uses pydantic-handlebars — the same engine pydantic-ai's own `TemplateStr`
+    uses for system-prompt templating — for syntactic parity across the app.
+    """
+    import pydantic_handlebars as ph
+
+    return ph.render(template, dict(values))
 
 
 _SELECTION_FINAL_RE = re.compile(r"^Final submission:\s*(.+?)\s*$", re.MULTILINE)
@@ -163,7 +174,7 @@ T = TypeVar("T", bound=BaseModel)
 
 
 def with_schema_suffix(prompt: str, model: type[T]) -> str:
-    """Append a JSON-schema instruction to `prompt` for Path B structured outputs.
+    """Append a JSON-schema instruction to `prompt` for the structured path.
 
     pydantic-ai emits `response_format={type: 'json_schema', strict: true, ...}`
     automatically when `output_type` is a BaseModel subclass on supported

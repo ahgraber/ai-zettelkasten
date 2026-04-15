@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 import subprocess
 from typing import Literal
+from uuid import UUID
 
+from pydantic import TypeAdapter
 from sqlmodel import Session, select
 
-from _claimify.models import LoadedDoc
+from _claimify.models import ExtractionRecord, LoadedDoc
 from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.db import get_engine
@@ -91,3 +94,33 @@ def load_docs(karakeep_ids: list[str]) -> list[LoadedDoc]:
     s3_client = S3Client(config)
     with Session(engine) as session:
         return [resolve_doc(kid, session, s3_client=s3_client) for kid in karakeep_ids]
+
+
+_EXTRACTION_ADAPTER: TypeAdapter[ExtractionRecord] = TypeAdapter(ExtractionRecord)
+
+
+def extraction_path(doc_uuid: UUID) -> Path:
+    return EXTRACTION_DIR / f"{doc_uuid}.jsonl"
+
+
+def write_extraction_jsonl(doc_uuid: UUID, records: Iterable[ExtractionRecord]) -> Path:
+    """Write one JSON line per extraction record; each line carries a `kind` discriminant."""
+    path = extraction_path(doc_uuid)
+    with path.open("w", encoding="utf-8") as fh:
+        for record in records:
+            fh.write(_EXTRACTION_ADAPTER.dump_json(record).decode("utf-8"))
+            fh.write("\n")
+    return path
+
+
+def read_extraction_jsonl(doc_uuid: UUID) -> list[ExtractionRecord]:
+    """Read a JSONL extraction file back into discriminated-union records."""
+    path = extraction_path(doc_uuid)
+    records: list[ExtractionRecord] = []
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            records.append(_EXTRACTION_ADAPTER.validate_json(line))
+    return records
