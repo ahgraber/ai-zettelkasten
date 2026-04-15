@@ -10,20 +10,40 @@ ROUGE-L measures the longest common subsequence (LCS) between the reference and 
 Note that ROUGE-L does not require consecutive matches, only in-sequence matches.
 """
 
-from rouge_score import rouge_scorer
+try:
+    from rouge_score import rouge_scorer
 
-R3SCORER = rouge_scorer.RougeScorer(["rouge3"], use_stemmer=False)
+    _IMPORT_ERROR: ImportError | None = None
+except ImportError as _e:
+    rouge_scorer = None  # type: ignore[assignment]
+    _IMPORT_ERROR = _e
 
-RLSCORER = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=False)
+_INSTALL_HINT = "rouge-score is required for OCR ROUGE scoring. Install with: `uv sync --extra eval`"
+
+_R3SCORER = None
+_RLSCORER = None
+
+
+def _require() -> None:
+    if _IMPORT_ERROR is not None:
+        raise ModuleNotFoundError(_INSTALL_HINT) from _IMPORT_ERROR
 
 
 def rouge_3_score(ref_text: str, ocr_text: str) -> float:
     """Compute ROUGE-3 F1 score between reference and OCR text."""
-    score = R3SCORER.score(ref_text, ocr_text)["rouge3"].fmeasure  # in [0,1]
+    _require()
+    global _R3SCORER
+    if _R3SCORER is None:
+        _R3SCORER = rouge_scorer.RougeScorer(["rouge3"], use_stemmer=False)
+    score = _R3SCORER.score(ref_text, ocr_text)["rouge3"].fmeasure  # in [0,1]
     return score
 
 
 def rouge_l_score(ref_text: str, ocr_text: str) -> float:
     """Compute ROUGE-L F1 score between reference and OCR text."""
-    score = RLSCORER.score(ref_text, ocr_text)["rougeL"].fmeasure  # in [0,1]
+    _require()
+    global _RLSCORER
+    if _RLSCORER is None:
+        _RLSCORER = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=False)
+    score = _RLSCORER.score(ref_text, ocr_text)["rougeL"].fmeasure  # in [0,1]
     return score

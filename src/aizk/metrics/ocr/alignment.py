@@ -1,5 +1,20 @@
 from pydantic import BaseModel
-from sequence_align.pairwise import alignment_score, hirschberg
+
+try:
+    from sequence_align.pairwise import alignment_score, hirschberg
+
+    _IMPORT_ERROR: ImportError | None = None
+except ImportError as _e:
+    alignment_score = None  # type: ignore[assignment]
+    hirschberg = None  # type: ignore[assignment]
+    _IMPORT_ERROR = _e
+
+_INSTALL_HINT = "sequence-align is required for sequence alignment scoring. Install with: `uv sync --extra eval`"
+
+
+def _require() -> None:
+    if _IMPORT_ERROR is not None:
+        raise ModuleNotFoundError(_INSTALL_HINT) from _IMPORT_ERROR
 
 
 class TransitionCosts(BaseModel):
@@ -17,6 +32,7 @@ def sequence_alignment_score(
     costs: TransitionCosts = DEFAULT_COSTS,
 ) -> float:
     """Example usage of alignment_score with Hirschberg alignment."""
+    _require()
     # use a rare unicode char as gap token
     gap_tokens = ["␣", "▓", "■", "▢", "▣", "▤", "▥", "▦"]  # NOQA: S105
 
