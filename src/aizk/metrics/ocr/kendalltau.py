@@ -7,9 +7,23 @@ Ref:
 - https://link.springer.com/article/10.1007/s11042-025-20736-y
 """
 
-from rapidfuzz import fuzz
+try:
+    from rapidfuzz import fuzz
 
-from scipy.stats import kendalltau
+    from scipy.stats import kendalltau
+
+    _IMPORT_ERROR: ImportError | None = None
+except ImportError as _e:
+    fuzz = None  # type: ignore[assignment]
+    kendalltau = None  # type: ignore[assignment]
+    _IMPORT_ERROR = _e
+
+_INSTALL_HINT = "rapidfuzz and scipy are required for Kendall-tau OCR scoring. Install with: `uv sync --extra eval`"
+
+
+def _require() -> None:
+    if _IMPORT_ERROR is not None:
+        raise ModuleNotFoundError(_INSTALL_HINT) from _IMPORT_ERROR
 
 
 def kt_tokenize(s: str):
@@ -26,6 +40,7 @@ def kt_token_alignment(ref_tokens, ocr_tokens, fuzzy_cutoff=90):
        (exact first, else fuzzy with RapidFuzz >= cutoff).
     2) Return two aligned index lists of equal length: positions in ref vs positions in OCR.
     """
+    _require()
     from collections import defaultdict
 
     used = set()
@@ -57,6 +72,7 @@ def kt_token_alignment(ref_tokens, ocr_tokens, fuzzy_cutoff=90):
 
 def kendall_tau_score(ref_text: str, ocr_text: str) -> float:
     """Compute normalized Kendall-τ score between reference and OCR text."""
+    _require()
     ref_tokens = kt_tokenize(ref_text)
     ocr_tokens = kt_tokenize(ocr_text)
 
