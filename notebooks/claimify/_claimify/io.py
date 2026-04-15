@@ -1,0 +1,79 @@
+"""Document loader + disk cache (karakeep_id -> aizk_uuid -> newest conversion_outputs)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+import subprocess
+from typing import Literal
+
+from sqlmodel import Session, select
+
+from _claimify.models import LoadedDoc
+from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.conversion.db import get_engine
+from aizk.conversion.storage.s3_client import S3Client
+from aizk.conversion.utilities.config import ConversionConfig
+
+
+def _repo_root() -> Path:
+    return Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
+
+
+DATA_DIR = _repo_root() / "data" / "claimify_demo"
+CACHE_DIR = DATA_DIR / "cache"
+EXTRACTION_DIR = DATA_DIR / "extraction"
+EVALUATION_DIR = DATA_DIR / "evaluation"
+
+for _d in (CACHE_DIR, EXTRACTION_DIR, EVALUATION_DIR):
+    _d.mkdir(parents=True, exist_ok=True)
+
+
+def resolve_doc(
+    karakeep_id: str,
+    session: Session,
+    *,
+    s3_client: S3Client | None = None,
+) -> LoadedDoc:
+    """Resolve a KaraKeep bookmark id to a `LoadedDoc`, fetching from cache or S3."""
+    bookmark = session.exec(select(Bookmark).where(Bookmark.karakeep_id == karakeep_id)).one_or_none()
+    if bookmark is None:
+        raise ValueError(f"No bookmark with karakeep_id={karakeep_id!r}")
+
+    output = session.exec(
+        select(ConversionOutput)
+        .where(ConversionOutput.aizk_uuid == bookmark.aizk_uuid)
+        .order_by(ConversionOutput.created_at.desc())
+        .limit(1)
+    ).one_or_none()
+    if output is None:
+        raise ValueError(f"No conversion_outputs for karakeep_id={karakeep_id!r} (aizk_uuid={bookmark.aizk_uuid})")
+
+    cache_path = CACHE_DIR / f"{bookmark.aizk_uuid}.md"
+    source: Literal["cache", "s3"]
+    if cache_path.exists():
+        markdown = cache_path.read_text(encoding="utf-8")
+        source = "cache"
+    else:
+        if s3_client is None:
+            s3_client = S3Client(ConversionConfig())
+        markdown = s3_client.get_object_bytes(output.markdown_key).decode("utf-8")
+        cache_path.write_text(markdown, encoding="utf-8")
+        source = "s3"
+
+    return LoadedDoc(
+        aizk_uuid=bookmark.aizk_uuid,
+        karakeep_id=karakeep_id,
+        title=output.title,
+        markdown=markdown,
+        source=source,
+    )
+
+
+def load_docs(karakeep_ids: list[str]) -> list[LoadedDoc]:
+    """Batch-resolve bookmark ids using a single DB session and S3 client."""
+    config = ConversionConfig()
+    engine = get_engine(config.database_url)
+    s3_client = S3Client(config)
+    with Session(engine) as session:
+        return [resolve_doc(kid, session, s3_client=s3_client) for kid in karakeep_ids]
