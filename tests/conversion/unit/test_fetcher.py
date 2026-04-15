@@ -47,7 +47,7 @@ async def test_fetch_arxiv_pdf_no_task_leaks(monkeypatch):
 
     monkeypatch.setattr(fetcher, "ArxivClient", _DummyArxivClient)
 
-    config = ConversionConfig(fetch_timeout_seconds=5)
+    config = ConversionConfig(_env_file=None, fetch_timeout_seconds=5)
 
     async with no_task_leaks(action="raise"):
         result = await fetcher.fetch_arxiv_pdf("1234.5678", config)
@@ -58,7 +58,7 @@ async def test_fetch_arxiv_pdf_no_task_leaks(monkeypatch):
 @pytest.mark.asyncio(loop_scope="function")
 async def test_fetch_github_readme_pages_no_task_leaks(monkeypatch):
     bookmark = _DummyBookmark()
-    config = ConversionConfig(fetch_timeout_seconds=5)
+    config = ConversionConfig(_env_file=None, fetch_timeout_seconds=5)
 
     monkeypatch.setattr(fetcher, "get_bookmark_source_url", lambda _bookmark: "https://user.github.io/site")
     monkeypatch.setattr(fetcher, "is_github_url", lambda _url: True)

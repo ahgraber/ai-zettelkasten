@@ -2,17 +2,76 @@
 
 from __future__ import annotations
 
+from collections.abc import MutableMapping
 import os
 from pathlib import Path
 import subprocess
 import sys
-from typing import Iterator
+from typing import AbstractSet, Iterator
 
 import pytest
 from sqlmodel import Session
 
 from aizk.conversion.db import get_engine
+from aizk.conversion.utilities.config import ConversionConfig
 from karakeep_client.models import Bookmark
+
+# Env-var aliases the harness intentionally owns — kept in sync with `set_test_env` below.
+# Aliases in this set survive the session-start cleanup so `set_test_env` can set them per test.
+_HARNESS_ENV_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "DATABASE_URL",
+        "S3_ACCESS_KEY_ID",
+        "S3_SECRET_ACCESS_KEY",
+        "S3_REGION",
+        "S3_BUCKET_NAME",
+        "S3_ENDPOINT_URL",
+        "RETRY_BASE_DELAY_SECONDS",
+    }
+)
+
+
+def _conversion_config_aliases() -> frozenset[str]:
+    return frozenset(
+        field.validation_alias
+        for field in ConversionConfig.model_fields.values()
+        if isinstance(field.validation_alias, str)
+    )
+
+
+def _strip_unclaimed_aliases(
+    environ: MutableMapping[str, str],
+    aliases: AbstractSet[str],
+    allowlist: AbstractSet[str],
+) -> dict[str, str]:
+    """Remove every alias from `environ` that is not in `allowlist`. Return what was removed."""
+    stripped: dict[str, str] = {}
+    for alias in aliases - allowlist:
+        if alias in environ:
+            stripped[alias] = environ.pop(alias)
+    return stripped
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _hermetic_conversion_config() -> Iterator[None]:
+    """Enforce the `testing` capability's hermeticity contract for every `ConversionConfig`.
+
+    Blocks the two pydantic-settings configuration sources that would otherwise leak workstation
+    state into test runs: (1) `.env` parsing is disabled for the session via `model_config`, and
+    (2) shell-exported variables matching any `ConversionConfig` alias not in the harness
+    allowlist are removed from `os.environ` before any test runs and restored at session end.
+    """
+    original_env_file = ConversionConfig.model_config.get("env_file")
+    ConversionConfig.model_config["env_file"] = None
+
+    stripped = _strip_unclaimed_aliases(os.environ, _conversion_config_aliases(), _HARNESS_ENV_ALLOWLIST)
+
+    try:
+        yield
+    finally:
+        ConversionConfig.model_config["env_file"] = original_env_file
+        for alias, value in stripped.items():
+            os.environ[alias] = value
 
 
 def _resolve_repo_root() -> Path:
@@ -46,7 +105,11 @@ def test_db_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.fixture(autouse=True)
 def set_test_env(monkeypatch: pytest.MonkeyPatch, test_db_path: Path) -> None:
-    """Ensure tests use a temp SQLite database and predictable settings."""
+    """Ensure tests use a temp SQLite database and predictable settings.
+
+    Keep every `ConversionConfig`-aliased variable set here listed in `_HARNESS_ENV_ALLOWLIST`;
+    aliases absent from that set are stripped from the environment before tests run.
+    """
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{test_db_path}")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
