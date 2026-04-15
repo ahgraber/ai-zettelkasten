@@ -24,7 +24,7 @@ def s3_client(monkeypatch: pytest.MonkeyPatch) -> S3Client:
     monkeypatch.setenv("S3_REGION", "us-east-1")
     monkeypatch.setenv("S3_BUCKET_NAME", "test-bucket")
     monkeypatch.setenv("S3_ENDPOINT_URL", "http://localhost:9000")
-    config = ConversionConfig()
+    config = ConversionConfig(_env_file=None)
     client = S3Client.__new__(S3Client)
     client.config = config
     client.bucket = config.s3_bucket_name

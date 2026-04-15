@@ -100,7 +100,7 @@ def _litestream_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("S3_BUCKET_NAME", "test-bucket")
     monkeypatch.setenv("S3_ENDPOINT_URL", "http://localhost:9000")
 
-    return ConversionConfig()
+    return ConversionConfig(_env_file=None)
 
 
 def test_start_stop_lifecycle_no_thread_leaks(_litestream_config, monkeypatch) -> None:

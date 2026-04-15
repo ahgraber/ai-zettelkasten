@@ -30,7 +30,7 @@ def config(monkeypatch: pytest.MonkeyPatch) -> ConversionConfig:
     monkeypatch.setenv("S3_BUCKET_NAME", "test-bucket")
     monkeypatch.setenv("S3_ENDPOINT_URL", "http://localhost:9000")
     monkeypatch.setenv("RETRY_BASE_DELAY_SECONDS", "0")
-    return ConversionConfig()
+    return ConversionConfig(_env_file=None)
 
 
 @pytest.fixture()

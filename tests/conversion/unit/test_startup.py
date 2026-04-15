@@ -34,7 +34,7 @@ def config(monkeypatch: pytest.MonkeyPatch) -> ConversionConfig:
     monkeypatch.setenv("S3_ENDPOINT_URL", "http://localhost:9000")
     monkeypatch.setenv("KARAKEEP_BASE_URL", "http://karakeep.local")
     monkeypatch.setenv("KARAKEEP_API_KEY", "test-key")
-    return ConversionConfig()
+    return ConversionConfig(_env_file=None)
 
 
 # ---------------------------------------------------------------------------
