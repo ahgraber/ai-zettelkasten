@@ -48,7 +48,7 @@ from _claimify.models import (
     InvalidSentenceVerdict,
     LoadedDoc,
 )
-from _claimify.pipeline import default_question
+from _claimify.pipeline import build_sentence_contexts, default_question
 from _claimify.structuring import split_by_headings
 from aizk.ai.claimify.prompts.evaluation import (
     coverage as coverage_prompts,
@@ -393,7 +393,10 @@ async def _evaluate_sentence(
             logger.warning("invalid_sentence failed model=%s: %s", bundle.model, exc)
 
     elements_result: ElementResult | None = None
-    if "element" in dimensions or "coverage" in dimensions:
+    # element/coverage compare extracted claims against sentence elements;
+    # both are meaningless for sentences with zero claims, so skip them there
+    # to avoid doubling the bill.
+    if ("element" in dimensions or "coverage" in dimensions) and claim_records:
         try:
             elements_result = await _call(bundle.element(question, excerpt, sentence))
             if "element" in dimensions:
@@ -447,6 +450,10 @@ async def evaluate_claims(
 ) -> Path:
     """Run each dimension across every (tier × model) and persist `EvalRecord`s.
 
+    Iterates over every tokenized sentence in the doc so dimensions like
+    `invalid_sentence` can score sentences Selection dropped (zero-claim
+    sentences). Per-claim dimensions fire only where `ClaimRecord`s exist.
+
     Tiers run sequentially so cost-guard prints are accurate; within a tier,
     sentence/claim calls fan out under `Semaphore(max_parallel)`.
     """
@@ -462,29 +469,27 @@ async def evaluate_claims(
         bundles = [bundle_for(m, paths=paths, api_key=api_key) for m in model_ids]
 
         tier_tasks: list[Awaitable[list[EvalRecord]]] = []
-        for (section_idx, sentence_idx), sent_claims in claims_by_sent.items():
-            if section_idx >= len(sections):
-                logger.warning("section_idx=%d out of range for doc=%s", section_idx, doc.aizk_uuid)
-                continue
-            section = sections[section_idx]
+        for section_idx, section in enumerate(sections):
             question = question_for(doc, section)
             excerpt = section.content
-            sentence = sent_claims[0].claim.sentence
-            for bundle in bundles:
-                tier_tasks.append(
-                    _evaluate_sentence(
-                        bundle,
-                        doc,
-                        question,
-                        excerpt,
-                        section_idx,
-                        sentence_idx,
-                        sentence,
-                        sent_claims,
-                        dim_set,
-                        sem,
+            contexts = build_sentence_contexts(section, section_idx, p=0, f=0)
+            for ctx in contexts:
+                sent_claims = claims_by_sent.get((section_idx, ctx.sentence_idx), [])
+                for bundle in bundles:
+                    tier_tasks.append(
+                        _evaluate_sentence(
+                            bundle,
+                            doc,
+                            question,
+                            excerpt,
+                            section_idx,
+                            ctx.sentence_idx,
+                            ctx.sentence,
+                            sent_claims,
+                            dim_set,
+                            sem,
+                        )
                     )
-                )
 
         batched = await asyncio.gather(*tier_tasks)
         for group in batched:
@@ -520,6 +525,22 @@ def baseline_majority(verdicts_by_model: dict[str, object]) -> object | None:
             return None
         return [Counter(v[i] for v in values).most_common(1)[0][0] for i in range(len(first))]
 
+    if isinstance(first, list) and all(isinstance(x, str) for x in first):
+        # element dimension: majority picks the list whose normalized-set
+        # representation appears most often among models.
+        def _norm_set(xs: list[str]) -> frozenset[str]:
+            return frozenset(_normalize_text(x) for x in xs if isinstance(x, str))
+
+        list_values = [v for v in values if isinstance(v, list) and all(isinstance(x, str) for x in v)]
+        if not list_values:
+            return None
+        counts = Counter(_norm_set(v) for v in list_values)
+        top_set, _ = counts.most_common(1)[0]
+        for v in list_values:
+            if _norm_set(v) == top_set:
+                return v
+        return None
+
     if isinstance(first, str):
         counts = Counter(_normalize_text(v) for v in values if isinstance(v, str))
         top_norm, _ = counts.most_common(1)[0]
@@ -541,6 +562,10 @@ def cohens_kappa(a: list[object], b: list[object]) -> float:
         raise ValueError(f"length mismatch: {len(a)} vs {len(b)}")
     if not a:
         return 0.0
+    # κ is undefined when only one label appears across both raters. sklearn
+    # returns NaN in that case; collapse to 1.0 on perfect match, 0.0 otherwise.
+    if len({*a, *b}) < 2:
+        return 1.0 if a == b else 0.0
     try:
         from sklearn.metrics import cohen_kappa_score
 
@@ -564,6 +589,7 @@ def cohens_kappa(a: list[object], b: list[object]) -> float:
 
 BOOL_DIMENSIONS = {"invalid_sentence", "entailment", "invalid_claim"}
 LIST_BOOL_DIMENSIONS = {"coverage"}
+ELEMENT_DIMENSIONS = {"element"}
 TEXT_DIMENSIONS = {"decontextualization"}
 
 
@@ -581,20 +607,43 @@ def _extract_verdict(rec: EvalRecord) -> object | None:
         return d.get("entailed")
     if rec.dimension == "coverage":
         return d.get("per_element_covered")
+    if rec.dimension == "element":
+        return d.get("elements")
     if rec.dimension == "decontextualization":
         return d.get("c_max_text")
     return None
 
 
-def agreement_table(verdicts: Iterable[EvalRecord], tiers: dict[str, list[str]]):
-    """Per-model agreement with per-unit baseline majority; returns a DataFrame.
+def _jaccard(a: list[str], b: list[str]) -> float:
+    sa = {_normalize_text(s) for s in a if isinstance(s, str)}
+    sb = {_normalize_text(s) for s in b if isinstance(s, str)}
+    if not sa and not sb:
+        return 1.0
+    return len(sa & sb) / len(sa | sb)
 
-    Rows: `model`. Columns: one dimension each, cell value is agreement
-    percentage vs. the baseline majority across units. Requires pandas.
+
+def agreement_table(
+    verdicts: Iterable[EvalRecord],
+    tiers: dict[str, list[str]],
+    *,
+    baseline_tier: str = "baseline",
+):
+    """Per-model agreement vs. the baseline-tier majority; returns a DataFrame.
+
+    The "baseline" is the majority vote among models in `tiers[baseline_tier]`
+    (design §2.3). Metrics vary by dimension:
+
+    - `invalid_sentence`, `entailment`, `invalid_claim`: Cohen's κ across units.
+    - `coverage` (list[bool]): Cohen's κ on flattened per-element labels.
+    - `element` (list[str]): mean Jaccard similarity across units.
+    - `decontextualization`: two columns — `_exact` and `_normalized` match rate.
     """
     import pandas as pd
 
     verdicts = list(verdicts)
+    baseline_models = set(tiers.get(baseline_tier, []))
+    if not baseline_models:
+        raise ValueError(f"baseline_tier {baseline_tier!r} not present in tiers: {list(tiers)}")
     all_models = sorted({m for models in tiers.values() for m in models})
 
     by_unit: dict[tuple, dict[str, object]] = defaultdict(dict)
@@ -606,30 +655,70 @@ def agreement_table(verdicts: Iterable[EvalRecord], tiers: dict[str, list[str]])
 
     baselines: dict[tuple, object] = {}
     for key, verdicts_by_model in by_unit.items():
-        bm = baseline_majority(verdicts_by_model)
+        baseline_votes = {m: v for m, v in verdicts_by_model.items() if m in baseline_models}
+        bm = baseline_majority(baseline_votes)
         if bm is not None:
             baselines[key] = bm
+
+    def _pair_lists(model: str, dim: str) -> tuple[list, list]:
+        mvals: list = []
+        bvals: list = []
+        for key, verdicts_by_model in by_unit.items():
+            if key[3] != dim or model not in verdicts_by_model or key not in baselines:
+                continue
+            mvals.append(verdicts_by_model[model])
+            bvals.append(baselines[key])
+        return mvals, bvals
 
     dims = sorted({rec.dimension for rec in verdicts})
     rows: list[dict[str, object]] = []
     for model in all_models:
         row: dict[str, object] = {"model": model}
         for dim in dims:
-            n_match = 0
-            n_total = 0
-            for key, verdicts_by_model in by_unit.items():
-                if key[3] != dim or model not in verdicts_by_model or key not in baselines:
-                    continue
-                mv = verdicts_by_model[model]
-                bv = baselines[key]
-                if dim in TEXT_DIMENSIONS:
-                    match = isinstance(mv, str) and isinstance(bv, str) and _normalize_text(mv) == _normalize_text(bv)
+            mvals, bvals = _pair_lists(model, dim)
+            n = len(mvals)
+            if dim in BOOL_DIMENSIONS:
+                row[dim] = cohens_kappa(mvals, bvals) if n else float("nan")
+            elif dim in LIST_BOOL_DIMENSIONS:
+                flat_m: list = []
+                flat_b: list = []
+                for mv, bv in zip(mvals, bvals, strict=False):
+                    if isinstance(mv, list) and isinstance(bv, list) and len(mv) == len(bv):
+                        flat_m.extend(mv)
+                        flat_b.extend(bv)
+                row[dim] = cohens_kappa(flat_m, flat_b) if flat_m else float("nan")
+            elif dim in ELEMENT_DIMENSIONS:
+                if n == 0:
+                    row[dim] = float("nan")
                 else:
-                    match = mv == bv
-                n_total += 1
-                if match:
-                    n_match += 1
-            row[dim] = (n_match / n_total) if n_total else float("nan")
+                    scores = [
+                        _jaccard(mv, bv)
+                        for mv, bv in zip(mvals, bvals, strict=False)
+                        if isinstance(mv, list) and isinstance(bv, list)
+                    ]
+                    row[dim] = (sum(scores) / len(scores)) if scores else float("nan")
+            elif dim in TEXT_DIMENSIONS:
+                if n == 0:
+                    row[f"{dim}_exact"] = float("nan")
+                    row[f"{dim}_normalized"] = float("nan")
+                else:
+                    pairs = [
+                        (mv, bv)
+                        for mv, bv in zip(mvals, bvals, strict=False)
+                        if isinstance(mv, str) and isinstance(bv, str)
+                    ]
+                    if not pairs:
+                        row[f"{dim}_exact"] = float("nan")
+                        row[f"{dim}_normalized"] = float("nan")
+                    else:
+                        exact = sum(1 for mv, bv in pairs if mv == bv) / len(pairs)
+                        normalized = sum(1 for mv, bv in pairs if _normalize_text(mv) == _normalize_text(bv)) / len(
+                            pairs
+                        )
+                        row[f"{dim}_exact"] = exact
+                        row[f"{dim}_normalized"] = normalized
+            else:
+                row[dim] = float("nan")
         rows.append(row)
 
     return pd.DataFrame(rows).set_index("model")

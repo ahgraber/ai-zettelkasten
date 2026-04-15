@@ -90,30 +90,36 @@ for uuid, recs in extraction_by_doc.items():
 
 # %%
 # Cost-guard: compute per-tier (calls × models) from the actual units.
-# invalid_sentence/element/coverage: per sentence.
+# invalid_sentence: per tokenized sentence (including sentences Selection dropped).
+# element/coverage: per sentence WITH at least one claim.
 # entailment/decontextualization/invalid_claim: per (sentence, claim).
 from collections import defaultdict  # noqa: E402
 
-per_sentence = 0
-per_sentence_claim = 0
-for recs in extraction_by_doc.values():
+from _claimify.pipeline import build_sentence_contexts  # noqa: E402
+from _claimify.structuring import split_by_headings  # noqa: E402
+
+total_sentences = 0
+sentences_with_claims = 0
+total_claims = 0
+for doc_uuid, recs in extraction_by_doc.items():
+    doc = doc_by_uuid[doc_uuid]
+    for section_idx, section in enumerate(split_by_headings(doc.markdown)):
+        total_sentences += len(build_sentence_contexts(section, section_idx, p=0, f=0))
     sentence_keys = set()
-    claim_count = 0
     for r in recs:
         if isinstance(r, ClaimRecord):
             c = r.claim
             sentence_keys.add((c.section_idx, c.sentence_idx))
-            claim_count += 1
-    per_sentence += len(sentence_keys)
-    per_sentence_claim += claim_count
+            total_claims += 1
+    sentences_with_claims += len(sentence_keys)
 
 dim_units = {
-    "invalid_sentence": per_sentence,
-    "element": per_sentence,
-    "coverage": per_sentence,
-    "entailment": per_sentence_claim,
-    "decontextualization": per_sentence_claim,
-    "invalid_claim": per_sentence_claim,
+    "invalid_sentence": total_sentences,
+    "element": sentences_with_claims,
+    "coverage": sentences_with_claims,
+    "entailment": total_claims,
+    "decontextualization": total_claims,
+    "invalid_claim": total_claims,
 }
 print(f"units per dimension: {dim_units}")
 for tier_name, model_ids in MODEL_TIERS.items():
