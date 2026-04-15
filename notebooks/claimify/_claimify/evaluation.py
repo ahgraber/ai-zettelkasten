@@ -440,6 +440,7 @@ async def evaluate_claims(
     *,
     tiers: dict[str, list[str]],
     dimensions: Iterable[str] = ALL_DIMENSIONS,
+    paths: dict[str, AdapterPath] | None = None,
     api_key: str | None = None,
     max_parallel: int = 8,
     question_for: Callable[[LoadedDoc, object], str] = default_question,
@@ -458,7 +459,7 @@ async def evaluate_claims(
     for tier_name, model_ids in tiers.items():
         logger.info("tier=%s models=%s", tier_name, model_ids)
         sem = asyncio.Semaphore(max_parallel)
-        bundles = [bundle_for(m, api_key=api_key) for m in model_ids]
+        bundles = [bundle_for(m, paths=paths, api_key=api_key) for m in model_ids]
 
         tier_tasks: list[Awaitable[list[EvalRecord]]] = []
         for (section_idx, sentence_idx), sent_claims in claims_by_sent.items():
