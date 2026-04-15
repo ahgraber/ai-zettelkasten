@@ -4,10 +4,12 @@ from validators import ValidationError as URLValidatorValidationError
 
 from aizk.utilities.url_utils import (
     clean_markdown_title,
+    extract_domain,
     extract_markdown_urls,
     extract_urls,
     fix_url_from_markdown,
     is_social_url,
+    normalize_url,
     safelink_to_url,
     strip_utm_params,
     validate_url,
@@ -613,3 +615,106 @@ class TestIsSocialUrl:
         """Test that invalid URLs raise appropriate errors."""
         with pytest.raises((PydanticValidationError, URLValidatorValidationError, ValueError)):
             is_social_url("not-a-url")
+
+
+class TestNormalizeURL:
+    """Dedupe-normalization tests; moved here from tests/conversion/unit/ so the
+    url-utils spec's declared test locations match code location.
+    """
+
+    def test_sorts_query_and_drops_fragment(self):
+        url = "https://Example.com/path?b=2&a=1#section"
+        assert normalize_url(url) == "https://example.com/path?a=1&b=2"
+
+    def test_strips_www(self):
+        assert normalize_url("https://www.example.com/path") == normalize_url("https://example.com/path")
+
+    def test_strips_www_preserves_path_query(self):
+        result = normalize_url("https://www.example.com/path?b=2&a=1")
+        assert "www" not in result
+        assert "/path" in result
+        assert "a=1" in result
+        assert result.index("a=1") < result.index("b=2")
+
+    def test_idempotent(self):
+        url = "https://www.example.com/path?utm_source=test&b=2&a=1#section"
+        once = normalize_url(url)
+        assert normalize_url(once) == once
+
+    def test_idempotent_github(self):
+        url = "https://github.com/owner/repo?utm_source=test"
+        once = normalize_url(url)
+        assert normalize_url(once) == once
+
+
+class TestNormalizeURLDeduplication:
+    """URL deduplication across www/UTM/query-order/fragment variations."""
+
+    def test_dedup_www_variants(self):
+        urls = ["https://www.example.com/path", "https://example.com/path"]
+        assert len({normalize_url(u) for u in urls}) == 1
+
+    def test_dedup_utm_params(self):
+        urls = [
+            "https://example.com/path?utm_source=email&utm_medium=newsletter",
+            "https://example.com/path",
+        ]
+        assert len({normalize_url(u) for u in urls}) == 1
+
+    def test_dedup_query_param_order(self):
+        urls = ["https://example.com/path?a=1&b=2", "https://example.com/path?b=2&a=1"]
+        assert len({normalize_url(u) for u in urls}) == 1
+
+    def test_dedup_fragment_ignored(self):
+        urls = ["https://example.com/path#section1", "https://example.com/path"]
+        assert len({normalize_url(u) for u in urls}) == 1
+
+    def test_dedup_combined_variations(self):
+        urls = [
+            "https://www.example.com/path?a=1&utm_source=test&b=2#section",
+            "https://example.com/path?b=2&a=1",
+            "https://WWW.EXAMPLE.COM/path?b=2&a=1#other",
+        ]
+        assert len({normalize_url(u) for u in urls}) == 1
+
+    def test_idempotent_deduplication(self):
+        urls = [
+            "https://www.example.com/path?utm_source=test&b=2&a=1#section",
+            "https://example.com/path?b=2&a=1",
+        ]
+        once = {normalize_url(u) for u in urls}
+        twice = {normalize_url(u) for u in once}
+        assert once == twice
+        assert len(once) == 1
+
+
+class TestExtractDomain:
+    def test_extracts_from_valid_url(self):
+        assert extract_domain("https://github.com/owner/repo") == "github.com"
+        assert extract_domain("https://www.example.com/path") == "www.example.com"
+        assert extract_domain("https://example.com:8080/path") == "example.com:8080"
+
+    def test_invalid_url_raises(self):
+        with pytest.raises(ValueError):
+            extract_domain("not a url")
+        with pytest.raises(ValueError):
+            extract_domain("")
+
+    def test_rejects_malformed_urls(self):
+        with pytest.raises((ValueError, Exception)):
+            extract_domain("https://exa mple.com/path")
+        with pytest.raises((ValueError, Exception)):
+            extract_domain("https://github.com:bad/path")
+
+
+class TestExtractURLsDedup:
+    """Dedup-specific extract_urls cases not covered by TestExtractURLs above."""
+
+    def test_balanced_parens_in_markdown_link(self):
+        urls = extract_urls("[link](https://en.wikipedia.org/wiki/Example_(term))")
+        assert "https://en.wikipedia.org/wiki/Example_(term)" in urls
+
+    def test_no_duplicates_on_overlap(self):
+        """URL appearing in both markdown and bare form is extracted once."""
+        urls = extract_urls("[link](https://example.com) https://example.com")
+        assert urls.count("https://example.com") == 1

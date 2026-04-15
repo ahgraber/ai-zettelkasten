@@ -113,6 +113,6 @@ The system SHALL validate URLs against regex pattern and Pydantic's `HttpUrl` ty
 ## Technical Notes
 
 - **Implementation:** `src/aizk/utilities/url_utils.py`
-- **Tests:** `tests/conversion/unit/test_url_utils.py`, `tests/utilities/test_url_utils.py`
+- **Tests:** `tests/utilities/test_url_utils.py`
 - **Dependencies:** `urllib.parse`, `re`, `validators`, `pydantic.HttpUrl`, `aizk.utilities.parse.check_balanced_brackets`, `aizk.utilities.process.temp_env_var`
 - **Deduplication Contract:** Two URLs normalize to the same string if and only if they represent the same logical resource (domain, path, query params) regardless of www prefix, UTM params, or fragment.
