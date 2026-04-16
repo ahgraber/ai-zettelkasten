@@ -17,7 +17,7 @@ from aizk.conversion.core.types import (
 
 class _FakeContentFetcher:
     def fetch(self, ref):  # noqa: ARG002
-        return ConversionInput(content=b"", content_type=ContentType.html)
+        return ConversionInput(content=b"", content_type=ContentType.HTML)
 
 
 class _FakeResolver:
@@ -29,11 +29,11 @@ class _FakeResolver:
 
 class _MultiFormatConverter:
     supported_formats: ClassVar[frozenset[ContentType]] = frozenset(
-        {ContentType.pdf, ContentType.html}
+        {ContentType.PDF, ContentType.HTML}
     )
     requires_gpu: ClassVar[bool] = True
 
-    def convert(self, input):  # noqa: A002, ARG002
+    def convert(self, conversion_input):  # noqa: ARG002
         return ConversionArtifacts(markdown="")
 
     def config_snapshot(self):
@@ -96,17 +96,17 @@ def test_converter_registered_for_each_supported_format():
     reg = ConverterRegistry()
     impl = _MultiFormatConverter()
     reg.register("docling", impl)
-    assert reg.resolve(ContentType.pdf, "docling") is impl
-    assert reg.resolve(ContentType.html, "docling") is impl
+    assert reg.resolve(ContentType.PDF, "docling") is impl
+    assert reg.resolve(ContentType.HTML, "docling") is impl
 
 
 def test_missing_converter_raises_typed_error():
     reg = ConverterRegistry()
     reg.register("docling", _MultiFormatConverter())
     with pytest.raises(NoConverterForFormat):
-        reg.resolve(ContentType.image, "docling")
+        reg.resolve(ContentType.IMAGE, "docling")
     with pytest.raises(NoConverterForFormat):
-        reg.resolve(ContentType.pdf, "marker")
+        reg.resolve(ContentType.PDF, "marker")
 
 
 def test_converter_with_no_supported_formats_rejected():
@@ -114,7 +114,7 @@ def test_converter_with_no_supported_formats_rejected():
         supported_formats: ClassVar[frozenset[ContentType]] = frozenset()
         requires_gpu: ClassVar[bool] = False
 
-        def convert(self, input):  # noqa: A002, ARG002
+        def convert(self, conversion_input):  # noqa: ARG002
             return ConversionArtifacts(markdown="")
 
         def config_snapshot(self):
@@ -123,3 +123,18 @@ def test_converter_with_no_supported_formats_rejected():
     reg = ConverterRegistry()
     with pytest.raises(ValueError, match="supported_formats"):
         reg.register("empty", _Empty())
+
+
+def test_converter_missing_supported_formats_attr_rejected():
+    class _NoAttr:
+        requires_gpu: ClassVar[bool] = False
+
+        def convert(self, conversion_input):  # noqa: ARG002
+            return ConversionArtifacts(markdown="")
+
+        def config_snapshot(self):
+            return {}
+
+    reg = ConverterRegistry()
+    with pytest.raises(ValueError, match="supported_formats"):
+        reg.register("no_attr", _NoAttr())

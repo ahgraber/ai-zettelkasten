@@ -48,6 +48,24 @@ class ChainNotTerminated(RuntimeError):
 
     Startup-time configuration error; not retryable. Process startup must fail
     before requests are accepted.
+
+    Attributes:
+        resolver_name: the resolver class whose declaration triggered the error.
+        missing_kind: the unregistered kind, or None when the error is a cycle.
+        cycle_path: the resolver-kind path forming the cycle, or None otherwise.
     """
 
     retryable: ClassVar[bool] = False
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        resolver_name: str | None = None,
+        missing_kind: str | None = None,
+        cycle_path: list[str] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.resolver_name = resolver_name
+        self.missing_kind = missing_kind
+        self.cycle_path = cycle_path

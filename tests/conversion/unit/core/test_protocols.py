@@ -20,10 +20,10 @@ from aizk.conversion.core.types import ContentType, ConversionArtifacts, Convers
 
 
 class _GpuConverter:
-    supported_formats: ClassVar[frozenset[ContentType]] = frozenset({ContentType.pdf})
+    supported_formats: ClassVar[frozenset[ContentType]] = frozenset({ContentType.PDF})
     requires_gpu: ClassVar[bool] = True
 
-    def convert(self, input):  # noqa: A002, ARG002
+    def convert(self, conversion_input):  # noqa: ARG002
         return ConversionArtifacts(markdown="")
 
     def config_snapshot(self):
@@ -31,10 +31,10 @@ class _GpuConverter:
 
 
 class _CpuConverter:
-    supported_formats: ClassVar[frozenset[ContentType]] = frozenset({ContentType.html})
+    supported_formats: ClassVar[frozenset[ContentType]] = frozenset({ContentType.HTML})
     requires_gpu: ClassVar[bool] = False
 
-    def convert(self, input):  # noqa: A002, ARG002
+    def convert(self, conversion_input):  # noqa: ARG002
         return ConversionArtifacts(markdown="")
 
     def config_snapshot(self):
@@ -54,8 +54,8 @@ def test_converter_requires_gpu_inspectable_on_class():
 
 
 def test_converter_supported_formats_inspectable_on_class():
-    assert _GpuConverter.supported_formats == frozenset({ContentType.pdf})
-    assert _CpuConverter.supported_formats == frozenset({ContentType.html})
+    assert _GpuConverter.supported_formats == frozenset({ContentType.PDF})
+    assert _CpuConverter.supported_formats == frozenset({ContentType.HTML})
 
 
 def test_resolver_resolves_to_inspectable_on_class():
@@ -68,8 +68,8 @@ def test_protocols_are_runtime_checkable():
     assert isinstance(_Resolver(), RefResolver)
 
 
-def test_resource_guard_is_context_manager():
-    class _Guard(ResourceGuard):
+def test_resource_guard_is_protocol():
+    class _Guard:
         def __init__(self):
             self.acquired = False
 
@@ -82,6 +82,7 @@ def test_resource_guard_is_context_manager():
             return False
 
     guard = _Guard()
+    assert isinstance(guard, ResourceGuard)
     with guard:
         assert guard.acquired is True
     assert guard.acquired is False
@@ -90,6 +91,6 @@ def test_resource_guard_is_context_manager():
 def test_content_fetcher_protocol_callable():
     class _F:
         def fetch(self, ref):  # noqa: ARG002
-            return ConversionInput(content=b"x", content_type=ContentType.html)
+            return ConversionInput(content=b"x", content_type=ContentType.HTML)
 
     assert isinstance(_F(), ContentFetcher)

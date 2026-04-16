@@ -56,10 +56,14 @@ class ConverterRegistry:
 
     def register(self, name: str, impl: object) -> None:
         """Register a converter under each format in its `supported_formats`."""
-        supported = getattr(impl, "supported_formats", frozenset())
+        if not hasattr(impl, "supported_formats"):
+            raise ValueError(
+                f"Converter {name!r} has no `supported_formats` attribute"
+            )
+        supported = impl.supported_formats  # type: ignore[union-attr]
         if not supported:
             raise ValueError(
-                f"Converter {name!r} declares no supported_formats; nothing to register"
+                f"Converter {name!r} declares an empty `supported_formats`; nothing to register"
             )
         for content_type in supported:
             self._entries[(content_type, name)] = impl

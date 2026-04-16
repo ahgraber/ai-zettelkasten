@@ -16,3 +16,15 @@ def test_content_type_has_seven_members():
         "csv",
     }
     assert len(ContentType) == 7
+
+
+def test_content_type_members_are_uppercase():
+    assert {ct.name for ct in ContentType} == {
+        "PDF",
+        "HTML",
+        "IMAGE",
+        "DOCX",
+        "PPTX",
+        "XLSX",
+        "CSV",
+    }

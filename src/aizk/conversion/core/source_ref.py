@@ -87,7 +87,7 @@ class InlineHtmlRef(BaseModel):
         }
 
 
-_SourceRefVariant = (
+SourceRefVariant = (
     KarakeepBookmarkRef
     | ArxivRef
     | GithubReadmeRef
@@ -96,10 +96,10 @@ _SourceRefVariant = (
     | InlineHtmlRef
 )
 
-SourceRef = Annotated[_SourceRefVariant, Field(discriminator="kind")]
+SourceRef = Annotated[SourceRefVariant, Field(discriminator="kind")]
 
 
-def compute_source_ref_hash(ref: _SourceRefVariant) -> str:
+def compute_source_ref_hash(ref: SourceRefVariant) -> str:
     """SHA-256 of the ref's canonical dedup payload.
 
     The payload is encoded with `sort_keys=True` and compact separators so that

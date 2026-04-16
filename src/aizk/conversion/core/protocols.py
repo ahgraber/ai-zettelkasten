@@ -6,34 +6,18 @@ Concrete adapter modules implement these in `aizk.conversion.adapters`.
 
 from __future__ import annotations
 
-from contextlib import AbstractContextManager
+from types import TracebackType
 from typing import ClassVar, Protocol, runtime_checkable
 
-from aizk.conversion.core.source_ref import (
-    ArxivRef,
-    GithubReadmeRef,
-    InlineHtmlRef,
-    KarakeepBookmarkRef,
-    SingleFileRef,
-    UrlRef,
-)
+from aizk.conversion.core.source_ref import SourceRefVariant
 from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput
-
-_AnyRef = (
-    KarakeepBookmarkRef
-    | ArxivRef
-    | GithubReadmeRef
-    | UrlRef
-    | SingleFileRef
-    | InlineHtmlRef
-)
 
 
 @runtime_checkable
 class ContentFetcher(Protocol):
     """Terminal fetcher: given a SourceRef, returns raw bytes + content type."""
 
-    def fetch(self, ref: _AnyRef) -> ConversionInput: ...
+    def fetch(self, ref: SourceRefVariant) -> ConversionInput: ...
 
 
 @runtime_checkable
@@ -46,7 +30,7 @@ class RefResolver(Protocol):
 
     resolves_to: ClassVar[frozenset[str]]
 
-    def resolve(self, ref: _AnyRef) -> _AnyRef: ...
+    def resolve(self, ref: SourceRefVariant) -> SourceRefVariant: ...
 
 
 @runtime_checkable
@@ -60,14 +44,25 @@ class Converter(Protocol):
     supported_formats: ClassVar[frozenset[ContentType]]
     requires_gpu: ClassVar[bool]
 
-    def convert(self, input: ConversionInput) -> ConversionArtifacts: ...
+    def convert(self, conversion_input: ConversionInput) -> ConversionArtifacts: ...
 
     def config_snapshot(self) -> dict[str, object]: ...
 
 
-class ResourceGuard(AbstractContextManager):
+@runtime_checkable
+class ResourceGuard(Protocol):
     """Context manager bounding access to a shared resource (e.g., GPU slots).
 
-    The acquiring thread is the sole releaser: implementations must release
-    only when the acquiring thread's `with` block unwinds.
+    The acquiring thread is the sole releaser: the guard must be held for
+    the full subprocess lifecycle and released only when the acquiring
+    thread's `with` block unwinds.
     """
+
+    def __enter__(self) -> ResourceGuard: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool | None: ...

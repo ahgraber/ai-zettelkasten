@@ -7,13 +7,13 @@ from enum import Enum
 
 
 class ContentType(str, Enum):
-    pdf = "pdf"
-    html = "html"
-    image = "image"
-    docx = "docx"
-    pptx = "pptx"
-    xlsx = "xlsx"
-    csv = "csv"
+    PDF = "pdf"
+    HTML = "html"
+    IMAGE = "image"
+    DOCX = "docx"
+    PPTX = "pptx"
+    XLSX = "xlsx"
+    CSV = "csv"
 
 
 @dataclass(frozen=True)
