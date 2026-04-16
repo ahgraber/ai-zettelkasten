@@ -122,22 +122,53 @@ def test_config_snapshot_picture_description_enabled_reflects_config():
 # Import path compatibility
 # ---------------------------------------------------------------------------
 
-def test_workers_converter_has_getattr_reexport():
-    """workers/converter.py must define __getattr__ that re-exports DoclingConverter.
+def test_docling_converter_importable_from_workers_converter_path():
+    """DoclingConverter from workers.converter must be the same class as from adapters.
 
-    A full behavioral test would require importing workers/converter.py which
-    depends on docling/httpx (not installed in the unit-test venv).  We verify
-    the re-export mechanism is present by inspecting the module source.
+    workers/converter.py requires httpx, docling, etc. which are not installed in the
+    unit-test venv.  We mock those heavy modules in sys.modules before importing,
+    then verify the re-export resolves to the canonical adapter class.
     """
-    import inspect
-    import importlib.util
+    import importlib
+    import sys
+    from types import ModuleType
+    from unittest.mock import MagicMock
 
-    spec = importlib.util.find_spec("aizk.conversion.workers.converter")
-    assert spec is not None
-    source = Path(spec.origin).read_text()
+    _heavy = [
+        "httpx", "PIL", "PIL.Image",
+        "docling", "docling.datamodel", "docling.datamodel.accelerator_options",
+        "docling.datamodel.backend_options", "docling.datamodel.base_models",
+        "docling.datamodel.document", "docling.datamodel.pipeline_options",
+        "docling.document_converter",
+        "docling_core", "docling_core.transforms", "docling_core.transforms.serializer",
+        "docling_core.transforms.serializer.base", "docling_core.transforms.serializer.common",
+        "docling_core.transforms.serializer.html", "docling_core.transforms.serializer.markdown",
+        "docling_core.types", "docling_core.types.doc", "docling_core.types.doc.base",
+        "docling_core.types.doc.document", "docling_core.types.io",
+        "aizk.utilities.mlflow_tracing",
+        "aizk.utilities",
+    ]
 
-    assert "__getattr__" in source, "workers/converter.py must define __getattr__ for re-export"
-    assert "DoclingConverter" in source, "workers/converter.py must re-export DoclingConverter"
-    assert "adapters.converters.docling" in source, (
-        "workers/converter.py __getattr__ must import from adapters.converters.docling"
-    )
+    # Stash any previously imported workers.converter so we can restore it.
+    _prev = sys.modules.pop("aizk.conversion.workers.converter", None)
+    _mocks: dict[str, object] = {}
+    try:
+        for mod_name in _heavy:
+            if mod_name not in sys.modules:
+                _mocks[mod_name] = sys.modules.setdefault(mod_name, MagicMock())
+
+        workers_converter = importlib.import_module("aizk.conversion.workers.converter")
+        ReExported = workers_converter.DoclingConverter  # type: ignore[attr-defined]
+        # Object identity (`is`) is not checked here: the test's sys.modules surgery
+        # means workers.converter and the test module may hold different module
+        # instances of the adapter.  The behaviorally meaningful check is that
+        # the re-exported name resolves to the correct class from the correct module.
+        assert ReExported.__name__ == "DoclingConverter"
+        assert ReExported.__module__ == "aizk.conversion.adapters.converters.docling"
+    finally:
+        # Restore original state — remove our mock entries, put back original module.
+        for mod_name in _mocks:
+            sys.modules.pop(mod_name, None)
+        sys.modules.pop("aizk.conversion.workers.converter", None)
+        if _prev is not None:
+            sys.modules["aizk.conversion.workers.converter"] = _prev

@@ -28,13 +28,14 @@ class DoclingConverter:
         self._config = config
 
     def convert(self, conversion_input: ConversionInput) -> ConversionArtifacts:
-        # Lazy import avoids a circular dependency: workers.converter will re-export
-        # this class, so importing it at module level would create a cycle.
+        # Kept lazy to avoid loading the heavy docling/httpx stack when only
+        # the class-level attributes (supported_formats, requires_gpu) are inspected.
         from aizk.conversion.workers.converter import convert_html, convert_pdf
 
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace = Path(tmpdir)
-            source_url: str | None = str(conversion_input.metadata.get("source_url") or "") or None
+            _raw_url = conversion_input.metadata.get("source_url")
+            source_url: str | None = str(_raw_url) if isinstance(_raw_url, str) and _raw_url else None
 
             if conversion_input.content_type is ContentType.PDF:
                 markdown, figure_paths = convert_pdf(

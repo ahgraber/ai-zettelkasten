@@ -206,21 +206,30 @@ def test_depth_cap_not_exceeded_for_valid_chain():
 # ---------------------------------------------------------------------------
 
 def test_orchestrator_has_no_adapter_imports():
-    """orchestrator.py must not import anything from aizk.conversion.adapters or wiring."""
-    import aizk.conversion.core.orchestrator as mod
+    """orchestrator.py must not transitively import adapters or wiring modules.
 
-    for name, submod in list(sys.modules.items()):
-        if name.startswith("aizk.conversion.adapters") or name.startswith("aizk.conversion.wiring"):
-            # If the module was imported as a side-effect of importing orchestrator, fail.
-            # We check the orchestrator module's own __spec__ / loader rather than sys.modules
-            # because other tests may have loaded adapters independently.
-            pass  # checked below via module source inspection
+    We purge any previously-cached adapter/wiring entries from sys.modules, then
+    reload the orchestrator module in isolation and assert that none of those
+    namespaces appear in sys.modules afterwards.
+    """
+    import importlib
+    import importlib.util
 
-    # Check at the source level: no 'adapters' or 'wiring' import strings in the module file.
-    import inspect
-    source = inspect.getsource(mod)
-    assert "adapters" not in source, "orchestrator.py must not reference adapters"
-    assert "aizk.conversion.wiring" not in source, "orchestrator.py must not reference wiring"
+    # Remove any previously loaded adapter/wiring modules so the check is clean.
+    _forbidden_prefixes = ("aizk.conversion.adapters", "aizk.conversion.wiring")
+    _cached = [k for k in list(sys.modules) if any(k.startswith(p) for p in _forbidden_prefixes)]
+    for key in _cached:
+        del sys.modules[key]
+
+    # Also evict the orchestrator itself so the import runs fresh.
+    sys.modules.pop("aizk.conversion.core.orchestrator", None)
+
+    importlib.import_module("aizk.conversion.core.orchestrator")
+
+    loaded = [k for k in sys.modules if any(k.startswith(p) for p in _forbidden_prefixes)]
+    assert loaded == [], (
+        f"orchestrator.py transitively imported forbidden modules: {loaded}"
+    )
 
 
 # ---------------------------------------------------------------------------
