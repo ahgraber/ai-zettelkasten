@@ -29,12 +29,12 @@
 
 ## PR 3 — Docling adapter extraction (move + re-export, non-breaking)
 
-- [ ] Create `aizk/conversion/adapters/__init__.py` and `aizk/conversion/adapters/converters/__init__.py`
-- [ ] Create `aizk/conversion/adapters/converters/docling.py`: extract `DoclingConverter` from existing `converter.py`; implement `Converter` protocol with `supported_formats = frozenset({ContentType.PDF, ContentType.HTML})` and `requires_gpu = True`; supply `config_snapshot()` returning same output-affecting fields as today
-- [ ] Add re-export from old `converter.py` module path to avoid breaking internal imports
-- [ ] Tests: `DoclingConverter.supported_formats` contains `PDF` and `HTML`; `DoclingConverter.requires_gpu == True`
-- [ ] Tests: `DoclingConverter.config_snapshot()` returns the same field set as today's Docling-specific config hash
-- [ ] Tests: existing converter tests continue to pass (import path compatibility)
+- [x] Create `aizk/conversion/adapters/__init__.py` and `aizk/conversion/adapters/converters/__init__.py`
+- [x] Create `aizk/conversion/adapters/converters/docling.py`: extract `DoclingConverter` from existing `converter.py`; implement `Converter` protocol with `supported_formats = frozenset({ContentType.PDF, ContentType.HTML})` and `requires_gpu = True`; supply `config_snapshot()` returning same output-affecting fields as today
+- [x] Add re-export from old `converter.py` module path to avoid breaking internal imports
+- [x] Tests: `DoclingConverter.supported_formats` contains `PDF` and `HTML`; `DoclingConverter.requires_gpu == True`
+- [x] Tests: `DoclingConverter.config_snapshot()` returns the same field set as today's Docling-specific config hash
+- [x] Tests: existing converter tests continue to pass (import path compatibility)
 
 ## PR 4 — Fetcher adapter extraction (move + re-export, non-breaking)
 

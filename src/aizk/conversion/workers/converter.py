@@ -1,4 +1,9 @@
-"""Docling conversion utilities for HTML and PDF content."""
+"""Docling conversion utilities for HTML and PDF content.
+
+``DoclingConverter`` (the protocol-compliant class adapter) lives in
+``aizk.conversion.adapters.converters.docling`` and is re-exported here
+so callers can continue to import it from this module path.
+"""
 
 from __future__ import annotations
 
@@ -524,3 +529,16 @@ def convert_pdf(
     else:
         figures = _extract_figures(doc, figure_dir(temp_dir))
         return markdown, figures
+
+
+# ---------------------------------------------------------------------------
+# Re-export: DoclingConverter (canonical path: adapters.converters.docling)
+# ---------------------------------------------------------------------------
+
+
+def __getattr__(name: str) -> object:
+    if name == "DoclingConverter":
+        from aizk.conversion.adapters.converters.docling import DoclingConverter
+
+        return DoclingConverter
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
