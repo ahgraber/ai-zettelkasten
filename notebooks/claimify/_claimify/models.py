@@ -122,6 +122,55 @@ class InvalidClaimsResult(BaseModel):
     per_claim_invalid: list[bool]
 
 
+ExtractionPhase = Literal[
+    "contextualize",
+    "selection",
+    "disambiguation",
+    "decomposition",
+]
+EvaluationPhase = Literal[
+    "invalid_sentence",
+    "element",
+    "coverage",
+    "entailment",
+    "decontextualization",
+    "invalid_claim",
+]
+
+
+class UsageSample(BaseModel):
+    """Per-LLM-call usage accounting.
+
+    Token fields come from `pydantic_ai.usage.RunUsage`; `cost_usd` is pulled
+    from the final `ModelResponse.provider_details` when OpenRouter is asked
+    to include usage (`extra_body={"usage": {"include": True}}`).
+    """
+
+    model: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    cost_usd: float | None = None
+    requests: int = 1
+
+    @classmethod
+    def zero(cls, model: str = "stub") -> UsageSample:
+        """Empty sample for tests and stub runners."""
+        return cls(model=model)
+
+
+class UsageRecord(BaseModel):
+    kind: Literal["usage"] = "usage"
+    doc_uuid: UUID
+    section_idx: int
+    sentence_idx: int | None
+    claim_idx: int | None
+    phase: ExtractionPhase
+    usage: UsageSample
+
+
 class ClaimRecord(BaseModel):
     kind: Literal["claim"] = "claim"
     claim: ExtractedClaim
@@ -138,7 +187,7 @@ class FailedRecord(BaseModel):
 
 
 ExtractionRecord = Annotated[
-    ClaimRecord | SkippedRecord | FailedRecord,
+    ClaimRecord | SkippedRecord | FailedRecord | UsageRecord,
     Field(discriminator="kind"),
 ]
 
@@ -153,3 +202,4 @@ class EvalRecord(BaseModel):
     model: str
     result_json: dict
     raw: str | None
+    usage: UsageSample | None = None

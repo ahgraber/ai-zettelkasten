@@ -13,7 +13,8 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 from pydantic_ai.providers.openrouter import OpenRouterProvider
 
-from _claimify.models import LoadedDoc, Section
+from _claimify.models import LoadedDoc, Section, UsageSample
+from _claimify.usage import extract_usage
 
 CONTEXTUALIZE_SYSTEM_TEMPLATE = (
     "You situate a chunk within the full document for retrieval.\n<document>\n{full_markdown}\n</document>"
@@ -35,6 +36,14 @@ def _is_anthropic_model(model: str) -> bool:
     return model.startswith("anthropic/") or model.startswith("claude")
 
 
+def _extra_body_for(model: str) -> dict:
+    """extra_body combining OpenRouter usage reporting with Anthropic cache_control."""
+    body: dict = {"usage": {"include": True}}
+    if _is_anthropic_model(model):
+        body["cache_control"] = {"type": "ephemeral"}
+    return body
+
+
 def make_context_agent(model: str, *, api_key: str | None = None) -> Agent[str, SectionContext]:
     """Build a contextualizer agent wired to OpenRouter.
 
@@ -44,17 +53,15 @@ def make_context_agent(model: str, *, api_key: str | None = None) -> Agent[str, 
     """
     provider = OpenRouterProvider(api_key=api_key)
     llm = OpenAIChatModel(model, provider=provider)
-    settings = (
-        OpenAIChatModelSettings(extra_body={"cache_control": {"type": "ephemeral"}})
-        if _is_anthropic_model(model)
-        else None
-    )
+    settings = OpenAIChatModelSettings(extra_body=_extra_body_for(model))
     agent: Agent[str, SectionContext] = Agent(
         llm,
         output_type=SectionContext,
         deps_type=str,
         model_settings=settings,
     )
+    # Carry the model id for downstream usage extraction (agents don't expose it).
+    agent._claimify_model = model  # type: ignore[attr-defined]
 
     @agent.system_prompt
     def _render_system(ctx: RunContext[str]) -> str:
@@ -67,8 +74,9 @@ async def contextualize_section(
     agent: Agent[str, SectionContext],
     doc: LoadedDoc,
     section: Section,
-) -> str:
-    """Return a short situating context string for `section` within `doc`."""
+) -> tuple[str, UsageSample]:
+    """Return the situating context string plus per-call usage."""
     user = CONTEXTUALIZE_USER_TEMPLATE.format(chunk=section.content)
     result = await agent.run(user, deps=doc.markdown)
-    return result.output.context
+    model = getattr(agent, "_claimify_model", "unknown")
+    return result.output.context, extract_usage(result, model=model)

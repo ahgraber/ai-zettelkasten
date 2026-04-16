@@ -440,23 +440,27 @@ def test_evaluate_claims_with_stubbed_bundle(tmp_path, monkeypatch):
         )
     )
 
+    from _claimify.models import UsageSample as _US
+
+    _U = _US.zero("stub/model")
+
     async def _inv_sent(q, e, s):
-        return InvalidSentenceVerdict(is_invalid=False, reasoning="")
+        return InvalidSentenceVerdict(is_invalid=False, reasoning=""), _U
 
     async def _elem(q, e, s):
-        return ElementResult(elements=["Alpha is a thing -> contains verifiable information"])
+        return ElementResult(elements=["Alpha is a thing -> contains verifiable information"]), _U
 
     async def _cov(q, e, claims, elements):
-        return CoverageResult(per_element_covered=[True])
+        return CoverageResult(per_element_covered=[True]), _U
 
     async def _ent(q, e, s, c):
-        return EntailmentResult(entailed=True, reasoning="")
+        return EntailmentResult(entailed=True, reasoning=""), _U
 
     async def _dec(q, e, s, all_c, c):
-        return DecontextResult(c_max_text=c, reasoning="")
+        return DecontextResult(c_max_text=c, reasoning=""), _U
 
     async def _inv_claim(c):
-        return InvalidClaimVerdict(is_invalid=False, reasoning="")
+        return InvalidClaimVerdict(is_invalid=False, reasoning=""), _U
 
     stub_bundle = ev.EvalAgentBundle(
         model="stub/model",
@@ -480,6 +484,7 @@ def test_evaluate_claims_with_stubbed_bundle(tmp_path, monkeypatch):
     loaded = claimify_io.read_evaluation_jsonl(doc_uuid)
     dims = {r.dimension for r in loaded}
     assert dims == set(ev.ALL_DIMENSIONS)
+    assert all(r.usage is not None and r.usage.model == "stub/model" for r in loaded)
     assert path == tmp_path / f"{doc_uuid}.jsonl"
 
 
@@ -536,25 +541,29 @@ def test_evaluate_claims_runs_invalid_sentence_on_zero_claim_sentences(tmp_path,
     invalid_sentence_targets: list[str] = []
     element_targets: list[str] = []
 
+    from _claimify.models import UsageSample as _US
+
+    _U = _US.zero("stub/model")
+
     async def _inv_sent(q, e, s):
         invalid_sentence_targets.append(s)
-        return InvalidSentenceVerdict(is_invalid=False, reasoning="")
+        return InvalidSentenceVerdict(is_invalid=False, reasoning=""), _U
 
     async def _elem(q, e, s):
         element_targets.append(s)
-        return ElementResult(elements=["Beta is a thing -> contains verifiable information"])
+        return ElementResult(elements=["Beta is a thing -> contains verifiable information"]), _U
 
     async def _cov(q, e, claims, elements):
-        return CoverageResult(per_element_covered=[True])
+        return CoverageResult(per_element_covered=[True]), _U
 
     async def _ent(q, e, s, c):
-        return EntailmentResult(entailed=True, reasoning="")
+        return EntailmentResult(entailed=True, reasoning=""), _U
 
     async def _dec(q, e, s, all_c, c):
-        return DecontextResult(c_max_text=c, reasoning="")
+        return DecontextResult(c_max_text=c, reasoning=""), _U
 
     async def _inv_claim(c):
-        return InvalidClaimVerdict(is_invalid=False, reasoning="")
+        return InvalidClaimVerdict(is_invalid=False, reasoning=""), _U
 
     stub_bundle = ev.EvalAgentBundle(
         model="stub/model",

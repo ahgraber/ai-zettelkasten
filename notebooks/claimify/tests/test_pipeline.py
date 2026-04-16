@@ -20,9 +20,13 @@ from _claimify.models import (
     Section,
     SelectionResult,
     SentenceContext,
+    UsageRecord,
+    UsageSample,
 )
 from _claimify.pipeline import build_sentence_contexts, extract_claims
 import pytest
+
+_U = UsageSample.zero("stub")
 
 
 @pytest.fixture(autouse=True)
@@ -45,7 +49,7 @@ class _StubContextAgent:
 
 
 async def _fake_contextualize_section(agent, doc, section):
-    return f"ctx-for-{'.'.join(section.heading_path) or 'lead'}"
+    return f"ctx-for-{'.'.join(section.heading_path) or 'lead'}", _U
 
 
 def _doc(md: str) -> LoadedDoc:
@@ -64,14 +68,14 @@ def _make_runners(
     disambig: DisambigResult,
     decomposition: DecompositionResult,
 ):
-    async def selection_runner(ctx: SentenceContext, question: str) -> SelectionResult:
-        return selection
+    async def selection_runner(ctx: SentenceContext, question: str):
+        return selection, _U
 
-    async def disambig_runner(ctx: SentenceContext, question: str) -> DisambigResult:
-        return disambig
+    async def disambig_runner(ctx: SentenceContext, question: str):
+        return disambig, _U
 
-    async def decomp_runner(ctx: SentenceContext, question: str) -> DecompositionResult:
-        return decomposition
+    async def decomp_runner(ctx: SentenceContext, question: str):
+        return decomposition, _U
 
     return selection_runner, disambig_runner, decomp_runner
 
@@ -116,9 +120,14 @@ def test_extract_claims_full_path_produces_claim_records(monkeypatch):
             f=1,
         )
     )
-    assert all(isinstance(r, ClaimRecord) for r in records)
-    assert len(records) == 2  # two sentences, one claim each
-    claim_rec = cast(ClaimRecord, records[0])
+    claim_records = [r for r in records if isinstance(r, ClaimRecord)]
+    usage_records = [r for r in records if isinstance(r, UsageRecord)]
+    assert len(claim_records) == 2  # two sentences, one claim each
+    # 1 contextualize + 3 stages per sentence × 2 sentences = 7 usage records
+    assert len(usage_records) == 7
+    phases = {u.phase for u in usage_records}
+    assert phases == {"contextualize", "selection", "disambiguation", "decomposition"}
+    claim_rec = claim_records[0]
     assert claim_rec.claim.heading_path == ["Top"]
     assert claim_rec.claim.context_str.startswith("ctx-for-Top")
     # The final form handed to decomposition (and persisted) is the
@@ -135,17 +144,23 @@ def test_extract_claims_chains_rewritten_and_decontextualized_sentences(monkeypa
 
     async def sel_r(ctx, question):
         seen["selection"] = ctx.sentence
-        return SelectionResult(contains_proposition=True, rewritten_sentence="Alpha rewritten.", reasoning="")
+        return SelectionResult(contains_proposition=True, rewritten_sentence="Alpha rewritten.", reasoning=""), _U
 
     async def dis_r(ctx, question):
         seen["disambiguation"] = ctx.sentence
-        return DisambigResult(
-            can_be_disambiguated=True, decontextualized_sentence="Alpha decontextualized.", reasoning=""
+        return (
+            DisambigResult(
+                can_be_disambiguated=True, decontextualized_sentence="Alpha decontextualized.", reasoning=""
+            ),
+            _U,
         )
 
     async def dec_r(ctx, question):
         seen["decomposition"] = ctx.sentence
-        return DecompositionResult(claims=[AtomicClaim(proposition="Alpha is a thing.", essential_context=None)])
+        return (
+            DecompositionResult(claims=[AtomicClaim(proposition="Alpha is a thing.", essential_context=None)]),
+            _U,
+        )
 
     asyncio.run(
         extract_claims(
@@ -176,7 +191,7 @@ def test_extract_claims_question_receives_context_str(monkeypatch):
 
     async def sel_r(ctx, question):
         captured["question"] = question
-        return SelectionResult(contains_proposition=False, rewritten_sentence=None, reasoning="")
+        return SelectionResult(contains_proposition=False, rewritten_sentence=None, reasoning=""), _U
 
     async def _boom(ctx, question):
         raise AssertionError("should not run")
@@ -224,7 +239,11 @@ def test_extract_claims_skips_when_selection_false(monkeypatch):
             f=1,
         )
     )
-    assert records == []
+    # Selection returned contains_proposition=False — no ClaimRecord/FailedRecord,
+    # but contextualize + selection usage are still captured.
+    assert [r for r in records if isinstance(r, (ClaimRecord, FailedRecord))] == []
+    usage_phases = [r.phase for r in records if isinstance(r, UsageRecord)]
+    assert usage_phases == ["contextualize", "selection"]
 
 
 def test_extract_claims_emits_failed_record_on_stage_exception(monkeypatch):
@@ -232,7 +251,7 @@ def test_extract_claims_emits_failed_record_on_stage_exception(monkeypatch):
     doc = _doc("# Top\nAlpha sentence.\n")
 
     async def sel_r(ctx, question):
-        return SelectionResult(contains_proposition=True, rewritten_sentence="a", reasoning="")
+        return SelectionResult(contains_proposition=True, rewritten_sentence="a", reasoning=""), _U
 
     async def dis_r(ctx, question):
         raise RuntimeError("boom")
@@ -251,11 +270,10 @@ def test_extract_claims_emits_failed_record_on_stage_exception(monkeypatch):
             f=1,
         )
     )
-    assert len(records) == 1
-    failed = cast(FailedRecord, records[0])
-    assert isinstance(failed, FailedRecord)
-    assert failed.failure.stage == "disambiguation"
-    assert "boom" in failed.failure.error
+    failed = [r for r in records if isinstance(r, FailedRecord)]
+    assert len(failed) == 1
+    assert failed[0].failure.stage == "disambiguation"
+    assert "boom" in failed[0].failure.error
 
 
 def test_extraction_jsonl_roundtrip(tmp_path, monkeypatch):

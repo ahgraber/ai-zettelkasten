@@ -26,7 +26,7 @@ from _claimify.io import (
     read_extraction_jsonl,
     write_extraction_jsonl,
 )
-from _claimify.models import ClaimRecord, FailedRecord
+from _claimify.models import ClaimRecord, FailedRecord, UsageRecord
 from _claimify.pipeline import (
     extract_claims,
     extraction_question,
@@ -35,6 +35,7 @@ from _claimify.pipeline import (
     make_selection_runner,
 )
 from _claimify.structuring import split_by_headings
+from _claimify.usage import summarize
 from dotenv import load_dotenv
 import nest_asyncio
 from setproctitle import setproctitle
@@ -101,8 +102,12 @@ async def _probe_context(doc) -> None:
     sections = split_by_headings(doc.markdown)
     print(f"probe doc={doc.title!r} sections={len(sections)}")
     for idx, section in enumerate(sections[:3]):
-        ctx = await contextualize_section(context_agent, doc, section)
-        print(f"  [{idx}] path={'/'.join(section.heading_path) or '<lead>'}: {ctx[:100]!r}")
+        ctx, usage = await contextualize_section(context_agent, doc, section)
+        cost = f"${usage.cost_usd:.4f}" if usage.cost_usd is not None else "n/a"
+        print(
+            f"  [{idx}] path={'/'.join(section.heading_path) or '<lead>'}: {ctx[:80]!r}  "
+            f"(tokens={usage.total_tokens} cache_read={usage.cache_read_tokens} cost={cost})"
+        )
 
 
 if RUN_CONTEXT_PROBE:
@@ -194,5 +199,40 @@ for title, records in by_doc.items():
         if isinstance(r, FailedRecord):
             f = r.failure
             print(f"FAIL [{title[:40]}] section={f.section_idx} sent={f.sentence_idx} stage={f.stage}: {f.error}")
+
+# %%
+# Usage accounting: total / mean / median per phase and overall.
+# Reads UsageRecord lines written alongside ClaimRecord/FailedRecord in each
+# doc's extraction JSONL. Cost figures show only when OpenRouter returned them.
+usage_by_phase: dict[str, list] = {}
+for records in by_doc.values():
+    for r in records:
+        if isinstance(r, UsageRecord):
+            usage_by_phase.setdefault(r.phase, []).append(r.usage)
+
+if usage_by_phase:
+    phase_order = ["contextualize", "selection", "disambiguation", "decomposition"]
+    print(f"{'phase':<16s} {'calls':>6s} {'tot_tok':>10s} {'mean_tok':>10s} {'med_tok':>10s} {'cost_usd':>10s}")
+    all_samples = []
+    for phase in phase_order:
+        samples = usage_by_phase.get(phase, [])
+        if not samples:
+            continue
+        s = summarize(samples)
+        all_samples.extend(samples)
+        cost = f"${s['total_cost_usd']:.4f}" if s["total_cost_usd"] is not None else "n/a"
+        print(
+            f"{phase:<16s} {s['calls']:>6d} {s['total_tokens']:>10d} "
+            f"{s['mean_total_tokens']:>10.1f} {s['median_total_tokens']:>10.1f} {cost:>10s}"
+        )
+    overall = summarize(all_samples)
+    overall_cost = f"${overall['total_cost_usd']:.4f}" if overall["total_cost_usd"] is not None else "n/a"
+    print(
+        f"{'OVERALL':<16s} {overall['calls']:>6d} {overall['total_tokens']:>10d} "
+        f"{overall['mean_total_tokens']:>10.1f} {overall['median_total_tokens']:>10.1f} {overall_cost:>10s}"
+    )
+    print(f"cache tokens: read={overall['total_cache_read_tokens']} write={overall['total_cache_write_tokens']}")
+else:
+    print("No UsageRecords found — re-run extraction after enabling RUN_FULL.")
 
 # %%

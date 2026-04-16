@@ -31,6 +31,7 @@ from _claimify.io import (
     read_extraction_jsonl,
 )
 from _claimify.models import ClaimRecord
+from _claimify.usage import summarize
 from dotenv import load_dotenv
 import nest_asyncio
 from setproctitle import setproctitle
@@ -183,3 +184,46 @@ if by_key:
     print(f"spot-check key section={key[0]} sentence={key[1]} claim={key[2]}")
     for rec in sorted(by_key[key], key=lambda r: (r.dimension, r.model)):
         print(f"  [{rec.dimension}] {rec.model}: {rec.result_json}")
+
+# %%
+# Usage accounting per dimension (phase) and per model, plus overall evaluation.
+# Each EvalRecord carries its own UsageSample for the LLM call that produced it.
+usage_by_dim: dict[str, list] = {}
+usage_by_model: dict[str, list] = {}
+all_usage = []
+for rec in all_verdicts:
+    if rec.usage is None:
+        continue
+    all_usage.append(rec.usage)
+    usage_by_dim.setdefault(rec.dimension, []).append(rec.usage)
+    usage_by_model.setdefault(rec.model, []).append(rec.usage)
+
+if all_usage:
+    header = f"{'phase':<22s} {'calls':>6s} {'tot_tok':>10s} {'mean_tok':>10s} {'med_tok':>10s} {'cost_usd':>10s}"
+    print("By dimension:")
+    print(header)
+    for dim in sorted(usage_by_dim):
+        s = summarize(usage_by_dim[dim])
+        cost = f"${s['total_cost_usd']:.4f}" if s["total_cost_usd"] is not None else "n/a"
+        print(
+            f"{dim:<22s} {s['calls']:>6d} {s['total_tokens']:>10d} "
+            f"{s['mean_total_tokens']:>10.1f} {s['median_total_tokens']:>10.1f} {cost:>10s}"
+        )
+    overall = summarize(all_usage)
+    overall_cost = f"${overall['total_cost_usd']:.4f}" if overall["total_cost_usd"] is not None else "n/a"
+    print(
+        f"{'OVERALL':<22s} {overall['calls']:>6d} {overall['total_tokens']:>10d} "
+        f"{overall['mean_total_tokens']:>10.1f} {overall['median_total_tokens']:>10.1f} {overall_cost:>10s}"
+    )
+
+    print("\nBy model:")
+    print(header.replace("phase", "model"))
+    for m in sorted(usage_by_model):
+        s = summarize(usage_by_model[m])
+        cost = f"${s['total_cost_usd']:.4f}" if s["total_cost_usd"] is not None else "n/a"
+        print(
+            f"{m[:22]:<22s} {s['calls']:>6d} {s['total_tokens']:>10d} "
+            f"{s['mean_total_tokens']:>10.1f} {s['median_total_tokens']:>10.1f} {cost:>10s}"
+        )
+else:
+    print("No usage data on EvalRecords — re-run evaluation with the updated pipeline.")

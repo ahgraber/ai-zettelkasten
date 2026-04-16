@@ -47,9 +47,11 @@ from _claimify.models import (
     InvalidClaimVerdict,
     InvalidSentenceVerdict,
     LoadedDoc,
+    UsageSample,
 )
 from _claimify.pipeline import build_sentence_contexts, default_question
 from _claimify.structuring import split_by_headings
+from _claimify.usage import extract_usage
 from aizk.ai.claimify.prompts.evaluation import (
     coverage as coverage_prompts,
     decontextualization as decontext_prompts,
@@ -72,16 +74,24 @@ ALL_DIMENSIONS: tuple[str, ...] = (
 
 AdapterPath = Literal["prose", "structured"]
 
-InvalidSentenceRunner = Callable[[str, str, str], Awaitable[InvalidSentenceVerdict]]
-ElementRunner = Callable[[str, str, str], Awaitable[ElementResult]]
-CoverageRunner = Callable[[str, str, dict[int, str], dict[int, str]], Awaitable[CoverageResult]]
-EntailmentRunner = Callable[[str, str, str, str], Awaitable[EntailmentResult]]
-DecontextRunner = Callable[[str, str, str, list[str], str], Awaitable[DecontextResult]]
-InvalidClaimRunner = Callable[[str], Awaitable[InvalidClaimVerdict]]
+InvalidSentenceRunner = Callable[[str, str, str], Awaitable[tuple[InvalidSentenceVerdict, UsageSample]]]
+ElementRunner = Callable[[str, str, str], Awaitable[tuple[ElementResult, UsageSample]]]
+CoverageRunner = Callable[[str, str, dict[int, str], dict[int, str]], Awaitable[tuple[CoverageResult, UsageSample]]]
+EntailmentRunner = Callable[[str, str, str, str], Awaitable[tuple[EntailmentResult, UsageSample]]]
+DecontextRunner = Callable[[str, str, str, list[str], str], Awaitable[tuple[DecontextResult, UsageSample]]]
+InvalidClaimRunner = Callable[[str], Awaitable[tuple[InvalidClaimVerdict, UsageSample]]]
 
 
 def _is_anthropic(model: str) -> bool:
     return model.startswith("anthropic/") or model.startswith("claude")
+
+
+def _settings_for(model: str) -> OpenAIChatModelSettings:
+    """Compose model settings with OpenRouter usage reporting + Anthropic cache_control."""
+    body: dict = {"usage": {"include": True}}
+    if _is_anthropic(model):
+        body["cache_control"] = {"type": "ephemeral"}
+    return OpenAIChatModelSettings(extra_body=body)
 
 
 def _build_agent(
@@ -93,9 +103,7 @@ def _build_agent(
     path: AdapterPath,
 ) -> Agent:
     chat = OpenAIChatModel(model, provider=OpenRouterProvider(api_key=api_key))
-    settings = (
-        OpenAIChatModelSettings(extra_body={"cache_control": {"type": "ephemeral"}}) if _is_anthropic(model) else None
-    )
+    settings = _settings_for(model)
     if path == "prose":
         return Agent(chat, output_type=str, system_prompt=system_prompt, model_settings=settings)
     return Agent(
@@ -131,7 +139,7 @@ def make_invalid_sentence_agent(
         path=path,
     )
 
-    async def run(question: str, excerpt: str, sentence: str) -> InvalidSentenceVerdict:
+    async def run(question: str, excerpt: str, sentence: str) -> tuple[InvalidSentenceVerdict, UsageSample]:
         user = render_template(
             invalid_sentences_prompts.USER_TEMPLATE,
             question=question,
@@ -139,9 +147,10 @@ def make_invalid_sentence_agent(
             sentence=sentence,
         )
         result = await agent.run(user)
+        sample = extract_usage(result, model=model)
         if path == "prose":
-            return parse_invalid_sentence(result.output)
-        return result.output
+            return parse_invalid_sentence(result.output), sample
+        return result.output, sample
 
     return run
 
@@ -158,7 +167,7 @@ def make_element_agent(model: str, *, path: AdapterPath = "prose", api_key: str 
         path=path,
     )
 
-    async def run(question: str, excerpt: str, sentence: str) -> ElementResult:
+    async def run(question: str, excerpt: str, sentence: str) -> tuple[ElementResult, UsageSample]:
         user = render_template(
             element_prompts.USER_TEMPLATE,
             question=question,
@@ -166,9 +175,10 @@ def make_element_agent(model: str, *, path: AdapterPath = "prose", api_key: str 
             sentence=sentence,
         )
         result = await agent.run(user)
+        sample = extract_usage(result, model=model)
         if path == "prose":
-            return parse_element(result.output)
-        return result.output
+            return parse_element(result.output), sample
+        return result.output, sample
 
     return run
 
@@ -190,7 +200,7 @@ def make_coverage_agent(model: str, *, path: AdapterPath = "prose", api_key: str
         excerpt: str,
         claims: dict[int, str],
         elements: dict[int, str],
-    ) -> CoverageResult:
+    ) -> tuple[CoverageResult, UsageSample]:
         user = render_template(
             coverage_prompts.USER_TEMPLATE,
             question=question,
@@ -199,9 +209,10 @@ def make_coverage_agent(model: str, *, path: AdapterPath = "prose", api_key: str
             elements=_format_indexed_dict(elements),
         )
         result = await agent.run(user)
+        sample = extract_usage(result, model=model)
         if path == "prose":
-            return parse_coverage(result.output, n_elements=len(elements))
-        return result.output
+            return parse_coverage(result.output, n_elements=len(elements)), sample
+        return result.output, sample
 
     return run
 
@@ -218,7 +229,7 @@ def make_entailment_agent(model: str, *, path: AdapterPath = "prose", api_key: s
         path=path,
     )
 
-    async def run(question: str, excerpt: str, sentence: str, claim: str) -> EntailmentResult:
+    async def run(question: str, excerpt: str, sentence: str, claim: str) -> tuple[EntailmentResult, UsageSample]:
         user = render_template(
             entailment_prompts.USER_TEMPLATE,
             question=question,
@@ -227,9 +238,10 @@ def make_entailment_agent(model: str, *, path: AdapterPath = "prose", api_key: s
             claim=claim,
         )
         result = await agent.run(user)
+        sample = extract_usage(result, model=model)
         if path == "prose":
-            return parse_entailment(result.output)
-        return result.output
+            return parse_entailment(result.output), sample
+        return result.output, sample
 
     return run
 
@@ -254,7 +266,7 @@ def make_decontextualization_agent(
         sentence: str,
         all_claims: list[str],
         claim: str,
-    ) -> DecontextResult:
+    ) -> tuple[DecontextResult, UsageSample]:
         user = render_template(
             decontext_prompts.USER_TEMPLATE,
             question=question,
@@ -264,9 +276,10 @@ def make_decontextualization_agent(
             claim=claim,
         )
         result = await agent.run(user)
+        sample = extract_usage(result, model=model)
         if path == "prose":
-            return parse_decontextualization(result.output, claim=claim)
-        return result.output
+            return parse_decontextualization(result.output, claim=claim), sample
+        return result.output, sample
 
     return run
 
@@ -285,12 +298,13 @@ def make_invalid_claim_agent(
         path=path,
     )
 
-    async def run(claim: str) -> InvalidClaimVerdict:
+    async def run(claim: str) -> tuple[InvalidClaimVerdict, UsageSample]:
         user = render_template(invalid_claims_prompts.USER_TEMPLATE, claim=claim)
         result = await agent.run(user)
+        sample = extract_usage(result, model=model)
         if path == "prose":
-            return parse_invalid_claim(result.output)
-        return result.output
+            return parse_invalid_claim(result.output), sample
+        return result.output, sample
 
     return run
 
@@ -367,7 +381,7 @@ async def _evaluate_sentence(
     records: list[EvalRecord] = []
     all_claim_texts = [cr.claim.claim.proposition for cr in claim_records]
 
-    def emit(dimension: str, claim_idx: int | None, result: BaseModel) -> None:
+    def emit(dimension: str, claim_idx: int | None, result: BaseModel, usage: UsageSample) -> None:
         records.append(
             EvalRecord(
                 doc_uuid=doc.aizk_uuid,
@@ -378,6 +392,7 @@ async def _evaluate_sentence(
                 model=bundle.model,
                 result_json=result.model_dump(),
                 raw=None,
+                usage=usage,
             )
         )
 
@@ -387,8 +402,8 @@ async def _evaluate_sentence(
 
     if "invalid_sentence" in dimensions:
         try:
-            v = await _call(bundle.invalid_sentence(question, excerpt, sentence))
-            emit("invalid_sentence", None, v)
+            v, u = await _call(bundle.invalid_sentence(question, excerpt, sentence))
+            emit("invalid_sentence", None, v, u)
         except Exception as exc:
             logger.warning("invalid_sentence failed model=%s: %s", bundle.model, exc)
 
@@ -398,9 +413,9 @@ async def _evaluate_sentence(
     # to avoid doubling the bill.
     if ("element" in dimensions or "coverage" in dimensions) and claim_records:
         try:
-            elements_result = await _call(bundle.element(question, excerpt, sentence))
+            elements_result, u = await _call(bundle.element(question, excerpt, sentence))
             if "element" in dimensions:
-                emit("element", None, elements_result)
+                emit("element", None, elements_result, u)
         except Exception as exc:
             logger.warning("element failed model=%s: %s", bundle.model, exc)
 
@@ -408,8 +423,8 @@ async def _evaluate_sentence(
         claims_dict = {i + 1: t for i, t in enumerate(all_claim_texts)}
         elements_dict = {i + 1: e for i, e in enumerate(elements_result.elements)}
         try:
-            cov = await _call(bundle.coverage(question, excerpt, claims_dict, elements_dict))
-            emit("coverage", None, cov)
+            cov, u = await _call(bundle.coverage(question, excerpt, claims_dict, elements_dict))
+            emit("coverage", None, cov, u)
         except Exception as exc:
             logger.warning("coverage failed model=%s: %s", bundle.model, exc)
 
@@ -417,20 +432,22 @@ async def _evaluate_sentence(
         claim_text = all_claim_texts[claim_idx]
         if "entailment" in dimensions:
             try:
-                ent = await _call(bundle.entailment(question, excerpt, sentence, claim_text))
-                emit("entailment", claim_idx, ent)
+                ent, u = await _call(bundle.entailment(question, excerpt, sentence, claim_text))
+                emit("entailment", claim_idx, ent, u)
             except Exception as exc:
                 logger.warning("entailment failed model=%s claim=%d: %s", bundle.model, claim_idx, exc)
         if "decontextualization" in dimensions:
             try:
-                dec = await _call(bundle.decontextualization(question, excerpt, sentence, all_claim_texts, claim_text))
-                emit("decontextualization", claim_idx, dec)
+                dec, u = await _call(
+                    bundle.decontextualization(question, excerpt, sentence, all_claim_texts, claim_text)
+                )
+                emit("decontextualization", claim_idx, dec, u)
             except Exception as exc:
                 logger.warning("decontext failed model=%s claim=%d: %s", bundle.model, claim_idx, exc)
         if "invalid_claim" in dimensions:
             try:
-                ic = await _call(bundle.invalid_claim(claim_text))
-                emit("invalid_claim", claim_idx, ic)
+                ic, u = await _call(bundle.invalid_claim(claim_text))
+                emit("invalid_claim", claim_idx, ic, u)
             except Exception as exc:
                 logger.warning("invalid_claim failed model=%s claim=%d: %s", bundle.model, claim_idx, exc)
 

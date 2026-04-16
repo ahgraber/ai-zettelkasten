@@ -32,8 +32,11 @@ from _claimify.models import (
     Section,
     SelectionResult,
     SentenceContext,
+    UsageRecord,
+    UsageSample,
 )
 from _claimify.structuring import split_by_headings
+from _claimify.usage import extract_usage
 from aizk.ai.claimify.prompts.extraction import (
     decomposition as decomposition_prompts,
     disambiguation as disambiguation_prompts,
@@ -44,9 +47,9 @@ logger = logging.getLogger(__name__)
 
 AdapterPath = Literal["prose", "structured"]
 
-SelectionRunner = Callable[[SentenceContext, str], Awaitable[SelectionResult]]
-DisambigRunner = Callable[[SentenceContext, str], Awaitable[DisambigResult]]
-DecompositionRunner = Callable[[SentenceContext, str], Awaitable[DecompositionResult]]
+SelectionRunner = Callable[[SentenceContext, str], Awaitable[tuple[SelectionResult, UsageSample]]]
+DisambigRunner = Callable[[SentenceContext, str], Awaitable[tuple[DisambigResult, UsageSample]]]
+DecompositionRunner = Callable[[SentenceContext, str], Awaitable[tuple[DecompositionResult, UsageSample]]]
 
 
 # ---------- sentence windows ----------
@@ -103,10 +106,12 @@ def _chat_model(model: str, *, api_key: str | None) -> OpenAIChatModel:
     return OpenAIChatModel(model, provider=OpenRouterProvider(api_key=api_key))
 
 
-def _settings_for(model: str) -> OpenAIChatModelSettings | None:
+def _settings_for(model: str) -> OpenAIChatModelSettings:
+    """Compose model settings with OpenRouter usage reporting + Anthropic cache_control."""
+    body: dict = {"usage": {"include": True}}
     if _is_anthropic(model):
-        return OpenAIChatModelSettings(extra_body={"cache_control": {"type": "ephemeral"}})
-    return None
+        body["cache_control"] = {"type": "ephemeral"}
+    return OpenAIChatModelSettings(extra_body=body)
 
 
 def _make_stage_runner(
@@ -136,9 +141,10 @@ def _make_stage_runner(
         excerpt = _windowed_excerpt(ctx, include_following=include_following)
         user = render_template(user_template, question=question, excerpt=excerpt, sentence=ctx.sentence)
         result = await agent.run(user)
+        sample = extract_usage(result, model=model)
         if path == "prose":
-            return parse_raw(result.output, ctx.sentence)
-        return result.output
+            return parse_raw(result.output, ctx.sentence), sample
+        return result.output, sample
 
     return run
 
@@ -207,6 +213,25 @@ def extraction_question(doc: LoadedDoc, section: Section, context_str: str) -> s
     )
 
 
+def _usage_record(
+    doc: LoadedDoc,
+    phase: Literal["contextualize", "selection", "disambiguation", "decomposition"],
+    sample: UsageSample,
+    *,
+    section_idx: int,
+    sentence_idx: int | None,
+    claim_idx: int | None = None,
+) -> UsageRecord:
+    return UsageRecord(
+        doc_uuid=doc.aizk_uuid,
+        section_idx=section_idx,
+        sentence_idx=sentence_idx,
+        claim_idx=claim_idx,
+        phase=phase,
+        usage=sample,
+    )
+
+
 async def _process_sentence(
     doc: LoadedDoc,
     ctx: SentenceContext,
@@ -220,12 +245,16 @@ async def _process_sentence(
     sem: asyncio.Semaphore,
 ) -> list[ExtractionRecord]:
     async with sem:
+        out: list[ExtractionRecord] = []
         try:
-            sel = await selection(ctx, question)
+            sel, sel_usage = await selection(ctx, question)
         except Exception as exc:
             return [_fail_record(doc, ctx, "selection", exc)]
+        out.append(
+            _usage_record(doc, "selection", sel_usage, section_idx=ctx.section_idx, sentence_idx=ctx.sentence_idx)
+        )
         if not sel.contains_proposition:
-            return []
+            return out
 
         ctx_after_selection = (
             ctx.model_copy(update={"sentence": sel.rewritten_sentence})
@@ -234,11 +263,21 @@ async def _process_sentence(
         )
 
         try:
-            dis = await disambiguation(ctx_after_selection, question)
+            dis, dis_usage = await disambiguation(ctx_after_selection, question)
         except Exception as exc:
-            return [_fail_record(doc, ctx_after_selection, "disambiguation", exc)]
+            out.append(_fail_record(doc, ctx_after_selection, "disambiguation", exc))
+            return out
+        out.append(
+            _usage_record(
+                doc,
+                "disambiguation",
+                dis_usage,
+                section_idx=ctx.section_idx,
+                sentence_idx=ctx.sentence_idx,
+            )
+        )
         if not dis.can_be_disambiguated or dis.decontextualized_sentence is None:
-            return []
+            return out
 
         ctx_after_disambig = (
             ctx_after_selection.model_copy(update={"sentence": dis.decontextualized_sentence})
@@ -247,11 +286,21 @@ async def _process_sentence(
         )
 
         try:
-            dec = await decomposition(ctx_after_disambig, question)
+            dec, dec_usage = await decomposition(ctx_after_disambig, question)
         except Exception as exc:
-            return [_fail_record(doc, ctx_after_disambig, "decomposition", exc)]
+            out.append(_fail_record(doc, ctx_after_disambig, "decomposition", exc))
+            return out
+        out.append(
+            _usage_record(
+                doc,
+                "decomposition",
+                dec_usage,
+                section_idx=ctx.section_idx,
+                sentence_idx=ctx.sentence_idx,
+            )
+        )
 
-        return [
+        out.extend(
             ClaimRecord(
                 claim=ExtractedClaim(
                     doc_uuid=doc.aizk_uuid,
@@ -264,7 +313,8 @@ async def _process_sentence(
                 )
             )
             for claim in dec.claims
-        ]
+        )
+        return out
 
 
 def _fail_record(
@@ -322,7 +372,7 @@ async def extract_claims(
 
     for section_idx, section in enumerate(sections):
         try:
-            context_str = await contextualize_section(context_agent, doc, section)
+            context_str, ctx_usage = await contextualize_section(context_agent, doc, section)
         except Exception as exc:
             logger.warning(
                 "Contextualization failed for doc=%s section=%d: %s",
@@ -342,6 +392,16 @@ async def extract_claims(
                 )
             )
             continue
+
+        records.append(
+            _usage_record(
+                doc,
+                "contextualize",
+                ctx_usage,
+                section_idx=section_idx,
+                sentence_idx=None,
+            )
+        )
 
         question = question_for(doc, section, context_str)
 
