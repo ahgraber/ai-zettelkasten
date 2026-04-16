@@ -2,21 +2,21 @@
 
 ## PR 1 — Core protocols, types, registries, SourceRef union (additive, non-breaking)
 
-- [ ] Create `aizk/conversion/core/__init__.py` package
-- [ ] Create `aizk/conversion/core/types.py`: `ContentType` enum (`pdf`, `html`, `image`, `docx`, `pptx`, `xlsx`, `csv`), `ConversionInput` (bytes + content_type + metadata), `ConversionArtifacts` (markdown + figures + metadata)
-- [ ] Create `aizk/conversion/core/source_ref.py`: `SourceRef` pydantic discriminated union with variants `KarakeepBookmarkRef`, `ArxivRef`, `GithubReadmeRef`, `UrlRef`, `SingleFileRef`, `InlineHtmlRef`; 64KB size cap on `InlineHtmlRef`
-- [ ] Implement `to_dedup_payload() -> dict` on each `SourceRef` variant — returns a canonical, normalized dict of identity-defining fields only (e.g., `KarakeepBookmarkRef → {"kind": "karakeep_bookmark", "bookmark_id": ...}`, `ArxivRef → {"kind": "arxiv", "arxiv_id": <normalized>}`, `UrlRef → {"kind": "url", "url": <normalized>}`, `InlineHtmlRef → {"kind": "inline_html", "content_hash": sha256(body)}`)
-- [ ] Add `compute_source_ref_hash(ref)` helper: SHA-256 of `json.dumps(ref.to_dedup_payload(), sort_keys=True, separators=(",", ":"))`
-- [ ] Create `aizk/conversion/core/protocols.py`: `ContentFetcher` protocol (`fetch(ref) -> ConversionInput`), `RefResolver` protocol (`resolve(ref) -> SourceRef`, `resolves_to: ClassVar[frozenset[str]]` class-level attribute enumerating every kind the resolver may emit), `Converter` protocol (`supported_formats: frozenset[ContentType]`, `requires_gpu: bool` class-level attribute, `convert(input) -> ConversionArtifacts`, `config_snapshot() -> dict`), `ResourceGuard` protocol (context manager; acquiring thread is sole releaser)
-- [ ] Create `aizk/conversion/core/registry.py`: `FetcherRegistry` with distinct registration entry points `register_content_fetcher(kind, impl)` and `register_resolver(kind, impl)` — role is declared at registration, not inferred from protocol shape; kind uniqueness enforced across both roles; `registered_kinds() -> frozenset[str]` returns the union of registered kinds; raises `FetcherNotRegistered` on unknown kind; `ConverterRegistry` (maps `(content_type, impl_name)` -> converter, raises `NoConverterForFormat`)
-- [ ] Create `aizk/conversion/core/errors.py`: `FetcherNotRegistered`, `NoConverterForFormat`, `FetcherDepthExceeded`, `ChainNotTerminated` typed errors with retryability classification (`ChainNotTerminated` is a startup-time error, not retryable)
-- [ ] Tests: `SourceRef` JSON round-trip for each variant; unknown kind rejected on deserialization; `InlineHtmlRef` exceeding 64KB rejected
-- [ ] Tests: `to_dedup_payload` — equivalent refs with cosmetic differences produce identical hashes; identity-field changes produce different hashes; `InlineHtmlRef` hash is content-addressed
-- [ ] Tests: `FetcherRegistry` — `register_content_fetcher` and `register_resolver` register the correct role; duplicate kind across roles is rejected; unregistered kind raises `FetcherNotRegistered`; `registered_kinds()` returns the union of both roles
-- [ ] Tests: `Converter.requires_gpu` is a class-level boolean inspectable without instantiation
-- [ ] Tests: `RefResolver.resolves_to` is a class-level `frozenset[str]` inspectable without instantiation
-- [ ] Tests: `ConverterRegistry` — register multi-format converter, resolve by `(content_type, name)`, missing combo error
-- [ ] Tests: `ContentType` enum has all 7 members
+- [x] Create `aizk/conversion/core/__init__.py` package
+- [x] Create `aizk/conversion/core/types.py`: `ContentType` enum (`pdf`, `html`, `image`, `docx`, `pptx`, `xlsx`, `csv`), `ConversionInput` (bytes + content_type + metadata), `ConversionArtifacts` (markdown + figures + metadata)
+- [x] Create `aizk/conversion/core/source_ref.py`: `SourceRef` pydantic discriminated union with variants `KarakeepBookmarkRef`, `ArxivRef`, `GithubReadmeRef`, `UrlRef`, `SingleFileRef`, `InlineHtmlRef`; 64KB size cap on `InlineHtmlRef`
+- [x] Implement `to_dedup_payload() -> dict` on each `SourceRef` variant — returns a canonical, normalized dict of identity-defining fields only (e.g., `KarakeepBookmarkRef → {"kind": "karakeep_bookmark", "bookmark_id": ...}`, `ArxivRef → {"kind": "arxiv", "arxiv_id": <normalized>}`, `UrlRef → {"kind": "url", "url": <normalized>}`, `InlineHtmlRef → {"kind": "inline_html", "content_hash": sha256(body)}`)
+- [x] Add `compute_source_ref_hash(ref)` helper: SHA-256 of `json.dumps(ref.to_dedup_payload(), sort_keys=True, separators=(",", ":"))`
+- [x] Create `aizk/conversion/core/protocols.py`: `ContentFetcher` protocol (`fetch(ref) -> ConversionInput`), `RefResolver` protocol (`resolve(ref) -> SourceRef`, `resolves_to: ClassVar[frozenset[str]]` class-level attribute enumerating every kind the resolver may emit), `Converter` protocol (`supported_formats: frozenset[ContentType]`, `requires_gpu: bool` class-level attribute, `convert(input) -> ConversionArtifacts`, `config_snapshot() -> dict`), `ResourceGuard` protocol (context manager; acquiring thread is sole releaser)
+- [x] Create `aizk/conversion/core/registry.py`: `FetcherRegistry` with distinct registration entry points `register_content_fetcher(kind, impl)` and `register_resolver(kind, impl)` — role is declared at registration, not inferred from protocol shape; kind uniqueness enforced across both roles; `registered_kinds() -> frozenset[str]` returns the union of registered kinds; raises `FetcherNotRegistered` on unknown kind; `ConverterRegistry` (maps `(content_type, impl_name)` -> converter, raises `NoConverterForFormat`)
+- [x] Create `aizk/conversion/core/errors.py`: `FetcherNotRegistered`, `NoConverterForFormat`, `FetcherDepthExceeded`, `ChainNotTerminated` typed errors with retryability classification (`ChainNotTerminated` is a startup-time error, not retryable)
+- [x] Tests: `SourceRef` JSON round-trip for each variant; unknown kind rejected on deserialization; `InlineHtmlRef` exceeding 64KB rejected
+- [x] Tests: `to_dedup_payload` — equivalent refs with cosmetic differences produce identical hashes; identity-field changes produce different hashes; `InlineHtmlRef` hash is content-addressed
+- [x] Tests: `FetcherRegistry` — `register_content_fetcher` and `register_resolver` register the correct role; duplicate kind across roles is rejected; unregistered kind raises `FetcherNotRegistered`; `registered_kinds()` returns the union of both roles
+- [x] Tests: `Converter.requires_gpu` is a class-level boolean inspectable without instantiation
+- [x] Tests: `RefResolver.resolves_to` is a class-level `frozenset[str]` inspectable without instantiation
+- [x] Tests: `ConverterRegistry` — register multi-format converter, resolve by `(content_type, name)`, missing combo error
+- [x] Tests: `ContentType` enum has all 7 members
 
 ## PR 2 — Orchestrator class with fakes-based tests (additive, non-breaking)
 
