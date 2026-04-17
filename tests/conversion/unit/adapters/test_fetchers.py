@@ -141,7 +141,6 @@ def test_arxiv_bookmark_with_pdf_asset_sets_karakeep_asset_url(heavy_mocks, monk
     mocks["bm"].is_pdf_asset.return_value = True
     mocks["bm"].get_bookmark_asset_id.return_value = "asset-xyz"
     mocks["arxiv"].get_arxiv_id.return_value = "2301.12345"
-    monkeypatch.setenv("KARAKEEP_BASE_URL", "https://karakeep.example.com")
 
     result = KarakeepBookmarkResolver(config=_resolver_config()).resolve(KarakeepBookmarkRef(bookmark_id="bk-1"))
 
@@ -175,13 +174,12 @@ def test_github_pages_bookmark_returns_url_ref(heavy_mocks):
     assert result.url == "https://owner.github.io/site"
 
 
-def test_pdf_asset_bookmark_returns_url_ref(heavy_mocks, monkeypatch):
+def test_pdf_asset_bookmark_returns_url_ref(heavy_mocks):
     mocks = heavy_mocks
     mocks["bm"].get_bookmark_source_url.return_value = "https://example.com/doc"
     mocks["bm"].detect_source_type.return_value = "other"
     mocks["bm"].is_pdf_asset.return_value = True
     mocks["bm"].get_bookmark_asset_id.return_value = "pdf-asset-1"
-    monkeypatch.setenv("KARAKEEP_BASE_URL", "https://karakeep.example.com")
 
     result = KarakeepBookmarkResolver(config=_resolver_config()).resolve(KarakeepBookmarkRef(bookmark_id="bk-4"))
 
@@ -189,14 +187,13 @@ def test_pdf_asset_bookmark_returns_url_ref(heavy_mocks, monkeypatch):
     assert "pdf-asset-1" in result.url
 
 
-def test_precrawled_archive_returns_url_ref(heavy_mocks, monkeypatch):
+def test_precrawled_archive_returns_url_ref(heavy_mocks):
     mocks = heavy_mocks
     mocks["bm"].get_bookmark_source_url.return_value = "https://example.com/page"
     mocks["bm"].detect_source_type.return_value = "other"
     mocks["bm"].is_pdf_asset.return_value = False
     mocks["bm"].is_precrawled_archive_asset.return_value = True
     mocks["bm"].get_bookmark_asset_id.return_value = "archive-1"
-    monkeypatch.setenv("KARAKEEP_BASE_URL", "https://karakeep.example.com")
 
     result = KarakeepBookmarkResolver(config=_resolver_config()).resolve(KarakeepBookmarkRef(bookmark_id="bk-5"))
 

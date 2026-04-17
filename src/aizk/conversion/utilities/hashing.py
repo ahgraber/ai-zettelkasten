@@ -23,6 +23,11 @@ def _docling_config_payload(config: ConversionConfig) -> dict[str, object]:
     Excludes endpoint URL and API key: these identify the picture-description provider
     but do not affect replayable output, and the API key is a secret that must not be
     persisted into the manifest.
+
+    Snapshot key shape is intentionally BREAKING vs. pre-PR-9 keys (which were
+    ``docling_*``-prefixed): keys here are the bare pydantic field names. Existing
+    jobs dedup only against keys hashed under the new shape — cross-version
+    idempotency dedup is not attempted.
     """
     return {
         key: value

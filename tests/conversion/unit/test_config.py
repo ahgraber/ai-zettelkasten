@@ -59,15 +59,28 @@ def test_nested_docling_env_vars_populate_converter_model(monkeypatch):
 def test_flat_docling_env_vars_are_ignored(monkeypatch):
     """Legacy flat AIZK_DOCLING_/DOCLING_ env vars must no longer populate config."""
     monkeypatch.delenv("AIZK_CONVERTER__DOCLING__OCR_ENABLED", raising=False)
+    monkeypatch.delenv("AIZK_CONVERTER__DOCLING__TABLE_STRUCTURE_ENABLED", raising=False)
+    monkeypatch.delenv("AIZK_CONVERTER__DOCLING__PICTURE_CLASSIFICATION_ENABLED", raising=False)
+    monkeypatch.delenv("AIZK_CONVERTER__DOCLING__PDF_MAX_PAGES", raising=False)
     monkeypatch.setenv("AIZK_DOCLING_OCR_ENABLED", "false")
     monkeypatch.setenv("DOCLING_ENABLE_OCR", "false")
+    monkeypatch.setenv("AIZK_DOCLING_TABLE_STRUCTURE_ENABLED", "false")
+    monkeypatch.setenv("DOCLING_ENABLE_TABLE_STRUCTURE", "false")
+    monkeypatch.setenv("AIZK_DOCLING_PICTURE_CLASSIFICATION_ENABLED", "false")
+    monkeypatch.setenv("DOCLING_ENABLE_PICTURE_CLASSIFICATION", "false")
+    monkeypatch.setenv("AIZK_DOCLING_PDF_MAX_PAGES", "11")
+    monkeypatch.setenv("DOCLING_PDF_MAX_PAGES", "11")
     monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL", "")
     monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY", "")
 
     config = ConversionConfig(_env_file=None)
 
     # Defaults preserved when flat vars are the only source of intent.
-    assert config.converter.docling.ocr_enabled is True
+    docling = config.converter.docling
+    assert docling.ocr_enabled is True
+    assert docling.table_structure_enabled is True
+    assert docling.picture_classification_enabled is True
+    assert docling.pdf_max_pages == 250
 
 
 def test_nested_karakeep_env_vars_populate_fetcher_model(monkeypatch):

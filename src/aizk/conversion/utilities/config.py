@@ -17,7 +17,7 @@ class DoclingConverterConfig(BaseModel):
     Populated from ``AIZK_CONVERTER__DOCLING__*`` environment variables.
     """
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     pdf_max_pages: int = 250
     ocr_enabled: bool = True
@@ -32,7 +32,7 @@ class DoclingConverterConfig(BaseModel):
 class ConverterConfig(BaseModel):
     """Container for per-converter nested config models."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     docling: DoclingConverterConfig = Field(default_factory=DoclingConverterConfig)
 
@@ -43,7 +43,7 @@ class KarakeepFetcherConfig(BaseModel):
     Populated from ``AIZK_FETCHER__KARAKEEP__*`` environment variables.
     """
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     base_url: str = ""
     api_key: str = ""
@@ -52,7 +52,7 @@ class KarakeepFetcherConfig(BaseModel):
 class FetcherConfig(BaseModel):
     """Container for per-fetcher nested config models."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     karakeep: KarakeepFetcherConfig = Field(default_factory=KarakeepFetcherConfig)
 
@@ -99,6 +99,9 @@ class ConversionConfig(BaseSettings):
         validation_alias="WORKER_DRAIN_TIMEOUT_SECONDS",
     )
 
+    # `validation_alias` makes the env-var prefix (`AIZK_CONVERTER__…`) independent
+    # of the Python field name (`converter`); `env_nested_delimiter="__"` then
+    # splits the remainder into nested sub-model fields. Both are required.
     converter: ConverterConfig = Field(
         default_factory=ConverterConfig,
         validation_alias="AIZK_CONVERTER",
