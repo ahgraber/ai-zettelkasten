@@ -54,26 +54,26 @@
 
 ## PR 5 — Wiring package with role-specific builders (additive, non-breaking)
 
-- [ ] Create `aizk/conversion/wiring/__init__.py`
-- [ ] Create `aizk/conversion/wiring/capabilities.py`: `DeploymentCapabilities` descriptor with `accepted_kinds: frozenset[str]` (sourced directly from `FetcherRegistry.registered_kinds()`), `content_types_for(kind) -> frozenset[ContentType]`, `converter_available(content_type) -> bool`, `startup_probes: list[Probe]`.
+- [x] Create `aizk/conversion/wiring/__init__.py`
+- [x] Create `aizk/conversion/wiring/capabilities.py`: `DeploymentCapabilities` descriptor with `accepted_kinds: frozenset[str]` (sourced directly from `FetcherRegistry.registered_kinds()`), `content_types_for(kind) -> frozenset[ContentType]`, `converter_available(content_type) -> bool`, `startup_probes: list[Probe]`.
   No `is_ready(kind)` or `resolver_chain_terminates(kind)` concepts
-- [ ] Create `aizk/conversion/wiring/registrations.py` (or similar): `register_ready_adapters(fetcher_registry, converter_registry, cfg)` — the single source of truth for which adapters are wired.
+- [x] Create `aizk/conversion/wiring/registrations.py` (or similar): `register_ready_adapters(fetcher_registry, converter_registry, cfg)` — the single source of truth for which adapters are wired.
   Called by both worker and API wiring so their `accepted_kinds` cannot drift.
   Skeleton adapters (e.g., `SingleFileFetcher`) are NOT called from this helper.
   After all registrations complete, the helper SHALL invoke `validate_chain_closure(fetcher_registry, depth_cap)` before returning; the check walks each resolver's `resolves_to` edges, asserts every produced kind is registered, and asserts the declared DAG has no cycles and no declared path exceeds the depth cap.
   On violation, raise `ChainNotTerminated` naming the resolver and missing kind (or the cycle); process startup fails before requests are accepted
-- [ ] Create `aizk/conversion/wiring/worker.py`: `build_worker_runtime(cfg)` — calls `register_ready_adapters`, creates GPU `ResourceGuard` (wrapping `threading.Semaphore`), wires and returns `Orchestrator` + guard + `DeploymentCapabilities`
-- [ ] Create `aizk/conversion/wiring/api.py`: `build_api_runtime(cfg)` — calls `register_ready_adapters` against its own registry instance and returns `DeploymentCapabilities` for request validation
-- [ ] Create `aizk/conversion/wiring/testing.py`: `build_test_runtime(cfg)` — fake resolvers, in-memory registries, test-configurable registrations
-- [ ] Verify: wiring package is the only package that imports both `core` and `adapters`
-- [ ] Tests: `build_worker_runtime` registers all expected fetcher kinds and converter formats
-- [ ] Tests: `build_api_runtime` and `build_worker_runtime` produce `DeploymentCapabilities` with identical `accepted_kinds` (shared registration helper)
-- [ ] Tests: `"singlefile"` is not in `accepted_kinds` because `register_ready_adapters` does not wire it (skeleton class is not invoked)
-- [ ] Tests: `validate_chain_closure` passes for the default wiring (KaraKeep resolver plus content fetchers for all four produced kinds)
-- [ ] Tests: `validate_chain_closure` raises `ChainNotTerminated` when a resolver declares a `resolves_to` kind that is not registered (fixture drops one downstream fetcher)
-- [ ] Tests: `validate_chain_closure` raises `ChainNotTerminated` when two resolvers declare a cycle in their `resolves_to` sets
-- [ ] Tests: `validate_chain_closure` raises `ChainNotTerminated` when the declared resolver DAG has a path longer than the depth cap
-- [ ] Tests: import graph lint — no adapter module imports `core` and another adapter
+- [x] Create `aizk/conversion/wiring/worker.py`: `build_worker_runtime(cfg)` — calls `register_ready_adapters`, creates GPU `ResourceGuard` (wrapping `threading.Semaphore`), wires and returns `Orchestrator` + guard + `DeploymentCapabilities`
+- [x] Create `aizk/conversion/wiring/api.py`: `build_api_runtime(cfg)` — calls `register_ready_adapters` against its own registry instance and returns `DeploymentCapabilities` for request validation
+- [x] Create `aizk/conversion/wiring/testing.py`: `build_test_runtime(cfg)` — fake resolvers, in-memory registries, test-configurable registrations
+- [x] Verify: wiring package is the only package that imports both `core` and `adapters`
+- [x] Tests: `build_worker_runtime` registers all expected fetcher kinds and converter formats
+- [x] Tests: `build_api_runtime` and `build_worker_runtime` produce `DeploymentCapabilities` with identical `accepted_kinds` (shared registration helper)
+- [x] Tests: `"singlefile"` is not in `accepted_kinds` because `register_ready_adapters` does not wire it (skeleton class is not invoked)
+- [x] Tests: `validate_chain_closure` passes for the default wiring (KaraKeep resolver plus content fetchers for all four produced kinds)
+- [x] Tests: `validate_chain_closure` raises `ChainNotTerminated` when a resolver declares a `resolves_to` kind that is not registered (fixture drops one downstream fetcher)
+- [x] Tests: `validate_chain_closure` raises `ChainNotTerminated` when two resolvers declare a cycle in their `resolves_to` sets
+- [x] Tests: `validate_chain_closure` raises `ChainNotTerminated` when the declared resolver DAG has a path longer than the depth cap
+- [x] Tests: import graph lint — no adapter module imports `core` and another adapter
 
 ## PR 6 — BREAKING (schema + identity + manifest): Bookmark → Source generalization + API cutover
 

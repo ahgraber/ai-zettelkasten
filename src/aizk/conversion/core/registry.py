@@ -74,3 +74,7 @@ class ConverterRegistry:
             return self._entries[(content_type, name)]
         except KeyError:
             raise NoConverterForFormat(content_type, name) from None
+
+    def registered_formats(self) -> frozenset[ContentType]:
+        """Content types for which at least one converter is registered."""
+        return frozenset(ct for ct, _ in self._entries)
