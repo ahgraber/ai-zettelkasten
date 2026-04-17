@@ -61,11 +61,16 @@ def get_bookmark_source_url(bookmark: Bookmark) -> str:
     raise BookmarkContentError(f"Bookmark {bookmark.id} has no source URL")
 
 
-def fetch_karakeep_bookmark(karakeep_id: str) -> Bookmark | None:
+def fetch_karakeep_bookmark(
+    karakeep_id: str,
+    *,
+    base_url: str | None = None,
+    api_key: str | None = None,
+) -> Bookmark | None:
     """Fetch bookmark details from KaraKeep."""
 
     async def _get_bookmark() -> Bookmark | None:
-        async with KarakeepClient() as client:
+        async with KarakeepClient(api_key=api_key, base_url=base_url) as client:
             return await client.get_bookmark(karakeep_id)
 
     try:

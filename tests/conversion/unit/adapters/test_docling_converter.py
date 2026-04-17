@@ -17,21 +17,27 @@ from aizk.conversion.utilities.hashing import build_output_config_snapshot
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_config(**overrides) -> ConversionConfig:
-    defaults = {
-        "DOCLING_PICTURE_DESCRIPTION_BASE_URL": "https://api.example.com",
-        "DOCLING_PICTURE_DESCRIPTION_API_KEY": "test-key",
-        "_env_file": None,
+def _make_config(**docling_overrides) -> ConversionConfig:
+    docling_defaults = {
+        "picture_description_base_url": "https://api.example.com",
+        "picture_description_api_key": "test-key",
     }
-    defaults.update(overrides)
-    return ConversionConfig(**defaults)
+    docling_defaults.update(docling_overrides)
+    return ConversionConfig(
+        _env_file=None,
+        converter={"docling": docling_defaults},
+    )
 
 
 def _make_config_disabled() -> ConversionConfig:
     return ConversionConfig(
-        DOCLING_PICTURE_DESCRIPTION_BASE_URL="",
-        DOCLING_PICTURE_DESCRIPTION_API_KEY="",
         _env_file=None,
+        converter={
+            "docling": {
+                "picture_description_base_url": "",
+                "picture_description_api_key": "",
+            }
+        },
     )
 
 
@@ -106,8 +112,8 @@ def test_config_snapshot_excludes_api_credentials():
     converter = DoclingConverter(config)
     snapshot = converter.config_snapshot()
 
-    assert "docling_picture_description_base_url" not in snapshot
-    assert "docling_picture_description_api_key" not in snapshot
+    assert "picture_description_base_url" not in snapshot
+    assert "picture_description_api_key" not in snapshot
 
 
 def test_config_snapshot_picture_description_enabled_reflects_config():

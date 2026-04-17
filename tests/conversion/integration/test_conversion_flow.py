@@ -103,7 +103,7 @@ def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
     # Avoid KaraKeep network calls; reuse a fixed bookmark payload.
     monkeypatch.setattr(
         "aizk.conversion.workers.orchestrator.fetch_karakeep_bookmark",
-        lambda _karakeep_id: html_bookmark,
+        lambda _karakeep_id, **_kwargs: html_bookmark,
     )
     monkeypatch.setattr(
         "aizk.conversion.workers.orchestrator.validate_bookmark_content",
@@ -154,7 +154,7 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch, html_bookmark):
 
     monkeypatch.setattr(
         "aizk.conversion.workers.orchestrator.fetch_karakeep_bookmark",
-        lambda _karakeep_id: html_bookmark,
+        lambda _karakeep_id, **_kwargs: html_bookmark,
     )
     monkeypatch.setattr(
         "aizk.conversion.workers.orchestrator.validate_bookmark_content",
@@ -208,8 +208,8 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch, html_bookmark):
 
 def test_submit_job_idempotency_key_disables_picture_description_without_api_key(monkeypatch, db_session) -> None:
     """Idempotency must reflect actual picture-description runtime enablement."""
-    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_BASE_URL", "https://openrouter.ai/api/v1")
-    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_API_KEY", "")
+    monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY", "")
 
     app = create_app()
     config = ConversionConfig(_env_file=None)

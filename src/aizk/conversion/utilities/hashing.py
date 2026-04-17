@@ -9,20 +9,16 @@ import xxhash
 
 from aizk.conversion.utilities.config import ConversionConfig
 
-# TODO(PR-9): _docling_config_payload and build_output_config_snapshot are
-# Docling-specific helpers.  When the env-var namespace is renamed
-# (AIZK_DOCLING_* → AIZK_CONVERTER__DOCLING__*) and the converter interface
-# gains a config_snapshot() method, these should move onto DoclingConverter.
 _OUTPUT_IRRELEVANT_DOCLING_FIELDS = frozenset(
     {
-        "docling_picture_description_base_url",
-        "docling_picture_description_api_key",
+        "picture_description_base_url",
+        "picture_description_api_key",
     }
 )
 
 
 def _docling_config_payload(config: ConversionConfig) -> dict[str, object]:
-    """Return the subset of config fields that affect Docling output.
+    """Return the subset of Docling config fields that affect output.
 
     Excludes endpoint URL and API key: these identify the picture-description provider
     but do not affect replayable output, and the API key is a secret that must not be
@@ -30,8 +26,8 @@ def _docling_config_payload(config: ConversionConfig) -> dict[str, object]:
     """
     return {
         key: value
-        for key, value in config.model_dump().items()
-        if key.startswith("docling_") and key not in _OUTPUT_IRRELEVANT_DOCLING_FIELDS
+        for key, value in config.converter.docling.model_dump().items()
+        if key not in _OUTPUT_IRRELEVANT_DOCLING_FIELDS
     }
 
 

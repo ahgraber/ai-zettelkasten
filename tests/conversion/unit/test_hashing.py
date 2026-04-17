@@ -26,6 +26,18 @@ def _docling_snapshot(config: ConversionConfig, *, picture_description_enabled: 
     )
 
 
+def _config_with_picture_description(*, base_url: str, api_key: str) -> ConversionConfig:
+    return ConversionConfig(
+        _env_file=None,
+        converter={
+            "docling": {
+                "picture_description_base_url": base_url,
+                "picture_description_api_key": api_key,
+            }
+        },
+    )
+
+
 def test_compute_idempotency_key_matches_sha256_picture_description_disabled():
     config = ConversionConfig(_env_file=None)
     snapshot = _docling_snapshot(config, picture_description_enabled=False)
@@ -114,15 +126,13 @@ def test_compute_idempotency_key_differs_by_converter_name():
 
 def test_compute_idempotency_key_stable_when_only_base_url_rotates():
     """Endpoint identity does not affect replayable output — key must not change when it rotates."""
-    config_a = ConversionConfig(
-        _env_file=None,
-        DOCLING_PICTURE_DESCRIPTION_BASE_URL="https://provider-a.example.com/v1",
-        DOCLING_PICTURE_DESCRIPTION_API_KEY="sk-test-key",
+    config_a = _config_with_picture_description(
+        base_url="https://provider-a.example.com/v1",
+        api_key="sk-test-key",
     )
-    config_b = ConversionConfig(
-        _env_file=None,
-        DOCLING_PICTURE_DESCRIPTION_BASE_URL="https://provider-b.example.com/v1",
-        DOCLING_PICTURE_DESCRIPTION_API_KEY="sk-test-key",
+    config_b = _config_with_picture_description(
+        base_url="https://provider-b.example.com/v1",
+        api_key="sk-test-key",
     )
     key_a = compute_idempotency_key(
         source_ref_hash="ref-rotate",
@@ -139,15 +149,13 @@ def test_compute_idempotency_key_stable_when_only_base_url_rotates():
 
 def test_compute_idempotency_key_stable_when_only_api_key_rotates():
     """Credentials are not output-affecting — rotating the api_key must not invalidate the key."""
-    config_a = ConversionConfig(
-        _env_file=None,
-        DOCLING_PICTURE_DESCRIPTION_BASE_URL="https://provider.example.com/v1",
-        DOCLING_PICTURE_DESCRIPTION_API_KEY="sk-original-key",
+    config_a = _config_with_picture_description(
+        base_url="https://provider.example.com/v1",
+        api_key="sk-original-key",
     )
-    config_b = ConversionConfig(
-        _env_file=None,
-        DOCLING_PICTURE_DESCRIPTION_BASE_URL="https://provider.example.com/v1",
-        DOCLING_PICTURE_DESCRIPTION_API_KEY="sk-rotated-key",
+    config_b = _config_with_picture_description(
+        base_url="https://provider.example.com/v1",
+        api_key="sk-rotated-key",
     )
     key_a = compute_idempotency_key(
         source_ref_hash="ref-rotate",
@@ -172,25 +180,24 @@ def test_build_output_config_snapshot_matches_manifest_contract():
     config = ConversionConfig(_env_file=None)
     snapshot = build_output_config_snapshot(config, picture_description_enabled=True)
     assert set(snapshot) == {
-        "docling_pdf_max_pages",
-        "docling_enable_ocr",
-        "docling_enable_table_structure",
-        "docling_picture_description_model",
-        "docling_picture_timeout",
-        "docling_enable_picture_classification",
+        "pdf_max_pages",
+        "ocr_enabled",
+        "table_structure_enabled",
+        "picture_description_model",
+        "picture_timeout",
+        "picture_classification_enabled",
         "picture_description_enabled",
     }
     assert snapshot["picture_description_enabled"] is True
-    assert snapshot["docling_enable_picture_classification"] is True
+    assert snapshot["picture_classification_enabled"] is True
 
 
 def test_build_output_config_snapshot_omits_provider_identity_and_credentials():
     """Provider identity and credentials MUST NOT appear in the manifest snapshot, even when configured."""
-    config = ConversionConfig(
-        _env_file=None,
-        DOCLING_PICTURE_DESCRIPTION_BASE_URL="https://provider.example.com/v1",
-        DOCLING_PICTURE_DESCRIPTION_API_KEY="sk-real-looking-value",
+    config = _config_with_picture_description(
+        base_url="https://provider.example.com/v1",
+        api_key="sk-real-looking-value",
     )
     snapshot = build_output_config_snapshot(config, picture_description_enabled=True)
-    assert "docling_picture_description_base_url" not in snapshot
-    assert "docling_picture_description_api_key" not in snapshot
+    assert "picture_description_base_url" not in snapshot
+    assert "picture_description_api_key" not in snapshot

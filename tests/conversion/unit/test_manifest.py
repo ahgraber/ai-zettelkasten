@@ -58,12 +58,12 @@ def _make_job(
 
 def _snapshot_v2(converter_name: str = "docling", **adapter) -> ManifestConfigSnapshotV2:
     defaults = {
-        "docling_pdf_max_pages": 250,
-        "docling_enable_ocr": True,
-        "docling_enable_table_structure": True,
-        "docling_picture_description_model": "openai/gpt-5-nano",
-        "docling_picture_timeout": 180.0,
-        "docling_enable_picture_classification": True,
+        "pdf_max_pages": 250,
+        "ocr_enabled": True,
+        "table_structure_enabled": True,
+        "picture_description_model": "openai/gpt-5-nano",
+        "picture_timeout": 180.0,
+        "picture_classification_enabled": True,
         "picture_description_enabled": False,
     }
     defaults.update(adapter)

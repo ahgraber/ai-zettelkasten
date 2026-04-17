@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import html as _html
 import logging
-import os
 from typing import ClassVar
 
 from aizk.conversion.core.source_ref import (
@@ -14,14 +13,9 @@ from aizk.conversion.core.source_ref import (
     SourceRefVariant,
     UrlRef,
 )
+from aizk.conversion.utilities.config import ConversionConfig
 
 logger = logging.getLogger(__name__)
-
-
-def _karakeep_asset_url(asset_id: str) -> str:
-    """Construct the KaraKeep REST URL for a given asset ID."""
-    base = os.environ.get("KARAKEEP_BASE_URL", "").rstrip("/")
-    return f"{base}/api/v1/assets/{asset_id}"
 
 
 class KarakeepBookmarkResolver:
@@ -41,6 +35,14 @@ class KarakeepBookmarkResolver:
     resolves_to: ClassVar[frozenset[str]] = frozenset(
         {"arxiv", "github_readme", "url", "inline_html"}
     )
+
+    def __init__(self, config: ConversionConfig) -> None:
+        self._config = config
+
+    def _karakeep_asset_url(self, asset_id: str) -> str:
+        """Construct the KaraKeep REST URL for a given asset ID."""
+        base = self._config.fetcher.karakeep.base_url.rstrip("/")
+        return f"{base}/api/v1/assets/{asset_id}"
 
     def resolve(self, ref: SourceRefVariant) -> SourceRefVariant:
         from aizk.conversion.utilities.bookmark_utils import (
@@ -62,7 +64,12 @@ class KarakeepBookmarkResolver:
         )
         from aizk.conversion.workers.fetcher import FetchError
 
-        bookmark = fetch_karakeep_bookmark(ref.bookmark_id)  # type: ignore[union-attr]
+        karakeep = self._config.fetcher.karakeep
+        bookmark = fetch_karakeep_bookmark(
+            ref.bookmark_id,  # type: ignore[union-attr]
+            base_url=karakeep.base_url or None,
+            api_key=karakeep.api_key or None,
+        )
         if bookmark is None:
             raise FetchError(f"Bookmark {ref.bookmark_id} not found in KaraKeep")  # type: ignore[union-attr]
 
@@ -80,7 +87,7 @@ class KarakeepBookmarkResolver:
             if is_pdf_asset(bookmark):
                 asset_id = get_bookmark_asset_id(bookmark)
                 if asset_id:
-                    karakeep_asset_url = _karakeep_asset_url(asset_id)
+                    karakeep_asset_url = self._karakeep_asset_url(asset_id)
             return ArxivRef(arxiv_id=arxiv_id, karakeep_asset_url=karakeep_asset_url)
 
         # Step 2: github
@@ -98,13 +105,13 @@ class KarakeepBookmarkResolver:
         if is_pdf_asset(bookmark):
             asset_id = get_bookmark_asset_id(bookmark)
             if asset_id:
-                return UrlRef(url=_karakeep_asset_url(asset_id))
+                return UrlRef(url=self._karakeep_asset_url(asset_id))
 
         # Step 4: precrawled archive
         if is_precrawled_archive_asset(bookmark):
             asset_id = get_bookmark_asset_id(bookmark)
             if asset_id:
-                return UrlRef(url=_karakeep_asset_url(asset_id))
+                return UrlRef(url=self._karakeep_asset_url(asset_id))
 
         # Step 5: HTML content — embed inline (preserves legacy: uses cached crawler bytes directly)
         html_content = get_bookmark_html_content(bookmark)

@@ -140,7 +140,7 @@ def _report_status(
 
 
 def _enrich_source_for_job(
-    job_id: int, engine: Engine
+    job_id: int, engine: Engine, config: ConversionConfig
 ) -> tuple[SourceRecord, SourceRefVariant]:
     """Populate the Source row's mutable metadata from the job's source_ref.
 
@@ -162,7 +162,12 @@ def _enrich_source_for_job(
     ref = parse_source_ref(source_ref_payload)
 
     if isinstance(ref, KarakeepBookmarkRef):
-        karakeep_bookmark = fetch_karakeep_bookmark(ref.bookmark_id)
+        karakeep = config.fetcher.karakeep
+        karakeep_bookmark = fetch_karakeep_bookmark(
+            ref.bookmark_id,
+            base_url=karakeep.base_url or None,
+            api_key=karakeep.api_key or None,
+        )
         if not karakeep_bookmark:
             raise FetchError(f"Bookmark {ref.bookmark_id} not found in KaraKeep")
         validate_bookmark_content(karakeep_bookmark)
@@ -472,7 +477,7 @@ def process_job_supervised(
         return
 
     try:
-        source, source_ref = _enrich_source_for_job(job_id, engine)
+        source, source_ref = _enrich_source_for_job(job_id, engine, config)
     except (FetchError, BookmarkContentError, JobDataIntegrityError) as exc:
         handle_job_error(job_id, exc, config)
         return

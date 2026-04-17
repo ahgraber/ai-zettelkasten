@@ -149,11 +149,11 @@
 
 ## PR 9 — BREAKING (config): Env-var namespace rename
 
-- [ ] Create per-adapter nested pydantic config models: `DoclingConverterConfig` under `AIZK_CONVERTER__DOCLING__*`, `KarakeepFetcherConfig` under `AIZK_FETCHER__KARAKEEP__*`, etc.
-- [ ] Remove flat `AIZK_DOCLING_*` / `DOCLING_*` env-var aliases from config — no compatibility shim
-- [ ] Update `.env.example` with new nested namespace structure
-- [ ] Update adapter constructors to accept their nested config models
-- [ ] Tests: `AIZK_CONVERTER__DOCLING__OCR_ENABLED=true` → `ocr_enabled` is `True`
-- [ ] Tests: old `AIZK_DOCLING_OCR_ENABLED=true` with no nested equivalent → field falls back to default
-- [ ] Tests: full test suite passes with new env-var names
-- [ ] Update deployment configuration documentation/scripts with new env-var names
+- [x] Create per-adapter nested pydantic config models: `DoclingConverterConfig` under `AIZK_CONVERTER__DOCLING__*`, `KarakeepFetcherConfig` under `AIZK_FETCHER__KARAKEEP__*`, etc.
+- [x] Remove flat `AIZK_DOCLING_*` / `DOCLING_*` env-var aliases from config — no compatibility shim
+- [x] Update `.env.example` with new nested namespace structure
+- [x] Update adapter constructors to accept their nested config models
+- [x] Tests: `AIZK_CONVERTER__DOCLING__OCR_ENABLED=true` → `ocr_enabled` is `True`
+- [x] Tests: old `AIZK_DOCLING_OCR_ENABLED=true` with no nested equivalent → field falls back to default
+- [x] Tests: full test suite passes with new env-var names
+- [x] Update deployment configuration documentation/scripts with new env-var names

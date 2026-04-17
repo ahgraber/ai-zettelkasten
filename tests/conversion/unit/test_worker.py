@@ -75,7 +75,7 @@ def test_process_job_retries_upload(monkeypatch, db_session: Session, html_bookm
         )
 
     # Bypass network and conversion steps so we can focus on the upload retry loop.
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
     monkeypatch.setattr(orchestrator, "_prepare_conversion_input", _prepare_conversion_input)
     monkeypatch.setattr(orchestrator, "_run_conversion", lambda **_kwargs: None)
@@ -155,7 +155,7 @@ def test_process_job_stops_on_cancellation(monkeypatch, db_session: Session, htm
         """If called, will increment, indicating failure to stop on cancellation."""
         upload_calls["count"] += 1
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
     monkeypatch.setattr(orchestrator, "_prepare_conversion_input", _prepare_conversion_input)
     monkeypatch.setattr(orchestrator, "_run_conversion", _run_conversion)
@@ -376,7 +376,7 @@ def test_process_job_supervised_times_out_with_phase(monkeypatch, db_session: Se
 
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
 
     killpg_calls = []
@@ -408,7 +408,7 @@ def test_process_job_supervised_cancels_child(monkeypatch, db_session: Session, 
 
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: True)  # Immediately cancelled
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
 
     # Track os.killpg calls
@@ -442,7 +442,7 @@ def test_process_job_supervised_reports_subprocess_error(monkeypatch, db_session
 
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
 
     errors: list[Exception] = []
@@ -480,7 +480,7 @@ def test_timeout_during_subprocess_terminates_and_reports_phase(
     monkeypatch.setattr(
         orchestrator.mp, "get_context", lambda _ctx: _TestContext(alive_cycles=5, exitcode=0, on_start=_on_start)
     )
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
 
@@ -528,7 +528,7 @@ def test_timeout_before_upload_reports_uploading_phase(monkeypatch, db_session: 
     monkeypatch.setattr(orchestrator, "handle_job_error", lambda _job_id, error, _config: errors.append(error))
 
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     class _StubProcess:
@@ -566,7 +566,7 @@ def test_timeout_during_upload_retry_stops_retrying(monkeypatch, db_session: Ses
         lambda **_kwargs: SupervisionResult("converting", None, False, False),
     )
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     upload_calls = {"count": 0}
@@ -617,7 +617,7 @@ def test_timeout_logs_elapsed_with_phase(monkeypatch, db_session: Session, html_
     bookmark = _create_bookmark(db_session)
     job = _create_running_job(db_session, bookmark)
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
 
@@ -663,7 +663,7 @@ def test_process_job_skips_spawn_for_cancelled_job(monkeypatch, db_session: Sess
         spawned["count"] += 1
         return _InlineProcess(target, args)
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
     monkeypatch.setattr(ctx, "Process", _track_process)
 
@@ -684,7 +684,7 @@ def test_logs_cancellation_during_phase(monkeypatch, db_session: Session, html_b
 
     # Simulate a short-lived alive loop where cancellation is detected immediately
     monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _TestContext(alive_cycles=2, exitcode=0))
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     # Immediately report cancelled
@@ -721,7 +721,7 @@ def test_cancelled_before_upload_skips_upload(monkeypatch, db_session: Session, 
         upload_calls["count"] += 1
 
     monkeypatch.setattr(orchestrator, "_upload_converted", _upload_converted)
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     config = ConversionConfig(_env_file=None)
@@ -791,7 +791,7 @@ def test_process_group_termination_uses_killpg(monkeypatch, db_session: Session,
 
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: True)  # Trigger cancellation
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
     monkeypatch.setattr(os, "getpgid", lambda _pid: 222)
     monkeypatch.setattr(os, "getpgrp", lambda: 111)
@@ -824,7 +824,7 @@ def test_process_group_handles_esrch_gracefully(monkeypatch, db_session: Session
 
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: True)
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
     monkeypatch.setattr(os, "getpgid", lambda _pid: 222)
     monkeypatch.setattr(os, "getpgrp", lambda: 111)
@@ -987,12 +987,12 @@ def _make_workspace_metadata(tmp_path: Path, *, markdown_hash: str) -> Path:
         "pipeline_name": "html",
         "fetched_at": "2026-01-01T00:00:00+00:00",
         "config_snapshot": {
-            "docling_pdf_max_pages": 250,
-            "docling_enable_ocr": True,
-            "docling_enable_table_structure": True,
-            "docling_picture_description_model": "none",
-            "docling_picture_timeout": 60.0,
-            "docling_enable_picture_classification": True,
+            "pdf_max_pages": 250,
+            "ocr_enabled": True,
+            "table_structure_enabled": True,
+            "picture_description_model": "none",
+            "picture_timeout": 60.0,
+            "picture_classification_enabled": True,
             "picture_description_enabled": False,
         },
     }

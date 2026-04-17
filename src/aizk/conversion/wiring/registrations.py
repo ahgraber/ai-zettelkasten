@@ -138,7 +138,7 @@ def register_ready_adapters(
     from aizk.conversion.adapters.fetchers.karakeep import KarakeepBookmarkResolver
     from aizk.conversion.adapters.fetchers.url import UrlFetcher
 
-    fetcher_registry.register_resolver("karakeep_bookmark", KarakeepBookmarkResolver())
+    fetcher_registry.register_resolver("karakeep_bookmark", KarakeepBookmarkResolver(config=cfg))
     fetcher_registry.register_content_fetcher("arxiv", ArxivFetcher(config=cfg))
     fetcher_registry.register_content_fetcher("github_readme", GithubReadmeFetcher(config=cfg))
     fetcher_registry.register_content_fetcher("url", UrlFetcher(config=cfg))

@@ -235,7 +235,7 @@ def test_real_subprocess_spawned_and_terminated(monkeypatch, db_session: Session
         return proc
 
     # Mock helper functions but let subprocess actually spawn
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
@@ -288,7 +288,7 @@ def test_cancelled_job_terminates_subprocess_with_no_zombies(monkeypatch, db_ses
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
@@ -327,7 +327,7 @@ def test_timeout_terminates_subprocess(monkeypatch, db_session: Session, html_bo
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
@@ -383,7 +383,7 @@ def test_subprocess_completes_normally_no_zombies(
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
@@ -449,7 +449,7 @@ def test_process_group_terminates_grandchild(
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _process_job_subprocess_spawn_child)
@@ -506,7 +506,7 @@ def test_sigterm_graceful_shutdown_within_grace_period(
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _process_job_subprocess_graceful_sigterm)
@@ -558,7 +558,7 @@ def test_sigkill_after_sigterm_on_timeout(monkeypatch, db_session: Session, html
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _process_job_subprocess_ignore_sigterm)
@@ -610,7 +610,7 @@ def test_cancel_mid_execution_terminates_within_poll_interval(
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)

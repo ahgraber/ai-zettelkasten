@@ -58,11 +58,18 @@ def _strip_unclaimed_aliases(
     aliases: AbstractSet[str],
     allowlist: AbstractSet[str],
 ) -> dict[str, str]:
-    """Remove every alias from `environ` that is not in `allowlist`. Return what was removed."""
+    """Remove every alias (and its nested descendants) from `environ` that is not in `allowlist`.
+
+    For nested-container aliases like `AIZK_CONVERTER`, also strips any key matching
+    `AIZK_CONVERTER__*` since pydantic-settings uses `__` as a nested delimiter.
+    """
     stripped: dict[str, str] = {}
     for alias in aliases - allowlist:
         if alias in environ:
             stripped[alias] = environ.pop(alias)
+        prefix = f"{alias}__"
+        for key in [k for k in environ if k.startswith(prefix)]:
+            stripped[key] = environ.pop(key)
     return stripped
 
 

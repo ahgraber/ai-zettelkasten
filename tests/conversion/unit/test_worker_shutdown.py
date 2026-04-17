@@ -232,7 +232,7 @@ class TestOrchestratorShutdownTerminated:
             "_supervise_conversion_process",
             lambda **_kwargs: SupervisionResult("converting", None, False, False, shutdown_terminated=True),
         )
-        monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+        monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
         monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
         monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
         monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())

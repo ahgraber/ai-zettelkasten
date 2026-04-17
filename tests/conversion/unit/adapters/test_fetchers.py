@@ -24,6 +24,14 @@ from aizk.conversion.core.source_ref import (
     UrlRef,
 )
 from aizk.conversion.core.types import ContentType, ConversionInput
+from aizk.conversion.utilities.config import ConversionConfig
+
+
+def _resolver_config(base_url: str = "https://karakeep.example.com") -> ConversionConfig:
+    return ConversionConfig(
+        _env_file=None,
+        fetcher={"karakeep": {"base_url": base_url, "api_key": "test-key"}},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +127,7 @@ def test_arxiv_bookmark_returns_arxiv_ref(heavy_mocks, monkeypatch):
     mocks["bm"].is_pdf_asset.return_value = False
     mocks["arxiv"].get_arxiv_id.return_value = "2301.12345"
 
-    result = KarakeepBookmarkResolver().resolve(KarakeepBookmarkRef(bookmark_id="bk-1"))
+    result = KarakeepBookmarkResolver(config=_resolver_config()).resolve(KarakeepBookmarkRef(bookmark_id="bk-1"))
 
     assert isinstance(result, ArxivRef)
     assert result.arxiv_id == "2301.12345"
@@ -135,7 +143,7 @@ def test_arxiv_bookmark_with_pdf_asset_sets_karakeep_asset_url(heavy_mocks, monk
     mocks["arxiv"].get_arxiv_id.return_value = "2301.12345"
     monkeypatch.setenv("KARAKEEP_BASE_URL", "https://karakeep.example.com")
 
-    result = KarakeepBookmarkResolver().resolve(KarakeepBookmarkRef(bookmark_id="bk-1"))
+    result = KarakeepBookmarkResolver(config=_resolver_config()).resolve(KarakeepBookmarkRef(bookmark_id="bk-1"))
 
     assert isinstance(result, ArxivRef)
     assert result.karakeep_asset_url == "https://karakeep.example.com/api/v1/assets/asset-xyz"
@@ -148,7 +156,7 @@ def test_github_bookmark_returns_github_readme_ref(heavy_mocks):
     mocks["gh"].is_github_pages_url.return_value = False
     mocks["gh"].parse_github_owner_repo.return_value = ("owner", "repo")
 
-    result = KarakeepBookmarkResolver().resolve(KarakeepBookmarkRef(bookmark_id="bk-2"))
+    result = KarakeepBookmarkResolver(config=_resolver_config()).resolve(KarakeepBookmarkRef(bookmark_id="bk-2"))
 
     assert isinstance(result, GithubReadmeRef)
     assert result.owner == "owner"
@@ -161,7 +169,7 @@ def test_github_pages_bookmark_returns_url_ref(heavy_mocks):
     mocks["bm"].detect_source_type.return_value = "github"
     mocks["gh"].is_github_pages_url.return_value = True
 
-    result = KarakeepBookmarkResolver().resolve(KarakeepBookmarkRef(bookmark_id="bk-3"))
+    result = KarakeepBookmarkResolver(config=_resolver_config()).resolve(KarakeepBookmarkRef(bookmark_id="bk-3"))
 
     assert isinstance(result, UrlRef)
     assert result.url == "https://owner.github.io/site"
@@ -175,7 +183,7 @@ def test_pdf_asset_bookmark_returns_url_ref(heavy_mocks, monkeypatch):
     mocks["bm"].get_bookmark_asset_id.return_value = "pdf-asset-1"
     monkeypatch.setenv("KARAKEEP_BASE_URL", "https://karakeep.example.com")
 
-    result = KarakeepBookmarkResolver().resolve(KarakeepBookmarkRef(bookmark_id="bk-4"))
+    result = KarakeepBookmarkResolver(config=_resolver_config()).resolve(KarakeepBookmarkRef(bookmark_id="bk-4"))
 
     assert isinstance(result, UrlRef)
     assert "pdf-asset-1" in result.url
@@ -190,7 +198,7 @@ def test_precrawled_archive_returns_url_ref(heavy_mocks, monkeypatch):
     mocks["bm"].get_bookmark_asset_id.return_value = "archive-1"
     monkeypatch.setenv("KARAKEEP_BASE_URL", "https://karakeep.example.com")
 
-    result = KarakeepBookmarkResolver().resolve(KarakeepBookmarkRef(bookmark_id="bk-5"))
+    result = KarakeepBookmarkResolver(config=_resolver_config()).resolve(KarakeepBookmarkRef(bookmark_id="bk-5"))
 
     assert isinstance(result, UrlRef)
     assert "archive-1" in result.url
@@ -203,7 +211,7 @@ def test_html_content_bookmark_returns_inline_html_ref(heavy_mocks):
     mocks["bm"].detect_source_type.return_value = "other"
     mocks["bm"].get_bookmark_html_content.return_value = "<html><body>content</body></html>"
 
-    result = KarakeepBookmarkResolver().resolve(KarakeepBookmarkRef(bookmark_id="bk-6"))
+    result = KarakeepBookmarkResolver(config=_resolver_config()).resolve(KarakeepBookmarkRef(bookmark_id="bk-6"))
 
     assert isinstance(result, InlineHtmlRef)
     assert b"content" in result.body
@@ -216,7 +224,7 @@ def test_html_content_without_source_url_returns_inline_html_ref(heavy_mocks):
     mocks["bm"].detect_source_type.return_value = "other"
     mocks["bm"].get_bookmark_html_content.return_value = "<html><body>no-url content</body></html>"
 
-    result = KarakeepBookmarkResolver().resolve(KarakeepBookmarkRef(bookmark_id="bk-6b"))
+    result = KarakeepBookmarkResolver(config=_resolver_config()).resolve(KarakeepBookmarkRef(bookmark_id="bk-6b"))
 
     assert isinstance(result, InlineHtmlRef)
     assert b"no-url content" in result.body
@@ -230,7 +238,7 @@ def test_text_only_bookmark_returns_inline_html_ref(heavy_mocks):
     mocks["bm"].get_bookmark_html_content.return_value = None
     mocks["bm"].get_bookmark_text_content.return_value = "some plain text"
 
-    result = KarakeepBookmarkResolver().resolve(KarakeepBookmarkRef(bookmark_id="bk-7"))
+    result = KarakeepBookmarkResolver(config=_resolver_config()).resolve(KarakeepBookmarkRef(bookmark_id="bk-7"))
 
     assert isinstance(result, InlineHtmlRef)
     assert b"some plain text" in result.body
@@ -245,7 +253,7 @@ def test_empty_bookmark_raises_error(heavy_mocks):
     mocks["bm"].get_bookmark_text_content.return_value = None
 
     with pytest.raises(_BookmarkContentUnavailableError):
-        KarakeepBookmarkResolver().resolve(KarakeepBookmarkRef(bookmark_id="bk-8"))
+        KarakeepBookmarkResolver(config=_resolver_config()).resolve(KarakeepBookmarkRef(bookmark_id="bk-8"))
 
 
 # ---------------------------------------------------------------------------

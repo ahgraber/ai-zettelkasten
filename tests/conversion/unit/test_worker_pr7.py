@@ -248,8 +248,10 @@ def test_enrich_source_for_arxiv_ref_does_not_rewrite_identity_columns(
 
     # Run the enrichment — it reads job.source_ref (ArxivRef) directly and
     # derives enrichment without hitting KaraKeep.
+    from aizk.conversion.utilities.config import ConversionConfig
+
     engine = db_session.get_bind()
-    _, returned_ref = _enrich_source_for_job(job.id, engine)
+    _, returned_ref = _enrich_source_for_job(job.id, engine, ConversionConfig(_env_file=None))
 
     # Re-read the Source
     db_session.expire_all()
@@ -302,8 +304,10 @@ def test_enrich_source_for_inline_html_ref(db_session):
     db_session.add(job)
     db_session.commit()
 
+    from aizk.conversion.utilities.config import ConversionConfig
+
     engine = db_session.get_bind()
-    _, returned_ref = _enrich_source_for_job(job.id, engine)
+    _, returned_ref = _enrich_source_for_job(job.id, engine, ConversionConfig(_env_file=None))
 
     db_session.expire_all()
     updated = db_session.exec(
