@@ -523,3 +523,10 @@ class ArxivClient:
             raise ValueError(f"Failed to parse {len(parsing_errors)} entries: {'; '.join(parsing_errors)}")
 
         return papers
+
+
+def __getattr__(name: str) -> object:
+    if name == "ArxivFetcher":
+        from aizk.conversion.adapters.fetchers.arxiv import ArxivFetcher
+        return ArxivFetcher
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

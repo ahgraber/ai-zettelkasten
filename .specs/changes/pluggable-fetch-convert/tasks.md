@@ -38,19 +38,19 @@
 
 ## PR 4 — Fetcher adapter extraction (move + re-export, non-breaking)
 
-- [ ] Create `aizk/conversion/adapters/fetchers/__init__.py`
-- [ ] Create `aizk/conversion/adapters/fetchers/karakeep.py`: extract `KarakeepBookmarkResolver` (implements `RefResolver`); preserve exact 7-step resolution precedence from `orchestrator.py:194-224`; return `ArxivRef`, `GithubReadmeRef`, `UrlRef`, or `InlineHtmlRef` as appropriate; declare `resolves_to = frozenset({"arxiv", "github_readme", "url", "inline_html"})`
-- [ ] Create `aizk/conversion/adapters/fetchers/arxiv.py`: extract `ArxivFetcher` (implements `ContentFetcher`); preserve 3-step PDF source precedence (KaraKeep asset → `arxiv_pdf_url` → abstract page resolution)
-- [ ] Create `aizk/conversion/adapters/fetchers/github.py`: extract `GithubReadmeFetcher` (implements `ContentFetcher`)
-- [ ] Create `aizk/conversion/adapters/fetchers/url.py`: extract `UrlFetcher` (implements `ContentFetcher`)
-- [ ] Create `aizk/conversion/adapters/fetchers/singlefile.py`: `SingleFileFetcher` skeleton class (implements `ContentFetcher`, raises `NotImplementedError`).
+- [x] Create `aizk/conversion/adapters/fetchers/__init__.py`
+- [x] Create `aizk/conversion/adapters/fetchers/karakeep.py`: extract `KarakeepBookmarkResolver` (implements `RefResolver`); preserve exact 7-step resolution precedence from `orchestrator.py:194-224`; return `ArxivRef`, `GithubReadmeRef`, `UrlRef`, or `InlineHtmlRef` as appropriate; declare `resolves_to = frozenset({"arxiv", "github_readme", "url", "inline_html"})`
+- [x] Create `aizk/conversion/adapters/fetchers/arxiv.py`: extract `ArxivFetcher` (implements `ContentFetcher`); preserve 3-step PDF source precedence (KaraKeep asset → `arxiv_pdf_url` → abstract page resolution)
+- [x] Create `aizk/conversion/adapters/fetchers/github.py`: extract `GithubReadmeFetcher` (implements `ContentFetcher`)
+- [x] Create `aizk/conversion/adapters/fetchers/url.py`: extract `UrlFetcher` (implements `ContentFetcher`)
+- [x] Create `aizk/conversion/adapters/fetchers/singlefile.py`: `SingleFileFetcher` skeleton class (implements `ContentFetcher`, raises `NotImplementedError`).
   Do NOT register it in the shared registration helper — the class exists for future work but is not wired into the registry until implemented, so `"singlefile"` does not appear in `accepted_kinds`
-- [ ] Create `aizk/conversion/adapters/fetchers/inline.py`: `InlineContentFetcher` (implements `ContentFetcher`); returns embedded bytes from `InlineHtmlRef` as `ConversionInput`
-- [ ] Add re-exports from old module paths (`fetcher.py`, `bookmark_utils.py`, `arxiv_utils.py`, `github_utils.py`)
-- [ ] Tests: `KarakeepBookmarkResolver` resolution precedence — arxiv bookmark returns `ArxivRef`, github returns `GithubReadmeRef`, PDF asset returns `UrlRef`, HTML content returns `UrlRef`, text-only returns `InlineHtmlRef`, empty returns error
-- [ ] Tests: `ArxivFetcher` PDF source precedence — asset preferred, `arxiv_pdf_url` fallback, abstract page resolution
-- [ ] Tests: `InlineContentFetcher` returns embedded bytes as `ConversionInput` with `ContentType.HTML`
-- [ ] Tests: existing fetcher/utils tests continue to pass (import path compatibility)
+- [x] Create `aizk/conversion/adapters/fetchers/inline.py`: `InlineContentFetcher` (implements `ContentFetcher`); returns embedded bytes from `InlineHtmlRef` as `ConversionInput`
+- [x] Add re-exports from old module paths (`fetcher.py`, `bookmark_utils.py`, `arxiv_utils.py`, `github_utils.py`)
+- [x] Tests: `KarakeepBookmarkResolver` resolution precedence — arxiv bookmark returns `ArxivRef`, github returns `GithubReadmeRef`, PDF asset returns `UrlRef`, HTML content returns `UrlRef`, text-only returns `InlineHtmlRef`, empty returns error
+- [x] Tests: `ArxivFetcher` PDF source precedence — asset preferred, `arxiv_pdf_url` fallback, abstract page resolution
+- [x] Tests: `InlineContentFetcher` returns embedded bytes as `ConversionInput` with `ContentType.HTML`
+- [x] Tests: existing fetcher/utils tests continue to pass (import path compatibility)
 
 ## PR 5 — Wiring package with role-specific builders (additive, non-breaking)
 

@@ -116,3 +116,10 @@ def is_github_pages_url(source_url: str) -> bool:
     """
     parsed = urlparse(source_url)
     return parsed.netloc.lower().endswith("github.io")
+
+
+def __getattr__(name: str) -> object:
+    if name == "GithubReadmeFetcher":
+        from aizk.conversion.adapters.fetchers.github import GithubReadmeFetcher
+        return GithubReadmeFetcher
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

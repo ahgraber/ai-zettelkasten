@@ -241,3 +241,21 @@ async def fetch_github_readme(
                     continue
 
     raise GitHubReadmeNotFoundError(f"No README found for {owner}/{repo}")
+
+
+_FETCHER_ADAPTER_EXPORTS: dict[str, str] = {
+    "KarakeepBookmarkResolver": "aizk.conversion.adapters.fetchers.karakeep",
+    "ArxivFetcher": "aizk.conversion.adapters.fetchers.arxiv",
+    "GithubReadmeFetcher": "aizk.conversion.adapters.fetchers.github",
+    "UrlFetcher": "aizk.conversion.adapters.fetchers.url",
+    "SingleFileFetcher": "aizk.conversion.adapters.fetchers.singlefile",
+    "InlineContentFetcher": "aizk.conversion.adapters.fetchers.inline",
+}
+
+
+def __getattr__(name: str) -> object:
+    if name in _FETCHER_ADAPTER_EXPORTS:
+        import importlib
+        mod = importlib.import_module(_FETCHER_ADAPTER_EXPORTS[name])
+        return getattr(mod, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

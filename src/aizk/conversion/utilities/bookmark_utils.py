@@ -195,3 +195,10 @@ def validate_bookmark_content(bookmark: Bookmark) -> None:
     if is_precrawled_archive_asset(bookmark):
         return
     raise BookmarkContentError(f"Bookmark {bookmark.id} is missing HTML, text, or PDF content")
+
+
+def __getattr__(name: str) -> object:
+    if name == "KarakeepBookmarkResolver":
+        from aizk.conversion.adapters.fetchers.karakeep import KarakeepBookmarkResolver
+        return KarakeepBookmarkResolver
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
