@@ -1,11 +1,23 @@
-"""Manifest generation for conversion artifacts."""
+"""Manifest generation for conversion artifacts.
+
+Two reader versions coexist:
+
+- ``ConversionManifestV1`` reads legacy manifests written prior to the
+  pluggable-fetch-convert refactor.
+- ``ConversionManifestV2`` is what the writer emits today; it supports
+  non-KaraKeep sources and records terminal fetch provenance explicitly.
+
+``load_manifest`` dispatches to the right reader based on the serialized
+``version`` string.  For backwards compatibility, ``ConversionManifest`` is an
+alias for ``ConversionManifestV2`` so existing callers continue to work.
+"""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Union
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -17,14 +29,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ManifestSource(BaseModel):
-    """Source information in manifest."""
-
-    url: str
-    normalized_url: str
-    title: str
-    source_type: Literal["arxiv", "github", "other"]
-    fetched_at: datetime
+# ---------------------------------------------------------------------------
+# Shared components
+# ---------------------------------------------------------------------------
 
 
 class ManifestConversionMetadata(BaseModel):
@@ -61,38 +68,194 @@ class ManifestArtifacts(BaseModel):
     figures: list[ManifestArtifactFigure]
 
 
-class ManifestConfigSnapshot(BaseModel):
-    """Conversion config fields that affect output, captured for exact replay.
+# ---------------------------------------------------------------------------
+# Provenance discriminated union (v2 only)
+# ---------------------------------------------------------------------------
+
+
+class ManifestProvenanceKarakeep(BaseModel):
+    """Terminal fetch provenance: KaraKeep itself was the byte source."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["karakeep_bookmark"] = "karakeep_bookmark"
+    bookmark_id: str
+
+
+class ManifestProvenanceArxiv(BaseModel):
+    """Terminal fetch provenance: arXiv PDF."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["arxiv"] = "arxiv"
+    arxiv_id: str
+
+
+class ManifestProvenanceGithub(BaseModel):
+    """Terminal fetch provenance: GitHub README."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["github_readme"] = "github_readme"
+    owner: str
+    repo: str
+
+
+class ManifestProvenanceUrl(BaseModel):
+    """Terminal fetch provenance: direct URL fetch."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["url"] = "url"
+    url: str
+
+
+class ManifestProvenanceInline(BaseModel):
+    """Terminal fetch provenance: inline HTML content."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["inline_html"] = "inline_html"
+    content_hash: str
+
+
+ManifestProvenanceVariant = Union[
+    ManifestProvenanceKarakeep,
+    ManifestProvenanceArxiv,
+    ManifestProvenanceGithub,
+    ManifestProvenanceUrl,
+    ManifestProvenanceInline,
+]
+
+ManifestProvenance = Annotated[ManifestProvenanceVariant, Field(discriminator="kind")]
+
+
+# ---------------------------------------------------------------------------
+# V1 manifest (legacy, read-only)
+# ---------------------------------------------------------------------------
+
+
+class ManifestSourceV1(BaseModel):
+    """Source information in v1.0 manifest (all fields required)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str
+    normalized_url: str
+    title: str
+    source_type: Literal["arxiv", "github", "other"]
+    fetched_at: datetime
+
+
+class ManifestConfigSnapshotV1(BaseModel):
+    """v1.0 Docling-specific config snapshot.
 
     Field set must stay in sync with build_output_config_snapshot in hashing.py.
-    The contract is enforced by test_build_output_config_snapshot_matches_manifest_contract.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    docling_pdf_max_pages: int = Field(description="Maximum PDF pages processed by Docling")
-    docling_enable_ocr: bool = Field(description="Whether OCR is enabled during conversion")
-    docling_enable_table_structure: bool = Field(description="Whether table structure extraction is enabled")
-    docling_picture_description_model: str = Field(description="Configured model for picture descriptions")
-    docling_picture_timeout: float = Field(description="Timeout for picture description generation")
-    docling_enable_picture_classification: bool = Field(
-        description="Whether figure classification and task-tagged prompting was active"
-    )
-    picture_description_enabled: bool = Field(description="Whether figure alt-text was generated via chat completions")
+    docling_pdf_max_pages: int
+    docling_enable_ocr: bool
+    docling_enable_table_structure: bool
+    docling_picture_description_model: str
+    docling_picture_timeout: float
+    docling_enable_picture_classification: bool
+    picture_description_enabled: bool
 
 
-class ConversionManifest(BaseModel):
-    """Complete conversion manifest with all metadata."""
+class ConversionManifestV1(BaseModel):
+    """Legacy v1.0 manifest reader. Not written post-refactor."""
 
-    model_config = ConfigDict(json_encoders={datetime: lambda v: v.isoformat()})
+    model_config = ConfigDict(extra="forbid")
 
-    version: str = "1.0"
+    version: Literal["1.0"]
     aizk_uuid: UUID
     karakeep_id: str
-    source: ManifestSource
+    source: ManifestSourceV1
     conversion: ManifestConversionMetadata
     artifacts: ManifestArtifacts
-    config_snapshot: ManifestConfigSnapshot
+    config_snapshot: ManifestConfigSnapshotV1
+
+
+# ---------------------------------------------------------------------------
+# V2 manifest (current format)
+# ---------------------------------------------------------------------------
+
+
+class ManifestSourceV2(BaseModel):
+    """Source metadata in v2 manifests. Fields nullable for non-KaraKeep sources."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str | None = None
+    normalized_url: str | None = None
+    title: str | None = None
+    source_type: Literal["arxiv", "github", "other"] | None = None
+    fetched_at: datetime | None = None
+
+
+class ManifestConfigSnapshotV2(BaseModel):
+    """v2 config snapshot: converter_name + opaque adapter-supplied fields.
+
+    The adapter supplies its own output-affecting fields under ``adapter``;
+    the manifest does not constrain their shape beyond "json-serializable".
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    converter_name: str = Field(description="Name of the converter that produced this output")
+    adapter: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Opaque adapter-supplied output-affecting config fields",
+    )
+
+
+class ConversionManifestV2(BaseModel):
+    """v2 manifest with explicit provenance and nullable identity fields."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal["2.0"]
+    aizk_uuid: UUID
+    karakeep_id: str | None = None
+    provenance: ManifestProvenance = Field(
+        description="Terminal fetch state — the identity that produced the converted bytes",
+    )
+    ingress: ManifestProvenance | None = Field(
+        default=None,
+        description="Submitter-supplied ref, only when it differs from the terminal provenance",
+    )
+    source: ManifestSourceV2
+    conversion: ManifestConversionMetadata
+    artifacts: ManifestArtifacts
+    config_snapshot: ManifestConfigSnapshotV2
+
+
+# Backwards-compatible alias so existing callers continue to work.
+ConversionManifest = ConversionManifestV2
+ManifestSource = ManifestSourceV2
+ManifestConfigSnapshot = ManifestConfigSnapshotV2
+
+
+# ---------------------------------------------------------------------------
+# Version-dispatching loader
+# ---------------------------------------------------------------------------
+
+
+def load_manifest(data: dict) -> ConversionManifestV1 | ConversionManifestV2:
+    """Load a manifest dict, dispatching to the right reader by ``version``."""
+    version = data.get("version")
+    if version == "1.0":
+        return ConversionManifestV1.model_validate(data)
+    if version == "2.0":
+        return ConversionManifestV2.model_validate(data)
+    raise ValueError(f"Unknown manifest version: {version!r}")
+
+
+# ---------------------------------------------------------------------------
+# Writer
+# ---------------------------------------------------------------------------
 
 
 def _coerce_datetime(value: datetime | None, fallback: datetime) -> datetime:
@@ -101,6 +264,96 @@ def _coerce_datetime(value: datetime | None, fallback: datetime) -> datetime:
     if chosen.tzinfo is None:
         return chosen.replace(tzinfo=timezone.utc)
     return chosen
+
+
+def _extract_arxiv_id(url: str | None) -> str | None:
+    """Best-effort arxiv_id extraction from a URL; returns None if not recognizable."""
+    if not url:
+        return None
+    try:
+        from aizk.conversion.utilities.arxiv_utils import get_arxiv_id
+
+        return get_arxiv_id(url)
+    except Exception:
+        return None
+
+
+def _extract_github_owner_repo(url: str | None) -> tuple[str, str] | None:
+    """Best-effort (owner, repo) extraction; returns None if not recognizable."""
+    if not url:
+        return None
+    try:
+        from aizk.conversion.utilities.github_utils import parse_github_owner_repo
+
+        return parse_github_owner_repo(url)
+    except Exception:
+        return None
+
+
+def _derive_provenance_and_ingress(
+    source: Source,
+) -> tuple[ManifestProvenanceVariant, ManifestProvenanceVariant | None]:
+    """Compute (provenance, ingress) for a Source row.
+
+    ``provenance`` describes the terminal fetch identity; ``ingress`` is the
+    submitter-supplied ref when it differs from the terminal.
+
+    For v2 today (pre-worker-cutover), the worker does not pass terminal state
+    explicitly, so this is a bridge: the submitter's ref (``source.source_ref``)
+    is used as ``ingress`` when the Source's resolved ``source_type`` indicates
+    a more specific terminal (arxiv/github), or as ``provenance`` directly
+    otherwise.
+    """
+    ingress_kind = str(source.source_ref.get("kind", ""))
+
+    # Only KaraKeep ingresses can resolve into a different terminal today.
+    if ingress_kind == "karakeep_bookmark":
+        if source.source_type == "arxiv":
+            arxiv_id = _extract_arxiv_id(source.url) or ""
+            provenance = ManifestProvenanceArxiv(arxiv_id=arxiv_id)
+            ingress = ManifestProvenanceKarakeep(
+                bookmark_id=str(source.source_ref.get("bookmark_id", "")),
+            )
+            return provenance, ingress
+        if source.source_type == "github":
+            owner_repo = _extract_github_owner_repo(source.url)
+            if owner_repo is not None:
+                owner, repo = owner_repo
+                provenance = ManifestProvenanceGithub(owner=owner, repo=repo)
+                ingress = ManifestProvenanceKarakeep(
+                    bookmark_id=str(source.source_ref.get("bookmark_id", "")),
+                )
+                return provenance, ingress
+        # KaraKeep-terminal cases (PDF assets, precrawled archives, text/html content)
+        # fall through to provenance = karakeep_bookmark with no ingress.
+        provenance = ManifestProvenanceKarakeep(
+            bookmark_id=str(source.source_ref.get("bookmark_id", "")),
+        )
+        return provenance, None
+
+    # Non-KaraKeep ingresses: provenance mirrors the submitted ref, no ingress.
+    if ingress_kind == "arxiv":
+        return ManifestProvenanceArxiv(arxiv_id=str(source.source_ref.get("arxiv_id", ""))), None
+    if ingress_kind == "github_readme":
+        return (
+            ManifestProvenanceGithub(
+                owner=str(source.source_ref.get("owner", "")),
+                repo=str(source.source_ref.get("repo", "")),
+            ),
+            None,
+        )
+    if ingress_kind == "url":
+        return ManifestProvenanceUrl(url=str(source.source_ref.get("url", ""))), None
+    if ingress_kind == "inline_html":
+        return (
+            ManifestProvenanceInline(
+                content_hash=str(source.source_ref.get("content_hash", "")),
+            ),
+            None,
+        )
+
+    # Unknown kind: best-effort fallback to url or raise.
+    raise ValueError(f"Unknown source_ref kind for manifest provenance: {ingress_kind!r}")
 
 
 def generate_manifest(
@@ -113,23 +366,14 @@ def generate_manifest(
     docling_version: str,
     pipeline_name: Literal["html", "pdf"],
     *,
-    config_snapshot: ManifestConfigSnapshot,
-) -> ConversionManifest:
-    """Generate manifest for conversion artifacts.
+    config_snapshot: ManifestConfigSnapshotV2 | ManifestConfigSnapshotV1 | dict[str, Any],
+    converter_name: str = "docling",
+) -> ConversionManifestV2:
+    """Generate a v2.0 manifest for conversion artifacts.
 
-    Args:
-        source: Source record with identity and metadata.
-        job: ConversionJob record with timing and job info.
-        fetched_at: Timestamp when content was fetched.
-        markdown_s3_uri: Absolute S3 URI for markdown (s3://bucket/key).
-        markdown_hash: Markdown xxHash64 hex digest.
-        figure_s3_uris: List of absolute S3 URIs for figures.
-        docling_version: Docling version used.
-        pipeline_name: Pipeline name (html/pdf).
-        config_snapshot: Replayable conversion config snapshot used for this output.
-
-    Returns:
-        ConversionManifest Pydantic model.
+    Accepts either a v1 snapshot dict (backwards-compatible call sites) or a
+    v2 ``ManifestConfigSnapshotV2``.  Callers supplying a v1 snapshot are
+    auto-migrated to v2 by wrapping the Docling fields under ``adapter``.
     """
     if job.id is None:
         raise ValueError("ConversionJob.id must be set before manifest generation")
@@ -140,14 +384,34 @@ def generate_manifest(
 
     source_type = source.source_type
     if source_type not in {"arxiv", "github", "other"}:
-        source_type = "other"
+        source_type = None
 
     figures = [ManifestArtifactFigure(key=uri, created_at=finished_at) for uri in figure_s3_uris]
 
-    return ConversionManifest(
+    # Normalize the snapshot to v2 shape.
+    if isinstance(config_snapshot, ManifestConfigSnapshotV2):
+        snapshot_v2 = config_snapshot
+    elif isinstance(config_snapshot, ManifestConfigSnapshotV1):
+        snapshot_v2 = ManifestConfigSnapshotV2(
+            converter_name=converter_name,
+            adapter=config_snapshot.model_dump(),
+        )
+    else:
+        # Raw dict (legacy callsite passing build_output_config_snapshot output).
+        snapshot_v2 = ManifestConfigSnapshotV2(
+            converter_name=converter_name,
+            adapter=dict(config_snapshot),
+        )
+
+    provenance, ingress = _derive_provenance_and_ingress(source)
+
+    return ConversionManifestV2(
+        version="2.0",
         aizk_uuid=source.aizk_uuid,
         karakeep_id=source.karakeep_id,
-        source=ManifestSource(
+        provenance=provenance,
+        ingress=ingress,
+        source=ManifestSourceV2(
             url=source.url,
             normalized_url=source.normalized_url,
             title=source.title,
@@ -171,11 +435,11 @@ def generate_manifest(
             ),
             figures=figures,
         ),
-        config_snapshot=config_snapshot,
+        config_snapshot=snapshot_v2,
     )
 
 
-def save_manifest(manifest: ConversionManifest, output_path: Path) -> None:
+def save_manifest(manifest: ConversionManifestV2, output_path: Path) -> None:
     """Save manifest to JSON file.
 
     Args:

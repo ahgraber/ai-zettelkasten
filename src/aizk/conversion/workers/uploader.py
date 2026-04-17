@@ -14,7 +14,7 @@ from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source as SourceRecord
 from aizk.conversion.db import get_engine
 from aizk.conversion.storage.manifest import (
-    ManifestConfigSnapshot,
+    ManifestConfigSnapshotV2,
     generate_manifest,
     save_manifest,
 )
@@ -121,7 +121,10 @@ def _upload_converted(job_id: int, workspace: Path, config: ConversionConfig) ->
             figure_s3_uris=figure_uris,
             docling_version=metadata["docling_version"],
             pipeline_name=metadata["pipeline_name"],
-            config_snapshot=ManifestConfigSnapshot(**metadata["config_snapshot"]),
+            config_snapshot=ManifestConfigSnapshotV2(
+                converter_name="docling",
+                adapter=dict(metadata["config_snapshot"]),
+            ),
         )
         manifest_path = workspace / "manifest.json"
         save_manifest(manifest, manifest_path)
