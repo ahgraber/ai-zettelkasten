@@ -47,6 +47,10 @@ class Orchestrator:
         self._resolve_converter = resolve_converter
         self._depth_cap = depth_cap
 
+    def fetch(self, ref: SourceRefVariant) -> ConversionInput:
+        """Fetch content for *ref*, following resolver hops as needed."""
+        return self._fetch(ref, depth=0)
+
     def _fetch(self, ref: SourceRefVariant, depth: int) -> ConversionInput:
         if depth >= self._depth_cap:
             raise FetcherDepthExceeded(depth=depth, kind=ref.kind)

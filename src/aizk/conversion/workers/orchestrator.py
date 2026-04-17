@@ -296,10 +296,10 @@ def _convert_job_artifacts(
     _report_status(status_queue, event="phase", message="converting")
     _raise_if_cancelled(job_id, engine)
 
-    # orchestrator.process() resolves (if needed), fetches, and converts.
+    # orchestrator.fetch() follows resolver hops and returns ConversionInput.
     # The fetch-chain populates ConversionInput.metadata with source_url for
     # adapters that need it (e.g. DoclingConverter.convert_html).
-    conversion_input = runtime.orchestrator._fetch(ref, depth=0)
+    conversion_input = runtime.orchestrator.fetch(ref)
     if not conversion_input.content:
         raise BookmarkContentUnavailableError(
             f"Fetcher returned empty content for job {job_id}"

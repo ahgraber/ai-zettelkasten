@@ -472,36 +472,43 @@ def test_arxiv_fetcher_populates_abstract_source_url(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Idempotency key parity: API-computed key is what the worker would compute
+# Idempotency key parity: API-persisted key matches independent computation
 # ---------------------------------------------------------------------------
 
 
-def test_idempotency_key_worker_matches_api():
-    """Worker never recomputes the key — the API is the sole writer.
+def test_api_idempotency_key_matches_independent_computation(db_session):
+    """The idempotency_key persisted by the API equals a key independently computed
+    from the same inputs (source_ref_hash, converter_name, config_snapshot).
 
-    This test asserts the structural contract: given the same inputs, both
-    sides produce the same SHA-256.  It guards against silent divergence in
-    the compute_idempotency_key formula.
+    This catches silent divergence in the compute_idempotency_key formula — for
+    example if the API route swaps argument order or changes the config snapshot
+    schema without updating the formula.
     """
-    from aizk.conversion.utilities.hashing import (
-        build_output_config_snapshot,
-        compute_idempotency_key,
-    )
+    from fastapi.testclient import TestClient
+
+    from aizk.conversion.api.main import create_app
     from aizk.conversion.utilities.config import ConversionConfig
+    from aizk.conversion.utilities.hashing import build_output_config_snapshot, compute_idempotency_key
 
-    cfg = ConversionConfig(_env_file=None)
-    ref = KarakeepBookmarkRef(bookmark_id="bm_parity")
+    app = create_app()
+    with TestClient(app) as client:
+        resp = client.post(
+            "/v1/jobs",
+            json={"source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_idempotency_parity"}},
+        )
+    assert resp.status_code == 201
+    api_idempotency_key = resp.json()["idempotency_key"]
+
+    # Independently compute using the same inputs the route uses.
+    ref = KarakeepBookmarkRef(bookmark_id="bm_idempotency_parity")
     source_ref_hash = compute_source_ref_hash(ref)
-    snapshot = build_output_config_snapshot(cfg, picture_description_enabled=False)
-
-    api_key = compute_idempotency_key(
-        source_ref_hash=source_ref_hash,
-        converter_name="docling",
-        config_snapshot=snapshot,
+    cfg = ConversionConfig()
+    config_snapshot = build_output_config_snapshot(
+        cfg, picture_description_enabled=cfg.is_picture_description_enabled()
     )
-    worker_key = compute_idempotency_key(
+    expected_key = compute_idempotency_key(
         source_ref_hash=source_ref_hash,
-        converter_name="docling",
-        config_snapshot=snapshot,
+        converter_name="docling",  # ApiRuntime.converter_name default
+        config_snapshot=config_snapshot,
     )
-    assert api_key == worker_key
+    assert api_idempotency_key == expected_key
