@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from aizk.conversion.core.errors import ChainNotTerminated
+from aizk.conversion.core.orchestrator import DEFAULT_DEPTH_CAP
 from aizk.conversion.core.registry import ConverterRegistry, FetcherRegistry
 from aizk.conversion.core.types import ContentType
 
 
 def validate_chain_closure(
     fetcher_registry: FetcherRegistry,
-    depth_cap: int = 3,
+    depth_cap: int = DEFAULT_DEPTH_CAP,
 ) -> None:
     """Walk all resolver-declared edges and verify chain termination.
 
@@ -20,6 +21,9 @@ def validate_chain_closure(
     - The declared DAG contains no cycles.
     - No declared path from a resolver to a terminal content fetcher requires
       more hops than *depth_cap* allows.
+
+    *depth_cap* defaults to ``DEFAULT_DEPTH_CAP`` — the same value the
+    ``Orchestrator`` uses — so the validator and runtime cannot drift.
 
     Raises:
         ChainNotTerminated: on missing kind, cycle, or depth-cap violation.
@@ -38,11 +42,8 @@ def validate_chain_closure(
         if role == "content_fetcher":
             return
 
-        # Resolver: inspect declared edges.
-        resolves_to: frozenset[str] = (
-            getattr(type(impl), "resolves_to", None)
-            or getattr(impl, "resolves_to", frozenset())
-        )
+        # Resolver: inspect declared edges.  resolves_to is ClassVar so always on the class.
+        resolves_to: frozenset[str] = getattr(type(impl), "resolves_to", frozenset())
         current_path = ancestor_path + [kind]
 
         for produced_kind in resolves_to:
@@ -83,10 +84,7 @@ def _compute_content_type_map(
         role, impl = fetcher_registry.resolve(kind)
         if role == "content_fetcher":
             return terminal_types.get(kind, frozenset())
-        resolves_to: frozenset[str] = (
-            getattr(type(impl), "resolves_to", None)
-            or getattr(impl, "resolves_to", frozenset())
-        )
+        resolves_to: frozenset[str] = getattr(type(impl), "resolves_to", frozenset())
         result: frozenset[ContentType] = frozenset()
         for produced_kind in resolves_to:
             if produced_kind in registered:
@@ -96,7 +94,9 @@ def _compute_content_type_map(
     return {kind: resolve_types(kind, frozenset()) for kind in registered}
 
 
-# Content types each terminal content-fetcher kind produces.
+# TODO: Move output type declarations onto ContentFetcher adapters as a
+#   ClassVar[frozenset[ContentType]] so wiring doesn't maintain this separate
+#   mapping. Each new fetcher kind currently requires an edit here too.
 _TERMINAL_CONTENT_TYPES: dict[str, frozenset[ContentType]] = {
     "arxiv": frozenset({ContentType.PDF}),
     "github_readme": frozenset({ContentType.HTML}),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html as _html
 import logging
 import os
 from typing import ClassVar
@@ -105,16 +106,16 @@ class KarakeepBookmarkResolver:
             if asset_id:
                 return UrlRef(url=_karakeep_asset_url(asset_id))
 
-        # Step 5: HTML content — use source URL so UrlFetcher can fetch it
+        # Step 5: HTML content — embed inline (preserves legacy: uses cached crawler bytes directly)
         html_content = get_bookmark_html_content(bookmark)
-        if html_content and html_content.strip() and source_url:
-            return UrlRef(url=source_url)
+        if html_content and html_content.strip():
+            return InlineHtmlRef(body=html_content.encode("utf-8"))
 
         # Step 6: text content — embed inline, wrapped in minimal HTML
         text_content = get_bookmark_text_content(bookmark)
         if text_content and text_content.strip():
-            html = f"<html><body><pre>{text_content}</pre></body></html>"
-            return InlineHtmlRef(body=html.encode("utf-8"))
+            wrapped = f"<html><body><pre>{_html.escape(text_content)}</pre></body></html>"
+            return InlineHtmlRef(body=wrapped.encode("utf-8"))
 
         # Step 7: no usable content
         raise BookmarkContentUnavailableError(

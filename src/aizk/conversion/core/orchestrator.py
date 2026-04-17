@@ -4,6 +4,14 @@ from __future__ import annotations
 
 from typing import Callable
 
+DEFAULT_DEPTH_CAP: int = 3
+"""Default maximum resolver hops before a terminal content fetch.
+
+Shared by the Orchestrator and wiring-time validate_chain_closure so the
+two never drift.  A chain of N resolvers followed by one content fetcher
+requires DEFAULT_DEPTH_CAP > N.
+"""
+
 from aizk.conversion.core.errors import FetcherDepthExceeded
 from aizk.conversion.core.protocols import ContentFetcher, Converter, RefResolver
 from aizk.conversion.core.source_ref import SourceRefVariant
@@ -33,7 +41,7 @@ class Orchestrator:
         self,
         resolve_fetcher: Callable[[str], tuple[str, ContentFetcher | RefResolver]],
         resolve_converter: Callable[[ContentType, str], Converter],
-        depth_cap: int = 3,
+        depth_cap: int = DEFAULT_DEPTH_CAP,
     ) -> None:
         self._resolve_fetcher = resolve_fetcher
         self._resolve_converter = resolve_converter

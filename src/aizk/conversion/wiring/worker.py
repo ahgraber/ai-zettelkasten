@@ -6,7 +6,7 @@ import threading
 from dataclasses import dataclass
 from types import TracebackType
 
-from aizk.conversion.core.orchestrator import Orchestrator
+from aizk.conversion.core.orchestrator import DEFAULT_DEPTH_CAP, Orchestrator
 from aizk.conversion.core.protocols import ResourceGuard
 from aizk.conversion.core.registry import ConverterRegistry, FetcherRegistry
 from aizk.conversion.wiring.capabilities import DeploymentCapabilities
@@ -77,6 +77,7 @@ def build_worker_runtime(cfg: object) -> WorkerRuntime:
     orchestrator = Orchestrator(
         resolve_fetcher=fetcher_registry.resolve,
         resolve_converter=converter_registry.resolve,
+        depth_cap=DEFAULT_DEPTH_CAP,
     )
 
     return WorkerRuntime(

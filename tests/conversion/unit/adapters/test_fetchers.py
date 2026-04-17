@@ -197,7 +197,8 @@ def test_precrawled_archive_returns_url_ref(heavy_mocks, monkeypatch):
     assert "archive-1" in result.url
 
 
-def test_html_content_bookmark_returns_url_ref(heavy_mocks):
+def test_html_content_bookmark_returns_inline_html_ref(heavy_mocks):
+    # Legacy behavior: embed cached HTML bytes inline (no extra fetch from source_url).
     mocks = heavy_mocks
     mocks["bm"].get_bookmark_source_url.return_value = "https://example.com/article"
     mocks["bm"].detect_source_type.return_value = "other"
@@ -205,8 +206,21 @@ def test_html_content_bookmark_returns_url_ref(heavy_mocks):
 
     result = KarakeepBookmarkResolver().resolve(KarakeepBookmarkRef(bookmark_id="bk-6"))
 
-    assert isinstance(result, UrlRef)
-    assert result.url == "https://example.com/article"
+    assert isinstance(result, InlineHtmlRef)
+    assert b"content" in result.body
+
+
+def test_html_content_without_source_url_returns_inline_html_ref(heavy_mocks):
+    # Regression: must not silently fall through when source_url is absent.
+    mocks = heavy_mocks
+    mocks["bm"].get_bookmark_source_url.side_effect = _BookmarkContentError("no url")
+    mocks["bm"].detect_source_type.return_value = "other"
+    mocks["bm"].get_bookmark_html_content.return_value = "<html><body>no-url content</body></html>"
+
+    result = KarakeepBookmarkResolver().resolve(KarakeepBookmarkRef(bookmark_id="bk-6b"))
+
+    assert isinstance(result, InlineHtmlRef)
+    assert b"no-url content" in result.body
 
 
 def test_text_only_bookmark_returns_inline_html_ref(heavy_mocks):

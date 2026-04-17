@@ -36,6 +36,12 @@ def build_test_runtime(
 
     Returns:
         A ``TestRuntime`` with mutable registries and empty capabilities.
+
+    Note:
+        ``capabilities.accepted_kinds`` is captured from the registries at
+        build time.  Adapters registered *after* this call are not reflected
+        in the returned capabilities.  Pass a pre-configured registry, or
+        call this function after all test registrations are complete.
     """
     fr = fetcher_registry if fetcher_registry is not None else FetcherRegistry()
     cr = converter_registry if converter_registry is not None else ConverterRegistry()
