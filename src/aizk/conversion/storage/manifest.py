@@ -298,18 +298,22 @@ def _derive_provenance_and_ingress(
     ``provenance`` describes the terminal fetch identity; ``ingress`` is the
     submitter-supplied ref when it differs from the terminal.
 
-    For v2 today (pre-worker-cutover), the worker does not pass terminal state
-    explicitly, so this is a bridge: the submitter's ref (``source.source_ref``)
-    is used as ``ingress`` when the Source's resolved ``source_type`` indicates
-    a more specific terminal (arxiv/github), or as ``provenance`` directly
-    otherwise.
+    Pre-worker-cutover bridge (TODO: remove after PR 7): the worker does not pass
+    terminal state explicitly, so this function infers it from ``source.source_type``
+    instead.  After PR 7 the worker will record the actual terminal ref in the
+    workspace metadata and pass it directly to ``generate_manifest``.
     """
     ingress_kind = str(source.source_ref.get("kind", ""))
 
     # Only KaraKeep ingresses can resolve into a different terminal today.
     if ingress_kind == "karakeep_bookmark":
         if source.source_type == "arxiv":
-            arxiv_id = _extract_arxiv_id(source.url) or ""
+            arxiv_id = _extract_arxiv_id(source.url)
+            if not arxiv_id:
+                raise ValueError(
+                    f"Source {source.aizk_uuid}: source_type='arxiv' but could not"
+                    f" extract arxiv_id from url={source.url!r}"
+                )
             provenance = ManifestProvenanceArxiv(arxiv_id=arxiv_id)
             ingress = ManifestProvenanceKarakeep(
                 bookmark_id=str(source.source_ref.get("bookmark_id", "")),
@@ -317,13 +321,17 @@ def _derive_provenance_and_ingress(
             return provenance, ingress
         if source.source_type == "github":
             owner_repo = _extract_github_owner_repo(source.url)
-            if owner_repo is not None:
-                owner, repo = owner_repo
-                provenance = ManifestProvenanceGithub(owner=owner, repo=repo)
-                ingress = ManifestProvenanceKarakeep(
-                    bookmark_id=str(source.source_ref.get("bookmark_id", "")),
+            if owner_repo is None:
+                raise ValueError(
+                    f"Source {source.aizk_uuid}: source_type='github' but could not"
+                    f" parse owner/repo from url={source.url!r}"
                 )
-                return provenance, ingress
+            owner, repo = owner_repo
+            provenance = ManifestProvenanceGithub(owner=owner, repo=repo)
+            ingress = ManifestProvenanceKarakeep(
+                bookmark_id=str(source.source_ref.get("bookmark_id", "")),
+            )
+            return provenance, ingress
         # KaraKeep-terminal cases (PDF assets, precrawled archives, text/html content)
         # fall through to provenance = karakeep_bookmark with no ingress.
         provenance = ManifestProvenanceKarakeep(
@@ -333,26 +341,45 @@ def _derive_provenance_and_ingress(
 
     # Non-KaraKeep ingresses: provenance mirrors the submitted ref, no ingress.
     if ingress_kind == "arxiv":
-        return ManifestProvenanceArxiv(arxiv_id=str(source.source_ref.get("arxiv_id", ""))), None
+        arxiv_id = source.source_ref.get("arxiv_id")
+        if not arxiv_id:
+            raise ValueError(
+                f"Source {source.aizk_uuid}: arxiv source_ref missing 'arxiv_id':"
+                f" {source.source_ref!r}"
+            )
+        return ManifestProvenanceArxiv(arxiv_id=str(arxiv_id)), None
     if ingress_kind == "github_readme":
+        owner = source.source_ref.get("owner")
+        repo = source.source_ref.get("repo")
+        if not owner or not repo:
+            raise ValueError(
+                f"Source {source.aizk_uuid}: github_readme source_ref missing 'owner'"
+                f" or 'repo': {source.source_ref!r}"
+            )
         return (
-            ManifestProvenanceGithub(
-                owner=str(source.source_ref.get("owner", "")),
-                repo=str(source.source_ref.get("repo", "")),
-            ),
+            ManifestProvenanceGithub(owner=str(owner), repo=str(repo)),
             None,
         )
     if ingress_kind == "url":
-        return ManifestProvenanceUrl(url=str(source.source_ref.get("url", ""))), None
+        url = source.source_ref.get("url")
+        if not url:
+            raise ValueError(
+                f"Source {source.aizk_uuid}: url source_ref missing 'url':"
+                f" {source.source_ref!r}"
+            )
+        return ManifestProvenanceUrl(url=str(url)), None
     if ingress_kind == "inline_html":
+        content_hash = source.source_ref.get("content_hash")
+        if not content_hash:
+            raise ValueError(
+                f"Source {source.aizk_uuid}: inline_html source_ref missing 'content_hash':"
+                f" {source.source_ref!r}"
+            )
         return (
-            ManifestProvenanceInline(
-                content_hash=str(source.source_ref.get("content_hash", "")),
-            ),
+            ManifestProvenanceInline(content_hash=str(content_hash)),
             None,
         )
 
-    # Unknown kind: best-effort fallback to url or raise.
     raise ValueError(f"Unknown source_ref kind for manifest provenance: {ingress_kind!r}")
 
 

@@ -26,6 +26,7 @@ def _karakeep_source_ref_json(karakeep_id: str) -> str:
     """Build the canonical source_ref JSON payload for a KaraKeep bookmark id."""
     return json.dumps(
         {"kind": "karakeep_bookmark", "bookmark_id": karakeep_id},
+        sort_keys=True,
         separators=(",", ":"),
     )
 

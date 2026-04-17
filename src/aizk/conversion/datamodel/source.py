@@ -62,8 +62,9 @@ class Source(SQLModel, table=True):
     def from_karakeep_id(cls, karakeep_id: str, **overrides: Any) -> "Source":
         """Construct a Source from a KaraKeep bookmark id, synthesizing source_ref.
 
-        Convenience for the bridge period while the API still accepts
-        ``karakeep_id`` directly. Overrides may set ``url``, ``title``, etc.
+        Test and admin convenience only — production flow goes through the API
+        job submission path which builds ``source_ref`` from ``JobSubmission``.
+        Overrides may set ``url``, ``title``, etc.
         """
         from aizk.conversion.core.source_ref import (
             KarakeepBookmarkRef,

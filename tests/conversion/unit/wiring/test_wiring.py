@@ -182,8 +182,13 @@ def test_build_worker_runtime_registers_expected_converter_formats(mock_docling,
     assert caps.converter_available(ContentType.HTML)
 
 
-def test_build_api_runtime_accepted_kinds_match_worker(mock_docling, monkeypatch):
-    """API and worker runtimes produce identical accepted_kinds (shared helper)."""
+def test_build_api_runtime_accepted_kinds_subset_of_worker(mock_docling, monkeypatch):
+    """API accepted_kinds is a strict subset of worker accepted_kinds.
+
+    The API gate only exposes directly-submittable kinds (karakeep_bookmark);
+    worker-internal resolver targets (arxiv, url, etc.) are registered for
+    chain-closure validation but must not be API-submittable.
+    """
     from aizk.conversion.wiring.api import build_api_runtime
     from aizk.conversion.wiring.worker import build_worker_runtime
 
@@ -193,7 +198,8 @@ def test_build_api_runtime_accepted_kinds_match_worker(mock_docling, monkeypatch
     worker_runtime = build_worker_runtime(cfg)
     api_runtime = build_api_runtime(cfg)
 
-    assert worker_runtime.capabilities.accepted_kinds == api_runtime.capabilities.accepted_kinds
+    assert api_runtime.capabilities.accepted_kinds == frozenset({"karakeep_bookmark"})
+    assert api_runtime.capabilities.accepted_kinds < worker_runtime.capabilities.accepted_kinds
 
 
 def test_singlefile_not_in_accepted_kinds(mock_docling, monkeypatch):

@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 
 from pydantic import AnyUrl
 from sqlalchemy import func, text
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import Session, select
 
@@ -195,9 +196,10 @@ def submit_job(
     # Mirrors the worker's claim_next_job pattern in loop.py.
     session.exec(text("BEGIN IMMEDIATE"))
 
+    converter_name = request.app.state.api_runtime.converter_name
     idempotency_key = submission.idempotency_key or compute_idempotency_key(
         source_ref_hash=source_ref_hash,
-        converter_name="docling",
+        converter_name=converter_name,
         config_snapshot=build_output_config_snapshot(
             config,
             picture_description_enabled=config.is_picture_description_enabled(),
@@ -228,8 +230,6 @@ def submit_job(
     # followed by SELECT to obtain the canonical row regardless of which transaction inserted it.
     # Uses SQLAlchemy's SQLite "insert() ... .on_conflict_do_nothing()" so UUID and JSON
     # column types are encoded via the dialect (raw text SQL would mis-encode them).
-    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-
     now = _utcnow()
     stmt = (
         sqlite_insert(Source)

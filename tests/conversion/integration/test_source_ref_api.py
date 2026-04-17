@@ -126,11 +126,11 @@ def test_source_identity_columns_immutable_after_creation(db_session):
     assert source.source_ref_hash
 
 
-def test_concurrent_source_dedup_produces_one_row(db_session):
-    """Two concurrent submissions with the same source_ref_hash share one Source row.
+def test_sequential_source_dedup_produces_one_row(db_session):
+    """Two sequential submissions with the same source_ref_hash share one Source row.
 
-    Sequential submissions exercise the same ON CONFLICT DO NOTHING code path,
-    since the race is handled by ``INSERT OR IGNORE`` followed by ``SELECT``.
+    Sequential calls exercise the same ON CONFLICT DO NOTHING code path that
+    guards against true concurrent races (INSERT OR IGNORE + SELECT).
     """
     app = create_app()
     with TestClient(app) as client:

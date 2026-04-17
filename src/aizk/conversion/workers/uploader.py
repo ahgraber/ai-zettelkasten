@@ -112,6 +112,7 @@ def _upload_converted(job_id: int, workspace: Path, config: ConversionConfig) ->
             figure_uris.append(s3_client.upload_file(fig_path, fig_key))
 
         job.finished_at = _utcnow()
+        converter_name = metadata.get("converter_name", "docling")
         manifest = generate_manifest(
             source=source,
             job=job,
@@ -122,7 +123,7 @@ def _upload_converted(job_id: int, workspace: Path, config: ConversionConfig) ->
             docling_version=metadata["docling_version"],
             pipeline_name=metadata["pipeline_name"],
             config_snapshot=ManifestConfigSnapshotV2(
-                converter_name="docling",
+                converter_name=converter_name,
                 adapter=dict(metadata["config_snapshot"]),
             ),
         )

@@ -34,7 +34,7 @@ def validate_chain_closure(
         if depth >= depth_cap:
             raise ChainNotTerminated(
                 f"Chain exceeds depth cap {depth_cap}: {' -> '.join(ancestor_path + [kind])}",
-                resolver_name=ancestor_path[0] if ancestor_path else kind,
+                resolver_name=ancestor_path[-1] if ancestor_path else kind,
                 cycle_path=ancestor_path + [kind],
             )
 

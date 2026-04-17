@@ -9,6 +9,10 @@ import xxhash
 
 from aizk.conversion.utilities.config import ConversionConfig
 
+# TODO(PR-9): _docling_config_payload and build_output_config_snapshot are
+# Docling-specific helpers.  When the env-var namespace is renamed
+# (AIZK_DOCLING_* → AIZK_CONVERTER__DOCLING__*) and the converter interface
+# gains a config_snapshot() method, these should move onto DoclingConverter.
 _OUTPUT_IRRELEVANT_DOCLING_FIELDS = frozenset(
     {
         "docling_picture_description_base_url",

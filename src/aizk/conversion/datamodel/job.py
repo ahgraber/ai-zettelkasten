@@ -42,9 +42,10 @@ class ConversionJob(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True, nullable=False)
     aizk_uuid: UUID = Field(foreign_key="sources.aizk_uuid", nullable=False, index=True)
-    # Production code always populates source_ref at job submission.  The default
-    # exists so test fixtures that construct ConversionJob directly without
-    # exercising fetch semantics are not forced to supply a payload.
+    # FOOTGUN: default_factory=dict exists only so test fixtures that build
+    # ConversionJob directly don't have to supply a source_ref payload.
+    # Production submit_job always passes an explicit source_ref — an empty-dict
+    # row in the real DB indicates a bug in the submission path, not a valid state.
     source_ref: dict[str, Any] = Field(
         sa_column=Column(JSON, nullable=False),
         default_factory=dict,
