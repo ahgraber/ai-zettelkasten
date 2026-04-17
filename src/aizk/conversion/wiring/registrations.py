@@ -109,6 +109,8 @@ def register_ready_adapters(
     fetcher_registry: FetcherRegistry,
     converter_registry: ConverterRegistry,
     cfg: object,
+    *,
+    include_converters: bool = True,
 ) -> tuple[dict[str, frozenset[ContentType]], frozenset[ContentType]]:
     """Register all production-ready adapters into *fetcher_registry* and *converter_registry*.
 
@@ -118,11 +120,18 @@ def register_ready_adapters(
     After registrations complete, invokes ``validate_chain_closure`` so process
     startup fails before accepting requests if the declared resolver graph is broken.
 
+    Args:
+        fetcher_registry: Registry into which fetchers/resolvers are registered.
+        converter_registry: Registry into which converters are registered.
+        cfg: ``ConversionConfig`` (or compatible) instance.
+        include_converters: When False, skips converter registration (and the
+            heavyweight DoclingConverter import).  The API process uses this
+            mode; converters are a worker-process concern.
+
     Returns:
         Tuple of (content_type_map, registered_content_types) for building
         ``DeploymentCapabilities``.
     """
-    from aizk.conversion.adapters.converters.docling import DoclingConverter
     from aizk.conversion.adapters.fetchers.arxiv import ArxivFetcher
     from aizk.conversion.adapters.fetchers.github import GithubReadmeFetcher
     from aizk.conversion.adapters.fetchers.inline import InlineContentFetcher
@@ -135,7 +144,10 @@ def register_ready_adapters(
     fetcher_registry.register_content_fetcher("url", UrlFetcher(config=cfg))
     fetcher_registry.register_content_fetcher("inline_html", InlineContentFetcher())
 
-    converter_registry.register("docling", DoclingConverter(cfg))
+    if include_converters:
+        from aizk.conversion.adapters.converters.docling import DoclingConverter
+
+        converter_registry.register("docling", DoclingConverter(cfg))
 
     validate_chain_closure(fetcher_registry)
 

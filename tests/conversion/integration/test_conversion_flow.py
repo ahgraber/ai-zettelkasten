@@ -130,7 +130,7 @@ def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
         response = client.post(
             "/v1/jobs",
             json={
-                "karakeep_id": "bm_test_001",
+                "source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_test_001"},
             },
         )
         assert response.status_code == 201
@@ -187,7 +187,7 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch, html_bookmark):
         response = client.post(
             "/v1/jobs",
             json={
-                "karakeep_id": "bm_cancel_001",
+                "source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_cancel_001"},
             },
         )
         assert response.status_code == 201
@@ -218,7 +218,7 @@ def test_submit_job_idempotency_key_disables_picture_description_without_api_key
         response = client.post(
             "/v1/jobs",
             json={
-                "karakeep_id": "bm_missing_picture_api_key",
+                "source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_missing_picture_api_key"},
             },
         )
 

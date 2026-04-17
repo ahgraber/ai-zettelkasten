@@ -10,6 +10,7 @@ from fastapi.responses import RedirectResponse
 from aizk.conversion.api.routes import bookmarks_router, health_router, jobs_router, outputs_router, ui_router
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.logging import configure_logging
+from aizk.conversion.wiring.api import build_api_runtime
 from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
 
 
@@ -27,6 +28,7 @@ async def lifespan(_app: FastAPI):
         experiment_name=config.mlflow_experiment_name,
     )
     run_migrations()
+    _app.state.api_runtime = build_api_runtime(config)
     yield
 
 

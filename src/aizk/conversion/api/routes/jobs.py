@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 from typing import Annotated
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import AnyUrl
 from sqlalchemy import func, text
@@ -15,7 +15,7 @@ from sqlmodel import Session, select
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 
-from aizk.conversion.api.dependencies import get_config, get_db_session
+from aizk.conversion.api.dependencies import get_capabilities, get_config, get_db_session
 from aizk.conversion.api.schemas import (
     ArtifactSummary,
     BulkActionResponse,
@@ -28,11 +28,16 @@ from aizk.conversion.api.schemas import (
     JobSubmission,
     QueueFullResponse,
 )
-from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
+from aizk.conversion.core.source_ref import (
+    KarakeepBookmarkRef,
+    SourceRefVariant,
+    compute_source_ref_hash,
+)
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.utilities.hashing import build_output_config_snapshot, compute_idempotency_key
+from aizk.conversion.wiring.capabilities import DeploymentCapabilities
 
 logger = logging.getLogger(__name__)
 
@@ -44,14 +49,11 @@ def _utcnow() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
 
 
-def _karakeep_source_ref(karakeep_id: str) -> tuple[dict[str, object], str]:
-    """Synthesize (source_ref, source_ref_hash) for a KaraKeep bookmark ID.
-
-    Bridge used while the API still accepts ``karakeep_id`` on submission;
-    removed in the PR that introduces ``source_ref`` as a first-class field.
-    """
-    ref = KarakeepBookmarkRef(bookmark_id=karakeep_id)
-    return ref.model_dump(), compute_source_ref_hash(ref)
+def _karakeep_id_for(source_ref: SourceRefVariant) -> str | None:
+    """Return ``karakeep_id`` for a KaraKeep ref, ``None`` otherwise."""
+    if isinstance(source_ref, KarakeepBookmarkRef):
+        return source_ref.bookmark_id
+    return None
 
 
 def _job_to_response(
@@ -78,6 +80,7 @@ def _job_to_response(
     return JobResponse(
         id=job.id,
         aizk_uuid=job.aizk_uuid,
+        source_ref=source.source_ref,
         karakeep_id=source.karakeep_id,
         url=source_url,
         title=source_title,
@@ -163,25 +166,25 @@ def submit_job(
     api_response: Response,
     session: Annotated[Session, Depends(get_db_session)],
     request: Request,
+    capabilities: Annotated[DeploymentCapabilities, Depends(get_capabilities)],
 ) -> JobResponse:
     """Submit a new conversion job."""
     config = get_config(request)
 
-    source_ref_payload, source_ref_hash = _karakeep_source_ref(submission.karakeep_id)
-    source = session.exec(select(Source).where(Source.source_ref_hash == source_ref_hash)).first()
-    is_new_source = source is None
-    if is_new_source:
-        # Create in memory only.  aizk_uuid is set by the Python default
-        # factory (uuid4), so it is available before the row is persisted.
-        # The INSERT is deferred to after the queue-depth check so a
-        # rejected submission does not leave an orphan source row.
-        source = Source(
-            karakeep_id=submission.karakeep_id,
-            source_ref=source_ref_payload,
-            source_ref_hash=source_ref_hash,
-            created_at=_utcnow(),
-            updated_at=_utcnow(),
+    source_ref: SourceRefVariant = submission.source_ref
+    if source_ref.kind not in capabilities.accepted_kinds:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "unsupported_source_kind",
+                "message": f"Source kind {source_ref.kind!r} is not accepted by this deployment",
+                "accepted_kinds": sorted(capabilities.accepted_kinds),
+            },
         )
+
+    source_ref_payload: dict[str, object] = source_ref.model_dump()
+    source_ref_hash = compute_source_ref_hash(source_ref)
+    karakeep_id = _karakeep_id_for(source_ref)
 
     # End the auto-begun read transaction so BEGIN IMMEDIATE can start clean.
     session.commit()
@@ -221,11 +224,28 @@ def submit_job(
             headers={"Retry-After": str(config.queue_retry_after_seconds)},
         )
 
-    if is_new_source:
-        session.add(source)
-        session.flush()
+    # Create/reuse Source row via INSERT ... ON CONFLICT (source_ref_hash) DO NOTHING
+    # followed by SELECT to obtain the canonical row regardless of which transaction inserted it.
+    # Uses SQLAlchemy's SQLite "insert() ... .on_conflict_do_nothing()" so UUID and JSON
+    # column types are encoded via the dialect (raw text SQL would mis-encode them).
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
     now = _utcnow()
+    stmt = (
+        sqlite_insert(Source)
+        .values(
+            karakeep_id=karakeep_id,
+            aizk_uuid=uuid4(),
+            source_ref=source_ref_payload,
+            source_ref_hash=source_ref_hash,
+            created_at=now,
+            updated_at=now,
+        )
+        .on_conflict_do_nothing(index_elements=["source_ref_hash"])
+    )
+    session.exec(stmt)
+    source = session.exec(select(Source).where(Source.source_ref_hash == source_ref_hash)).one()
+
     job = ConversionJob(
         aizk_uuid=source.aizk_uuid,
         source_ref=source_ref_payload,
@@ -280,7 +300,6 @@ def list_jobs(
     session: Annotated[Session, Depends(get_db_session)],
     status_filter: Annotated[ConversionJobStatus | None, Query(alias="status")] = None,
     aizk_uuid: Annotated[UUID | None, Query()] = None,
-    karakeep_id: Annotated[str | None, Query()] = None,
     created_after: Annotated[dt.datetime | None, Query()] = None,
     created_before: Annotated[dt.datetime | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=1000)] = 50,
@@ -296,9 +315,6 @@ def list_jobs(
     if aizk_uuid:
         query = query.where(ConversionJob.aizk_uuid == aizk_uuid)
         count_query = count_query.where(ConversionJob.aizk_uuid == aizk_uuid)
-    if karakeep_id:
-        query = query.join(Source).where(Source.karakeep_id == karakeep_id)
-        count_query = count_query.join(Source).where(Source.karakeep_id == karakeep_id)
     if created_after:
         query = query.where(ConversionJob.created_at >= created_after)
         count_query = count_query.where(ConversionJob.created_at >= created_after)

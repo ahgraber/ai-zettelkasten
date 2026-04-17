@@ -35,8 +35,11 @@ def build_api_runtime(cfg: object) -> ApiRuntime:
     fetcher_registry = FetcherRegistry()
     converter_registry = ConverterRegistry()
 
+    # The API process doesn't run converters; skip DoclingConverter registration
+    # (and its heavyweight imports) while keeping fetcher registration identical to
+    # the worker so accepted_kinds cannot drift.
     content_type_map, registered_content_types = register_ready_adapters(
-        fetcher_registry, converter_registry, cfg
+        fetcher_registry, converter_registry, cfg, include_converters=False
     )
 
     capabilities = DeploymentCapabilities(
