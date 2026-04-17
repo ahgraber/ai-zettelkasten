@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from uuid import UUID
 
 import xxhash
 
@@ -45,36 +44,32 @@ def build_output_config_snapshot(
 
 
 def compute_idempotency_key(
-    aizk_uuid: UUID,
-    payload_version: int,
-    config: ConversionConfig,
-    *,
-    picture_description_enabled: bool,
+    source_ref_hash: str,
+    converter_name: str,
+    config_snapshot: dict[str, object],
 ) -> str:
-    """Compute a stable SHA256 idempotency key.
+    """Compute a stable SHA-256 idempotency key for a conversion job.
+
+    The key incorporates the three things that determine whether two submissions
+    are semantically identical: the canonical fetch identity (``source_ref_hash``),
+    the converter in use, and the converter's output-affecting config snapshot.
 
     Args:
-        aizk_uuid: Bookmark UUID.
-        payload_version: Payload version for conversion.
-        config: Conversion configuration.
-        picture_description_enabled: Whether picture description via chat completions is active.
-            Affects Markdown output (figure alt-text), so must be part of the key.
+        source_ref_hash: SHA-256 of the submitted SourceRef's canonical dedup
+            payload.  See ``aizk.conversion.core.source_ref.compute_source_ref_hash``.
+        converter_name: Name the converter was registered under
+            (e.g. ``"docling"``).  Included so different converters on the same
+            source produce distinct keys.
+        config_snapshot: Converter-supplied dict of output-affecting config
+            fields.  For Docling this is the result of
+            ``build_output_config_snapshot(config, picture_description_enabled=...)``
+            or equivalently ``DoclingConverter.config_snapshot()``.
 
     Returns:
-        Hex-encoded SHA256 digest.
+        Hex-encoded SHA-256 digest.
     """
-    from importlib.metadata import version
-
-    docling_version = version("docling")
-
-    config_snapshot = build_output_config_snapshot(
-        config,
-        picture_description_enabled=picture_description_enabled,
-    )
     config_json = json.dumps(config_snapshot, sort_keys=True, separators=(",", ":"))
-
-    raw = f"{str(aizk_uuid)}:{payload_version}:{docling_version}:{config_json}"
-
+    raw = f"{source_ref_hash}:{converter_name}:{config_json}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 

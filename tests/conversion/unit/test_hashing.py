@@ -1,7 +1,6 @@
 """Unit tests for hashing utilities."""
 
 import hashlib
-from importlib.metadata import version
 import json
 
 import pytest
@@ -13,59 +12,104 @@ from aizk.conversion.utilities.hashing import (
     compute_markdown_hash,
 )
 
-_OUTPUT_IRRELEVANT_DOCLING_FIELDS = {
-    "docling_picture_description_base_url",
-    "docling_picture_description_api_key",
-}
 
-
-def _expected_key(uuid: str, payload_version: int, config: ConversionConfig, picture_description_enabled: bool) -> str:
-    docling_version = version("docling")
-    config_snapshot = {
-        **{
-            k: v
-            for k, v in config.model_dump().items()
-            if k.startswith("docling_") and k not in _OUTPUT_IRRELEVANT_DOCLING_FIELDS
-        },
-        "picture_description_enabled": picture_description_enabled,
-    }
+def _expected_key(source_ref_hash: str, converter_name: str, config_snapshot: dict) -> str:
     config_json = json.dumps(config_snapshot, sort_keys=True, separators=(",", ":"))
-    raw = f"{uuid}:{payload_version}:{docling_version}:{config_json}"
+    raw = f"{source_ref_hash}:{converter_name}:{config_json}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _docling_snapshot(config: ConversionConfig, *, picture_description_enabled: bool) -> dict:
+    return build_output_config_snapshot(
+        config,
+        picture_description_enabled=picture_description_enabled,
+    )
 
 
 def test_compute_idempotency_key_matches_sha256_picture_description_disabled():
     config = ConversionConfig(_env_file=None)
-    key = compute_idempotency_key("uuid-1", 2, config, picture_description_enabled=False)
-    assert key == _expected_key("uuid-1", 2, config, False)
+    snapshot = _docling_snapshot(config, picture_description_enabled=False)
+    key = compute_idempotency_key(
+        source_ref_hash="ref-hash-1",
+        converter_name="docling",
+        config_snapshot=snapshot,
+    )
+    assert key == _expected_key("ref-hash-1", "docling", snapshot)
 
 
 def test_compute_idempotency_key_matches_sha256_picture_description_enabled():
     config = ConversionConfig(_env_file=None)
-    key = compute_idempotency_key("uuid-1", 2, config, picture_description_enabled=True)
-    assert key == _expected_key("uuid-1", 2, config, True)
+    snapshot = _docling_snapshot(config, picture_description_enabled=True)
+    key = compute_idempotency_key(
+        source_ref_hash="ref-hash-1",
+        converter_name="docling",
+        config_snapshot=snapshot,
+    )
+    assert key == _expected_key("ref-hash-1", "docling", snapshot)
 
 
 def test_compute_idempotency_key_differs_by_picture_description_flag():
     config = ConversionConfig(_env_file=None)
-    key_off = compute_idempotency_key("uuid-1", 1, config, picture_description_enabled=False)
-    key_on = compute_idempotency_key("uuid-1", 1, config, picture_description_enabled=True)
+    key_off = compute_idempotency_key(
+        source_ref_hash="ref-hash-1",
+        converter_name="docling",
+        config_snapshot=_docling_snapshot(config, picture_description_enabled=False),
+    )
+    key_on = compute_idempotency_key(
+        source_ref_hash="ref-hash-1",
+        converter_name="docling",
+        config_snapshot=_docling_snapshot(config, picture_description_enabled=True),
+    )
     assert key_off != key_on
 
 
 def test_compute_idempotency_key_stable_for_identical_inputs():
     config = ConversionConfig(_env_file=None)
-    key_a = compute_idempotency_key("uuid-abc", 3, config, picture_description_enabled=True)
-    key_b = compute_idempotency_key("uuid-abc", 3, config, picture_description_enabled=True)
+    snapshot = _docling_snapshot(config, picture_description_enabled=True)
+    key_a = compute_idempotency_key(
+        source_ref_hash="ref-hash-abc",
+        converter_name="docling",
+        config_snapshot=snapshot,
+    )
+    key_b = compute_idempotency_key(
+        source_ref_hash="ref-hash-abc",
+        converter_name="docling",
+        config_snapshot=snapshot,
+    )
     assert key_a == key_b
 
 
 @pytest.mark.parametrize("enabled", [True, False])
-def test_compute_idempotency_key_differs_by_uuid(enabled: bool):
+def test_compute_idempotency_key_differs_by_source_ref_hash(enabled: bool):
     config = ConversionConfig(_env_file=None)
-    key_a = compute_idempotency_key("uuid-1", 1, config, picture_description_enabled=enabled)
-    key_b = compute_idempotency_key("uuid-2", 1, config, picture_description_enabled=enabled)
+    snapshot = _docling_snapshot(config, picture_description_enabled=enabled)
+    key_a = compute_idempotency_key(
+        source_ref_hash="ref-hash-1",
+        converter_name="docling",
+        config_snapshot=snapshot,
+    )
+    key_b = compute_idempotency_key(
+        source_ref_hash="ref-hash-2",
+        converter_name="docling",
+        config_snapshot=snapshot,
+    )
     assert key_a != key_b
+
+
+def test_compute_idempotency_key_differs_by_converter_name():
+    config = ConversionConfig(_env_file=None)
+    snapshot = _docling_snapshot(config, picture_description_enabled=True)
+    key_docling = compute_idempotency_key(
+        source_ref_hash="ref-hash-1",
+        converter_name="docling",
+        config_snapshot=snapshot,
+    )
+    key_other = compute_idempotency_key(
+        source_ref_hash="ref-hash-1",
+        converter_name="marker",
+        config_snapshot=snapshot,
+    )
+    assert key_docling != key_other
 
 
 def test_compute_idempotency_key_stable_when_only_base_url_rotates():
@@ -80,8 +124,16 @@ def test_compute_idempotency_key_stable_when_only_base_url_rotates():
         DOCLING_PICTURE_DESCRIPTION_BASE_URL="https://provider-b.example.com/v1",
         DOCLING_PICTURE_DESCRIPTION_API_KEY="sk-test-key",
     )
-    key_a = compute_idempotency_key("uuid-rotate", 1, config_a, picture_description_enabled=True)
-    key_b = compute_idempotency_key("uuid-rotate", 1, config_b, picture_description_enabled=True)
+    key_a = compute_idempotency_key(
+        source_ref_hash="ref-rotate",
+        converter_name="docling",
+        config_snapshot=_docling_snapshot(config_a, picture_description_enabled=True),
+    )
+    key_b = compute_idempotency_key(
+        source_ref_hash="ref-rotate",
+        converter_name="docling",
+        config_snapshot=_docling_snapshot(config_b, picture_description_enabled=True),
+    )
     assert key_a == key_b
 
 
@@ -97,8 +149,16 @@ def test_compute_idempotency_key_stable_when_only_api_key_rotates():
         DOCLING_PICTURE_DESCRIPTION_BASE_URL="https://provider.example.com/v1",
         DOCLING_PICTURE_DESCRIPTION_API_KEY="sk-rotated-key",
     )
-    key_a = compute_idempotency_key("uuid-rotate", 1, config_a, picture_description_enabled=True)
-    key_b = compute_idempotency_key("uuid-rotate", 1, config_b, picture_description_enabled=True)
+    key_a = compute_idempotency_key(
+        source_ref_hash="ref-rotate",
+        converter_name="docling",
+        config_snapshot=_docling_snapshot(config_a, picture_description_enabled=True),
+    )
+    key_b = compute_idempotency_key(
+        source_ref_hash="ref-rotate",
+        converter_name="docling",
+        config_snapshot=_docling_snapshot(config_b, picture_description_enabled=True),
+    )
     assert key_a == key_b
 
 

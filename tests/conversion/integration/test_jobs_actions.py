@@ -34,9 +34,11 @@ def _create_job(
     status: ConversionJobStatus,
     idempotency_key: str,
     attempts: int = 0,
+    source_ref: dict | None = None,
 ) -> ConversionJob:
     job = ConversionJob(
         aizk_uuid=aizk_uuid,
+        source_ref=source_ref or {},
         title=title or "",
         payload_version=1,
         status=status,

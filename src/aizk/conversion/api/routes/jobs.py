@@ -32,7 +32,7 @@ from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
-from aizk.conversion.utilities.hashing import compute_idempotency_key
+from aizk.conversion.utilities.hashing import build_output_config_snapshot, compute_idempotency_key
 
 logger = logging.getLogger(__name__)
 
@@ -193,10 +193,12 @@ def submit_job(
     session.exec(text("BEGIN IMMEDIATE"))
 
     idempotency_key = submission.idempotency_key or compute_idempotency_key(
-        source.aizk_uuid,
-        submission.payload_version,
-        config,
-        picture_description_enabled=config.is_picture_description_enabled(),
+        source_ref_hash=source_ref_hash,
+        converter_name="docling",
+        config_snapshot=build_output_config_snapshot(
+            config,
+            picture_description_enabled=config.is_picture_description_enabled(),
+        ),
     )
 
     existing_job = session.exec(select(ConversionJob).where(ConversionJob.idempotency_key == idempotency_key)).first()

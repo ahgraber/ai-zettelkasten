@@ -225,11 +225,19 @@ def test_submit_job_idempotency_key_disables_picture_description_without_api_key
     assert response.status_code == 201
     payload = response.json()
 
+    from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
+    from aizk.conversion.utilities.hashing import build_output_config_snapshot
+
+    source_ref_hash = compute_source_ref_hash(
+        KarakeepBookmarkRef(bookmark_id="bm_missing_picture_api_key")
+    )
     expected_key = compute_idempotency_key(
-        UUID(payload["aizk_uuid"]),
-        1,
-        config,
-        picture_description_enabled=False,
+        source_ref_hash=source_ref_hash,
+        converter_name="docling",
+        config_snapshot=build_output_config_snapshot(
+            config,
+            picture_description_enabled=False,
+        ),
     )
 
     assert payload["idempotency_key"] == expected_key
