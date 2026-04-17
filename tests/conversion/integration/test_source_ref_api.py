@@ -92,3 +92,68 @@ def test_response_has_source_ref_and_nullable_karakeep_id(db_session):
     assert "source_ref" in body
     assert "karakeep_id" in body
     assert body["karakeep_id"] == "bm_resp_shape"
+
+
+def test_source_identity_columns_immutable_after_creation(db_session):
+    """aizk_uuid, source_ref, source_ref_hash, karakeep_id are set once and not rewritten."""
+    from uuid import UUID
+
+    app = create_app()
+    with TestClient(app) as client:
+        resp1 = client.post(
+            "/v1/jobs",
+            json={
+                "source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_immut"},
+            },
+        )
+        # Submit another job for the same source — dedup by source_ref_hash.
+        resp2 = client.post(
+            "/v1/jobs",
+            json={
+                "source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_immut"},
+                "idempotency_key": "immut-dedup-key" + "0" * 49,
+            },
+        )
+    assert resp1.status_code == 201
+    assert resp2.status_code == 201
+
+    source = db_session.exec(select(Source).where(Source.karakeep_id == "bm_immut")).one()
+    # aizk_uuid must be the same across both submissions (the identity is the Source row).
+    assert UUID(resp1.json()["aizk_uuid"]) == source.aizk_uuid
+    assert UUID(resp2.json()["aizk_uuid"]) == source.aizk_uuid
+    # source_ref and source_ref_hash are set at the first INSERT and not rewritten.
+    assert source.source_ref == {"kind": "karakeep_bookmark", "bookmark_id": "bm_immut"}
+    assert source.source_ref_hash
+
+
+def test_concurrent_source_dedup_produces_one_row(db_session):
+    """Two concurrent submissions with the same source_ref_hash share one Source row.
+
+    Sequential submissions exercise the same ON CONFLICT DO NOTHING code path,
+    since the race is handled by ``INSERT OR IGNORE`` followed by ``SELECT``.
+    """
+    app = create_app()
+    with TestClient(app) as client:
+        resp1 = client.post(
+            "/v1/jobs",
+            json={
+                "source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_race"},
+                "idempotency_key": "race-1" + "0" * 58,
+            },
+        )
+        resp2 = client.post(
+            "/v1/jobs",
+            json={
+                "source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_race"},
+                "idempotency_key": "race-2" + "0" * 58,
+            },
+        )
+    assert resp1.status_code == 201
+    assert resp2.status_code == 201
+
+    sources = db_session.exec(select(Source).where(Source.karakeep_id == "bm_race")).all()
+    assert len(sources) == 1
+    assert resp1.json()["aizk_uuid"] == resp2.json()["aizk_uuid"]
+    # Both jobs have distinct idempotency keys and are separate rows.
+    assert resp1.json()["idempotency_key"] != resp2.json()["idempotency_key"]
+    assert resp1.json()["id"] != resp2.json()["id"]

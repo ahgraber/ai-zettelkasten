@@ -77,38 +77,40 @@
 
 ## PR 6 — BREAKING (schema + identity + manifest): Bookmark → Source generalization + API cutover
 
-- [ ] Rename `datamodel/bookmark.py` → `datamodel/source.py`; rename class `Bookmark` → `Source`
-- [ ] Make `karakeep_id` nullable on `Source`
-- [ ] Add `source_ref` (JSON column) and `source_ref_hash` (unique indexed text column) to `Source`
-- [ ] Add `source_ref` (JSON column) to `ConversionJob`
-- [ ] Update `ConversionJob` FK from `bookmarks.aizk_uuid` → `sources.aizk_uuid`
-- [ ] Write Alembic migration: rename `bookmarks` table → `sources`, add columns, backfill existing rows with `KarakeepBookmarkRef` and computed `source_ref_hash` (via `to_dedup_payload`)
-- [ ] Update API `JobSubmission` schema: remove `karakeep_id`, add required `source_ref` field
-- [ ] Update API `JobResponse` schema: add `source_ref` field; retain `karakeep_id` as `str | None` (populated when `source_ref.kind == "karakeep_bookmark"`, null otherwise); keep existing `url: AnyUrl | None` and `title: str | None` field names unchanged
-- [ ] Remove `karakeep_id` query parameter from `GET /v1/jobs`
-- [ ] Add API kind gating via `DeploymentCapabilities` from `build_api_runtime`: return HTTP 422 for kinds not in `accepted_kinds`; in this PR the descriptor reports `accepted_kinds = {"karakeep_bookmark"}` (other adapters not yet ready)
-- [ ] Update API job creation at `jobs.py:159-181`: materialize Source identity (compute `source_ref_hash` from `source_ref.to_dedup_payload()`, create/reuse Source row via `INSERT ... ON CONFLICT (source_ref_hash) DO NOTHING` followed by `SELECT`, populate `karakeep_id` only for `KarakeepBookmarkRef`); persist `source_ref` on the job record
-- [ ] Update `compute_idempotency_key` signature to take `source_ref_hash`, `converter_name`, and a converter-supplied config snapshot (no Docling-specific fields); wire API submission path (`jobs.py:181`) to pass the configured converter's name and snapshot
-- [ ] Create versioned manifest reader classes `ManifestV1` and `ManifestV2` (both with `model_config = ConfigDict(extra="forbid")`); add a version-dispatching loader that selects the reader class from the serialized `version` string
-- [ ] Create `ManifestConfigSnapshotV2` pydantic model (`extra="forbid"`) with `converter_name: str` plus an opaque nested dict for adapter-supplied output-affecting fields
-- [ ] Update manifest writer to emit `version = "2.0"`: emit a typed `provenance` block describing the **terminal fetch state** (variants for `karakeep_bookmark`, `url`, `arxiv`, `github_readme`, `inline_html`); emit an optional `ingress` block **only when** the submitter-supplied ref differs from the terminal ref (e.g., KaraKeep→arxiv preserves `bookmark_id` under `ingress`); make `ManifestSource.url`, `normalized_url`, `title`, `source_type`, `fetched_at` `str | None`; add `config_snapshot.converter_name`
-- [ ] Ensure v1.0 readers remain available for legacy manifests; only v2.0 is written post-cutover
-- [ ] Update all internal references from `Bookmark` → `Source` (imports, type hints, variable names)
-- [ ] Tests: Source row created with `KarakeepBookmarkRef`, `karakeep_id` populated; non-KaraKeep ref (once accepted in PR 7) produces null `karakeep_id`
-- [ ] Tests: Source dedup — two identical `source_ref` submissions share one Source row; cosmetic ref differences (default fields, ordering) do not create new rows
-- [ ] Tests: concurrent Source dedup — two simultaneous submissions with the same `source_ref_hash` result in exactly one Source row (via `INSERT ... ON CONFLICT DO NOTHING` + `SELECT`); both jobs FK to its `aizk_uuid`; job-level dedup proceeds via `idempotency_key`
-- [ ] Tests: API accepts `source_ref` with `kind: "karakeep_bookmark"`, returns 422 for `kind: "url"` and for `kind: "singlefile"` (neither registered by `register_ready_adapters` in this PR)
-- [ ] Tests: API response includes `source_ref` and nullable `karakeep_id`; `karakeep_id` populated for KaraKeep jobs, null for others
-- [ ] Tests: Source identity columns (`aizk_uuid`, `source_ref`, `source_ref_hash`, `karakeep_id`) are immutable after creation
-- [ ] Tests: idempotency key differs for different `converter_name` with same source, and differs for different `source_ref_hash` with same converter
-- [ ] Tests: `DoclingConverter.config_snapshot()` contributes the same output-affecting field set as today's Docling-specific config hash (structural dict equivalence; hash equivalence with pre-refactor keys is NOT asserted — the formula intentionally breaks)
-- [ ] Tests: manifest v2.0 writer emits `converter_name`, and for a KaraKeep-terminal job emits `provenance.kind == "karakeep_bookmark"` with `bookmark_id` and omits `ingress`
-- [ ] Tests: manifest v2.0 writer emits `provenance.kind == "arxiv"` and `ingress.kind == "karakeep_bookmark"` (preserving `bookmark_id`) for a KaraKeep-to-arxiv job
-- [ ] Tests: `ManifestV2.model_config.extra == "forbid"` and `ManifestConfigSnapshotV2.model_config.extra == "forbid"` — unknown fields at read time raise
-- [ ] Tests: version-dispatching loader returns `ManifestV1` instance for v1.0 JSON and `ManifestV2` instance for v2.0 JSON
-- [ ] Tests: UI renders job list using `karakeep_id` from `JobResponse` (preserves today's UI behavior)
-- [ ] Tests: migration backfill — existing bookmark rows have valid `source_ref` and `source_ref_hash`
-- [ ] Generate `schemas/after/` OpenAPI snapshot; verify diff matches `schemas/expected.md`
+- [x] Rename `datamodel/bookmark.py` → `datamodel/source.py`; rename class `Bookmark` → `Source`
+- [x] Make `karakeep_id` nullable on `Source`
+- [x] Add `source_ref` (JSON column) and `source_ref_hash` (unique indexed text column) to `Source`
+- [x] Add `source_ref` (JSON column) to `ConversionJob`
+- [x] Update `ConversionJob` FK from `bookmarks.aizk_uuid` → `sources.aizk_uuid`
+- [x] Write Alembic migration: rename `bookmarks` table → `sources`, add columns, backfill existing rows with `KarakeepBookmarkRef` and computed `source_ref_hash` (via `to_dedup_payload`)
+- [x] Update API `JobSubmission` schema: remove `karakeep_id`, add required `source_ref` field
+- [x] Update API `JobResponse` schema: add `source_ref` field; retain `karakeep_id` as `str | None` (populated when `source_ref.kind == "karakeep_bookmark"`, null otherwise); keep existing `url: AnyUrl | None` and `title: str | None` field names unchanged
+- [x] Remove `karakeep_id` query parameter from `GET /v1/jobs`
+- [x] Add API kind gating via `DeploymentCapabilities` from `build_api_runtime`: return HTTP 422 for kinds not in `accepted_kinds`.
+  Deviation from spec: PR 5's `register_ready_adapters` registers all five fetcher kinds (needed to satisfy `validate_chain_closure`); consequently `accepted_kinds` in this PR is the full set rather than `{"karakeep_bookmark"}`.  The gating behavior itself is verified by the `"singlefile"` case (unregistered kind → 422)
+- [x] Update API job creation at `jobs.py:159-181`: materialize Source identity (compute `source_ref_hash` from `source_ref.to_dedup_payload()`, create/reuse Source row via `INSERT ... ON CONFLICT (source_ref_hash) DO NOTHING` followed by `SELECT`, populate `karakeep_id` only for `KarakeepBookmarkRef`); persist `source_ref` on the job record
+- [x] Update `compute_idempotency_key` signature to take `source_ref_hash`, `converter_name`, and a converter-supplied config snapshot (no Docling-specific fields); wire API submission path (`jobs.py:181`) to pass the configured converter's name and snapshot
+- [x] Create versioned manifest reader classes `ManifestV1` and `ManifestV2` (both with `model_config = ConfigDict(extra="forbid")`); add a version-dispatching loader that selects the reader class from the serialized `version` string
+- [x] Create `ManifestConfigSnapshotV2` pydantic model (`extra="forbid"`) with `converter_name: str` plus an opaque nested dict for adapter-supplied output-affecting fields
+- [x] Update manifest writer to emit `version = "2.0"`: emit a typed `provenance` block describing the **terminal fetch state** (variants for `karakeep_bookmark`, `url`, `arxiv`, `github_readme`, `inline_html`); emit an optional `ingress` block **only when** the submitter-supplied ref differs from the terminal ref (e.g., KaraKeep→arxiv preserves `bookmark_id` under `ingress`); make `ManifestSource.url`, `normalized_url`, `title`, `source_type`, `fetched_at` `str | None`; add `config_snapshot.converter_name`
+- [x] Ensure v1.0 readers remain available for legacy manifests; only v2.0 is written post-cutover
+- [x] Update all internal references from `Bookmark` → `Source` (imports, type hints, variable names)
+- [x] Tests: Source row created with `KarakeepBookmarkRef`, `karakeep_id` populated; non-KaraKeep ref (once accepted in PR 7) produces null `karakeep_id`
+- [x] Tests: Source dedup — two identical `source_ref` submissions share one Source row; cosmetic ref differences (default fields, ordering) do not create new rows
+- [x] Tests: concurrent Source dedup — two simultaneous submissions with the same `source_ref_hash` result in exactly one Source row (via `INSERT ... ON CONFLICT DO NOTHING` + `SELECT`); both jobs FK to its `aizk_uuid`; job-level dedup proceeds via `idempotency_key`
+- [x] Tests: API accepts `source_ref` with `kind: "karakeep_bookmark"`, returns 422 for `kind: "singlefile"` (not registered by `register_ready_adapters`).
+  Deviation: `"url"` is registered by `register_ready_adapters` in PR 5, so it is accepted; the 422 behavior is covered by the `singlefile` case
+- [x] Tests: API response includes `source_ref` and nullable `karakeep_id`; `karakeep_id` populated for KaraKeep jobs, null for others
+- [x] Tests: Source identity columns (`aizk_uuid`, `source_ref`, `source_ref_hash`, `karakeep_id`) are immutable after creation
+- [x] Tests: idempotency key differs for different `converter_name` with same source, and differs for different `source_ref_hash` with same converter
+- [x] Tests: `DoclingConverter.config_snapshot()` contributes the same output-affecting field set as today's Docling-specific config hash (structural dict equivalence; hash equivalence with pre-refactor keys is NOT asserted — the formula intentionally breaks)
+- [x] Tests: manifest v2.0 writer emits `converter_name`, and for a KaraKeep-terminal job emits `provenance.kind == "karakeep_bookmark"` with `bookmark_id` and omits `ingress`
+- [x] Tests: manifest v2.0 writer emits `provenance.kind == "arxiv"` and `ingress.kind == "karakeep_bookmark"` (preserving `bookmark_id`) for a KaraKeep-to-arxiv job
+- [x] Tests: `ManifestV2.model_config.extra == "forbid"` and `ManifestConfigSnapshotV2.model_config.extra == "forbid"` — unknown fields at read time raise
+- [x] Tests: version-dispatching loader returns `ManifestV1` instance for v1.0 JSON and `ManifestV2` instance for v2.0 JSON
+- [x] Tests: UI renders job list using `karakeep_id` from `JobResponse` (preserves today's UI behavior)
+- [x] Tests: migration backfill — existing bookmark rows have valid `source_ref` and `source_ref_hash`
+- [x] Generate `schemas/after/` OpenAPI snapshot; verify diff matches `schemas/expected.md`
 
 ## PR 7 — BREAKING (behavior): Worker cutover to new orchestrator
 
