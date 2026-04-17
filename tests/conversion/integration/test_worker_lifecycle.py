@@ -27,7 +27,7 @@ import psutil
 import pytest
 from sqlmodel import Session
 
-from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers import errors as errors_mod, loop, orchestrator
@@ -182,9 +182,9 @@ def _wait_for_path(path: Path, *, timeout_seconds: float, interval_seconds: floa
     pytest.fail(f"Expected {path} to exist within {timeout_seconds} seconds")
 
 
-def _create_test_bookmark(db_session: Session) -> Bookmark:
+def _create_test_bookmark(db_session: Session) -> Source:
     """Helper to create a test bookmark."""
-    bookmark = Bookmark(
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_lifecycle_test",
         url="https://example.com/test",
         normalized_url="https://example.com/test",
@@ -198,10 +198,11 @@ def _create_test_bookmark(db_session: Session) -> Bookmark:
     return bookmark
 
 
-def _create_test_job(db_session: Session, bookmark: Bookmark, status: ConversionJobStatus) -> ConversionJob:
+def _create_test_job(db_session: Session, bookmark: Source, status: ConversionJobStatus) -> ConversionJob:
     """Helper to create a test job."""
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title or "Test Job",
         idempotency_key="lifecycle" * 8,
         status=status,

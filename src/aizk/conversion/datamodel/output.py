@@ -15,7 +15,7 @@ class ConversionOutput(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True, nullable=False)
     job_id: int = Field(foreign_key="conversion_jobs.id", nullable=False, unique=True, index=True)
-    aizk_uuid: UUID = Field(foreign_key="bookmarks.aizk_uuid", nullable=False, index=True)
+    aizk_uuid: UUID = Field(foreign_key="sources.aizk_uuid", nullable=False, index=True)
     title: str = Field(max_length=500, nullable=False)
     payload_version: int = Field(nullable=False)
     s3_prefix: str = Field(sa_column=Column(Text, nullable=False))
@@ -31,10 +31,10 @@ class ConversionOutput(SQLModel, table=True):
         index=True,
     )
 
-    bookmark: "Bookmark" = Relationship(back_populates="outputs")
+    source: "Source" = Relationship(back_populates="outputs")
     job: Optional["ConversionJob"] = Relationship(back_populates="output")
 
 
 if TYPE_CHECKING:
-    from aizk.conversion.datamodel.bookmark import Bookmark
     from aizk.conversion.datamodel.job import ConversionJob
+    from aizk.conversion.datamodel.source import Source

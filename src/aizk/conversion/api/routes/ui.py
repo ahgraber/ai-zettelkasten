@@ -15,8 +15,8 @@ from fastapi.templating import Jinja2Templates
 
 from aizk.conversion.api.dependencies import get_db_session
 from aizk.conversion.api.routes.jobs import _apply_job_cancel, _apply_job_delete, _apply_job_retry
-from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.source import Source
 
 router = APIRouter(prefix="/ui", tags=["ui"])
 
@@ -95,7 +95,7 @@ def _apply_filters(
         query = query.where(
             or_(
                 func.lower(ConversionJob.title).like(pattern),
-                func.lower(Bookmark.karakeep_id).like(pattern),
+                func.lower(Source.karakeep_id).like(pattern),
                 func.lower(cast(ConversionJob.aizk_uuid, String)).like(pattern),
                 cast(ConversionJob.id, String).like(f"%{search}%"),
             )
@@ -118,7 +118,7 @@ def _load_jobs_page(
     sort_key = _SORTABLE_COLUMNS[_to_sort(sort)]
     sort_clause = sort_key.asc() if _to_direction(direction) == "asc" else sort_key.desc()
 
-    base_query = select(ConversionJob, Bookmark).join(Bookmark, Bookmark.aizk_uuid == ConversionJob.aizk_uuid)
+    base_query = select(ConversionJob, Source).join(Source, Source.aizk_uuid == ConversionJob.aizk_uuid)
     total_jobs = session.exec(select(func.count()).select_from(base_query.subquery())).one()
 
     filtered_query = _apply_filters(base_query, status_filter, search)
@@ -127,15 +127,15 @@ def _load_jobs_page(
     rows = session.exec(filtered_query.order_by(sort_clause).limit(limit).offset(offset)).all()
 
     jobs: list[dict[str, Any]] = []
-    for job, bookmark in rows:
+    for job, source in rows:
         if job.id is None:
             continue
         jobs.append(
             {
                 "id": job.id,
                 "aizk_uuid": str(job.aizk_uuid),
-                "karakeep_id": bookmark.karakeep_id,
-                "title": job.title or bookmark.title or "",
+                "karakeep_id": source.karakeep_id,
+                "title": job.title or source.title or "",
                 "status": job.status.value,
                 "attempts": job.attempts,
                 "queued_at": _format_dt(job.queued_at),

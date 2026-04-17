@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 from sqlmodel import Session
 
-from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers import loop, orchestrator, shutdown
@@ -33,8 +33,8 @@ def _reset_gpu_semaphore():
     orchestrator._gpu_semaphore = None
 
 
-def _create_bookmark(db_session: Session) -> Bookmark:
-    bookmark = Bookmark(
+def _create_bookmark(db_session: Session) -> Source:
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_concurrency_test",
         url="https://example.com",
         normalized_url="https://example.com",
@@ -48,9 +48,10 @@ def _create_bookmark(db_session: Session) -> Bookmark:
     return bookmark
 
 
-def _create_queued_job(db_session: Session, bookmark: Bookmark, *, suffix: str = "") -> ConversionJob:
+def _create_queued_job(db_session: Session, bookmark: Source, *, suffix: str = "") -> ConversionJob:
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title or "",
         idempotency_key=("q" + suffix).ljust(64, "0"),
         status=ConversionJobStatus.QUEUED,

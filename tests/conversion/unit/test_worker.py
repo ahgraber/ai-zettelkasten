@@ -11,7 +11,7 @@ from unittest.mock import Mock
 import pytest
 from sqlmodel import Session
 
-from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.storage.s3_client import S3Error, S3UploadError
@@ -21,8 +21,8 @@ from aizk.conversion.workers import converter, errors as errors_mod, fetcher, lo
 from aizk.conversion.workers.types import ConversionInput, SupervisionResult
 
 
-def _create_bookmark(db_session: Session) -> Bookmark:
-    bookmark = Bookmark(
+def _create_bookmark(db_session: Session) -> Source:
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_poll_retryable",
         url="https://example.com",
         normalized_url="https://example.com",
@@ -43,7 +43,7 @@ def test_process_job_retries_upload(monkeypatch, db_session: Session, html_bookm
     fp.allow_unregistered(False)
 
     # Seed a bookmark/job so process_job can move through its normal workflow.
-    bookmark = Bookmark(
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_retry_test",
         url="https://example.com",
         normalized_url="https://example.com",
@@ -57,6 +57,7 @@ def test_process_job_retries_upload(monkeypatch, db_session: Session, html_bookm
 
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         idempotency_key="a" * 64,
         status=ConversionJobStatus.QUEUED,
@@ -110,7 +111,7 @@ def test_process_job_stops_on_cancellation(monkeypatch, db_session: Session, htm
     """Stop processing before upload when a job is cancelled mid-run."""
     monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
     fp.allow_unregistered(False)
-    bookmark = Bookmark(
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_cancel_test",
         url="https://example.com",
         normalized_url="https://example.com",
@@ -124,6 +125,7 @@ def test_process_job_stops_on_cancellation(monkeypatch, db_session: Session, htm
 
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         idempotency_key="c" * 64,
         status=ConversionJobStatus.QUEUED,
@@ -175,6 +177,7 @@ def test_poll_picks_retryable_job_after_delay(monkeypatch, db_session: Session) 
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         idempotency_key="a" * 64,
         status=ConversionJobStatus.FAILED_RETRYABLE,
@@ -210,6 +213,7 @@ def test_poll_skips_retryable_job_before_delay(monkeypatch, db_session: Session)
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         idempotency_key="b" * 64,
         status=ConversionJobStatus.FAILED_RETRYABLE,
@@ -235,6 +239,7 @@ def test_raise_if_cancelled_raises(db_session: Session) -> None:
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         idempotency_key="d" * 64,
         status=ConversionJobStatus.CANCELLED,
@@ -342,9 +347,10 @@ class _TestContext:
         )
 
 
-def _create_running_job(db_session: Session, bookmark: Bookmark) -> ConversionJob:
+def _create_running_job(db_session: Session, bookmark: Source) -> ConversionJob:
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title or "",
         idempotency_key="e" * 64,
         status=ConversionJobStatus.RUNNING,
@@ -639,6 +645,7 @@ def test_process_job_skips_spawn_for_cancelled_job(monkeypatch, db_session: Sess
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title or "",
         idempotency_key="z" * 64,
         status=ConversionJobStatus.CANCELLED,
@@ -837,6 +844,7 @@ def test_handle_job_error_retryable_sets_failed_retryable(monkeypatch, db_sessio
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         idempotency_key="r" * 64,
         status=ConversionJobStatus.QUEUED,
@@ -866,6 +874,7 @@ def test_handle_job_error_permanent_sets_failed_perm(monkeypatch, db_session: Se
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         idempotency_key="p" * 64,
         status=ConversionJobStatus.QUEUED,
@@ -891,6 +900,7 @@ def test_handle_job_error_missing_artifacts_is_permanent(monkeypatch, db_session
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         idempotency_key="q" * 64,
         status=ConversionJobStatus.QUEUED,
@@ -996,7 +1006,7 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
     """When content hash matches a prior output, S3 upload is skipped and existing keys are reused."""
     monkeypatch.setattr(uploader, "get_engine", lambda _url=None: db_session.get_bind())
 
-    bookmark = Bookmark(
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_hash_reuse",
         url="https://example.com",
         normalized_url="https://example.com",
@@ -1010,6 +1020,7 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
 
     prior_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title="Hash Reuse",
         idempotency_key="p" * 64,
         status=ConversionJobStatus.SUCCEEDED,
@@ -1022,6 +1033,7 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
     prior_output = ConversionOutput(
         job_id=prior_job.id,
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title="Hash Reuse",
         payload_version=1,
         s3_prefix=f"s3://bucket/{bookmark.aizk_uuid}/",
@@ -1037,6 +1049,7 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
 
     new_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title="Hash Reuse",
         idempotency_key="n" * 64,
         status=ConversionJobStatus.RUNNING,
@@ -1079,7 +1092,7 @@ def test_upload_converted_uploads_when_hash_differs(monkeypatch, db_session: Ses
     """When no prior output has a matching hash, the full S3 upload proceeds."""
     monkeypatch.setattr(uploader, "get_engine", lambda _url=None: db_session.get_bind())
 
-    bookmark = Bookmark(
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_hash_upload",
         url="https://example.com",
         normalized_url="https://example.com",
@@ -1093,6 +1106,7 @@ def test_upload_converted_uploads_when_hash_differs(monkeypatch, db_session: Ses
 
     new_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title="Hash Upload",
         idempotency_key="u" * 64,
         status=ConversionJobStatus.RUNNING,
@@ -1131,6 +1145,7 @@ def test_initialize_running_job_returns_false_for_cancelled_after_running_set(
     # Simulate the state after poll_and_process_jobs committed RUNNING
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         idempotency_key="r" * 64,
         status=ConversionJobStatus.RUNNING,

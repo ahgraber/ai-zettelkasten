@@ -7,12 +7,12 @@ from uuid import UUID
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 
 
-def _create_bookmark(session, karakeep_id: str, url: str, title: str) -> Bookmark:
-    bookmark = Bookmark(
+def _create_bookmark(session, karakeep_id: str, url: str, title: str) -> Source:
+    bookmark = Source.from_karakeep_id(
         karakeep_id=karakeep_id,
         url=url,
         normalized_url=url,
@@ -55,6 +55,7 @@ def test_bulk_retry_resets_failed_jobs(db_session) -> None:
     job_retryable = _create_job(
         db_session,
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         status=ConversionJobStatus.FAILED_RETRYABLE,
         idempotency_key="a" * 64,
@@ -63,6 +64,7 @@ def test_bulk_retry_resets_failed_jobs(db_session) -> None:
     job_cancelled = _create_job(
         db_session,
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         status=ConversionJobStatus.CANCELLED,
         idempotency_key="b" * 64,
@@ -99,6 +101,7 @@ def test_single_retry_increments_attempt_count(db_session) -> None:
     job = _create_job(
         db_session,
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         status=ConversionJobStatus.FAILED_RETRYABLE,
         idempotency_key="e" * 64,
@@ -123,6 +126,7 @@ def test_bulk_cancel_marks_queued_and_running_jobs(db_session) -> None:
     job_queued = _create_job(
         db_session,
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         status=ConversionJobStatus.QUEUED,
         idempotency_key="c" * 64,
@@ -130,6 +134,7 @@ def test_bulk_cancel_marks_queued_and_running_jobs(db_session) -> None:
     job_running = _create_job(
         db_session,
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         status=ConversionJobStatus.RUNNING,
         idempotency_key="d" * 64,

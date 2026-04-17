@@ -12,7 +12,7 @@ from pyleak import no_thread_leaks
 import pytest
 from sqlmodel import Session
 
-from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers import errors as errors_mod, loop, orchestrator, shutdown
@@ -27,8 +27,8 @@ def _reset_shutdown():
     shutdown.reset()
 
 
-def _create_bookmark(db_session: Session) -> Bookmark:
-    bookmark = Bookmark(
+def _create_bookmark(db_session: Session) -> Source:
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_shutdown_test",
         url="https://example.com",
         normalized_url="https://example.com",
@@ -42,9 +42,10 @@ def _create_bookmark(db_session: Session) -> Bookmark:
     return bookmark
 
 
-def _create_running_job(db_session: Session, bookmark: Bookmark) -> ConversionJob:
+def _create_running_job(db_session: Session, bookmark: Source) -> ConversionJob:
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title or "",
         idempotency_key="s" * 64,
         status=ConversionJobStatus.RUNNING,

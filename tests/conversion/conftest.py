@@ -12,9 +12,23 @@ from typing import AbstractSet, Iterator
 import pytest
 from sqlmodel import Session
 
+from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.db import get_engine
 from aizk.conversion.utilities.config import ConversionConfig
 from karakeep_client.models import Bookmark
+
+
+def make_source(karakeep_id: str, **overrides) -> Source:
+    """Construct a Source row for a KaraKeep bookmark id with synthesized source_ref."""
+    ref = KarakeepBookmarkRef(bookmark_id=karakeep_id)
+    defaults = {
+        "karakeep_id": karakeep_id,
+        "source_ref": ref.model_dump(),
+        "source_ref_hash": compute_source_ref_hash(ref),
+    }
+    defaults.update(overrides)
+    return Source(**defaults)
 
 # Env-var aliases the harness intentionally owns — kept in sync with `set_test_env` below.
 # Aliases in this set survive the session-start cleanup so `set_test_env` can set them per test.

@@ -28,9 +28,10 @@ from aizk.conversion.api.schemas import (
     JobSubmission,
     QueueFullResponse,
 )
-from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.utilities.hashing import compute_idempotency_key
 
 logger = logging.getLogger(__name__)
@@ -43,9 +44,19 @@ def _utcnow() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
 
 
+def _karakeep_source_ref(karakeep_id: str) -> tuple[dict[str, object], str]:
+    """Synthesize (source_ref, source_ref_hash) for a KaraKeep bookmark ID.
+
+    Bridge used while the API still accepts ``karakeep_id`` on submission;
+    removed in the PR that introduces ``source_ref`` as a first-class field.
+    """
+    ref = KarakeepBookmarkRef(bookmark_id=karakeep_id)
+    return ref.model_dump(), compute_source_ref_hash(ref)
+
+
 def _job_to_response(
     job: ConversionJob,
-    bookmark: Bookmark,
+    source: Source,
     output: ConversionOutput | None,
 ) -> JobResponse:
     """Convert job and optional output into API response."""
@@ -61,16 +72,16 @@ def _job_to_response(
             figure_count=output.figure_count,
         )
 
-    bookmark_url = AnyUrl(bookmark.url) if bookmark.url else None
-    bookmark_title = bookmark.title or job.title
+    source_url = AnyUrl(source.url) if source.url else None
+    source_title = source.title or job.title
 
     return JobResponse(
         id=job.id,
         aizk_uuid=job.aizk_uuid,
-        karakeep_id=bookmark.karakeep_id,
-        url=bookmark_url,
-        title=bookmark_title,
-        source_type=bookmark.source_type,
+        karakeep_id=source.karakeep_id,
+        url=source_url,
+        title=source_title,
+        source_type=source.source_type,
         status=job.status,
         attempts=job.attempts,
         payload_version=job.payload_version,
@@ -156,15 +167,18 @@ def submit_job(
     """Submit a new conversion job."""
     config = get_config(request)
 
-    bookmark = session.exec(select(Bookmark).where(Bookmark.karakeep_id == submission.karakeep_id)).first()
-    is_new_bookmark = bookmark is None
-    if is_new_bookmark:
+    source_ref_payload, source_ref_hash = _karakeep_source_ref(submission.karakeep_id)
+    source = session.exec(select(Source).where(Source.source_ref_hash == source_ref_hash)).first()
+    is_new_source = source is None
+    if is_new_source:
         # Create in memory only.  aizk_uuid is set by the Python default
         # factory (uuid4), so it is available before the row is persisted.
         # The INSERT is deferred to after the queue-depth check so a
-        # rejected submission does not leave an orphan bookmark row.
-        bookmark = Bookmark(
+        # rejected submission does not leave an orphan source row.
+        source = Source(
             karakeep_id=submission.karakeep_id,
+            source_ref=source_ref_payload,
+            source_ref_hash=source_ref_hash,
             created_at=_utcnow(),
             updated_at=_utcnow(),
         )
@@ -179,7 +193,7 @@ def submit_job(
     session.exec(text("BEGIN IMMEDIATE"))
 
     idempotency_key = submission.idempotency_key or compute_idempotency_key(
-        bookmark.aizk_uuid,
+        source.aizk_uuid,
         submission.payload_version,
         config,
         picture_description_enabled=config.is_picture_description_enabled(),
@@ -188,9 +202,9 @@ def submit_job(
     existing_job = session.exec(select(ConversionJob).where(ConversionJob.idempotency_key == idempotency_key)).first()
     if existing_job:
         output = _get_output_summary(session, existing_job.id)
-        bookmark = session.exec(select(Bookmark).where(Bookmark.aizk_uuid == existing_job.aizk_uuid)).one()
+        source = session.exec(select(Source).where(Source.aizk_uuid == existing_job.aizk_uuid)).one()
         api_response.status_code = status.HTTP_200_OK
-        job_response = _job_to_response(existing_job, bookmark, output)
+        job_response = _job_to_response(existing_job, source, output)
         return job_response
 
     actionable_statuses = [ConversionJobStatus.QUEUED, ConversionJobStatus.FAILED_RETRYABLE]
@@ -205,14 +219,15 @@ def submit_job(
             headers={"Retry-After": str(config.queue_retry_after_seconds)},
         )
 
-    if is_new_bookmark:
-        session.add(bookmark)
+    if is_new_source:
+        session.add(source)
         session.flush()
 
     now = _utcnow()
     job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
-        title=bookmark.title or bookmark.karakeep_id,
+        aizk_uuid=source.aizk_uuid,
+        source_ref=source_ref_payload,
+        title=source.title or source.karakeep_id or str(source.aizk_uuid),
         payload_version=submission.payload_version,
         status=ConversionJobStatus.QUEUED,
         attempts=0,
@@ -224,9 +239,9 @@ def submit_job(
     session.add(job)
     session.commit()
     session.refresh(job)
-    session.refresh(bookmark)
+    session.refresh(source)
 
-    job_response = _job_to_response(job, bookmark, None)
+    job_response = _job_to_response(job, source, None)
     return job_response
 
 
@@ -254,8 +269,8 @@ def get_job(
     if not job:
         raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
     output = _get_output_summary(session, job_id)
-    bookmark = session.exec(select(Bookmark).where(Bookmark.aizk_uuid == job.aizk_uuid)).one()
-    return _job_to_response(job, bookmark, output)
+    source = session.exec(select(Source).where(Source.aizk_uuid == job.aizk_uuid)).one()
+    return _job_to_response(job, source, output)
 
 
 @router.get("", response_model=JobList)
@@ -280,8 +295,8 @@ def list_jobs(
         query = query.where(ConversionJob.aizk_uuid == aizk_uuid)
         count_query = count_query.where(ConversionJob.aizk_uuid == aizk_uuid)
     if karakeep_id:
-        query = query.join(Bookmark).where(Bookmark.karakeep_id == karakeep_id)
-        count_query = count_query.join(Bookmark).where(Bookmark.karakeep_id == karakeep_id)
+        query = query.join(Source).where(Source.karakeep_id == karakeep_id)
+        count_query = count_query.join(Source).where(Source.karakeep_id == karakeep_id)
     if created_after:
         query = query.where(ConversionJob.created_at >= created_after)
         count_query = count_query.where(ConversionJob.created_at >= created_after)
@@ -296,7 +311,7 @@ def list_jobs(
     # joinedload/selectinload eager-load in bulk to keep the number of queries bounded.
     jobs = session.exec(
         query.options(
-            joinedload(ConversionJob.bookmark),
+            joinedload(ConversionJob.source),
             selectinload(ConversionJob.output),
         )
         .order_by(ConversionJob.created_at.desc())
@@ -306,9 +321,9 @@ def list_jobs(
 
     responses = []
     for job in jobs:
-        if job.bookmark is None:
-            raise HTTPException(status_code=500, detail={"error": "bookmark_missing", "message": "Bookmark not found"})
-        responses.append(_job_to_response(job, job.bookmark, job.output))
+        if job.source is None:
+            raise HTTPException(status_code=500, detail={"error": "source_missing", "message": "Source not found"})
+        responses.append(_job_to_response(job, job.source, job.output))
 
     return JobList(jobs=responses, total=total, limit=limit, offset=offset)
 
@@ -334,9 +349,9 @@ def retry_job(
     session.add(job)
     session.commit()
     session.refresh(job)
-    bookmark = session.exec(select(Bookmark).where(Bookmark.aizk_uuid == job.aizk_uuid)).one()
+    source = session.exec(select(Source).where(Source.aizk_uuid == job.aizk_uuid)).one()
     output = _get_output_summary(session, job_id)
-    return _job_to_response(job, bookmark, output)
+    return _job_to_response(job, source, output)
 
 
 @router.post("/{job_id}/cancel", response_model=JobResponse)
@@ -360,9 +375,9 @@ def cancel_job(
     session.add(job)
     session.commit()
     session.refresh(job)
-    bookmark = session.exec(select(Bookmark).where(Bookmark.aizk_uuid == job.aizk_uuid)).one()
+    source = session.exec(select(Source).where(Source.aizk_uuid == job.aizk_uuid)).one()
     output = _get_output_summary(session, job_id)
-    return _job_to_response(job, bookmark, output)
+    return _job_to_response(job, source, output)
 
 
 @router.post("/actions", response_model=BulkActionResponse)

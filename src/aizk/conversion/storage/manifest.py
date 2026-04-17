@@ -11,8 +11,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
-    from aizk.conversion.datamodel.bookmark import Bookmark
     from aizk.conversion.datamodel.job import ConversionJob
+    from aizk.conversion.datamodel.source import Source
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +104,7 @@ def _coerce_datetime(value: datetime | None, fallback: datetime) -> datetime:
 
 
 def generate_manifest(
-    bookmark: Bookmark,
+    source: Source,
     job: ConversionJob,
     fetched_at: datetime,
     markdown_s3_uri: str,
@@ -118,7 +118,7 @@ def generate_manifest(
     """Generate manifest for conversion artifacts.
 
     Args:
-        bookmark: Bookmark record with source metadata.
+        source: Source record with identity and metadata.
         job: ConversionJob record with timing and job info.
         fetched_at: Timestamp when content was fetched.
         markdown_s3_uri: Absolute S3 URI for markdown (s3://bucket/key).
@@ -138,19 +138,19 @@ def generate_manifest(
     finished_at = _coerce_datetime(job.finished_at, fetched_at)
     duration_seconds = max(0, int((finished_at - started_at).total_seconds()))
 
-    source_type = bookmark.source_type
+    source_type = source.source_type
     if source_type not in {"arxiv", "github", "other"}:
         source_type = "other"
 
     figures = [ManifestArtifactFigure(key=uri, created_at=finished_at) for uri in figure_s3_uris]
 
     return ConversionManifest(
-        aizk_uuid=bookmark.aizk_uuid,
-        karakeep_id=bookmark.karakeep_id,
+        aizk_uuid=source.aizk_uuid,
+        karakeep_id=source.karakeep_id,
         source=ManifestSource(
-            url=bookmark.url,
-            normalized_url=bookmark.normalized_url,
-            title=bookmark.title,
+            url=source.url,
+            normalized_url=source.normalized_url,
+            title=source.title,
             source_type=source_type,  # type: ignore[arg-type]
             fetched_at=fetched_at,
         ),

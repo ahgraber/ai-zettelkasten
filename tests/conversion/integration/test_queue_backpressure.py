@@ -9,12 +9,12 @@ from sqlmodel import select
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 
 
-def _create_bookmark(session, karakeep_id: str) -> Bookmark:
-    bookmark = Bookmark(
+def _create_bookmark(session, karakeep_id: str) -> Source:
+    bookmark = Source.from_karakeep_id(
         karakeep_id=karakeep_id,
         url="https://example.com",
         normalized_url="https://example.com",
@@ -28,9 +28,10 @@ def _create_bookmark(session, karakeep_id: str) -> Bookmark:
     return bookmark
 
 
-def _create_queued_job(session, *, aizk_uuid: UUID, idempotency_key: str) -> ConversionJob:
+def _create_queued_job(session, *, aizk_uuid: UUID, idempotency_key: str, source_ref: dict | None = None) -> ConversionJob:
     job = ConversionJob(
         aizk_uuid=aizk_uuid,
+        source_ref=source_ref or {},
         title="Test",
         payload_version=1,
         status=ConversionJobStatus.QUEUED,
@@ -43,7 +44,7 @@ def _create_queued_job(session, *, aizk_uuid: UUID, idempotency_key: str) -> Con
     return job
 
 
-def _fill_queue(session, bookmark: Bookmark, count: int) -> list[ConversionJob]:
+def _fill_queue(session, bookmark: Source, count: int) -> list[ConversionJob]:
     """Create `count` QUEUED jobs for the given bookmark."""
     jobs = []
     for i in range(count):
@@ -51,6 +52,7 @@ def _fill_queue(session, bookmark: Bookmark, count: int) -> list[ConversionJob]:
             _create_queued_job(
                 session,
                 aizk_uuid=bookmark.aizk_uuid,
+                source_ref=bookmark.source_ref,
                 idempotency_key=f"fill-{i:04d}",
             )
         )
@@ -85,7 +87,7 @@ def test_rejected_submission_does_not_create_orphan_bookmark(db_session, monkeyp
         response = client.post("/v1/jobs", json={"karakeep_id": "bp-orphan-new"})
 
     assert response.status_code == 503
-    orphan = db_session.exec(select(Bookmark).where(Bookmark.karakeep_id == "bp-orphan-new")).first()
+    orphan = db_session.exec(select(Source).where(Source.karakeep_id == "bp-orphan-new")).first()
     assert orphan is None, "Rejected submission should not persist a bookmark row"
 
 
@@ -111,6 +113,7 @@ def test_duplicate_bypasses_queue_depth_check(db_session, monkeypatch) -> None:
     existing = _create_queued_job(
         db_session,
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         idempotency_key="dup-key-00",
     )
 

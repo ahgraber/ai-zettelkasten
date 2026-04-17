@@ -68,7 +68,7 @@ def _config_snapshot(
 
 def _base_manifest(*, picture_description_enabled: bool = False) -> ConversionManifest:
     return generate_manifest(
-        bookmark=_make_bookmark(),
+        source=_make_bookmark(),
         job=_make_job(),
         fetched_at=_FETCHED_AT,
         markdown_s3_uri="s3://bucket/output.md",
@@ -109,7 +109,7 @@ def test_manifest_config_snapshot_contains_docling_enable_picture_classification
     manifest = _base_manifest()
     assert manifest.config_snapshot.docling_enable_picture_classification is True
     manifest_off = generate_manifest(
-        bookmark=_make_bookmark(),
+        source=_make_bookmark(),
         job=_make_job(),
         fetched_at=_FETCHED_AT,
         markdown_s3_uri="s3://bucket/output.md",

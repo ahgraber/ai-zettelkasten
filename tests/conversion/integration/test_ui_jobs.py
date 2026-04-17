@@ -5,13 +5,13 @@ import datetime as dt
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 
 
 def test_ui_jobs_renders_table_and_filters(db_session) -> None:
     app = create_app()
-    bookmark = Bookmark(
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_ui_jobs",
         url="https://example.com/ui",
         normalized_url="https://example.com/ui",
@@ -25,6 +25,7 @@ def test_ui_jobs_renders_table_and_filters(db_session) -> None:
 
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.FAILED_PERM,
@@ -66,7 +67,7 @@ def test_ui_jobs_filters_across_all_jobs(db_session) -> None:
     app = create_app()
     base_time = dt.datetime(2024, 1, 1, tzinfo=dt.timezone.utc)
 
-    target_bookmark = Bookmark(
+    target_bookmark = Source.from_karakeep_id(
         karakeep_id="bm_ui_target",
         url="https://example.com/target",
         normalized_url="https://example.com/target",
@@ -80,6 +81,7 @@ def test_ui_jobs_filters_across_all_jobs(db_session) -> None:
 
     target_job = ConversionJob(
         aizk_uuid=target_bookmark.aizk_uuid,
+        source_ref=target_bookmark.source_ref,
         title="Special Target",
         payload_version=1,
         status=ConversionJobStatus.FAILED_PERM,
@@ -92,7 +94,7 @@ def test_ui_jobs_filters_across_all_jobs(db_session) -> None:
     db_session.add(target_job)
 
     for idx in range(60):
-        bookmark = Bookmark(
+        bookmark = Source.from_karakeep_id(
             karakeep_id=f"bm_ui_jobs_{idx}",
             url=f"https://example.com/{idx}",
             normalized_url=f"https://example.com/{idx}",
@@ -104,6 +106,7 @@ def test_ui_jobs_filters_across_all_jobs(db_session) -> None:
         queued_at = base_time + dt.timedelta(minutes=idx + 1)
         job = ConversionJob(
             aizk_uuid=bookmark.aizk_uuid,
+            source_ref=bookmark.source_ref,
             title=bookmark.title,
             payload_version=1,
             status=ConversionJobStatus.SUCCEEDED,
@@ -132,7 +135,7 @@ def test_ui_jobs_filters_across_all_jobs(db_session) -> None:
 
 def test_ui_jobs_delete_action_removes_failed_and_cancelled_jobs(db_session) -> None:
     app = create_app()
-    bookmark = Bookmark(
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_ui_delete",
         url="https://example.com/delete",
         normalized_url="https://example.com/delete",
@@ -146,6 +149,7 @@ def test_ui_jobs_delete_action_removes_failed_and_cancelled_jobs(db_session) -> 
 
     failed_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.FAILED_RETRYABLE,
@@ -154,6 +158,7 @@ def test_ui_jobs_delete_action_removes_failed_and_cancelled_jobs(db_session) -> 
     )
     cancelled_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.CANCELLED,
@@ -185,7 +190,7 @@ def test_ui_jobs_delete_action_removes_failed_and_cancelled_jobs(db_session) -> 
 
 def test_ui_jobs_delete_action_rejects_non_deletable_status(db_session) -> None:
     app = create_app()
-    bookmark = Bookmark(
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_ui_delete_reject",
         url="https://example.com/delete-reject",
         normalized_url="https://example.com/delete-reject",
@@ -199,6 +204,7 @@ def test_ui_jobs_delete_action_rejects_non_deletable_status(db_session) -> None:
 
     queued_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.QUEUED,
@@ -236,7 +242,7 @@ def test_ui_jobs_empty_unfiltered_shows_system_empty_message(db_session) -> None
 
 def test_ui_jobs_search_with_no_matches_shows_filtered_empty_message(db_session) -> None:
     app = create_app()
-    bookmark = Bookmark(
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_ui_search_empty",
         url="https://example.com/search-empty",
         normalized_url="https://example.com/search-empty",
@@ -250,6 +256,7 @@ def test_ui_jobs_search_with_no_matches_shows_filtered_empty_message(db_session)
 
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.SUCCEEDED,
@@ -269,7 +276,7 @@ def test_ui_jobs_search_with_no_matches_shows_filtered_empty_message(db_session)
 
 def test_ui_jobs_status_filter_with_no_matches_shows_filtered_empty_message(db_session) -> None:
     app = create_app()
-    bookmark = Bookmark(
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_ui_status_empty",
         url="https://example.com/status-empty",
         normalized_url="https://example.com/status-empty",
@@ -283,6 +290,7 @@ def test_ui_jobs_status_filter_with_no_matches_shows_filtered_empty_message(db_s
 
     succeeded_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.SUCCEEDED,
@@ -291,6 +299,7 @@ def test_ui_jobs_status_filter_with_no_matches_shows_filtered_empty_message(db_s
     )
     queued_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.QUEUED,
@@ -311,7 +320,7 @@ def test_ui_jobs_status_filter_with_no_matches_shows_filtered_empty_message(db_s
 
 def test_ui_jobs_bulk_cancel_mixed_eligibility_splits_applied_and_ineligible(db_session) -> None:
     app = create_app()
-    bookmark = Bookmark(
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_ui_mixed_cancel",
         url="https://example.com/mixed-cancel",
         normalized_url="https://example.com/mixed-cancel",
@@ -325,6 +334,7 @@ def test_ui_jobs_bulk_cancel_mixed_eligibility_splits_applied_and_ineligible(db_
 
     queued_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.QUEUED,
@@ -333,6 +343,7 @@ def test_ui_jobs_bulk_cancel_mixed_eligibility_splits_applied_and_ineligible(db_
     )
     succeeded_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.SUCCEEDED,
@@ -365,7 +376,7 @@ def test_ui_jobs_bulk_cancel_mixed_eligibility_splits_applied_and_ineligible(db_
 
 def test_ui_jobs_bulk_action_missing_job_counted_as_ineligible(db_session) -> None:
     app = create_app()
-    bookmark = Bookmark(
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_ui_missing_id",
         url="https://example.com/missing-id",
         normalized_url="https://example.com/missing-id",
@@ -379,6 +390,7 @@ def test_ui_jobs_bulk_action_missing_job_counted_as_ineligible(db_session) -> No
 
     queued_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.QUEUED,
@@ -405,7 +417,7 @@ def test_ui_jobs_bulk_action_missing_job_counted_as_ineligible(db_session) -> No
 
 def test_ui_jobs_bulk_action_all_eligible_omits_skipped_phrase(db_session) -> None:
     app = create_app()
-    bookmark = Bookmark(
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_ui_all_eligible",
         url="https://example.com/all-eligible",
         normalized_url="https://example.com/all-eligible",
@@ -419,6 +431,7 @@ def test_ui_jobs_bulk_action_all_eligible_omits_skipped_phrase(db_session) -> No
 
     queued_a = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.QUEUED,
@@ -427,6 +440,7 @@ def test_ui_jobs_bulk_action_all_eligible_omits_skipped_phrase(db_session) -> No
     )
     queued_b = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.QUEUED,

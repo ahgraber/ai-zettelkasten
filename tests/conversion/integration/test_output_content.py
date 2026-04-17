@@ -11,23 +11,24 @@ import pytest
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.storage.s3_client import S3Client, S3Error, S3NotFoundError
 
 
-def _create_bookmark(session, karakeep_id: str) -> Bookmark:
-    bookmark = Bookmark(karakeep_id=karakeep_id)
+def _create_bookmark(session, karakeep_id: str) -> Source:
+    bookmark = Source.from_karakeep_id(karakeep_id=karakeep_id)
     session.add(bookmark)
     session.commit()
     session.refresh(bookmark)
     return bookmark
 
 
-def _create_job(session, *, aizk_uuid: UUID, idempotency_key: str) -> ConversionJob:
+def _create_job(session, *, aizk_uuid: UUID, source_ref: dict | None = None, idempotency_key: str) -> ConversionJob:
     job = ConversionJob(
         aizk_uuid=aizk_uuid,
+    source_ref=source_ref or {},
         title="Test",
         payload_version=1,
         status=ConversionJobStatus.SUCCEEDED,
