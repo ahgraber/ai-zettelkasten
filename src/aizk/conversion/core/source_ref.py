@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 
 _MAX_INLINE_BYTES = 64 * 1024  # 64 KB
@@ -109,3 +109,12 @@ def compute_source_ref_hash(ref: SourceRefVariant) -> str:
     payload = ref.to_dedup_payload()
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+_SOURCE_REF_ADAPTER: TypeAdapter[SourceRefVariant] = TypeAdapter(SourceRef)
+
+
+def parse_source_ref(payload: dict[str, Any]) -> SourceRefVariant:
+    """Deserialize a dict payload (e.g. from the ``Source.source_ref`` JSON column)
+    into the matching ``SourceRef`` variant via the discriminator."""
+    return _SOURCE_REF_ADAPTER.validate_python(payload)

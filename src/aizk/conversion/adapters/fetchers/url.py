@@ -45,4 +45,8 @@ class UrlFetcher:
             raise FetchError(f"Failed to fetch {url}: {exc}") from exc
 
         content_type = _detect_content_type(url, response.headers.get("content-type", ""))
-        return ConversionInput(content=response.content, content_type=content_type)
+        return ConversionInput(
+            content=response.content,
+            content_type=content_type,
+            metadata={"source_url": url},
+        )

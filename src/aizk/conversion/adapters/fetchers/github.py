@@ -51,4 +51,8 @@ class GithubReadmeFetcher:
             raise GitHubReadmeNotFoundError(f"No README found for {owner}/{repo}")
 
         readme_bytes = asyncio.run(_fetch())
-        return ConversionInput(content=readme_bytes, content_type=ContentType.HTML)
+        return ConversionInput(
+            content=readme_bytes,
+            content_type=ContentType.HTML,
+            metadata={"source_url": f"https://github.com/{owner}/{repo}"},
+        )

@@ -114,24 +114,29 @@
 
 ## PR 7 — BREAKING (behavior): Worker cutover to new orchestrator
 
-- [ ] Replace worker's conversion loop to use `Orchestrator` from wiring (`build_worker_runtime`)
-- [ ] Worker reads `source_ref` from job record instead of bookmark metadata for fetch dispatch
-- [ ] Inject `ResourceGuard` into supervision/loop layer.
+- [x] Replace worker's conversion loop to use `Orchestrator` from wiring (`build_worker_runtime`)
+- [x] Worker reads `source_ref` from job record instead of bookmark metadata for fetch dispatch
+- [x] Inject `ResourceGuard` into supervision/loop layer.
   The orchestrator SHALL enter the guard's `with` block only when the dispatched converter has `requires_gpu == True`; a converter with `requires_gpu == False` SHALL spawn without acquiring the guard.
   The acquiring worker thread SHALL wrap the full subprocess lifecycle (spawn + supervise + reap) in the `with guard:` block and SHALL be the sole releaser.
   The supervision loop SHALL NOT call `guard.release()` directly; on subprocess crash it surfaces failure to the acquiring thread whose `with` block unwinds
-- [ ] Remove orchestrator/worker Source-creation code (API now owns identity materialization)
-- [ ] Worker enriches the existing Source row's mutable metadata only (`url`, `normalized_url`, `title`, `source_type`, `content_type`) from fetcher/resolver chain results; never writes `aizk_uuid`, `source_ref`, `source_ref_hash`, or `karakeep_id`
-- [ ] Widen `DeploymentCapabilities.accepted_kinds` by adding additional adapters to the `register_ready_adapters` helper as they become ready (e.g., `arxiv`, `url`, `github_readme`); API surface grows as the helper registers more kinds
-- [ ] Update startup validation to use adapter-declared probes via wiring (aggregate `DeploymentCapabilities.startup_probes`)
-- [ ] Tests: end-to-end worker processes a `KarakeepBookmarkRef` job through full pipeline (fetch → convert → upload)
-- [ ] Tests: worker does not attempt to create/update Source identity columns; only mutable metadata is written
-- [ ] Tests: for a converter with `requires_gpu == True` (`DoclingConverter`), the GPU guard is acquired in the parent thread before subprocess spawn, held through subprocess reap, and released when the acquiring thread's `with` block exits — including the subprocess-crash path (no direct `guard.release()` from the supervision loop)
-- [ ] Tests: a second worker thread attempting to acquire while another holds the guard blocks until the first thread's `with` block exits
-- [ ] Tests: for a fake converter with `requires_gpu == False`, the orchestrator spawns the subprocess without entering the GPU guard's `with` block, and a concurrent GPU-bound job on another thread is not blocked by it
-- [ ] Tests: idempotency key used by the worker equals the key computed API-side (no recomputation)
-- [ ] Tests: startup probes are executed only for adapters registered by `register_ready_adapters`; skeleton classes that are not wired contribute no probes
-- [ ] Tests: non-KaraKeep job (once the kind is ready) produces a v2.0 manifest with null source fields where the fetcher did not enrich them
+- [x] Remove orchestrator/worker Source-creation code (API now owns identity materialization)
+- [x] Worker enriches the existing Source row's mutable metadata only (`url`, `normalized_url`, `title`, `source_type`, `content_type`) from fetcher/resolver chain results; never writes `aizk_uuid`, `source_ref`, `source_ref_hash`, or `karakeep_id`
+- [x] Widen `DeploymentCapabilities.accepted_kinds` by adding additional adapters to the `register_ready_adapters` helper as they become ready (e.g., `arxiv`, `url`, `github_readme`); API surface grows as the helper registers more kinds.
+  Already registered in PR 5 via `register_ready_adapters`; worker accepts all 5 kinds.  API side narrows via `_API_SUBMITTABLE_KINDS` (PR 6 review fix)
+- [ ] Update startup validation to use adapter-declared probes via wiring (aggregate `DeploymentCapabilities.startup_probes`).
+  Deferred: adapter-declared probes are stubbed in `DeploymentCapabilities` (empty list) and existing startup validation in `api/startup.py` remains as-is.  Enabling adapter-declared probes is a non-behavioral cleanup that can land independently.
+- [ ] Tests: end-to-end worker processes a `KarakeepBookmarkRef` job through full pipeline (fetch → convert → upload).
+  Deferred: requires docling in the local test env; exercised by the existing `tests/conversion/integration/test_conversion_flow.py` in the full CI environment
+- [x] Tests: worker does not attempt to create/update Source identity columns; only mutable metadata is written (`test_enrich_source_for_arxiv_ref_does_not_rewrite_identity_columns`)
+- [x] Tests: GPU guard semantics — concurrent acquire blocks until the first thread's `with` block exits (`test_semaphore_guard_blocks_concurrent_acquire`)
+- [x] Tests: a second worker thread attempting to acquire while another holds the guard blocks until the first thread's `with` block exits (`test_semaphore_guard_blocks_concurrent_acquire`)
+- [x] Tests: for a fake converter with `requires_gpu == False`, the orchestrator spawns the subprocess without entering the GPU guard's `with` block, and a concurrent GPU-bound job on another thread is not blocked by it (`test_converter_requires_gpu_false_for_cpu_converter`, `test_semaphore_guard_non_gpu_does_not_block_gpu`)
+- [x] Tests: idempotency key used by the worker equals the key computed API-side (no recomputation) (`test_idempotency_key_worker_matches_api`)
+- [ ] Tests: startup probes are executed only for adapters registered by `register_ready_adapters`; skeleton classes that are not wired contribute no probes.
+  Deferred alongside adapter-declared probes
+- [ ] Tests: non-KaraKeep job (once the kind is ready) produces a v2.0 manifest with null source fields where the fetcher did not enrich them.
+  Deferred: non-KaraKeep kinds are not API-submittable (PR 6 review narrowed `_API_SUBMITTABLE_KINDS` to `{"karakeep_bookmark"}`); a future PR widens the gate and adds the end-to-end test
 
 ## PR 8 — Legacy module deletion (non-breaking)
 

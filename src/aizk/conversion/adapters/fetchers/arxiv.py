@@ -35,6 +35,8 @@ class ArxivFetcher:
         cfg = self._config
         timeout = float(cfg.fetch_timeout_seconds) if cfg else 30.0
 
+        abstract_url = f"https://arxiv.org/abs/{ref.arxiv_id}"
+
         # Step 1: KaraKeep asset URL (preferred — avoids arxiv.org rate limits)
         if getattr(ref, "karakeep_asset_url", None):
             logger.info("Fetching arXiv PDF from KaraKeep asset: %s", ref.karakeep_asset_url)
@@ -42,7 +44,11 @@ class ArxivFetcher:
                 with httpx.Client(timeout=timeout, follow_redirects=True) as client:
                     response = client.get(ref.karakeep_asset_url)
                     response.raise_for_status()
-                    return ConversionInput(content=response.content, content_type=ContentType.PDF)
+                    return ConversionInput(
+                        content=response.content,
+                        content_type=ContentType.PDF,
+                        metadata={"source_url": abstract_url, "arxiv_id": ref.arxiv_id},
+                    )
             except Exception as exc:
                 raise ArxivPdfFetchError(
                     f"Failed to fetch KaraKeep asset for arXiv {ref.arxiv_id}: {exc}"
@@ -55,7 +61,11 @@ class ArxivFetcher:
                 with httpx.Client(timeout=timeout, follow_redirects=True) as client:
                     response = client.get(ref.arxiv_pdf_url)
                     response.raise_for_status()
-                    return ConversionInput(content=response.content, content_type=ContentType.PDF)
+                    return ConversionInput(
+                        content=response.content,
+                        content_type=ContentType.PDF,
+                        metadata={"source_url": abstract_url, "arxiv_id": ref.arxiv_id},
+                    )
             except Exception as exc:
                 raise ArxivPdfFetchError(
                     f"Failed to fetch arXiv PDF from URL for {ref.arxiv_id}: {exc}"
@@ -69,7 +79,11 @@ class ArxivFetcher:
                     return await client.download_paper_pdf(ref.arxiv_id, use_export_url=True)
 
             pdf_bytes = asyncio.run(_download())
-            return ConversionInput(content=pdf_bytes, content_type=ContentType.PDF)
+            return ConversionInput(
+                content=pdf_bytes,
+                content_type=ContentType.PDF,
+                metadata={"source_url": abstract_url, "arxiv_id": ref.arxiv_id},
+            )
         except Exception as exc:
             raise ArxivPdfFetchError(
                 f"Failed to fetch arXiv PDF for {ref.arxiv_id}: {exc}"

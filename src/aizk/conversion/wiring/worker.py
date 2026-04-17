@@ -41,6 +41,20 @@ class WorkerRuntime:
     capabilities: DeploymentCapabilities
     fetcher_registry: FetcherRegistry
     converter_registry: ConverterRegistry
+    converter_name: str = "docling"
+
+    def converter_requires_gpu(self, converter_name: str | None = None) -> bool:
+        """Return ``requires_gpu`` for the named converter (default: this runtime's).
+
+        ``requires_gpu`` is a class-level attribute on the Converter, so the
+        same value applies regardless of content_type.  Returns False when the
+        named converter is not registered (e.g. API-side runtimes).
+        """
+        name = converter_name or self.converter_name
+        for (_content_type, reg_name), impl in self.converter_registry._entries.items():
+            if reg_name == name:
+                return bool(getattr(impl, "requires_gpu", False))
+        return False
 
 
 def build_worker_runtime(cfg: object) -> WorkerRuntime:
