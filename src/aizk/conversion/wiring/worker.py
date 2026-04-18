@@ -51,10 +51,10 @@ class WorkerRuntime:
         named converter is not registered (e.g. API-side runtimes).
         """
         name = converter_name or self.converter_name
-        for (_content_type, reg_name), impl in self.converter_registry._entries.items():
-            if reg_name == name:
-                return bool(getattr(impl, "requires_gpu", False))
-        return False
+        impl = self.converter_registry.get_by_name(name)
+        if impl is None:
+            return False
+        return bool(getattr(type(impl), "requires_gpu", False))
 
 
 def build_worker_runtime(cfg: object) -> WorkerRuntime:

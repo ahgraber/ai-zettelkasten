@@ -90,6 +90,20 @@ class ConverterRegistry:
         except KeyError:
             raise NoConverterForFormat(content_type, name) from None
 
+    def get_by_name(self, name: str) -> object | None:
+        """Return a single converter instance registered under *name*, or ``None``.
+
+        A converter is registered under one ``(ContentType, name)`` key per
+        supported format, but the same ``impl`` instance is stored under every
+        key. This lookup returns that single instance so callers that need
+        class-level attributes (e.g. ``requires_gpu``) can read them without
+        knowing which content type to query.
+        """
+        for (_content_type, reg_name), impl in self._entries.items():
+            if reg_name == name:
+                return impl
+        return None
+
     def registered_formats(self) -> frozenset[ContentType]:
         """Content types for which at least one converter is registered."""
         return frozenset(ct for ct, _ in self._entries)
