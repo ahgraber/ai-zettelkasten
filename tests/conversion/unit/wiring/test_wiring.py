@@ -213,6 +213,38 @@ def test_singlefile_not_in_accepted_kinds(mock_docling, monkeypatch):
     assert "singlefile" not in runtime.capabilities.accepted_kinds
 
 
+def test_skeleton_fetcher_contributes_no_startup_probes(mock_docling, monkeypatch):
+    """Skeleton adapters must not leak probes into the runtime capabilities.
+
+    ``SingleFileFetcher`` exists as an interface stub but is intentionally
+    not wired by ``register_ready_adapters`` — any future probe it declares
+    must stay out of ``startup_probes`` until the class is actually
+    registered. Lock that invariant so a misfire in future wiring edits
+    trips the test, not a production startup.
+    """
+    from aizk.conversion.adapters.fetchers.singlefile import SingleFileFetcher
+    from aizk.conversion.wiring.worker import build_worker_runtime
+
+    cfg = MagicMock()
+    cfg.worker_gpu_concurrency = 1
+
+    runtime = build_worker_runtime(cfg)
+
+    # Direct assertion: the skeleton is not in the fetcher registry at all.
+    assert "singlefile" not in runtime.fetcher_registry.registered_kinds()
+
+    # Defensive: even if someone attaches a probe-like callable to the
+    # skeleton class, default wiring must not include it — startup_probes
+    # today is always empty for this deployment and only populated via
+    # explicit adapter registration.
+    for probe in runtime.capabilities.startup_probes:
+        owner = getattr(probe, "__self__", None)
+        assert not isinstance(owner, SingleFileFetcher), (
+            "Skeleton SingleFileFetcher leaked a startup probe into the "
+            "default wiring; it must remain unregistered until implemented."
+        )
+
+
 # ---------------------------------------------------------------------------
 # validate_chain_closure — default wiring
 # ---------------------------------------------------------------------------
