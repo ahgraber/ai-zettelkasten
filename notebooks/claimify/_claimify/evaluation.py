@@ -49,6 +49,7 @@ from _claimify.models import (
     LoadedDoc,
     UsageSample,
 )
+from _claimify.openrouter import make_openrouter_provider
 from _claimify.pipeline import build_sentence_contexts, default_question
 from _claimify.structuring import split_by_headings
 from _claimify.usage import extract_usage
@@ -154,6 +155,15 @@ def make_invalid_sentence_agent(
         result_model=InvalidSentenceVerdict,
         path=path,
     )
+    if path == "prose":
+
+        @agent.output_validator
+        def _check(data: str) -> str:
+            try:
+                parse_invalid_sentence(data)
+            except Exception as exc:
+                raise ModelRetry(f"Could not parse invalid_sentence response: {exc}") from exc
+            return data
 
     async def run(question: str, excerpt: str, sentence: str) -> tuple[InvalidSentenceVerdict, UsageSample]:
         user = render_template(
@@ -182,6 +192,15 @@ def make_element_agent(model: str, *, path: AdapterPath = "prose", api_key: str 
         result_model=ElementResult,
         path=path,
     )
+    if path == "prose":
+
+        @agent.output_validator
+        def _check(data: str) -> str:
+            try:
+                parse_element(data)
+            except Exception as exc:
+                raise ModelRetry(f"Could not parse element response: {exc}") from exc
+            return data
 
     async def run(question: str, excerpt: str, sentence: str) -> tuple[ElementResult, UsageSample]:
         user = render_template(
@@ -209,7 +228,17 @@ def make_coverage_agent(model: str, *, path: AdapterPath = "prose", api_key: str
         system_prompt=coverage_prompts.SYSTEM_PROMPT,
         result_model=CoverageResult,
         path=path,
+        deps_type=int if path == "prose" else None,
     )
+    if path == "prose":
+
+        @agent.output_validator
+        def _check(ctx: RunContext[int], data: str) -> str:
+            try:
+                parse_coverage(data, n_elements=ctx.deps)
+            except Exception as exc:
+                raise ModelRetry(f"Could not parse coverage response: {exc}") from exc
+            return data
 
     async def run(
         question: str,
@@ -224,7 +253,10 @@ def make_coverage_agent(model: str, *, path: AdapterPath = "prose", api_key: str
             claims=_format_indexed_dict(claims),
             elements=_format_indexed_dict(elements),
         )
-        result = await agent.run(user)
+        if path == "prose":
+            result = await agent.run(user, deps=len(elements))
+        else:
+            result = await agent.run(user)
         sample = extract_usage(result, model=model)
         if path == "prose":
             return parse_coverage(result.output, n_elements=len(elements)), sample
@@ -244,6 +276,15 @@ def make_entailment_agent(model: str, *, path: AdapterPath = "prose", api_key: s
         result_model=EntailmentResult,
         path=path,
     )
+    if path == "prose":
+
+        @agent.output_validator
+        def _check(data: str) -> str:
+            try:
+                parse_entailment(data)
+            except Exception as exc:
+                raise ModelRetry(f"Could not parse entailment response: {exc}") from exc
+            return data
 
     async def run(question: str, excerpt: str, sentence: str, claim: str) -> tuple[EntailmentResult, UsageSample]:
         user = render_template(
@@ -274,7 +315,17 @@ def make_decontextualization_agent(
         system_prompt=decontext_prompts.SYSTEM_PROMPT,
         result_model=DecontextResult,
         path=path,
+        deps_type=str if path == "prose" else None,
     )
+    if path == "prose":
+
+        @agent.output_validator
+        def _check(ctx: RunContext[str], data: str) -> str:
+            try:
+                parse_decontextualization(data, claim=ctx.deps)
+            except Exception as exc:
+                raise ModelRetry(f"Could not parse decontextualization response: {exc}") from exc
+            return data
 
     async def run(
         question: str,
@@ -291,7 +342,10 @@ def make_decontextualization_agent(
             claims=_format_list(all_claims),
             claim=claim,
         )
-        result = await agent.run(user)
+        if path == "prose":
+            result = await agent.run(user, deps=claim)
+        else:
+            result = await agent.run(user)
         sample = extract_usage(result, model=model)
         if path == "prose":
             return parse_decontextualization(result.output, claim=claim), sample
@@ -313,6 +367,15 @@ def make_invalid_claim_agent(
         result_model=InvalidClaimVerdict,
         path=path,
     )
+    if path == "prose":
+
+        @agent.output_validator
+        def _check(data: str) -> str:
+            try:
+                parse_invalid_claim(data)
+            except Exception as exc:
+                raise ModelRetry(f"Could not parse invalid_claim response: {exc}") from exc
+            return data
 
     async def run(claim: str) -> tuple[InvalidClaimVerdict, UsageSample]:
         user = render_template(invalid_claims_prompts.USER_TEMPLATE, claim=claim)

@@ -129,19 +129,40 @@ def _make_stage_runner(
     settings = _settings_for(model)
     chat = _chat_model(model, api_key=api_key)
     if path == "prose":
-        agent = Agent(chat, output_type=str, system_prompt=system_prompt, model_settings=settings)
+        # deps carry the sentence so the output_validator can invoke parse_raw
+        # with the same per-call context the runner will use.
+        agent = Agent(
+            chat,
+            output_type=str,
+            system_prompt=system_prompt,
+            model_settings=settings,
+            deps_type=str,
+            output_retries=2,
+        )
+
+        @agent.output_validator
+        def _check_parse(ctx: RunContext[str], data: str) -> str:
+            try:
+                parse_raw(data, ctx.deps)
+            except Exception as exc:
+                raise ModelRetry(f"Could not parse prose output: {exc}") from exc
+            return data
     else:
         agent = Agent(
             chat,
             output_type=result_model,
             system_prompt=with_schema_suffix(system_prompt, result_model),
             model_settings=settings,
+            output_retries=2,
         )
 
     async def run(ctx: SentenceContext, question: str):
         excerpt = _windowed_excerpt(ctx, include_following=include_following)
         user = render_template(user_template, question=question, excerpt=excerpt, sentence=ctx.sentence)
-        result = await agent.run(user)
+        if path == "prose":
+            result = await agent.run(user, deps=ctx.sentence)
+        else:
+            result = await agent.run(user)
         sample = extract_usage(result, model=model)
         if path == "prose":
             return parse_raw(result.output, ctx.sentence), sample
