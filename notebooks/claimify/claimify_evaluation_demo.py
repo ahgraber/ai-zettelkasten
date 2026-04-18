@@ -29,6 +29,7 @@ from _claimify.io import (
     load_docs,
     read_evaluation_jsonl,
     read_extraction_jsonl,
+    resolve_repo_root,
 )
 from _claimify.models import ClaimRecord
 from _claimify.usage import summarize
@@ -44,6 +45,9 @@ logging.basicConfig(level=logging.INFO)
 logging.getLogger("aizk").setLevel(logging.DEBUG)
 logging.getLogger("_claimify").setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+REPO_ROOT = resolve_repo_root()
+os.chdir(REPO_ROOT)
 
 _ = load_dotenv()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")

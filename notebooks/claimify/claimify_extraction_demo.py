@@ -17,6 +17,7 @@ import logging
 import os
 from pathlib import Path
 import random
+import subprocess  # noqa: E402
 
 from _claimify.contextualize import contextualize_section, make_context_agent
 from _claimify.io import (
@@ -24,6 +25,7 @@ from _claimify.io import (
     ensure_punkt_tab,
     load_docs,
     read_extraction_jsonl,
+    resolve_repo_root,
     write_extraction_jsonl,
 )
 from _claimify.models import ClaimRecord, FailedRecord, UsageRecord
@@ -40,6 +42,13 @@ from dotenv import load_dotenv
 import nest_asyncio
 from setproctitle import setproctitle
 
+from aizk.conversion.utilities.config import ConversionConfig  # noqa: E402
+from aizk.conversion.utilities.litestream import (  # noqa: E402
+    _litestream_env,
+    _resolve_litestream_binary,
+    _write_config_file,
+)
+
 # %%
 nest_asyncio.apply()
 setproctitle(Path(__file__).stem)
@@ -49,8 +58,40 @@ logging.getLogger("aizk").setLevel(logging.DEBUG)
 logging.getLogger("_claimify").setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+REPO_ROOT = resolve_repo_root()
+os.chdir(REPO_ROOT)
+
 _ = load_dotenv()
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+OPENROUTER_API_KEY = os.environ.get("_OPENROUTER_API_KEY")
+
+# %%
+# Restore the local SQLite DB from the Litestream S3 replica (read-only sync;
+# no replication subprocess). Wipe the stale local copy first since
+# `litestream restore` refuses to overwrite an existing file.
+
+_config = ConversionConfig()
+_db_path = (REPO_ROOT / "data" / "conversion_service.db").resolve()
+for _suffix in ("", "-wal", "-shm"):
+    (_db_path.parent / f"{_db_path.name}{_suffix}").unlink(missing_ok=True)
+
+_bucket = _config.litestream_s3_bucket_name or _config.s3_bucket_name
+_ls_config_path = _write_config_file(
+    db_path=_db_path,
+    bucket=_bucket,
+    config_path=Path(_config.litestream_config_path),
+    s3_prefix=_config.litestream_s3_prefix,
+    s3_region=_config.s3_region,
+    s3_endpoint_url=_config.s3_endpoint_url,
+    s3_force_path_style=_config.litestream_s3_force_path_style,
+    s3_sign_payload=_config.litestream_s3_sign_payload,
+)
+_ls_binary = _resolve_litestream_binary(_config.litestream_binary)
+subprocess.run(
+    [_ls_binary, "restore", "-config", str(_ls_config_path), str(_db_path)],
+    check=True,
+    env=_litestream_env(_config),
+)
+
 
 # %%
 # Five demo docs. Swap in/out; the commented entries below are alternates that
