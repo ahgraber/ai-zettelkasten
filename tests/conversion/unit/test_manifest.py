@@ -148,6 +148,41 @@ def test_config_snapshot_v2_forbids_extra_fields():
     assert ManifestConfigSnapshotV2.model_config["extra"] == "forbid"
 
 
+# ---------------------------------------------------------------------------
+# Inline HTML provenance — end-to-end SourceRef → storage → manifest writer
+# ---------------------------------------------------------------------------
+
+
+def test_writer_emits_inline_html_provenance_with_content_hash_from_storage_payload():
+    """MF3 regression: manifest writer reads content_hash from the stored payload.
+
+    Before the fix, ``InlineHtmlRef.model_dump()`` wrote ``body`` (not
+    ``content_hash``) to the ``source_ref`` column. The manifest writer's
+    inline_html branch raised ValueError because content_hash was absent. This
+    test exercises the full round-trip: ref.to_storage_payload() → source_ref
+    column → generate_manifest() → ManifestProvenanceInline with the expected
+    hash.
+    """
+    import hashlib
+
+    from aizk.conversion.core.source_ref import InlineHtmlRef
+
+    body = b"<html><body>hello</body></html>"
+    ref = InlineHtmlRef(body=body)
+    expected_hash = hashlib.sha256(body).hexdigest()
+
+    manifest = _base_manifest(
+        karakeep_id=None,
+        url=None,
+        source_type=None,
+        source_ref=ref.to_storage_payload(),
+    )
+
+    assert manifest.provenance.kind == "inline_html"
+    assert manifest.provenance.content_hash == expected_hash
+    assert manifest.ingress is None
+
+
 def test_manifest_v1_forbids_extra_fields():
     assert ConversionManifestV1.model_config["extra"] == "forbid"
 

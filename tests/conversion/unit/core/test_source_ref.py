@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
@@ -14,6 +16,7 @@ from aizk.conversion.core.source_ref import (
     SourceRef,
     UrlRef,
     compute_source_ref_hash,
+    parse_source_ref,
 )
 
 
@@ -103,3 +106,87 @@ def test_github_payload_shape():
         "owner": "anthropic",
         "repo": "claude-code",
     }
+
+
+# ---------------------------------------------------------------------------
+# to_storage_payload — what gets persisted to Source.source_ref JSON column
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        KarakeepBookmarkRef(bookmark_id="bk-1"),
+        ArxivRef(arxiv_id="2301.12345"),
+        ArxivRef(arxiv_id="2301.12345", arxiv_pdf_url="https://arxiv.org/pdf/2301.12345"),
+        GithubReadmeRef(owner="anthropic", repo="claude-code"),
+        UrlRef(url="https://example.com/page"),
+        SingleFileRef(path="/tmp/page.html"),
+        InlineHtmlRef(body=b"<html><body>hi</body></html>"),
+    ],
+)
+def test_storage_payload_preserves_discriminator(ref):
+    payload = ref.to_storage_payload()
+    assert payload["kind"] == ref.kind
+
+
+def test_storage_payload_is_json_serializable():
+    """Every stored payload must encode cleanly into the JSON column.
+
+    The InlineHtmlRef case is the critical one: pre-fix, ``model_dump()``
+    emitted raw ``bytes`` that SQLAlchemy's JSON column could not encode.
+    """
+    import json
+
+    refs = [
+        KarakeepBookmarkRef(bookmark_id="bk-1"),
+        ArxivRef(arxiv_id="2301.12345"),
+        InlineHtmlRef(body="<html><body>utf-8 content · 日本語</body></html>".encode()),
+    ]
+    for ref in refs:
+        payload = ref.to_storage_payload()
+        json.dumps(payload)  # must not raise
+
+
+def test_inline_html_storage_payload_carries_content_hash():
+    """MF3: the manifest writer reads content_hash from the stored payload.
+
+    Without this, `manifest._derive_provenance_and_ingress` raises ValueError
+    because the inline_html branch requires content_hash to be present.
+    """
+    body = b"<html><body>hello</body></html>"
+    ref = InlineHtmlRef(body=body)
+
+    payload = ref.to_storage_payload()
+
+    assert payload["kind"] == "inline_html"
+    assert payload["content_hash"] == hashlib.sha256(body).hexdigest()
+
+
+def test_inline_html_storage_payload_round_trips_through_parse():
+    """Persisting and re-parsing must yield an equivalent ref."""
+    body = b"<html><body>round-trip</body></html>"
+    ref = InlineHtmlRef(body=body)
+
+    payload = ref.to_storage_payload()
+    restored = parse_source_ref(payload)
+
+    assert isinstance(restored, InlineHtmlRef)
+    assert restored.body == body
+
+
+@pytest.mark.parametrize(
+    ("ref_factory", "restored_type"),
+    [
+        (lambda: KarakeepBookmarkRef(bookmark_id="bk-1"), KarakeepBookmarkRef),
+        (lambda: ArxivRef(arxiv_id="2301.12345"), ArxivRef),
+        (lambda: GithubReadmeRef(owner="anthropic", repo="claude-code"), GithubReadmeRef),
+        (lambda: UrlRef(url="https://example.com/page"), UrlRef),
+        (lambda: SingleFileRef(path="/tmp/page.html"), SingleFileRef),
+    ],
+)
+def test_non_inline_storage_payload_round_trips(ref_factory, restored_type):
+    ref = ref_factory()
+    restored = parse_source_ref(ref.to_storage_payload())
+    assert isinstance(restored, restored_type)
+    assert restored == ref

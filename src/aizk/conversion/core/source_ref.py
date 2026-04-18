@@ -12,7 +12,19 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 _MAX_INLINE_BYTES = 64 * 1024  # 64 KB
 
 
-class KarakeepBookmarkRef(BaseModel):
+class _StorageMixin:
+    """Default ``to_storage_payload`` for variants whose JSON dump is sufficient.
+
+    Uses ``model_dump(mode="json")`` so non-JSON-primitive fields (e.g. ``bytes``)
+    are encoded in a round-trippable form. Variants that persist derived identity
+    fields (e.g. ``InlineHtmlRef.content_hash``) override this to add them.
+    """
+
+    def to_storage_payload(self) -> dict[str, Any]:
+        return self.model_dump(mode="json")  # type: ignore[attr-defined]
+
+
+class KarakeepBookmarkRef(_StorageMixin, BaseModel):
     model_config = ConfigDict(frozen=True)
 
     kind: Literal["karakeep_bookmark"] = "karakeep_bookmark"
@@ -22,7 +34,7 @@ class KarakeepBookmarkRef(BaseModel):
         return {"kind": "karakeep_bookmark", "bookmark_id": self.bookmark_id}
 
 
-class ArxivRef(BaseModel):
+class ArxivRef(_StorageMixin, BaseModel):
     model_config = ConfigDict(frozen=True)
 
     kind: Literal["arxiv"] = "arxiv"
@@ -34,7 +46,7 @@ class ArxivRef(BaseModel):
         return {"kind": "arxiv", "arxiv_id": self.arxiv_id}
 
 
-class GithubReadmeRef(BaseModel):
+class GithubReadmeRef(_StorageMixin, BaseModel):
     model_config = ConfigDict(frozen=True)
 
     kind: Literal["github_readme"] = "github_readme"
@@ -45,7 +57,7 @@ class GithubReadmeRef(BaseModel):
         return {"kind": "github_readme", "owner": self.owner, "repo": self.repo}
 
 
-class UrlRef(BaseModel):
+class UrlRef(_StorageMixin, BaseModel):
     model_config = ConfigDict(frozen=True)
 
     kind: Literal["url"] = "url"
@@ -55,7 +67,7 @@ class UrlRef(BaseModel):
         return {"kind": "url", "url": self.url}
 
 
-class SingleFileRef(BaseModel):
+class SingleFileRef(_StorageMixin, BaseModel):
     model_config = ConfigDict(frozen=True)
 
     kind: Literal["singlefile"] = "singlefile"
@@ -65,7 +77,7 @@ class SingleFileRef(BaseModel):
         return {"kind": "singlefile", "path": self.path}
 
 
-class InlineHtmlRef(BaseModel):
+class InlineHtmlRef(_StorageMixin, BaseModel):
     model_config = ConfigDict(frozen=True)
 
     kind: Literal["inline_html"] = "inline_html"
@@ -85,6 +97,15 @@ class InlineHtmlRef(BaseModel):
             "kind": "inline_html",
             "content_hash": hashlib.sha256(self.body).hexdigest(),
         }
+
+    def to_storage_payload(self) -> dict[str, Any]:
+        # The manifest writer reads ``content_hash`` from the stored payload;
+        # ``model_dump`` alone only emits ``body``. Persisting the derived hash
+        # keeps the manifest writer schema-agnostic and lets the column be
+        # queried by hash without rehydrating the body.
+        payload = self.model_dump(mode="json")
+        payload["content_hash"] = hashlib.sha256(self.body).hexdigest()
+        return payload
 
 
 SourceRefVariant = (

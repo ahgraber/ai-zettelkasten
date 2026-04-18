@@ -183,7 +183,7 @@ def submit_job(
             },
         )
 
-    source_ref_payload: dict[str, object] = source_ref.model_dump()
+    source_ref_payload: dict[str, object] = source_ref.to_storage_payload()
     source_ref_hash = compute_source_ref_hash(source_ref)
     karakeep_id = _karakeep_id_for(source_ref)
 

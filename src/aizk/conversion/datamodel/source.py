@@ -74,7 +74,7 @@ class Source(SQLModel, table=True):
         ref = KarakeepBookmarkRef(bookmark_id=karakeep_id)
         defaults = {
             "karakeep_id": karakeep_id,
-            "source_ref": ref.model_dump(),
+            "source_ref": ref.to_storage_payload(),
             "source_ref_hash": compute_source_ref_hash(ref),
         }
         defaults.update(overrides)
