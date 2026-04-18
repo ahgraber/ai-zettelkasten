@@ -11,4 +11,4 @@ def test_create_db_and_tables(tmp_path):
     create_db_and_tables(engine)
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
-    assert {"sources", "conversion_jobs", "conversion_outputs"}.issubset(tables)
+    assert {"bookmarks", "conversion_jobs", "conversion_outputs"}.issubset(tables)

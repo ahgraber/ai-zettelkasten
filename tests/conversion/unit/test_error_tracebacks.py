@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlmodel import Session
 
-from aizk.conversion.datamodel.source import Source
+from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers.errors import ReportedChildError
@@ -34,9 +34,9 @@ def config(monkeypatch: pytest.MonkeyPatch) -> ConversionConfig:
 
 
 @pytest.fixture()
-def bookmark(db_session: Session) -> Source:
+def bookmark(db_session: Session) -> Bookmark:
     """Create and return a test bookmark."""
-    bm = Source.from_karakeep_id(
+    bm = Bookmark(
         karakeep_id="bm_traceback_test",
         url="https://example.com",
         normalized_url="https://example.com",
@@ -51,11 +51,10 @@ def bookmark(db_session: Session) -> Source:
 
 
 @pytest.fixture()
-def job(db_session: Session, bookmark: Source) -> ConversionJob:
+def job(db_session: Session, bookmark: Bookmark) -> ConversionJob:
     """Create and return a RUNNING test job."""
     j = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
-        source_ref=bookmark.source_ref,
         title=bookmark.title,
         status=ConversionJobStatus.RUNNING,
         idempotency_key="test-traceback-key",
@@ -202,11 +201,10 @@ def test_handle_job_error_logs_error_with_detail(
 # ---------------------------------------------------------------------------
 
 
-def test_error_detail_column_exists_after_migration(db_session: Session, bookmark: Source) -> None:
+def test_error_detail_column_exists_after_migration(db_session: Session, bookmark: Bookmark) -> None:
     """Verify the error_detail column is writable after migrations run."""
     j = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
-        source_ref=bookmark.source_ref,
         title="Migration Test",
         status=ConversionJobStatus.FAILED_PERM,
         idempotency_key="migration-test-key",

@@ -1,22 +1,8 @@
-"""Per-job orchestration for conversion workers.
-
-The worker delegates fetch → convert to the injected ``Orchestrator`` from
-``aizk.conversion.wiring.worker.build_worker_runtime``.  The subprocess
-boundary is preserved for crash isolation: the parent acquires the GPU
-``ResourceGuard`` (when the dispatched converter has ``requires_gpu == True``),
-spawns the child, supervises it, and unwinds the guard on return.  The child
-builds its own ``WorkerRuntime`` (spawn mode re-imports), runs the
-orchestrator, and serializes artifacts to the workspace for the parent-side
-upload step.
-
-Identity materialization (Source creation, aizk_uuid, source_ref, source_ref_hash)
-is API-side.  The worker only enriches mutable Source metadata (``url``,
-``normalized_url``, ``title``, ``content_type``, ``source_type``) and never
-writes identity columns.
-"""
+"""Per-job orchestration for conversion workers."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 import datetime as dt
 import json
@@ -25,49 +11,42 @@ import multiprocessing as mp
 import os
 from pathlib import Path
 import tempfile
+import threading
 import time
 from typing import Literal
 
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
-from aizk.conversion.core.errors import (
-    ChainNotTerminated,
-    FetcherDepthExceeded,
-    FetcherNotRegistered,
-    NoConverterForFormat,
-)
-from aizk.conversion.core.source_ref import (
-    ArxivRef,
-    GithubReadmeRef,
-    InlineHtmlRef,
-    KarakeepBookmarkRef,
-    SourceRefVariant,
-    UrlRef,
-    parse_source_ref,
-)
-from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput
+from aizk.conversion.datamodel.bookmark import Bookmark as BookmarkRecord
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
-from aizk.conversion.datamodel.source import Source as SourceRecord
 from aizk.conversion.db import get_engine
 from aizk.conversion.utilities.bookmark_utils import (
     BookmarkContentError,
     detect_content_type,
     detect_source_type,
     fetch_karakeep_bookmark,
+    get_bookmark_asset_id,
+    get_bookmark_html_content,
     get_bookmark_source_url,
+    get_bookmark_text_content,
+    is_pdf_asset,
+    is_precrawled_archive_asset,
     validate_bookmark_content,
 )
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.hashing import build_output_config_snapshot, compute_markdown_hash
 from aizk.conversion.utilities.paths import (
     OUTPUT_MARKDOWN_FILENAME,
-    figure_dir,
     markdown_path,
     metadata_path,
 )
 from aizk.conversion.utilities.whitespace import normalize_whitespace
-from aizk.conversion.wiring.worker import WorkerRuntime, build_worker_runtime
+from aizk.conversion.workers.converter import (
+    ConversionError,
+    convert_html,
+    convert_pdf,
+)
 from aizk.conversion.workers.errors import (
     ConversionCancelledError,
     ConversionSubprocessError,
@@ -79,17 +58,34 @@ from aizk.conversion.workers.errors import (
 from aizk.conversion.workers.fetcher import (
     BookmarkContentUnavailableError,
     FetchError,
+    fetch_arxiv,
+    fetch_github_readme,
+    fetch_karakeep_asset,
 )
 from aizk.conversion.workers.shutdown import is_shutdown_requested
 from aizk.conversion.workers.supervision import _supervise_conversion_process
-from aizk.conversion.workers.types import SupervisionResult, _utcnow
+from aizk.conversion.workers.types import (
+    ConversionArtifacts,
+    ConversionInput,
+    SupervisionResult,
+    _utcnow,
+)
 from aizk.conversion.workers.uploader import _upload_converted
+from aizk.utilities.async_utils import run_async
 from aizk.utilities.url_utils import normalize_url
+from karakeep_client.models import Bookmark as KarakeepBookmark
 
 logger = logging.getLogger(__name__)
 
+# Module-level GPU semaphore.  Limits concurrent conversion subprocesses
+# to prevent GPU OOM when multiple jobs run in parallel.
+_gpu_semaphore: threading.Semaphore | None = None
 
-_SOURCE_REF_FILENAME = "source_ref.json"
+
+def configure_gpu_semaphore(gpu_concurrency: int) -> None:
+    """Set the GPU concurrency limit.  Called once at worker startup."""
+    global _gpu_semaphore  # noqa: PLW0603
+    _gpu_semaphore = threading.Semaphore(gpu_concurrency)
 
 
 def _docling_version() -> str:
@@ -145,139 +141,118 @@ def _report_status(
         return
 
 
-def _enrich_source_for_job(
-    job_id: int, engine: Engine, config: ConversionConfig
-) -> tuple[SourceRecord, SourceRefVariant]:
-    """Populate the Source row's mutable metadata from the job's source_ref.
+def _prepare_bookmark_for_job(job_id: int, engine: Engine) -> tuple[BookmarkRecord, KarakeepBookmark]:
+    """Fetch, validate, and persist AIZK Bookmark for conversion.
 
-    Identity columns (``aizk_uuid``, ``source_ref``, ``source_ref_hash``,
-    ``karakeep_id``) are NOT written — the API owns identity materialization.
-    For ``KarakeepBookmarkRef`` the KaraKeep API is consulted to derive
-    ``url``/``title``/``source_type``; for other refs, enrichment is derived
-    from the ref fields themselves.
+    Runs in the parent process before spawning the conversion subprocess.
     """
     with Session(engine) as session:
         job = session.get(ConversionJob, job_id)
         if not job:
             raise JobDataIntegrityError(f"Job {job_id} missing during preflight")
-        source = session.exec(
-            select(SourceRecord).where(SourceRecord.aizk_uuid == job.aizk_uuid)
-        ).one()
-        source_ref_payload = dict(job.source_ref or source.source_ref)
+        bookmark = session.exec(select(BookmarkRecord).where(BookmarkRecord.aizk_uuid == job.aizk_uuid)).one()
 
-    ref = parse_source_ref(source_ref_payload)
+    karakeep_bookmark = fetch_karakeep_bookmark(bookmark.karakeep_id)
+    if not karakeep_bookmark:
+        raise FetchError(f"Bookmark {bookmark.karakeep_id} not found in KaraKeep")
+    validate_bookmark_content(karakeep_bookmark)
 
-    if isinstance(ref, KarakeepBookmarkRef):
-        from aizk.conversion.adapters.fetchers.karakeep import KarakeepBookmarkResolver
-
-        karakeep = config.fetcher.karakeep
-        karakeep_bookmark = fetch_karakeep_bookmark(
-            ref.bookmark_id,
-            base_url=karakeep.base_url or None,
-            api_key=karakeep.api_key or None,
-        )
-        if not karakeep_bookmark:
-            raise FetchError(f"Bookmark {ref.bookmark_id} not found in KaraKeep")
-        validate_bookmark_content(karakeep_bookmark)
-        source_url = get_bookmark_source_url(karakeep_bookmark)
-        updates: dict[str, object | None] = {
-            "url": source_url,
-            "normalized_url": normalize_url(source_url) if source_url else None,
-            "title": karakeep_bookmark.title or source_url,
-            "content_type": detect_content_type(karakeep_bookmark),
-            "source_type": detect_source_type(source_url),
-        }
-        # F4/#29: pre-resolve the KarakeepBookmarkRef here so the child
-        # subprocess does not redo the KaraKeep RPC in
-        # ``KarakeepBookmarkResolver.resolve``. The child's orchestrator
-        # will receive the already-refined ref (ArxivRef, UrlRef,
-        # InlineHtmlRef, …) and dispatch straight to the terminal
-        # content fetcher. The Source row's ``source_ref`` column stays
-        # the original KarakeepBookmarkRef — identity is separate from
-        # the per-job refined ref, which only flows through the
-        # workspace ``source_ref.json`` side-channel.
-        resolver = KarakeepBookmarkResolver(config=config)
-        ref = resolver.refine_from_bookmark(ref, karakeep_bookmark)
-    elif isinstance(ref, ArxivRef):
-        abstract_url = f"https://arxiv.org/abs/{ref.arxiv_id}"
-        updates = {
-            "url": abstract_url,
-            "normalized_url": normalize_url(abstract_url),
-            "source_type": "arxiv",
-            "content_type": "pdf",
-        }
-    elif isinstance(ref, GithubReadmeRef):
-        repo_url = f"https://github.com/{ref.owner}/{ref.repo}"
-        updates = {
-            "url": repo_url,
-            "normalized_url": normalize_url(repo_url),
-            "source_type": "github",
-            "content_type": "html",
-        }
-    elif isinstance(ref, UrlRef):
-        updates = {
-            "url": ref.url,
-            "normalized_url": normalize_url(ref.url),
-            "source_type": "other",
-        }
-    elif isinstance(ref, InlineHtmlRef):
-        updates = {"content_type": "html", "source_type": "other"}
-    else:
-        updates = {}
+    source_url = get_bookmark_source_url(karakeep_bookmark)
+    updated_source_type = detect_source_type(source_url)
+    updated_content_type = detect_content_type(karakeep_bookmark)
+    updated_title = karakeep_bookmark.title or source_url
+    normalized_url = normalize_url(source_url) if source_url else None
 
     with Session(engine) as session:
-        source = session.exec(
-            select(SourceRecord).where(SourceRecord.aizk_uuid == job.aizk_uuid)
-        ).one()
-        for key, value in updates.items():
-            if value is not None:
-                setattr(source, key, value)
-        source.updated_at = _utcnow()
-        session.add(source)
+        bookmark = session.exec(select(BookmarkRecord).where(BookmarkRecord.aizk_uuid == job.aizk_uuid)).one()
         job_record = session.get(ConversionJob, job_id)
-        if job_record and source.title:
-            job_record.title = source.title
+        bookmark.url = source_url
+        bookmark.normalized_url = normalized_url
+        bookmark.title = updated_title
+        bookmark.content_type = updated_content_type
+        bookmark.source_type = updated_source_type
+        bookmark.updated_at = _utcnow()
+        if job_record:
+            job_record.title = updated_title
             job_record.updated_at = _utcnow()
             session.add(job_record)
+        session.add(bookmark)
         session.commit()
-        session.refresh(source)
+        session.refresh(bookmark)
 
-    return source, ref
-
-
-def _pipeline_from_content_type(content_type: ContentType) -> Literal["html", "pdf"]:
-    """Map a ``ContentType`` to the legacy ``pipeline_name`` used by the manifest."""
-    if content_type is ContentType.PDF:
-        return "pdf"
-    return "html"
+    return bookmark, karakeep_bookmark
 
 
-def _persist_artifacts(
+def _prepare_conversion_input(
     *,
-    workspace: Path,
-    artifacts: ConversionArtifacts,
-    content_type: ContentType,
-    fetched_at: dt.datetime,
-    converter_name: str,
+    bookmark_record: BookmarkRecord,
+    karakeep_bookmark: KarakeepBookmark,
     config: ConversionConfig,
-) -> None:
-    """Write the in-memory artifacts + metadata.json to the workspace.
+) -> ConversionInput:
+    """Prepare conversion input bytes and determine pipeline."""
+    fetched_at = _utcnow()
+    if bookmark_record.source_type == "arxiv":
+        pdf_bytes = asyncio.run(fetch_arxiv(karakeep_bookmark, config))
+        return ConversionInput(pipeline="pdf", content_bytes=pdf_bytes, fetched_at=fetched_at)
 
-    The parent-side uploader reads this workspace layout unchanged from the
-    pre-PR-7 flow.
+    if bookmark_record.source_type == "github":
+        readme_bytes = asyncio.run(fetch_github_readme(karakeep_bookmark, config))
+        return ConversionInput(pipeline="html", content_bytes=readme_bytes, fetched_at=fetched_at)
+
+    if is_pdf_asset(karakeep_bookmark):
+        asset_id = get_bookmark_asset_id(karakeep_bookmark)
+        if asset_id:
+            pdf_bytes = run_async(fetch_karakeep_asset, asset_id)
+            return ConversionInput(pipeline="pdf", content_bytes=pdf_bytes, fetched_at=fetched_at)
+
+    if is_precrawled_archive_asset(karakeep_bookmark):
+        asset_id = get_bookmark_asset_id(karakeep_bookmark)
+        if asset_id:
+            html_bytes = run_async(fetch_karakeep_asset, asset_id)
+            return ConversionInput(pipeline="html", content_bytes=html_bytes, fetched_at=fetched_at)
+
+    # Fallback to HTML content
+    html_content = get_bookmark_html_content(karakeep_bookmark)
+    if html_content:
+        return ConversionInput(pipeline="html", content_bytes=html_content.encode("utf-8"), fetched_at=fetched_at)
+
+    text_content = get_bookmark_text_content(karakeep_bookmark)
+    if text_content:
+        html = f"<html><body><pre>{text_content}</pre></body></html>"
+        return ConversionInput(pipeline="html", content_bytes=html.encode("utf-8"), fetched_at=fetched_at)
+
+    raise BookmarkContentUnavailableError(f"Bookmark {bookmark_record.karakeep_id} has no usable content")
+
+
+def _run_conversion(
+    *,
+    job: ConversionJob,
+    bookmark: BookmarkRecord,
+    conversion_input: ConversionInput,
+    config: ConversionConfig,
+    engine: Engine,
+    workspace: Path,
+) -> ConversionArtifacts:
+    """Run conversion and persist local artifacts for parent upload.
+
+    This is executed in the child process and performs cancellation checks.
     """
-    markdown_text = normalize_whitespace(artifacts.markdown)
-    markdown_file = markdown_path(workspace, OUTPUT_MARKDOWN_FILENAME)
+    _raise_if_cancelled(job.id, engine)
+    content_bytes = conversion_input.content_bytes
+    pipeline_name = conversion_input.pipeline
+    fetched_at = conversion_input.fetched_at
+
+    if pipeline_name == "pdf":
+        markdown_text, figure_paths = convert_pdf(content_bytes, workspace, config)
+    else:
+        markdown_text, figure_paths = convert_html(content_bytes, workspace, config, source_url=bookmark.url)
+
+    _raise_if_cancelled(job.id, engine)
+    markdown_filename = OUTPUT_MARKDOWN_FILENAME
+    markdown_file = markdown_path(workspace, markdown_filename)
+    # Normalize whitespace before writing and hashing
+    markdown_text = normalize_whitespace(markdown_text)
     markdown_file.write_text(markdown_text)
-
-    figures_root = figure_dir(workspace)
-    figures_root.mkdir(parents=True, exist_ok=True)
-    figure_filenames: list[str] = []
-    for i, fig_bytes in enumerate(artifacts.figures):
-        fig_name = f"figure-{i:03d}.png"
-        (figures_root / fig_name).write_bytes(fig_bytes)
-        figure_filenames.append(fig_name)
-
     markdown_hash = compute_markdown_hash(markdown_text)
     picture_description_enabled = config.is_picture_description_enabled()
     config_snapshot = build_output_config_snapshot(
@@ -286,84 +261,81 @@ def _persist_artifacts(
     )
 
     metadata = {
-        "pipeline_name": _pipeline_from_content_type(content_type),
+        "pipeline_name": pipeline_name,
         "fetched_at": fetched_at.isoformat(),
-        "markdown_filename": OUTPUT_MARKDOWN_FILENAME,
-        "figure_files": figure_filenames,
+        "markdown_filename": markdown_filename,
+        "figure_files": [path.name for path in figure_paths],
         "markdown_hash_xx64": markdown_hash,
         "docling_version": _docling_version(),
         "config_snapshot": config_snapshot,
-        "converter_name": converter_name,
     }
-    metadata_path(workspace).write_text(json.dumps(metadata, indent=2, sort_keys=False))
+    metadata_file = metadata_path(workspace)
+    metadata_file.write_text(json.dumps(metadata, indent=2, sort_keys=False))
+
+    return ConversionArtifacts(
+        markdown_path=markdown_file,
+        figure_paths=figure_paths,
+        markdown_hash=markdown_hash,
+        pipeline_name=pipeline_name,
+        fetched_at=fetched_at,
+        docling_version=metadata["docling_version"],
+    )
 
 
 def _convert_job_artifacts(
     *,
     job_id: int,
     workspace: Path,
-    source_ref_path: Path,
+    karakeep_payload_path: Path,
     status_queue: mp.Queue | None,
 ) -> None:
-    """Run fetch + convert in the child process via the injected Orchestrator."""
+    """Prepare input and run conversion in the child process."""
     config = ConversionConfig()
     engine = get_engine(config.database_url)
-    runtime = build_worker_runtime(config)
+
+    with Session(engine) as session:
+        job = session.get(ConversionJob, job_id)
+        if not job:
+            raise JobDataIntegrityError(f"Job {job_id} missing during conversion")
+        bookmark = session.exec(select(BookmarkRecord).where(BookmarkRecord.aizk_uuid == job.aizk_uuid)).one()
 
     _raise_if_cancelled(job_id, engine)
-    ref_payload = json.loads(source_ref_path.read_text())
-    ref = parse_source_ref(ref_payload)
+    karakeep_payload = json.loads(karakeep_payload_path.read_text())
+    karakeep_bookmark = KarakeepBookmark.model_validate(karakeep_payload)
 
     _report_status(status_queue, event="phase", message="preparing_input")
-    fetched_at = _utcnow()
+    conversion_input = _prepare_conversion_input(
+        bookmark_record=bookmark,
+        karakeep_bookmark=karakeep_bookmark,
+        config=config,
+    )
 
     _report_status(status_queue, event="phase", message="converting")
-    _raise_if_cancelled(job_id, engine)
-
-    # orchestrator.fetch() follows resolver hops and returns ConversionInput.
-    # The fetch-chain populates ConversionInput.metadata with source_url for
-    # adapters that need it (e.g. DoclingConverter.convert_html).
-    conversion_input = runtime.orchestrator.fetch(ref)
-    if not conversion_input.content:
-        raise BookmarkContentUnavailableError(
-            f"Fetcher returned empty content for job {job_id}"
-        )
-    _raise_if_cancelled(job_id, engine)
-    converter = runtime.converter_registry.resolve(
-        conversion_input.content_type, runtime.converter_name
-    )
-    artifacts = converter.convert(conversion_input)  # type: ignore[attr-defined]
-
-    _raise_if_cancelled(job_id, engine)
-    _persist_artifacts(
-        workspace=workspace,
-        artifacts=artifacts,
-        content_type=conversion_input.content_type,
-        fetched_at=fetched_at,
-        converter_name=runtime.converter_name,
+    _run_conversion(
+        job=job,
+        bookmark=bookmark,
         config=config,
+        workspace=workspace,
+        conversion_input=conversion_input,
+        engine=engine,
     )
 
 
 def _process_job_subprocess(
     job_id: int,
     workspace_path: str,
-    source_ref_path: str,
+    karakeep_payload_path: str,
     status_queue: mp.Queue,
 ) -> None:
     """Subprocess entrypoint that reports conversion events to the parent."""
     import traceback as tb_mod
-
-    # Lazy import to avoid loading docling (via DoclingConverter/convert_html/pdf)
-    # in the parent process, which only needs ApiRuntime-equivalent wiring.
-    from aizk.conversion.workers.converter import ConversionError
 
     os.setpgrp()  # Create new process group for cleanup of all descendants
     try:
         _convert_job_artifacts(
             job_id=job_id,
             workspace=Path(workspace_path),
-            source_ref_path=Path(source_ref_path),
+            karakeep_payload_path=Path(karakeep_payload_path),
             status_queue=status_queue,
         )
         _report_status(status_queue, event="completed", message="conversion completed")
@@ -375,10 +347,6 @@ def _process_job_subprocess(
         BookmarkContentUnavailableError,
         BookmarkContentError,
         JobDataIntegrityError,
-        FetcherNotRegistered,
-        FetcherDepthExceeded,
-        NoConverterForFormat,
-        ChainNotTerminated,
     ) as exc:
         error_code = getattr(exc, "error_code", "conversion_failed")
         retryable = exc.retryable
@@ -407,14 +375,14 @@ def _spawn_conversion_subprocess(
     *,
     job_id: int,
     workspace: Path,
-    source_ref_path: Path,
+    payload_path: Path,
 ) -> tuple[mp.Process, mp.Queue]:
     """Start the conversion subprocess and return the process and status queue."""
     ctx = mp.get_context("spawn")
     status_queue: mp.Queue = ctx.Queue()
     process = ctx.Process(
         target=_process_job_subprocess,
-        args=(job_id, str(workspace), str(source_ref_path), status_queue),
+        args=(job_id, str(workspace), str(payload_path), status_queue),
         daemon=True,
     )
     process.start()
@@ -443,55 +411,48 @@ def _spawn_and_supervise(
     *,
     job_id: int,
     workspace: Path,
-    source_ref_path: Path,
+    payload_path: Path,
     poll_interval_seconds: float,
     timeout_seconds: float,
     is_cancelled_fn: Callable[[], bool],
     config: ConversionConfig,
 ) -> tuple[mp.Process, SupervisionResult, float | None]:
-    """Spawn a conversion subprocess and supervise it.
+    """Spawn a conversion subprocess under the GPU semaphore and supervise it."""
+    sem = _gpu_semaphore
+    if sem is not None:
+        sem.acquire()
+    try:
+        process, status_queue = _spawn_conversion_subprocess(
+            job_id=job_id,
+            workspace=workspace,
+            payload_path=payload_path,
+        )
 
-    Caller is responsible for holding the GPU ``ResourceGuard`` around this
-    call (via ``with runtime.gpu_guard:``) when the dispatched converter
-    has ``requires_gpu == True``.  This function does NOT acquire the guard
-    itself — GPU admission is a per-dispatch decision owned by the caller.
-    """
-    process, status_queue = _spawn_conversion_subprocess(
-        job_id=job_id,
-        workspace=workspace,
-        source_ref_path=source_ref_path,
-    )
+        deadline = None
+        if timeout_seconds > 0:
+            deadline = time.monotonic() + timeout_seconds
 
-    deadline = None
-    if timeout_seconds > 0:
-        deadline = time.monotonic() + timeout_seconds
-
-    result = _supervise_conversion_process(
-        job_id=job_id,
-        process=process,
-        status_queue=status_queue,
-        poll_interval_seconds=poll_interval_seconds,
-        deadline=deadline,
-        timeout_seconds=timeout_seconds,
-        is_cancelled_fn=is_cancelled_fn,
-        shutdown_requested_fn=is_shutdown_requested,
-        drain_timeout_seconds=float(config.worker_drain_timeout_seconds),
-    )
+        result = _supervise_conversion_process(
+            job_id=job_id,
+            process=process,
+            status_queue=status_queue,
+            poll_interval_seconds=poll_interval_seconds,
+            deadline=deadline,
+            timeout_seconds=timeout_seconds,
+            is_cancelled_fn=is_cancelled_fn,
+            shutdown_requested_fn=is_shutdown_requested,
+            drain_timeout_seconds=float(config.worker_drain_timeout_seconds),
+        )
+    finally:
+        if sem is not None:
+            sem.release()
     return process, result, deadline
 
 
-def process_job_supervised(
-    job_id: int,
-    config: ConversionConfig,
-    runtime: WorkerRuntime,
-    poll_interval_seconds: float = 2.0,
-) -> None:
+def process_job_supervised(job_id: int, config: ConversionConfig, poll_interval_seconds: float = 2.0) -> None:
     """Run a supervised conversion attempt and upload artifacts on success.
 
-    The parent process handles preflight, cancellation, timeout, uploads, and
-    GPU-guard acquisition.  Conversion itself runs in a forked subprocess that
-    builds its own ``WorkerRuntime`` and invokes the orchestrator's fetch →
-    convert pipeline.
+    The parent process handles preflight, cancellation, timeout, and uploads.
     """
     engine = get_engine(config.database_url)
     timeout_seconds = float(config.worker_job_timeout_seconds)
@@ -500,47 +461,27 @@ def process_job_supervised(
         return
 
     try:
-        source, source_ref = _enrich_source_for_job(job_id, engine, config)
+        bookmark, karakeep_bookmark = _prepare_bookmark_for_job(job_id, engine)
     except (FetchError, BookmarkContentError, JobDataIntegrityError) as exc:
         handle_job_error(job_id, exc, config)
         return
     except Exception as exc:
-        handle_job_error(
-            job_id, PreflightError(f"Job {job_id} preflight failed: {exc}"), config
-        )
+        handle_job_error(job_id, PreflightError(f"Job {job_id} preflight failed: {exc}"), config)
         return
-
     with tempfile.TemporaryDirectory() as tmpdirname:
         workspace = Path(tmpdirname)
-        source_ref_path = workspace / _SOURCE_REF_FILENAME
-        source_ref_path.write_text(source_ref.model_dump_json())
+        payload_path = workspace / "karakeep_bookmark.json"
+        payload_path.write_text(json.dumps(karakeep_bookmark.model_dump(mode="json"), indent=2))
 
-        # Admit the subprocess under the GPU guard iff the dispatched
-        # converter declares requires_gpu. Today the only registered
-        # converter (Docling) requires_gpu=True, so this branch is
-        # always entered; the bypass branch is exercised by tests using
-        # a fake converter with requires_gpu=False.
-        if runtime.converter_requires_gpu():
-            with runtime.gpu_guard:
-                process, result, deadline = _spawn_and_supervise(
-                    job_id=job_id,
-                    workspace=workspace,
-                    source_ref_path=source_ref_path,
-                    poll_interval_seconds=poll_interval_seconds,
-                    timeout_seconds=timeout_seconds,
-                    is_cancelled_fn=lambda: _is_job_cancelled(job_id, engine),
-                    config=config,
-                )
-        else:
-            process, result, deadline = _spawn_and_supervise(
-                job_id=job_id,
-                workspace=workspace,
-                source_ref_path=source_ref_path,
-                poll_interval_seconds=poll_interval_seconds,
-                timeout_seconds=timeout_seconds,
-                is_cancelled_fn=lambda: _is_job_cancelled(job_id, engine),
-                config=config,
-            )
+        process, result, deadline = _spawn_and_supervise(
+            job_id=job_id,
+            workspace=workspace,
+            payload_path=payload_path,
+            poll_interval_seconds=poll_interval_seconds,
+            timeout_seconds=timeout_seconds,
+            is_cancelled_fn=lambda: _is_job_cancelled(job_id, engine),
+            config=config,
+        )
 
         if result.timed_out:
             handle_job_error(
@@ -589,9 +530,7 @@ def process_job_supervised(
         if process.exitcode and process.exitcode != 0:
             handle_job_error(
                 job_id,
-                ConversionSubprocessError(
-                    f"Job {job_id} subprocess exited with code {process.exitcode}"
-                ),
+                ConversionSubprocessError(f"Job {job_id} subprocess exited with code {process.exitcode}"),
                 config,
             )
             return

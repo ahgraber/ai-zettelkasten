@@ -116,5 +116,3 @@ def is_github_pages_url(source_url: str) -> bool:
     """
     parsed = urlparse(source_url)
     return parsed.netloc.lower().endswith("github.io")
-
-

@@ -7,12 +7,12 @@ from uuid import UUID
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.datamodel.source import Source
+from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 
 
-def _create_bookmark(db_session, karakeep_id: str) -> Source:
-    bookmark = Source.from_karakeep_id(
+def _create_bookmark(db_session, karakeep_id: str) -> Bookmark:
+    bookmark = Bookmark(
         karakeep_id=karakeep_id,
         aizk_uuid=UUID("550e8400-e29b-41d4-a716-446655440000"),
         url="https://example.com",
@@ -27,10 +27,9 @@ def _create_bookmark(db_session, karakeep_id: str) -> Source:
     return bookmark
 
 
-def _create_job(db_session, *, aizk_uuid: UUID, source_ref: dict | None = None, status: ConversionJobStatus, idempotency_key: str) -> ConversionJob:
+def _create_job(db_session, *, aizk_uuid: UUID, status: ConversionJobStatus, idempotency_key: str) -> ConversionJob:
     job = ConversionJob(
         aizk_uuid=aizk_uuid,
-    source_ref=source_ref or {},
         title="Status Count Job",
         payload_version=1,
         status=status,
@@ -50,14 +49,12 @@ def test_status_counts_returns_totals(db_session) -> None:
     _create_job(
         db_session,
         aizk_uuid=bookmark.aizk_uuid,
-        source_ref=bookmark.source_ref,
         status=ConversionJobStatus.QUEUED,
         idempotency_key="b" * 64,
     )
     _create_job(
         db_session,
         aizk_uuid=bookmark.aizk_uuid,
-        source_ref=bookmark.source_ref,
         status=ConversionJobStatus.FAILED_RETRYABLE,
         idempotency_key="c" * 64,
     )

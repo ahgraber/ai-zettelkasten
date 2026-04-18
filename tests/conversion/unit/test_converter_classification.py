@@ -98,15 +98,11 @@ def _make_config(
     enable_classification: bool = True,
 ) -> ConversionConfig:
     return ConversionConfig(
+        DOCLING_PICTURE_DESCRIPTION_BASE_URL=base_url,
+        DOCLING_PICTURE_DESCRIPTION_API_KEY=api_key,
+        DOCLING_PICTURE_DESCRIPTION_MODEL=model,
+        DOCLING_ENABLE_PICTURE_CLASSIFICATION=enable_classification,
         _env_file=None,
-        converter={
-            "docling": {
-                "picture_description_base_url": base_url,
-                "picture_description_api_key": api_key,
-                "picture_description_model": model,
-                "picture_classification_enabled": enable_classification,
-            }
-        },
     )
 
 

@@ -1,46 +1,5 @@
 # Changelog
 
-## Unreleased
-
-### BREAKING — idempotency key lineage reset after manifest v1 → v2
-
-The pluggable-fetch-convert refactor changed the shape of the conversion
-``config_snapshot`` dict written into the manifest, and by extension the
-shape of the input to ``compute_idempotency_key``:
-
-- **v1** (pre-refactor): flat Docling-specific keys
-  (``docling_pdf_max_pages``, ``docling_enable_ocr``, …) under
-  ``config_snapshot``.
-- **v2** (post-refactor): ``{converter_name: "docling", adapter: {...}}``
-  where the old Docling fields are re-homed under ``adapter``. Some field
-  names also drop the ``docling_`` prefix when they move into the
-  per-adapter sub-dict.
-
-Semantically the same output-affecting fields are represented with the
-same values, but the dict keys changed. The SHA-256 idempotency key is
-computed over this shape, so cross-version keys do **not** collide:
-
-- A v1 manifest's idempotency key and a v2 submission of the same content
-  produce different keys.
-- Submissions made after rollout that re-ingest a pre-refactor source
-  start a new idempotency-key lineage. Historical jobs remain visible and
-  queryable but will not be considered idempotent replays of new work.
-
-**No code migration is required.** Post-refactor submissions already carry
-different identity (``source_ref`` + ``source_ref_hash`` vs the old raw
-``karakeep_id``-based idempotency), so the idempotency gap exists at the
-identity layer independently of the snapshot-shape change.
-
-**Operator action:** expect a one-time surge of "new" job rows after
-rollout for content that was previously ingested — this is the new-lineage
-behavior, not duplicate work. If cross-version idempotency matters for
-your deployment, run `DELETE FROM conversion_jobs WHERE …` or a targeted
-`UPDATE` before rollout; no automated migration is provided because the
-stance is intentional (post-refactor identity is a stronger contract).
-
-See `.specs/changes/pluggable-fetch-convert/design.md` §
-"Snapshot structural equivalence" for the full contract.
-
 ## `v0.1.0` — [2026-04-14]
 
 - feat(conversion): simplify/standardize configuration [164f48a]

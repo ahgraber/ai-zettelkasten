@@ -14,8 +14,7 @@ from sqlmodel import Session, select
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.db import get_engine
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.wiring.worker import WorkerRuntime, build_worker_runtime
-from aizk.conversion.workers.orchestrator import process_job_supervised
+from aizk.conversion.workers.orchestrator import configure_gpu_semaphore, process_job_supervised
 from aizk.conversion.workers.shutdown import (
     force_exit,
     is_immediate_shutdown,
@@ -110,18 +109,12 @@ def claim_next_job(config: ConversionConfig) -> int | None:
     return job_id
 
 
-def poll_and_process_jobs(
-    config: ConversionConfig,
-    runtime: WorkerRuntime,
-    poll_interval_seconds: float = 2.0,
-) -> bool:
+def poll_and_process_jobs(config: ConversionConfig, poll_interval_seconds: float = 2.0) -> bool:
     """Pick up the next eligible job and invoke supervised processing."""
     job_id = claim_next_job(config)
     if job_id is None:
         return False
-    process_job_supervised(
-        job_id, config, runtime, poll_interval_seconds=poll_interval_seconds
-    )
+    process_job_supervised(job_id, config, poll_interval_seconds=poll_interval_seconds)
     return True
 
 
@@ -171,7 +164,7 @@ def run_worker(config: ConversionConfig, poll_interval_seconds: float = 2.0) -> 
     Returns an exit code: 0 for clean shutdown, 1 for forced termination.
     """
     register_signal_handlers()
-    runtime = build_worker_runtime(config)
+    configure_gpu_semaphore(config.worker_gpu_concurrency)
 
     max_workers = config.worker_concurrency
     logger.info(
@@ -205,7 +198,6 @@ def run_worker(config: ConversionConfig, poll_interval_seconds: float = 2.0) -> 
                         process_job_supervised,
                         job_id,
                         config,
-                        runtime,
                         poll_interval_seconds=poll_interval_seconds,
                     )
                     futures[future] = job_id

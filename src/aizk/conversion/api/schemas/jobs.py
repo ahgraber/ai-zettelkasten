@@ -8,19 +8,13 @@ from uuid import UUID
 
 from pydantic import AnyUrl, BaseModel, Field
 
-from aizk.conversion.core.source_ref import SourceRef
 from aizk.conversion.datamodel.job import ConversionJobStatus
 
 
 class JobSubmission(BaseModel):
-    """Request schema for job submission.
+    """Request schema for job submission."""
 
-    ``source_ref`` is the canonical fetch instruction: a discriminated union
-    over the supported source kinds (KaraKeep bookmark, arxiv, URL, etc.).
-    The API gates accepted kinds via the wiring-layer ``DeploymentCapabilities``.
-    """
-
-    source_ref: SourceRef
+    karakeep_id: str = Field(..., max_length=255)
     payload_version: int = Field(default=1, ge=1)
     idempotency_key: str | None = Field(default=None, max_length=64)
 
@@ -35,18 +29,11 @@ class ArtifactSummary(BaseModel):
 
 
 class JobResponse(BaseModel):
-    """Response schema for conversion jobs.
-
-    ``source_ref`` is the canonical identifier going forward. ``karakeep_id``
-    is kept as a nullable convenience field so the existing UI (which filters
-    by KaraKeep id) continues to work against the new schema. It is populated
-    when ``source_ref.kind == "karakeep_bookmark"`` and ``None`` otherwise.
-    """
+    """Response schema for conversion jobs."""
 
     id: int
     aizk_uuid: UUID
-    source_ref: SourceRef
-    karakeep_id: str | None = None
+    karakeep_id: str
     url: AnyUrl | None = None
     title: str | None = None
     source_type: str | None = None

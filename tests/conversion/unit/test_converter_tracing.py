@@ -27,9 +27,9 @@ def test_convert_html_uses_llm_trace_when_picture_description_enabled(monkeypatc
     monkeypatch.setattr(converter, "_extract_figures", lambda _doc, _out: [])
     monkeypatch.setattr(converter, "trace_model_call", _capture_trace_model_call)
 
-    monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL", "https://openrouter.ai/api/v1")
-    monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY", "test-key")
-    monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_MODEL", "openai/gpt-5-nano")
+    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_API_KEY", "test-key")
+    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_MODEL", "openai/gpt-5-nano")
     # Classification enabled by default; enrichment loop owns the trace span
     config = ConversionConfig(_env_file=None)
     markdown, figures = converter.convert_html(b"<html></html>", temp_dir=tmp_path, config=config)
@@ -63,10 +63,10 @@ def test_convert_html_uses_builtin_trace_when_classification_disabled(monkeypatc
     monkeypatch.setattr(converter, "_extract_figures", lambda _doc, _out: [])
     monkeypatch.setattr(converter, "trace_model_call", _capture_trace_model_call)
 
-    monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL", "https://openrouter.ai/api/v1")
-    monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY", "test-key")
-    monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_MODEL", "openai/gpt-5-nano")
-    monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_CLASSIFICATION_ENABLED", "false")
+    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_API_KEY", "test-key")
+    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_MODEL", "openai/gpt-5-nano")
+    monkeypatch.setenv("DOCLING_ENABLE_PICTURE_CLASSIFICATION", "false")
     config = ConversionConfig(_env_file=None)
     markdown, figures = converter.convert_html(b"<html></html>", temp_dir=tmp_path, config=config)
 
@@ -98,8 +98,8 @@ def test_convert_html_skips_llm_trace_when_picture_description_disabled(monkeypa
     monkeypatch.setattr(converter, "_extract_figures", lambda _doc, _out: [])
     monkeypatch.setattr(converter, "trace_model_call", _capture_trace_model_call)
 
-    monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL", "")
-    monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY", "")
+    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_BASE_URL", "")
+    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_API_KEY", "")
     config = ConversionConfig(_env_file=None)
     markdown, figures = converter.convert_html(b"<html></html>", temp_dir=tmp_path, config=config)
 

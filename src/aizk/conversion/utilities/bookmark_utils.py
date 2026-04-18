@@ -61,16 +61,11 @@ def get_bookmark_source_url(bookmark: Bookmark) -> str:
     raise BookmarkContentError(f"Bookmark {bookmark.id} has no source URL")
 
 
-def fetch_karakeep_bookmark(
-    karakeep_id: str,
-    *,
-    base_url: str | None = None,
-    api_key: str | None = None,
-) -> Bookmark | None:
+def fetch_karakeep_bookmark(karakeep_id: str) -> Bookmark | None:
     """Fetch bookmark details from KaraKeep."""
 
     async def _get_bookmark() -> Bookmark | None:
-        async with KarakeepClient(api_key=api_key, base_url=base_url) as client:
+        async with KarakeepClient() as client:
             return await client.get_bookmark(karakeep_id)
 
     try:
@@ -200,5 +195,3 @@ def validate_bookmark_content(bookmark: Bookmark) -> None:
     if is_precrawled_archive_asset(bookmark):
         return
     raise BookmarkContentError(f"Bookmark {bookmark.id} is missing HTML, text, or PDF content")
-
-

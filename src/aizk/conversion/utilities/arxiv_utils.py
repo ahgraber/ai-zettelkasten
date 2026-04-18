@@ -523,5 +523,3 @@ class ArxivClient:
             raise ValueError(f"Failed to parse {len(parsing_errors)} entries: {'; '.join(parsing_errors)}")
 
         return papers
-
-
