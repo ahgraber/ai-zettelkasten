@@ -156,13 +156,13 @@ Role-specific builders make startup probes, accepted source kinds, and registere
 
 The orchestrator recurses on resolved refs with a configurable depth cap (default 3).
 
-**Role is declared at registration, not inferred:** The registry exposes two distinct registration entry points — `register_content_fetcher(kind, impl)` and `register_resolver(kind, impl)` — and stores role alongside the implementation.
-Role is not inferred by structural isinstance against the two protocols, because Python protocols are structural and a single class could accidentally satisfy both.
-Kind uniqueness is enforced across both roles: the same `kind` cannot have both a content fetcher and a resolver registered.
+**Role is declared at registration, determined structurally at dispatch:** The registry exposes two distinct registration entry points — `register_content_fetcher(kind, impl)` and `register_resolver(kind, impl)` — which document caller intent and keep the call-site readable.
+Dispatch-time role is determined by `isinstance(impl, RefResolver)` against the `@runtime_checkable` protocol: an adapter without a `resolves_to` ClassVar and `resolve` method cannot satisfy `RefResolver`, so the check is reliable for the protocols as specified.
+Kind uniqueness is enforced in the registry: the same `kind` cannot have both a content fetcher and a resolver registered, regardless of which entry point was used.
 
-**Rationale:** Encoding the role in the type (rather than a union return type) moves the dispatch decision to registration time, not call time.
-A `ContentFetcher` that accidentally returns a `SourceRef` is a static type error.
-Each protocol has a single, concrete return type — no isinstance checks on the payload.
+**Rationale:** Encoding the role at the protocol level (via the presence of `resolve` + `resolves_to` on RefResolver) means a single class cannot accidentally satisfy both — ContentFetcher is minimal (one method + `produces`) and RefResolver adds `resolves_to` + `resolve`.
+Keeping role-determination structural at dispatch time means the orchestrator does not carry a separate role tag on each dispatch, and the registry stores only `impl` per kind — one fewer representation to drift.
+A `ContentFetcher` that accidentally returns a `SourceRef` is a static type error; each protocol has a single, concrete return type.
 
 The depth cap prevents infinite resolver chains.
 In practice the longest chain is 1 hop (KaraKeep bookmark -> arxiv/github/url ref).
@@ -178,10 +178,8 @@ The cost of stronger static verification (a declared emissions attribute on ever
 - **Single fetcher protocol returning `ConversionInput | SourceRef`:** union return type is too permissive; any fetcher can return either thing without static error.
   Isinstance on every return value is repetitive.
 - **Fetcher delegation inside the adapter (resolver calls another fetcher internally):** hides delegation, risks unbounded recursion, requires injecting the resolver callable into adapters (more wiring, harder to test).
-- **Infer role structurally via isinstance against protocols:** structural protocols can match any class with the right method shape; "no adapter SHALL implement both" is unenforceable without a declared role.
-  Rejected.
-- **Declare each resolver's possible emissions as a protocol attribute so the wiring layer can statically verify chain termination:** stronger check, but adds a self-describing attribute on every resolver for a class of wiring bugs that only occurs under coordinated misconfiguration of a small registered set.
-  Rejected in favor of runtime `FetcherNotRegistered` and composition-root discipline.
+- **Store the role as a separate tag alongside the impl in the registry:** previous design. Rejected because the protocols themselves distinguish the two roles structurally (`RefResolver` has `resolve` + `resolves_to`; `ContentFetcher` has `fetch` + `produces`), and every adapter declares the structure explicitly via ClassVars. Keeping a separate role tag was redundant and drifted from the adapter-declared source of truth; dropped in favor of `isinstance(impl, RefResolver)` at dispatch.
+- **Declare each resolver's possible emissions as a protocol attribute so the wiring layer can statically verify chain termination:** declarations exist (see `RefResolver.resolves_to`) and are consumed at wiring time by `validate_chain_closure`; runtime `FetcherNotRegistered` remains the dispatch-time guard for any ref returned outside the declared set.
 
 ### Decision: Capability-based converter registry
 
@@ -396,7 +394,8 @@ Going forward, all new submissions use the new formula.
 Duplicate submissions of a pre-refactor source will compute a new-formula key that does not collide with the stored pre-refactor key, so the legacy job is not considered an idempotent replay of a post-refactor submission — this is acceptable because post-refactor submissions carry different identity anyway (`source_ref` vs `karakeep_id`).
 
 **Snapshot structural equivalence (separate from hash equivalence):** The Docling adapter's `config_snapshot()` SHALL contribute the same field set as today's Docling-specific config hash — including `picture_description_enabled` and any other output-affecting values the pre-refactor formula included.
-This is a structural contract on the snapshot dict (same keys, same values for the same input config), not a claim that the final hash matches.
+This is a structural contract on the snapshot dict (same semantic field set with the same values for the same input config), not a claim that the final hash matches.
+Field-key renames inside the snapshot — e.g. dropping a leading namespace prefix when fields move into a per-adapter sub-dict — are permitted as long as every output-affecting field is still represented and carries the same value.
 
 **Rationale:** Two deployments processing the same source with different converters (or different converter configs) must produce distinct keys.
 Including `converter_name` in the key is the minimal change that enables multi-converter support later.

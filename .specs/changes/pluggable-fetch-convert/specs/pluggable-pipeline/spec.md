@@ -6,9 +6,10 @@
 
 The system SHALL support two fetcher roles — content fetchers and ref resolvers — each with a distinct protocol.
 A content fetcher SHALL accept a `SourceRef` and return a `ConversionInput` containing the fetched bytes and authoritative content type.
+A content fetcher SHALL declare a class-level `produces: ClassVar[frozenset[ContentType]]` attribute enumerating every `ContentType` it may emit at runtime; wiring reads this attribute off the adapter class so the set of terminal content types is an adapter-owned declaration rather than a separate map in the wiring layer.
 A ref resolver SHALL accept a `SourceRef` and return a more specific `SourceRef`, deferring byte-level fetching to a downstream content fetcher.
 A ref resolver SHALL declare a class-level `resolves_to: ClassVar[frozenset[str]]` attribute enumerating every `SourceRef` kind it may emit at runtime; this declaration is the static edge set used for chain-closure validation at wiring time (see "Validate resolver chain closure at wiring time").
-Role SHALL be declared at registration time (the registry exposes distinct registration entry points per role); role SHALL NOT be inferred by structural isinstance against the two protocols.
+Registration entry points (`register_content_fetcher` and `register_resolver`) declare caller intent at the registration call-site; dispatch-time role SHALL be determined structurally via `isinstance(impl, RefResolver)` against the `@runtime_checkable` protocol so the orchestrator does not carry a separate role tag.
 
 #### Scenario: Content fetcher returns bytes
 
@@ -16,17 +17,23 @@ Role SHALL be declared at registration time (the registry exposes distinct regis
 - **WHEN** the fetcher is invoked
 - **THEN** a `ConversionInput` is returned containing the source bytes and an authoritative `ContentType`
 
+#### Scenario: Content fetcher declares produced content types
+
+- **GIVEN** a content fetcher adapter class
+- **WHEN** its `produces` class attribute is inspected
+- **THEN** it returns a non-empty `frozenset[ContentType]` enumerating every terminal type the fetcher may emit (e.g., `{ContentType.PDF, ContentType.HTML}` for a URL fetcher)
+
 #### Scenario: Ref resolver returns a refined ref
 
 - **GIVEN** a `SourceRef` whose kind maps to a registered ref resolver
 - **WHEN** the resolver is invoked
 - **THEN** a new `SourceRef` of a different kind is returned, to be dispatched on by the orchestrator
 
-#### Scenario: Role is declared at registration, not inferred
+#### Scenario: Dispatch role is determined structurally at runtime
 
-- **GIVEN** a registry with distinct registration entry points for content fetchers and ref resolvers
-- **WHEN** an adapter is registered
-- **THEN** the registry records role from the registration call, not from structural typing checks against the adapter's methods
+- **GIVEN** a registered adapter and a `SourceRef` whose kind maps to it
+- **WHEN** the orchestrator dispatches the ref
+- **THEN** it invokes `impl.resolve(ref)` when `isinstance(impl, RefResolver)` is true and `impl.fetch(ref)` otherwise
 
 #### Scenario: Resolver declares its output kinds
 
@@ -66,6 +73,7 @@ The registry SHALL expose distinct registration entry points per role (`register
 Kind uniqueness SHALL be enforced across both roles: a kind with a content fetcher registered cannot also have a resolver registered, and vice versa.
 The registry SHALL reject duplicate registration for a kind that is already registered in either role.
 The registry SHALL raise a typed error when resolution is attempted for an unregistered kind.
+The registry SHALL expose `registered_kinds() -> frozenset[str]` returning every kind present across both roles, and `submittable_kinds() -> frozenset[str]` returning the subset whose adapter classes declare `api_submittable = True`. API wiring uses the latter; worker wiring uses the former.
 
 #### Scenario: Fetcher resolved by kind
 
@@ -227,22 +235,25 @@ The wiring package SHALL be the only package that imports both core protocols an
 ### Requirement: Expose a deployment capability descriptor for API gating
 
 The system SHALL expose a `DeploymentCapabilities` descriptor — produced by the wiring layer — that answers, for a given deployment: which `SourceRef` kinds are accepted, which `ContentType` values have a registered converter, and which startup probes the deployment's adapters declare.
-`accepted_kinds` SHALL be exactly the set of kinds registered in the fetcher registry (content fetchers and resolvers); no separate readiness concept is maintained.
 Adapters that are not yet ready to serve SHALL NOT be registered in the registry — their implementation classes may exist in the codebase as skeletons, but the composition root does not wire them until they function.
-Worker and API wiring SHALL share a single registration helper so both process roles derive the same `accepted_kinds`.
+Worker and API wiring SHALL share a single registration helper (`register_ready_adapters`). Process roles derive complementary kind subsets from the same registry:
+
+- The worker operates on the full `FetcherRegistry.registered_kinds()` — every registered fetcher and resolver, so the orchestrator can dispatch any kind produced by the resolver chain.
+- The API narrows to `FetcherRegistry.submittable_kinds()` — the subset whose adapters declare `api_submittable = True` as a class-level attribute. Worker-internal resolver targets (e.g. `"arxiv"`, `"inline_html"`) declare `api_submittable = False` so they participate in chain-closure validation without being directly callable by external clients.
+
 The API SHALL consult this descriptor (not raw registry membership from elsewhere in the code) when validating `source_ref.kind`.
 
-#### Scenario: Registered kind accepted
+#### Scenario: Submittable kind accepted
 
-- **GIVEN** the composition root registered a fetcher for kind `"karakeep_bookmark"` via the shared registration helper
+- **GIVEN** the composition root registered a resolver for kind `"karakeep_bookmark"` whose adapter class declares `api_submittable = True`
 - **WHEN** a client submits a job with `source_ref.kind = "karakeep_bookmark"`
 - **THEN** the submission is accepted because `"karakeep_bookmark"` is in `DeploymentCapabilities.accepted_kinds`
 
-#### Scenario: Unregistered kind rejected
+#### Scenario: Worker-internal kind rejected at ingress
 
-- **GIVEN** `DeploymentCapabilities.accepted_kinds = {"karakeep_bookmark"}`
+- **GIVEN** a content fetcher registered for kind `"url"` whose adapter class declares `api_submittable = False`
 - **WHEN** a client submits a job with `source_ref.kind = "url"`
-- **THEN** HTTP 422 is returned with an error indicating the kind is not supported in this deployment
+- **THEN** HTTP 422 is returned with an error indicating the kind is not supported in this deployment, even though the worker's own capability descriptor recognizes `"url"` as a dispatch target
 
 #### Scenario: Not-yet-ready adapter is not registered
 

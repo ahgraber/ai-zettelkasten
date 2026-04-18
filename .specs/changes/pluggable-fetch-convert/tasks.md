@@ -123,7 +123,7 @@
 - [x] Remove orchestrator/worker Source-creation code (API now owns identity materialization)
 - [x] Worker enriches the existing Source row's mutable metadata only (`url`, `normalized_url`, `title`, `source_type`, `content_type`) from fetcher/resolver chain results; never writes `aizk_uuid`, `source_ref`, `source_ref_hash`, or `karakeep_id`
 - [x] Widen `DeploymentCapabilities.accepted_kinds` by adding additional adapters to the `register_ready_adapters` helper as they become ready (e.g., `arxiv`, `url`, `github_readme`); API surface grows as the helper registers more kinds.
-  Already registered in PR 5 via `register_ready_adapters`; worker accepts all 5 kinds.  API side narrows via `_API_SUBMITTABLE_KINDS` (PR 6 review fix)
+  Worker accepts all registered kinds via `FetcherRegistry.registered_kinds()`.  API narrows to `FetcherRegistry.submittable_kinds()` — the subset whose adapters declare `api_submittable = True` at the class level.  Today only `KarakeepBookmarkResolver` is submittable; other adapters opt in by flipping the flag.
 - [ ] Update startup validation to use adapter-declared probes via wiring (aggregate `DeploymentCapabilities.startup_probes`).
   Deferred: adapter-declared probes are stubbed in `DeploymentCapabilities` (empty list) and existing startup validation in `api/startup.py` remains as-is.  Enabling adapter-declared probes is a non-behavioral cleanup that can land independently.
 - [ ] Tests: end-to-end worker processes a `KarakeepBookmarkRef` job through full pipeline (fetch → convert → upload).
@@ -136,7 +136,7 @@
 - [ ] Tests: startup probes are executed only for adapters registered by `register_ready_adapters`; skeleton classes that are not wired contribute no probes.
   Deferred alongside adapter-declared probes
 - [ ] Tests: non-KaraKeep job (once the kind is ready) produces a v2.0 manifest with null source fields where the fetcher did not enrich them.
-  Deferred: non-KaraKeep kinds are not API-submittable (PR 6 review narrowed `_API_SUBMITTABLE_KINDS` to `{"karakeep_bookmark"}`); a future PR widens the gate and adds the end-to-end test
+  Deferred: non-KaraKeep kinds are not API-submittable because each adapter declares `api_submittable = False`; flipping an adapter's flag widens the gate. A future PR (enabling e.g. `UrlRef` direct submission) adds the end-to-end test alongside the flag change.
 
 ## PR 8 — Legacy module deletion (non-breaking)
 
