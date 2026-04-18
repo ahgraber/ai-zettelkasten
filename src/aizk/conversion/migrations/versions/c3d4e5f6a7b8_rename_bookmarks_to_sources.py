@@ -100,7 +100,18 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Revert schema changes."""
+    """Revert schema changes.
+
+    Guard against silent data loss: the pre-refactor schema has no way to
+    represent non-karakeep source_ref kinds (url, arxiv, inline_html, …).
+    Abort before dropping columns when any such row exists, and require
+    operators to perform an explicit data migration first. Also abort if
+    any source row has a NULL karakeep_id, since the downgrade tightens
+    karakeep_id back to NOT NULL.
+    """
+    connection = op.get_bind()
+    _guard_downgrade_against_data_loss(connection)
+
     with op.batch_alter_table("conversion_jobs", schema=None) as batch_op:
         batch_op.drop_column("source_ref")
 
@@ -111,3 +122,52 @@ def downgrade() -> None:
         batch_op.drop_column("source_ref")
 
     op.rename_table("sources", "bookmarks")
+
+
+def _guard_downgrade_against_data_loss(connection: sa.engine.Connection) -> None:
+    """Fail the downgrade if data cannot be represented in the pre-refactor schema.
+
+    Two failure modes, both raised as ``RuntimeError`` with an actionable message:
+
+    1. Any ``sources.source_ref`` whose ``kind`` is not ``karakeep_bookmark``
+       cannot be represented after ``source_ref`` is dropped.
+    2. Any ``sources.karakeep_id IS NULL`` cannot survive the NOT NULL tightening.
+
+    SQLite's ``json_extract`` is used for kind inspection — portable to SQLite
+    ≥ 3.38 which the project already requires via Litestream.
+    """
+    non_karakeep_sources = connection.execute(
+        sa.text(
+            "SELECT COUNT(*) FROM sources "
+            "WHERE json_extract(source_ref, '$.kind') != 'karakeep_bookmark'"
+        )
+    ).scalar_one()
+    if non_karakeep_sources:
+        raise RuntimeError(
+            f"Cannot downgrade c3d4e5f6a7b8: {non_karakeep_sources} source row(s) "
+            "have non-karakeep source_ref kinds. Manual data migration required "
+            "before downgrade — re-ingest these sources through KaraKeep or "
+            "delete them explicitly."
+        )
+
+    null_karakeep_sources = connection.execute(
+        sa.text("SELECT COUNT(*) FROM sources WHERE karakeep_id IS NULL")
+    ).scalar_one()
+    if null_karakeep_sources:
+        raise RuntimeError(
+            f"Cannot downgrade c3d4e5f6a7b8: {null_karakeep_sources} source row(s) "
+            "have NULL karakeep_id. The pre-refactor schema requires karakeep_id "
+            "to be NOT NULL. Manual data migration required before downgrade."
+        )
+
+    non_karakeep_jobs = connection.execute(
+        sa.text(
+            "SELECT COUNT(*) FROM conversion_jobs "
+            "WHERE json_extract(source_ref, '$.kind') != 'karakeep_bookmark'"
+        )
+    ).scalar_one()
+    if non_karakeep_jobs:
+        raise RuntimeError(
+            f"Cannot downgrade c3d4e5f6a7b8: {non_karakeep_jobs} conversion_jobs row(s) "
+            "have non-karakeep source_ref kinds. Manual data migration required."
+        )
