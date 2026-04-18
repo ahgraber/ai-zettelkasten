@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from aizk.conversion.core.types import ConversionInput
+from typing import ClassVar
+
+from aizk.conversion.core.types import ContentType, ConversionInput
 
 
 class SingleFileFetcher:
@@ -12,6 +14,8 @@ class SingleFileFetcher:
     accepted at the API or worker boundary.  This class exists to hold
     the intended interface until the implementation lands.
     """
+
+    produces: ClassVar[frozenset[ContentType]] = frozenset({ContentType.HTML})
 
     def fetch(self, ref) -> ConversionInput:
         raise NotImplementedError(

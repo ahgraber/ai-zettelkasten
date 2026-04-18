@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import ClassVar
 
 from aizk.conversion.core.types import ContentType, ConversionInput
 
@@ -23,6 +24,8 @@ def _detect_content_type(url: str, content_type_header: str) -> ContentType:
 
 class UrlFetcher:
     """ContentFetcher that retrieves content from an arbitrary URL via HTTP GET."""
+
+    produces: ClassVar[frozenset[ContentType]] = frozenset({ContentType.PDF, ContentType.HTML})
 
     def __init__(self, config=None) -> None:
         self._config = config

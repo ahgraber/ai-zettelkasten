@@ -15,7 +15,15 @@ from aizk.conversion.core.types import ContentType, ConversionArtifacts, Convers
 
 @runtime_checkable
 class ContentFetcher(Protocol):
-    """Terminal fetcher: given a SourceRef, returns raw bytes + content type."""
+    """Terminal fetcher: given a SourceRef, returns raw bytes + content type.
+
+    ``produces`` is the class-level set of ``ContentType``s the fetcher can emit.
+    The wiring layer reads it without instantiating the adapter so the set of
+    terminal content types is an adapter-owned declaration, not a separate map
+    in ``wiring/``.
+    """
+
+    produces: ClassVar[frozenset[ContentType]]
 
     def fetch(self, ref: SourceRefVariant) -> ConversionInput: ...
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import ClassVar
 
 from aizk.conversion.core.types import ContentType, ConversionInput
 
@@ -15,6 +16,8 @@ class GithubReadmeFetcher:
     Iterates through common README filenames and branch names (main, master)
     using the raw.githubusercontent.com endpoint.
     """
+
+    produces: ClassVar[frozenset[ContentType]] = frozenset({ContentType.HTML})
 
     def __init__(self, config=None) -> None:
         self._config = config

@@ -72,9 +72,12 @@ def validate_chain_closure(
 
 def _compute_content_type_map(
     fetcher_registry: FetcherRegistry,
-    terminal_types: dict[str, frozenset[ContentType]],
 ) -> dict[str, frozenset[ContentType]]:
-    """Compute terminal content types reachable from each registered kind."""
+    """Compute terminal content types reachable from each registered kind.
+
+    Terminal content types are sourced from each ContentFetcher adapter's
+    ``produces`` class attribute — the wiring layer never owns that mapping.
+    """
     registered = fetcher_registry.registered_kinds()
 
     def resolve_types(kind: str, seen: frozenset[str]) -> frozenset[ContentType]:
@@ -83,7 +86,7 @@ def _compute_content_type_map(
         seen = seen | {kind}
         role, impl = fetcher_registry.resolve(kind)
         if role == "content_fetcher":
-            return terminal_types.get(kind, frozenset())
+            return frozenset(getattr(type(impl), "produces", frozenset()))
         resolves_to: frozenset[str] = getattr(type(impl), "resolves_to", frozenset())
         result: frozenset[ContentType] = frozenset()
         for produced_kind in resolves_to:
@@ -92,17 +95,6 @@ def _compute_content_type_map(
         return result
 
     return {kind: resolve_types(kind, frozenset()) for kind in registered}
-
-
-# TODO: Move output type declarations onto ContentFetcher adapters as a
-#   ClassVar[frozenset[ContentType]] so wiring doesn't maintain this separate
-#   mapping. Each new fetcher kind currently requires an edit here too.
-_TERMINAL_CONTENT_TYPES: dict[str, frozenset[ContentType]] = {
-    "arxiv": frozenset({ContentType.PDF}),
-    "github_readme": frozenset({ContentType.HTML}),
-    "url": frozenset({ContentType.PDF, ContentType.HTML}),
-    "inline_html": frozenset({ContentType.HTML}),
-}
 
 
 def register_ready_adapters(
@@ -151,6 +143,6 @@ def register_ready_adapters(
 
     validate_chain_closure(fetcher_registry)
 
-    content_type_map = _compute_content_type_map(fetcher_registry, _TERMINAL_CONTENT_TYPES)
+    content_type_map = _compute_content_type_map(fetcher_registry)
     registered_content_types = converter_registry.registered_formats()
     return content_type_map, registered_content_types

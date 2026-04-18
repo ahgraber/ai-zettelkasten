@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import ClassVar
 
 from aizk.conversion.core.types import ContentType, ConversionInput
 
@@ -19,6 +20,8 @@ class ArxivFetcher:
     2. ``arxiv_pdf_url`` set on the ref → fetch from that explicit PDF URL
     3. Otherwise → construct PDF URL from ``arxiv_id`` and fetch from arxiv.org
     """
+
+    produces: ClassVar[frozenset[ContentType]] = frozenset({ContentType.PDF})
 
     def __init__(self, config=None) -> None:
         self._config = config
