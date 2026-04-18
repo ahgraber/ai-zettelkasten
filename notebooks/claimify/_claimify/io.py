@@ -19,11 +19,11 @@ from aizk.conversion.storage.s3_client import S3Client
 from aizk.conversion.utilities.config import ConversionConfig
 
 
-def _repo_root() -> Path:
+def resolve_repo_root() -> Path:
     return Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
 
 
-DATA_DIR = _repo_root() / "data" / "claimify_demo"
+DATA_DIR = resolve_repo_root() / "data" / "claimify_demo"
 CACHE_DIR = DATA_DIR / "cache"
 EXTRACTION_DIR = DATA_DIR / "extraction"
 EVALUATION_DIR = DATA_DIR / "evaluation"
@@ -74,7 +74,12 @@ def resolve_doc(
     else:
         if s3_client is None:
             s3_client = S3Client(ConversionConfig())
-        markdown = s3_client.get_object_bytes(output.markdown_key).decode("utf-8")
+        # Workaround: uploader.py stores `markdown_key` as the full URI
+        # (s3://bucket/key) instead of a bare key; boto3 needs the bare key.
+        # Revert this `.removeprefix(...)` call once uploader.py is fixed to
+        # persist a bare key and existing rows are backfilled.
+        bare_key = output.markdown_key.removeprefix(f"s3://{s3_client.bucket}/")
+        markdown = s3_client.get_object_bytes(bare_key).decode("utf-8")
         cache_path.write_text(markdown, encoding="utf-8")
         source = "s3"
 
