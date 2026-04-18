@@ -46,11 +46,37 @@ class KarakeepBookmarkResolver:
         return f"{base}/api/v1/assets/{asset_id}"
 
     def resolve(self, ref: SourceRefVariant) -> SourceRefVariant:
+        """Fetch the bookmark from KaraKeep and refine ``ref`` using it.
+
+        Most callers hit this method. The parent process can also call
+        :meth:`refine_from_bookmark` directly to share an already-fetched
+        bookmark between the enrichment step and the resolution step — see
+        ``workers.orchestrator._enrich_source_for_job``.
+        """
+        from aizk.conversion.utilities.bookmark_utils import fetch_karakeep_bookmark
+        from aizk.conversion.workers.fetcher import FetchError
+
+        karakeep = self._config.fetcher.karakeep
+        bookmark = fetch_karakeep_bookmark(
+            ref.bookmark_id,  # type: ignore[union-attr]
+            base_url=karakeep.base_url or None,
+            api_key=karakeep.api_key or None,
+        )
+        if bookmark is None:
+            raise FetchError(f"Bookmark {ref.bookmark_id} not found in KaraKeep")  # type: ignore[union-attr]
+        return self.refine_from_bookmark(ref, bookmark)
+
+    def refine_from_bookmark(self, ref: SourceRefVariant, bookmark: object) -> SourceRefVariant:
+        """Refine ``ref`` using an already-fetched *bookmark*.
+
+        Public seam so a caller that already holds the KaraKeep bookmark
+        (e.g. the worker's parent-side enrichment step) can run the
+        resolution precedence without a second RPC.
+        """
         from aizk.conversion.utilities.bookmark_utils import (
             BookmarkContentError,
             BookmarkContentUnavailableError,
             detect_source_type,
-            fetch_karakeep_bookmark,
             get_bookmark_asset_id,
             get_bookmark_html_content,
             get_bookmark_source_url,
@@ -63,16 +89,6 @@ class KarakeepBookmarkResolver:
             is_github_pages_url,
             parse_github_owner_repo,
         )
-        from aizk.conversion.workers.fetcher import FetchError
-
-        karakeep = self._config.fetcher.karakeep
-        bookmark = fetch_karakeep_bookmark(
-            ref.bookmark_id,  # type: ignore[union-attr]
-            base_url=karakeep.base_url or None,
-            api_key=karakeep.api_key or None,
-        )
-        if bookmark is None:
-            raise FetchError(f"Bookmark {ref.bookmark_id} not found in KaraKeep")  # type: ignore[union-attr]
 
         try:
             source_url: str | None = get_bookmark_source_url(bookmark)

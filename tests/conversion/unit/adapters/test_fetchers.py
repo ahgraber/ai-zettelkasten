@@ -254,6 +254,65 @@ def test_empty_bookmark_raises_error(heavy_mocks):
 
 
 # ---------------------------------------------------------------------------
+# refine_from_bookmark — RPC-free resolution path (F4, #29)
+# ---------------------------------------------------------------------------
+
+
+def test_refine_from_bookmark_does_not_call_fetch_karakeep_bookmark(heavy_mocks):
+    """Pre-fetched-bookmark seam is the whole point: no RPC on this path.
+
+    Parent-side enrichment fetches the bookmark once, then calls
+    ``refine_from_bookmark`` to run the 7-step precedence without a second
+    RPC. The child's orchestrator then receives the already-refined ref
+    and dispatches straight to a terminal content fetcher.
+    """
+    mocks = heavy_mocks
+    mocks["bm"].get_bookmark_source_url.return_value = "https://arxiv.org/abs/2301.12345"
+    mocks["bm"].detect_source_type.return_value = "arxiv"
+    mocks["bm"].is_pdf_asset.return_value = False
+    mocks["arxiv"].get_arxiv_id.return_value = "2301.12345"
+
+    # fetch_karakeep_bookmark is the RPC we must NOT make on this path.
+    mocks["bm"].fetch_karakeep_bookmark.reset_mock()
+
+    resolver = KarakeepBookmarkResolver(config=_resolver_config())
+    prefetched_bookmark = MagicMock(name="prefetched_bookmark")
+
+    result = resolver.refine_from_bookmark(
+        KarakeepBookmarkRef(bookmark_id="bk-29"),
+        prefetched_bookmark,
+    )
+
+    assert isinstance(result, ArxivRef)
+    assert result.arxiv_id == "2301.12345"
+    mocks["bm"].fetch_karakeep_bookmark.assert_not_called()
+
+
+def test_resolve_delegates_post_fetch_logic_to_refine_from_bookmark(heavy_mocks):
+    """``resolve`` and ``refine_from_bookmark`` produce identical outputs for
+    a given bookmark — one goes through the RPC, the other skips it, but
+    the refinement logic is the same.
+    """
+    mocks = heavy_mocks
+    mocks["bm"].get_bookmark_source_url.return_value = "https://github.com/owner/repo"
+    mocks["bm"].detect_source_type.return_value = "github"
+    mocks["gh"].is_github_pages_url.return_value = False
+    mocks["gh"].parse_github_owner_repo.return_value = ("owner", "repo")
+
+    prefetched_bookmark = MagicMock(name="prefetched_bookmark")
+    mocks["bm"].fetch_karakeep_bookmark.return_value = prefetched_bookmark
+
+    resolver = KarakeepBookmarkResolver(config=_resolver_config())
+    ref = KarakeepBookmarkRef(bookmark_id="bk-29b")
+
+    via_resolve = resolver.resolve(ref)
+    via_refine = resolver.refine_from_bookmark(ref, prefetched_bookmark)
+
+    assert type(via_resolve) is type(via_refine)
+    assert via_resolve == via_refine
+
+
+# ---------------------------------------------------------------------------
 # ArxivFetcher — PDF source precedence
 # ---------------------------------------------------------------------------
 

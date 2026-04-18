@@ -168,6 +168,8 @@ def _enrich_source_for_job(
     ref = parse_source_ref(source_ref_payload)
 
     if isinstance(ref, KarakeepBookmarkRef):
+        from aizk.conversion.adapters.fetchers.karakeep import KarakeepBookmarkResolver
+
         karakeep = config.fetcher.karakeep
         karakeep_bookmark = fetch_karakeep_bookmark(
             ref.bookmark_id,
@@ -185,6 +187,17 @@ def _enrich_source_for_job(
             "content_type": detect_content_type(karakeep_bookmark),
             "source_type": detect_source_type(source_url),
         }
+        # F4/#29: pre-resolve the KarakeepBookmarkRef here so the child
+        # subprocess does not redo the KaraKeep RPC in
+        # ``KarakeepBookmarkResolver.resolve``. The child's orchestrator
+        # will receive the already-refined ref (ArxivRef, UrlRef,
+        # InlineHtmlRef, …) and dispatch straight to the terminal
+        # content fetcher. The Source row's ``source_ref`` column stays
+        # the original KarakeepBookmarkRef — identity is separate from
+        # the per-job refined ref, which only flows through the
+        # workspace ``source_ref.json`` side-channel.
+        resolver = KarakeepBookmarkResolver(config=config)
+        ref = resolver.refine_from_bookmark(ref, karakeep_bookmark)
     elif isinstance(ref, ArxivRef):
         abstract_url = f"https://arxiv.org/abs/{ref.arxiv_id}"
         updates = {

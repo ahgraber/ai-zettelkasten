@@ -319,6 +319,94 @@ def test_enrich_source_for_inline_html_ref(db_session):
     assert isinstance(returned_ref, InlineHtmlRef)
 
 
+def test_enrich_source_for_karakeep_ref_pre_resolves_to_refined_ref(db_session, monkeypatch):
+    """F4/#29: parent enrichment pre-resolves a KarakeepBookmarkRef so the
+    child subprocess sees the already-refined ref and doesn't re-fetch the
+    bookmark. Verify:
+
+    1. ``fetch_karakeep_bookmark`` is called exactly once (one RPC per job).
+    2. ``_enrich_source_for_job`` returns the REFINED ref, not the original
+       KarakeepBookmarkRef. That ref gets written to ``workspace/source_ref.json``
+       and the child's orchestrator dispatches it directly to the terminal
+       content fetcher — no resolver hop.
+    3. The Source row's ``source_ref`` column stays the ORIGINAL
+       KarakeepBookmarkRef (identity, immutable by the worker).
+    """
+    from aizk.conversion.workers.orchestrator import _enrich_source_for_job
+
+    ref = KarakeepBookmarkRef(bookmark_id="bk-pre-resolve")
+    original_payload = ref.model_dump()
+    source = Source(
+        karakeep_id="bk-pre-resolve",
+        source_ref=original_payload,
+        source_ref_hash=compute_source_ref_hash(ref),
+    )
+    db_session.add(source)
+    db_session.commit()
+    db_session.refresh(source)
+
+    job = ConversionJob(
+        aizk_uuid=source.aizk_uuid,
+        source_ref=original_payload,
+        title="initial",
+        status=ConversionJobStatus.NEW,
+        idempotency_key="k" * 64,
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    # Bookmark stub: arxiv URL → resolver refines to ArxivRef.
+    fake_bookmark = MagicMock()
+    fake_bookmark.title = "A Paper"
+
+    from aizk.conversion.workers import orchestrator as worker_orch
+
+    calls: list[str] = []
+
+    def _fake_fetch(bookmark_id, *, base_url=None, api_key=None):
+        calls.append(bookmark_id)
+        return fake_bookmark
+
+    monkeypatch.setattr(worker_orch, "fetch_karakeep_bookmark", _fake_fetch)
+    monkeypatch.setattr(worker_orch, "validate_bookmark_content", lambda _bm: None)
+    monkeypatch.setattr(worker_orch, "detect_content_type", lambda _bm: "pdf")
+    monkeypatch.setattr(worker_orch, "detect_source_type", lambda _url: "arxiv")
+    monkeypatch.setattr(
+        worker_orch, "get_bookmark_source_url", lambda _bm: "https://arxiv.org/abs/2401.00001"
+    )
+
+    # Stub the resolver's refine_from_bookmark via the class so we can verify
+    # (a) it's called and (b) fetch_karakeep_bookmark is not invoked again from it.
+    from aizk.conversion.adapters.fetchers.karakeep import KarakeepBookmarkResolver
+
+    def _fake_refine(self, ref_in, bookmark_in):
+        assert bookmark_in is fake_bookmark
+        return ArxivRef(arxiv_id="2401.00001")
+
+    monkeypatch.setattr(KarakeepBookmarkResolver, "refine_from_bookmark", _fake_refine)
+
+    from aizk.conversion.utilities.config import ConversionConfig
+
+    engine = db_session.get_bind()
+    _, returned_ref = _enrich_source_for_job(
+        job.id, engine, ConversionConfig(_env_file=None)
+    )
+
+    # 1. Single RPC
+    assert calls == ["bk-pre-resolve"]
+
+    # 2. Returned ref is the refined one, not the original KarakeepBookmarkRef
+    assert isinstance(returned_ref, ArxivRef)
+    assert returned_ref.arxiv_id == "2401.00001"
+
+    # 3. Source.source_ref identity unchanged
+    db_session.expire_all()
+    updated = db_session.exec(
+        select(Source).where(Source.aizk_uuid == source.aizk_uuid)
+    ).one()
+    assert updated.source_ref == original_payload
+
+
 # ---------------------------------------------------------------------------
 # _persist_artifacts — workspace layout matches uploader expectations
 # ---------------------------------------------------------------------------
