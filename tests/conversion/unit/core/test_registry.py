@@ -47,18 +47,33 @@ def test_register_content_fetcher_and_resolve():
     reg = FetcherRegistry()
     impl = _FakeContentFetcher()
     reg.register_content_fetcher("arxiv", impl)
-    role, resolved = reg.resolve("arxiv")
-    assert role == "content_fetcher"
-    assert resolved is impl
+    assert reg.resolve("arxiv") is impl
 
 
 def test_register_resolver_and_resolve():
     reg = FetcherRegistry()
     impl = _FakeResolver()
     reg.register_resolver("karakeep_bookmark", impl)
-    role, resolved = reg.resolve("karakeep_bookmark")
-    assert role == "resolver"
-    assert resolved is impl
+    assert reg.resolve("karakeep_bookmark") is impl
+
+
+def test_resolve_returns_resolver_detectable_via_isinstance():
+    """Orchestrator dispatch relies on ``isinstance(impl, RefResolver)``.
+
+    ContentFetchers do not satisfy RefResolver (no ``resolve`` method), so
+    the orchestrator falls through to the terminal-fetch branch. Resolvers
+    do, so the orchestrator recurses.
+    """
+    from aizk.conversion.core.protocols import RefResolver
+
+    reg = FetcherRegistry()
+    fetcher = _FakeContentFetcher()
+    resolver = _FakeResolver()
+    reg.register_content_fetcher("arxiv", fetcher)
+    reg.register_resolver("karakeep_bookmark", resolver)
+
+    assert not isinstance(reg.resolve("arxiv"), RefResolver)
+    assert isinstance(reg.resolve("karakeep_bookmark"), RefResolver)
 
 
 def test_duplicate_kind_across_roles_rejected():

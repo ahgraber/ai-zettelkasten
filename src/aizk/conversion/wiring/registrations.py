@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from aizk.conversion.core.errors import ChainNotTerminated
 from aizk.conversion.core.orchestrator import DEFAULT_DEPTH_CAP
+from aizk.conversion.core.protocols import RefResolver
 from aizk.conversion.core.registry import ConverterRegistry, FetcherRegistry
 from aizk.conversion.core.types import ContentType
 
@@ -38,8 +39,8 @@ def validate_chain_closure(
                 cycle_path=ancestor_path + [kind],
             )
 
-        role, impl = fetcher_registry.resolve(kind)
-        if role == "content_fetcher":
+        impl = fetcher_registry.resolve(kind)
+        if not isinstance(impl, RefResolver):
             return
 
         # Resolver: inspect declared edges.  resolves_to is ClassVar so always on the class.
@@ -65,8 +66,8 @@ def validate_chain_closure(
             walk(produced_kind, current_path, depth + 1)
 
     for kind in registered:
-        role, _ = fetcher_registry.resolve(kind)
-        if role == "resolver":
+        impl = fetcher_registry.resolve(kind)
+        if isinstance(impl, RefResolver):
             walk(kind, [], 0)
 
 
@@ -84,8 +85,8 @@ def _compute_content_type_map(
         if kind in seen:
             return frozenset()
         seen = seen | {kind}
-        role, impl = fetcher_registry.resolve(kind)
-        if role == "content_fetcher":
+        impl = fetcher_registry.resolve(kind)
+        if not isinstance(impl, RefResolver):
             return frozenset(getattr(type(impl), "produces", frozenset()))
         resolves_to: frozenset[str] = getattr(type(impl), "resolves_to", frozenset())
         result: frozenset[ContentType] = frozenset()

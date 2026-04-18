@@ -24,9 +24,9 @@ class Orchestrator:
     Parameters
     ----------
     resolve_fetcher:
-        Callable mapping ``kind`` → ``(role, impl)`` where role is
-        ``"content_fetcher"`` or ``"resolver"`` and ``impl`` satisfies
-        ``ContentFetcher`` or ``RefResolver`` respectively.
+        Callable mapping ``kind`` → ``impl`` satisfying either ``ContentFetcher``
+        or ``RefResolver``. The orchestrator distinguishes the two
+        structurally via ``isinstance(impl, RefResolver)`` at dispatch time.
     resolve_converter:
         Callable mapping ``(ContentType, name)`` → a ``Converter`` instance.
     depth_cap:
@@ -39,7 +39,7 @@ class Orchestrator:
 
     def __init__(
         self,
-        resolve_fetcher: Callable[[str], tuple[str, ContentFetcher | RefResolver]],
+        resolve_fetcher: Callable[[str], ContentFetcher | RefResolver],
         resolve_converter: Callable[[ContentType, str], Converter],
         depth_cap: int = DEFAULT_DEPTH_CAP,
     ) -> None:
@@ -54,13 +54,11 @@ class Orchestrator:
     def _fetch(self, ref: SourceRefVariant, depth: int) -> ConversionInput:
         if depth >= self._depth_cap:
             raise FetcherDepthExceeded(depth=depth, kind=ref.kind)
-        role, impl = self._resolve_fetcher(ref.kind)
-        if role == "content_fetcher":
-            return impl.fetch(ref)  # type: ignore[union-attr]
-        if role == "resolver":
-            resolved_ref = impl.resolve(ref)  # type: ignore[union-attr]
+        impl = self._resolve_fetcher(ref.kind)
+        if isinstance(impl, RefResolver):
+            resolved_ref = impl.resolve(ref)
             return self._fetch(resolved_ref, depth + 1)
-        raise ValueError(f"unknown fetcher role {role!r} for kind {ref.kind!r}")
+        return impl.fetch(ref)
 
     def process(self, ref: SourceRefVariant, converter_name: str) -> ConversionArtifacts:
         """Fetch content for *ref*, then convert it with the named converter."""

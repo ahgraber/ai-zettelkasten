@@ -18,15 +18,18 @@ class ContentFetcher(Protocol):
     """Terminal fetcher: given a SourceRef, returns raw bytes + content type.
 
     ``produces`` is the class-level set of ``ContentType``s the fetcher can emit.
-    ``api_submittable`` declares whether its ``kind`` is a valid ingress at the
-    public API boundary; worker-internal kinds (e.g. ``arxiv``) set it to False
-    so they can participate in resolver chain closure without being directly
-    callable by external clients. The wiring layer reads both attributes off
-    the adapter class without instantiating it.
+    Wiring reads it without instantiating the adapter so the set of terminal
+    content types is an adapter-owned declaration, not a separate map in
+    ``wiring/``.
+
+    **Wiring convention (not part of the protocol):** adapters also declare a
+    class-level ``api_submittable: bool`` attribute which the API wiring reads
+    via ``getattr`` to decide which kinds external clients may submit. It is
+    intentionally not a Protocol member so adding it does not break structural
+    subtyping for lightweight test fakes.
     """
 
     produces: ClassVar[frozenset[ContentType]]
-    api_submittable: ClassVar[bool]
 
     def fetch(self, ref: SourceRefVariant) -> ConversionInput: ...
 
@@ -36,13 +39,15 @@ class RefResolver(Protocol):
     """Intermediate resolver: refines a SourceRef into a more specific one.
 
     ``resolves_to`` is the static edge set used by wiring-time chain-closure
-    validation. ``api_submittable`` declares whether the resolver's ``kind`` is
-    a valid ingress at the public API boundary (most resolvers are, because
-    callers submit the high-level kind and the chain resolves it).
+    validation. The orchestrator distinguishes resolvers from content fetchers
+    via ``isinstance(impl, RefResolver)``, so this protocol must stay narrow —
+    the set of attributes here is what any fake or real resolver must supply.
+
+    **Wiring convention (not part of the protocol):** the ``api_submittable``
+    attribute, see :class:`ContentFetcher`.
     """
 
     resolves_to: ClassVar[frozenset[str]]
-    api_submittable: ClassVar[bool]
 
     def resolve(self, ref: SourceRefVariant) -> SourceRefVariant: ...
 

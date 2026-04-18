@@ -2,49 +2,43 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 from aizk.conversion.core.errors import FetcherNotRegistered, NoConverterForFormat
 from aizk.conversion.core.types import ContentType
-
-
-Role = Literal["content_fetcher", "resolver"]
 
 
 class FetcherRegistry:
     """Maps source-ref kinds to either a content fetcher or a ref resolver.
 
-    Role is declared at registration via the entry-point chosen
-    (`register_content_fetcher` or `register_resolver`); it is never inferred
-    by structural typing. Kind uniqueness is enforced across both roles.
+    Role is distinguished structurally via ``isinstance(impl, RefResolver)`` at
+    dispatch time — the registry itself stores a single ``impl`` per kind.
+    Kind uniqueness is enforced across the combined set. The two entry points
+    (``register_content_fetcher`` / ``register_resolver``) remain as
+    registration-intent documentation and keep the call-site readable.
     """
 
     def __init__(self) -> None:
-        self._entries: dict[str, tuple[Role, object]] = {}
+        self._entries: dict[str, object] = {}
 
     def register_content_fetcher(self, kind: str, impl: object) -> None:
-        self._register(kind, "content_fetcher", impl)
+        self._register(kind, impl)
 
     def register_resolver(self, kind: str, impl: object) -> None:
-        self._register(kind, "resolver", impl)
+        self._register(kind, impl)
 
-    def _register(self, kind: str, role: Role, impl: object) -> None:
+    def _register(self, kind: str, impl: object) -> None:
         if kind in self._entries:
-            existing_role = self._entries[kind][0]
-            raise ValueError(
-                f"Kind {kind!r} is already registered as {existing_role!r}"
-            )
-        self._entries[kind] = (role, impl)
+            raise ValueError(f"Kind {kind!r} is already registered")
+        self._entries[kind] = impl
 
-    def resolve(self, kind: str) -> tuple[Role, object]:
-        """Return (role, impl) for the given kind, or raise `FetcherNotRegistered`."""
+    def resolve(self, kind: str) -> object:
+        """Return the adapter for the given kind, or raise ``FetcherNotRegistered``."""
         try:
             return self._entries[kind]
         except KeyError:
             raise FetcherNotRegistered(kind) from None
 
     def registered_kinds(self) -> frozenset[str]:
-        """Union of all registered kinds across both roles."""
+        """Union of all registered kinds."""
         return frozenset(self._entries)
 
     def submittable_kinds(self) -> frozenset[str]:
@@ -58,7 +52,7 @@ class FetcherRegistry:
         """
         return frozenset(
             kind
-            for kind, (_role, impl) in self._entries.items()
+            for kind, impl in self._entries.items()
             if getattr(type(impl), "api_submittable", False)
         )
 
