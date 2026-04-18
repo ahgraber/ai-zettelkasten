@@ -44,8 +44,9 @@ async def _check_db(engine: Engine) -> CheckResult:
 
 async def _check_picture_description(config) -> CheckResult:
     """Verify picture description endpoint reachability via GET /models."""
-    base_url = config.docling_picture_description_base_url.strip().rstrip("/")
-    api_key = config.docling_picture_description_api_key.strip()
+    docling = config.converter.docling
+    base_url = docling.picture_description_base_url.strip().rstrip("/")
+    api_key = docling.picture_description_api_key.strip()
     url = f"{base_url}/models"
     headers = {"Authorization": f"Bearer {api_key}"}
 

@@ -27,7 +27,7 @@ import psutil
 import pytest
 from sqlmodel import Session
 
-from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers import errors as errors_mod, loop, orchestrator
@@ -182,9 +182,9 @@ def _wait_for_path(path: Path, *, timeout_seconds: float, interval_seconds: floa
     pytest.fail(f"Expected {path} to exist within {timeout_seconds} seconds")
 
 
-def _create_test_bookmark(db_session: Session) -> Bookmark:
+def _create_test_bookmark(db_session: Session) -> Source:
     """Helper to create a test bookmark."""
-    bookmark = Bookmark(
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_lifecycle_test",
         url="https://example.com/test",
         normalized_url="https://example.com/test",
@@ -198,10 +198,11 @@ def _create_test_bookmark(db_session: Session) -> Bookmark:
     return bookmark
 
 
-def _create_test_job(db_session: Session, bookmark: Bookmark, status: ConversionJobStatus) -> ConversionJob:
+def _create_test_job(db_session: Session, bookmark: Source, status: ConversionJobStatus) -> ConversionJob:
     """Helper to create a test job."""
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title or "Test Job",
         idempotency_key="lifecycle" * 8,
         status=status,
@@ -234,7 +235,7 @@ def test_real_subprocess_spawned_and_terminated(monkeypatch, db_session: Session
         return proc
 
     # Mock helper functions but let subprocess actually spawn
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
@@ -287,7 +288,7 @@ def test_cancelled_job_terminates_subprocess_with_no_zombies(monkeypatch, db_ses
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
@@ -326,7 +327,7 @@ def test_timeout_terminates_subprocess(monkeypatch, db_session: Session, html_bo
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
@@ -382,7 +383,7 @@ def test_subprocess_completes_normally_no_zombies(
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
@@ -448,7 +449,7 @@ def test_process_group_terminates_grandchild(
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _process_job_subprocess_spawn_child)
@@ -505,7 +506,7 @@ def test_sigterm_graceful_shutdown_within_grace_period(
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _process_job_subprocess_graceful_sigterm)
@@ -557,7 +558,7 @@ def test_sigkill_after_sigterm_on_timeout(monkeypatch, db_session: Session, html
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _process_job_subprocess_ignore_sigterm)
@@ -609,7 +610,7 @@ def test_cancel_mid_execution_terminates_within_poll_interval(
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)

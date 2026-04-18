@@ -2,10 +2,10 @@
 
 import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 from uuid import UUID
 
-from sqlalchemy import Column, Index, Text
+from sqlalchemy import JSON, Column, Index, Text
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -23,7 +23,12 @@ class ConversionJobStatus(str, Enum):
 
 
 class ConversionJob(SQLModel, table=True):
-    """Represents a single conversion attempt with retry tracking."""
+    """Represents a single conversion attempt with retry tracking.
+
+    ``source_ref`` is denormalized onto the job record: it is the canonical fetch
+    instruction for this job, stored alongside the FK to the Source row so the
+    worker can pick up the job without a join.
+    """
 
     __tablename__ = "conversion_jobs"
     __table_args__ = (
@@ -36,7 +41,15 @@ class ConversionJob(SQLModel, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True, nullable=False)
-    aizk_uuid: UUID = Field(foreign_key="bookmarks.aizk_uuid", nullable=False, index=True)
+    aizk_uuid: UUID = Field(foreign_key="sources.aizk_uuid", nullable=False, index=True)
+    # FOOTGUN: default_factory=dict exists only so test fixtures that build
+    # ConversionJob directly don't have to supply a source_ref payload.
+    # Production submit_job always passes an explicit source_ref — an empty-dict
+    # row in the real DB indicates a bug in the submission path, not a valid state.
+    source_ref: dict[str, Any] = Field(
+        sa_column=Column(JSON, nullable=False),
+        default_factory=dict,
+    )
     title: str = Field(max_length=500, nullable=False)
     payload_version: int = Field(default=1, nullable=False)
     status: ConversionJobStatus = Field(default=ConversionJobStatus.NEW, nullable=False, index=True)
@@ -60,10 +73,10 @@ class ConversionJob(SQLModel, table=True):
         nullable=False,
     )
 
-    bookmark: "Bookmark" = Relationship(back_populates="jobs")
+    source: "Source" = Relationship(back_populates="jobs")
     output: Optional["ConversionOutput"] = Relationship(back_populates="job")
 
 
 if TYPE_CHECKING:
-    from aizk.conversion.datamodel.bookmark import Bookmark
     from aizk.conversion.datamodel.output import ConversionOutput
+    from aizk.conversion.datamodel.source import Source

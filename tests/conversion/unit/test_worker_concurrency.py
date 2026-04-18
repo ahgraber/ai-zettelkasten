@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from concurrent.futures import Future
 import datetime as dt
+import os
+import signal
 import threading
 import time
 from unittest.mock import MagicMock
@@ -11,10 +13,10 @@ from unittest.mock import MagicMock
 import pytest
 from sqlmodel import Session
 
-from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.workers import loop, orchestrator, shutdown
+from aizk.conversion.workers import loop, shutdown
 
 
 @pytest.fixture(autouse=True)
@@ -24,16 +26,8 @@ def _reset_shutdown():
     shutdown.reset()
 
 
-@pytest.fixture(autouse=True)
-def _reset_gpu_semaphore():
-    """Reset GPU semaphore state between tests."""
-    orchestrator._gpu_semaphore = None
-    yield
-    orchestrator._gpu_semaphore = None
-
-
-def _create_bookmark(db_session: Session) -> Bookmark:
-    bookmark = Bookmark(
+def _create_bookmark(db_session: Session) -> Source:
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_concurrency_test",
         url="https://example.com",
         normalized_url="https://example.com",
@@ -47,9 +41,10 @@ def _create_bookmark(db_session: Session) -> Bookmark:
     return bookmark
 
 
-def _create_queued_job(db_session: Session, bookmark: Bookmark, *, suffix: str = "") -> ConversionJob:
+def _create_queued_job(db_session: Session, bookmark: Source, *, suffix: str = "") -> ConversionJob:
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title or "",
         idempotency_key=("q" + suffix).ljust(64, "0"),
         status=ConversionJobStatus.QUEUED,
@@ -119,45 +114,6 @@ class TestReapCompleted:
 
 
 # ---------------------------------------------------------------------------
-# GPU semaphore
-# ---------------------------------------------------------------------------
-
-
-class TestGpuSemaphore:
-    def test_configure_sets_semaphore(self):
-        orchestrator.configure_gpu_semaphore(2)
-        assert orchestrator._gpu_semaphore is not None
-
-    def test_semaphore_limits_concurrent_access(self):
-        """Verify only N threads can hold the semaphore simultaneously."""
-        sem = threading.Semaphore(1)
-
-        max_concurrent = {"value": 0}
-        current = {"value": 0}
-        lock = threading.Lock()
-
-        def _worker():
-            sem.acquire()
-            try:
-                with lock:
-                    current["value"] += 1
-                    max_concurrent["value"] = max(max_concurrent["value"], current["value"])
-                time.sleep(0.01)
-            finally:
-                with lock:
-                    current["value"] -= 1
-                sem.release()
-
-        threads = [threading.Thread(target=_worker) for _ in range(3)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=5)
-
-        assert max_concurrent["value"] == 1
-
-
-# ---------------------------------------------------------------------------
 # run_worker concurrency
 # ---------------------------------------------------------------------------
 
@@ -183,7 +139,7 @@ class TestRunWorkerConcurrency:
             shutdown.request_shutdown()
             return None
 
-        def _fake_process(_job_id, _config, poll_interval_seconds=2.0):
+        def _fake_process(_job_id, _config, _runtime, poll_interval_seconds=2.0):
             with lock:
                 current["value"] += 1
                 max_concurrent["value"] = max(max_concurrent["value"], current["value"])
@@ -195,7 +151,6 @@ class TestRunWorkerConcurrency:
         monkeypatch.setattr(loop, "claim_next_job", _fake_claim)
         monkeypatch.setattr(loop, "process_job_supervised", _fake_process)
         monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
-        monkeypatch.setattr(loop, "configure_gpu_semaphore", lambda _n: None)
         monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
 
         exit_code = loop.run_worker(config, poll_interval_seconds=0.01)
@@ -220,7 +175,7 @@ class TestRunWorkerConcurrency:
             shutdown.request_shutdown()
             return None
 
-        def _fake_process(job_id, _config, poll_interval_seconds=2.0):
+        def _fake_process(job_id, _config, _runtime, poll_interval_seconds=2.0):
             time.sleep(0.03)
             with lock:
                 completed_jobs.append(job_id)
@@ -228,7 +183,6 @@ class TestRunWorkerConcurrency:
         monkeypatch.setattr(loop, "claim_next_job", _fake_claim)
         monkeypatch.setattr(loop, "process_job_supervised", _fake_process)
         monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
-        monkeypatch.setattr(loop, "configure_gpu_semaphore", lambda _n: None)
         monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
 
         exit_code = loop.run_worker(config, poll_interval_seconds=0.01)
@@ -241,9 +195,71 @@ class TestRunWorkerConcurrency:
         shutdown.request_shutdown()
 
         monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
-        monkeypatch.setattr(loop, "configure_gpu_semaphore", lambda _n: None)
 
         config = ConversionConfig(_env_file=None)
         exit_code = loop.run_worker(config, poll_interval_seconds=0.01)
 
         assert exit_code == 0
+
+    def test_immediate_shutdown_exits_one(self, monkeypatch):
+        """Double signal exits with code 1."""
+        claim_count = {"n": 0}
+        exit_calls: list[int] = []
+
+        def _fake_claim(_config):
+            claim_count["n"] += 1
+            if claim_count["n"] == 1:
+                return 1
+            return None
+
+        def _fake_process(_job_id, _config, _runtime, poll_interval_seconds=2.0):
+            shutdown._handle_signal(signal.SIGTERM, None)
+            shutdown._handle_signal(signal.SIGTERM, None)
+            time.sleep(0.01)
+
+        monkeypatch.setattr(loop, "claim_next_job", _fake_claim)
+        monkeypatch.setattr(loop, "process_job_supervised", _fake_process)
+        monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
+        monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
+        monkeypatch.setattr(os, "_exit", lambda code: exit_calls.append(code))
+
+        config = ConversionConfig(_env_file=None)
+        loop.run_worker(config, poll_interval_seconds=0.01)
+
+        assert exit_calls == [1]
+
+    def test_drain_timeout_exits_one(self, monkeypatch):
+        """Jobs that don't finish within drain timeout cause exit code 1."""
+        monkeypatch.setenv("WORKER_DRAIN_TIMEOUT_SECONDS", "0")
+        config = ConversionConfig(_env_file=None)
+
+        stop = threading.Event()
+        exit_calls: list[int] = []
+        claim_count = {"n": 0}
+
+        def _fake_claim(_config):
+            claim_count["n"] += 1
+            if claim_count["n"] == 1:
+                return 1
+            shutdown.request_shutdown()
+            return None
+
+        def _fake_process(_job_id, _config, _runtime, poll_interval_seconds=2.0):
+            # Block until mock os._exit fires (unblocked via stop event).
+            stop.wait(timeout=30)
+
+        def _mock_exit(code: int) -> None:
+            exit_calls.append(code)
+            stop.set()
+
+        monkeypatch.setattr(loop, "claim_next_job", _fake_claim)
+        monkeypatch.setattr(loop, "process_job_supervised", _fake_process)
+        monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
+        monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
+        # Override _drain_in_flight to avoid the 15s buffer wait in tests.
+        monkeypatch.setattr(loop, "_drain_in_flight", lambda futures, _config: bool(futures))
+        monkeypatch.setattr(os, "_exit", _mock_exit)
+
+        loop.run_worker(config, poll_interval_seconds=0.01)
+
+        assert exit_calls == [1]

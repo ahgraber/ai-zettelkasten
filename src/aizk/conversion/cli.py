@@ -11,7 +11,7 @@ import uvicorn
 
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.litestream import LitestreamManager
-from aizk.conversion.utilities.startup import StartupValidationError, log_feature_summary, validate_startup
+from aizk.conversion.utilities.startup import StartupValidationError, validate_startup
 from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,11 @@ def _cmd_serve(_args: argparse.Namespace) -> int:
     """Run the FastAPI server."""
     setproctitle("docling-api")
     config = ConversionConfig()
-    log_feature_summary(config, "api")
+    try:
+        validate_startup(config, role="api")
+    except StartupValidationError:
+        logger.exception("startup validation failed", extra={"role": "api"})
+        return 1
     configure_mlflow_tracing(
         enabled=config.mlflow_tracing_enabled,
         tracking_uri=config.mlflow_tracking_uri,

@@ -11,8 +11,9 @@ import time
 from pyleak import no_thread_leaks
 import pytest
 from sqlmodel import Session
+from unittest.mock import MagicMock
 
-from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers import errors as errors_mod, loop, orchestrator, shutdown
@@ -27,8 +28,8 @@ def _reset_shutdown():
     shutdown.reset()
 
 
-def _create_bookmark(db_session: Session) -> Bookmark:
-    bookmark = Bookmark(
+def _create_bookmark(db_session: Session) -> Source:
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_shutdown_test",
         url="https://example.com",
         normalized_url="https://example.com",
@@ -42,9 +43,10 @@ def _create_bookmark(db_session: Session) -> Bookmark:
     return bookmark
 
 
-def _create_running_job(db_session: Session, bookmark: Bookmark) -> ConversionJob:
+def _create_running_job(db_session: Session, bookmark: Source) -> ConversionJob:
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title or "",
         idempotency_key="s" * 64,
         status=ConversionJobStatus.RUNNING,
@@ -230,7 +232,7 @@ class TestOrchestratorShutdownTerminated:
             "_supervise_conversion_process",
             lambda **_kwargs: SupervisionResult("converting", None, False, False, shutdown_terminated=True),
         )
-        monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+        monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
         monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
         monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
         monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
@@ -252,7 +254,8 @@ class TestOrchestratorShutdownTerminated:
         monkeypatch.setattr(orchestrator, "handle_job_error", lambda _job_id, error, _config: errors.append(error))
 
         config = ConversionConfig(_env_file=None)
-        orchestrator.process_job_supervised(job.id, config)
+        mock_runtime = MagicMock()
+        orchestrator.process_job_supervised(job.id, config, mock_runtime)
 
         assert len(errors) == 1
         assert isinstance(errors[0], errors_mod.ConversionTimeoutError)
@@ -272,7 +275,6 @@ class TestRunWorkerShutdown:
         shutdown.request_shutdown()
 
         monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
-        monkeypatch.setattr(loop, "configure_gpu_semaphore", lambda _n: None)
 
         config = ConversionConfig(_env_file=None)
         exit_code = loop.run_worker(config, poll_interval_seconds=0.01)
@@ -290,13 +292,12 @@ class TestRunWorkerShutdown:
             shutdown.request_shutdown()
             return None
 
-        def _fake_process(_job_id, _config, poll_interval_seconds=2.0):
+        def _fake_process(_job_id, _config, _runtime, poll_interval_seconds=2.0):
             pass  # Job completes immediately.
 
         monkeypatch.setattr(loop, "claim_next_job", _fake_claim)
         monkeypatch.setattr(loop, "process_job_supervised", _fake_process)
         monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
-        monkeypatch.setattr(loop, "configure_gpu_semaphore", lambda _n: None)
         monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
 
         config = ConversionConfig(_env_file=None)
@@ -314,7 +315,7 @@ class TestRunWorkerShutdown:
                 return 1
             return None
 
-        def _fake_process(_job_id, _config, poll_interval_seconds=2.0):
+        def _fake_process(_job_id, _config, _runtime, poll_interval_seconds=2.0):
             shutdown._handle_signal(signal.SIGTERM, None)
             shutdown._handle_signal(signal.SIGTERM, None)
 
@@ -322,7 +323,6 @@ class TestRunWorkerShutdown:
         monkeypatch.setattr(loop, "claim_next_job", _fake_claim)
         monkeypatch.setattr(loop, "process_job_supervised", _fake_process)
         monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
-        monkeypatch.setattr(loop, "configure_gpu_semaphore", lambda _n: None)
         monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
         monkeypatch.setattr(loop, "force_exit", lambda code: exit_calls.append(code))
 
@@ -350,7 +350,7 @@ class TestRunWorkerShutdown:
             shutdown.request_shutdown()
             return None
 
-        def _blocking_process(_job_id, _config, poll_interval_seconds=2.0):
+        def _blocking_process(_job_id, _config, _runtime, poll_interval_seconds=2.0):
             stop.wait(timeout=30)  # Block until cleanup
 
         def _mock_exit(code: int) -> None:
@@ -360,7 +360,6 @@ class TestRunWorkerShutdown:
         monkeypatch.setattr(loop, "claim_next_job", _fake_claim)
         monkeypatch.setattr(loop, "process_job_supervised", _blocking_process)
         monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
-        monkeypatch.setattr(loop, "configure_gpu_semaphore", lambda _n: None)
         monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
         # Mock _drain_in_flight to return True immediately — the real drain
         # has a 15-second buffer that would make this test unacceptably slow.
@@ -389,7 +388,7 @@ class TestRunWorkerShutdown:
             shutdown.request_shutdown()
             return None
 
-        def _fake_process(_job_id, _config, poll_interval_seconds=2.0):
+        def _fake_process(_job_id, _config, _runtime, poll_interval_seconds=2.0):
             with Session(db_session.get_bind()) as session:
                 j = session.get(ConversionJob, _job_id)
                 j.status = ConversionJobStatus.FAILED_RETRYABLE
@@ -399,7 +398,6 @@ class TestRunWorkerShutdown:
         monkeypatch.setattr(loop, "claim_next_job", _fake_claim)
         monkeypatch.setattr(loop, "process_job_supervised", _fake_process)
         monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
-        monkeypatch.setattr(loop, "configure_gpu_semaphore", lambda _n: None)
         monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
 
         config = ConversionConfig(_env_file=None)

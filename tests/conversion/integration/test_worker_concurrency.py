@@ -8,7 +8,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Mapped
 
-from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.utilities.config import ConversionConfig
@@ -17,7 +17,7 @@ from aizk.conversion.workers import loop as loop_module
 
 def test_poll_and_process_jobs_is_atomic(db_session, monkeypatch):
     """Ensure only one worker claims a queued job when polling concurrently."""
-    bookmark = Bookmark(
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_concurrent_001",
         aizk_uuid=UUID("550e8400-e29b-41d4-a716-446655440000"),
         url="https://example.com",
@@ -33,6 +33,7 @@ def test_poll_and_process_jobs_is_atomic(db_session, monkeypatch):
 
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.QUEUED,

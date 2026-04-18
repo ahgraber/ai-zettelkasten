@@ -1,0 +1,230 @@
+"""Tests for FetcherRegistry and ConverterRegistry."""
+
+from __future__ import annotations
+
+from typing import ClassVar
+
+import pytest
+
+from aizk.conversion.core.errors import FetcherNotRegistered, NoConverterForFormat
+from aizk.conversion.core.registry import ConverterRegistry, FetcherRegistry
+from aizk.conversion.core.types import (
+    ContentType,
+    ConversionArtifacts,
+    ConversionInput,
+)
+
+
+class _FakeContentFetcher:
+    def fetch(self, ref):  # noqa: ARG002
+        return ConversionInput(content=b"", content_type=ContentType.HTML)
+
+
+class _FakeResolver:
+    resolves_to: ClassVar[frozenset[str]] = frozenset({"url"})
+
+    def resolve(self, ref):  # noqa: ARG002
+        return ref
+
+
+class _MultiFormatConverter:
+    supported_formats: ClassVar[frozenset[ContentType]] = frozenset(
+        {ContentType.PDF, ContentType.HTML}
+    )
+    requires_gpu: ClassVar[bool] = True
+
+    def convert(self, conversion_input):  # noqa: ARG002
+        return ConversionArtifacts(markdown="")
+
+    def config_snapshot(self):
+        return {}
+
+
+# --- FetcherRegistry --------------------------------------------------------
+
+
+def test_register_content_fetcher_and_resolve():
+    reg = FetcherRegistry()
+    impl = _FakeContentFetcher()
+    reg.register_content_fetcher("arxiv", impl)
+    assert reg.resolve("arxiv") is impl
+
+
+def test_register_resolver_and_resolve():
+    reg = FetcherRegistry()
+    impl = _FakeResolver()
+    reg.register_resolver("karakeep_bookmark", impl)
+    assert reg.resolve("karakeep_bookmark") is impl
+
+
+def test_resolve_returns_resolver_detectable_via_isinstance():
+    """Orchestrator dispatch relies on ``isinstance(impl, RefResolver)``.
+
+    ContentFetchers do not satisfy RefResolver (no ``resolve`` method), so
+    the orchestrator falls through to the terminal-fetch branch. Resolvers
+    do, so the orchestrator recurses.
+    """
+    from aizk.conversion.core.protocols import RefResolver
+
+    reg = FetcherRegistry()
+    fetcher = _FakeContentFetcher()
+    resolver = _FakeResolver()
+    reg.register_content_fetcher("arxiv", fetcher)
+    reg.register_resolver("karakeep_bookmark", resolver)
+
+    assert not isinstance(reg.resolve("arxiv"), RefResolver)
+    assert isinstance(reg.resolve("karakeep_bookmark"), RefResolver)
+
+
+def test_duplicate_kind_across_roles_rejected():
+    reg = FetcherRegistry()
+    reg.register_content_fetcher("url", _FakeContentFetcher())
+    with pytest.raises(ValueError, match="already registered"):
+        reg.register_resolver("url", _FakeResolver())
+
+
+def test_duplicate_kind_same_role_rejected():
+    reg = FetcherRegistry()
+    reg.register_content_fetcher("url", _FakeContentFetcher())
+    with pytest.raises(ValueError, match="already registered"):
+        reg.register_content_fetcher("url", _FakeContentFetcher())
+
+
+def test_unregistered_kind_raises_typed_error():
+    reg = FetcherRegistry()
+    with pytest.raises(FetcherNotRegistered) as exc:
+        reg.resolve("does_not_exist")
+    assert exc.value.kind == "does_not_exist"
+
+
+def test_registered_kinds_returns_union_across_roles():
+    reg = FetcherRegistry()
+    reg.register_content_fetcher("url", _FakeContentFetcher())
+    reg.register_resolver("karakeep_bookmark", _FakeResolver())
+    assert reg.registered_kinds() == frozenset({"url", "karakeep_bookmark"})
+
+
+# --- submittable_kinds ------------------------------------------------------
+
+
+class _SubmittableResolver:
+    resolves_to: ClassVar[frozenset[str]] = frozenset({"url"})
+    api_submittable: ClassVar[bool] = True
+
+    def resolve(self, ref):  # noqa: ARG002
+        return ref
+
+
+class _InternalFetcher:
+    api_submittable: ClassVar[bool] = False
+
+    def fetch(self, ref):  # noqa: ARG002
+        return ConversionInput(content=b"", content_type=ContentType.HTML)
+
+
+def test_submittable_kinds_filters_by_adapter_flag():
+    """Only adapters with ``api_submittable = True`` surface in submittable_kinds."""
+    reg = FetcherRegistry()
+    reg.register_resolver("karakeep_bookmark", _SubmittableResolver())
+    reg.register_content_fetcher("url", _InternalFetcher())
+    reg.register_content_fetcher("arxiv", _InternalFetcher())
+
+    assert reg.submittable_kinds() == frozenset({"karakeep_bookmark"})
+
+
+def test_submittable_kinds_defaults_false_when_flag_missing():
+    """Missing ``api_submittable`` attribute defaults to False (safe default)."""
+    reg = FetcherRegistry()
+    # _FakeResolver and _FakeContentFetcher declare no api_submittable.
+    reg.register_resolver("karakeep_bookmark", _FakeResolver())
+    reg.register_content_fetcher("url", _FakeContentFetcher())
+
+    assert reg.submittable_kinds() == frozenset()
+
+
+def test_submittable_kinds_is_subset_of_registered_kinds():
+    reg = FetcherRegistry()
+    reg.register_resolver("karakeep_bookmark", _SubmittableResolver())
+    reg.register_content_fetcher("url", _InternalFetcher())
+
+    assert reg.submittable_kinds() <= reg.registered_kinds()
+
+
+# --- ConverterRegistry ------------------------------------------------------
+
+
+def test_converter_registered_for_each_supported_format():
+    reg = ConverterRegistry()
+    impl = _MultiFormatConverter()
+    reg.register("docling", impl)
+    assert reg.resolve(ContentType.PDF, "docling") is impl
+    assert reg.resolve(ContentType.HTML, "docling") is impl
+
+
+def test_missing_converter_raises_typed_error():
+    reg = ConverterRegistry()
+    reg.register("docling", _MultiFormatConverter())
+    with pytest.raises(NoConverterForFormat):
+        reg.resolve(ContentType.IMAGE, "docling")
+    with pytest.raises(NoConverterForFormat):
+        reg.resolve(ContentType.PDF, "marker")
+
+
+def test_get_by_name_returns_impl_when_registered():
+    """Allows callers to read class-level attrs (e.g. requires_gpu) by name only."""
+    reg = ConverterRegistry()
+    impl = _MultiFormatConverter()
+    reg.register("docling", impl)
+
+    assert reg.get_by_name("docling") is impl
+
+
+def test_get_by_name_returns_none_on_miss():
+    """Missing converter returns None — callers use this to short-circuit
+    (e.g. API-side runtimes that don't register converters)."""
+    reg = ConverterRegistry()
+    reg.register("docling", _MultiFormatConverter())
+
+    assert reg.get_by_name("marker") is None
+    assert reg.get_by_name("") is None
+
+
+def test_get_by_name_returns_same_instance_regardless_of_content_type():
+    """A converter registered under multiple formats is the same instance for each."""
+    reg = ConverterRegistry()
+    impl = _MultiFormatConverter()
+    reg.register("docling", impl)
+
+    assert reg.get_by_name("docling") is reg.resolve(ContentType.PDF, "docling")
+    assert reg.get_by_name("docling") is reg.resolve(ContentType.HTML, "docling")
+
+
+def test_converter_with_no_supported_formats_rejected():
+    class _Empty:
+        supported_formats: ClassVar[frozenset[ContentType]] = frozenset()
+        requires_gpu: ClassVar[bool] = False
+
+        def convert(self, conversion_input):  # noqa: ARG002
+            return ConversionArtifacts(markdown="")
+
+        def config_snapshot(self):
+            return {}
+
+    reg = ConverterRegistry()
+    with pytest.raises(ValueError, match="supported_formats"):
+        reg.register("empty", _Empty())
+
+
+def test_converter_missing_supported_formats_attr_rejected():
+    class _NoAttr:
+        requires_gpu: ClassVar[bool] = False
+
+        def convert(self, conversion_input):  # noqa: ARG002
+            return ConversionArtifacts(markdown="")
+
+        def config_snapshot(self):
+            return {}
+
+    reg = ConverterRegistry()
+    with pytest.raises(ValueError, match="supported_formats"):
+        reg.register("no_attr", _NoAttr())

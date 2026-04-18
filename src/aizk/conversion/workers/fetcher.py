@@ -76,11 +76,18 @@ def _is_arxiv_abstract_url(url: str) -> bool:
         return False
 
 
-async def fetch_karakeep_asset(asset_id: str) -> bytes:
+async def fetch_karakeep_asset(
+    asset_id: str,
+    *,
+    base_url: str | None = None,
+    api_key: str | None = None,
+) -> bytes:
     """Fetch asset bytes from KaraKeep.
 
     Args:
         asset_id: Asset identifier.
+        base_url: Optional KaraKeep base URL override (falls back to env).
+        api_key: Optional KaraKeep API key override (falls back to env).
 
     Returns:
         Asset bytes.
@@ -89,7 +96,7 @@ async def fetch_karakeep_asset(asset_id: str) -> bytes:
         FetchError: If asset fetch fails.
     """
     try:
-        async with KarakeepClient() as client:
+        async with KarakeepClient(api_key=api_key, base_url=base_url) as client:
             return await client.get_asset(asset_id=asset_id)
     except Exception as exc:
         raise FetchError(f"Failed to fetch KaraKeep asset {asset_id}: {exc}") from exc
@@ -164,7 +171,12 @@ async def fetch_arxiv(
         asset_id = get_bookmark_asset_id(bookmark)
         if asset_id:
             logger.info("Fetching PDF asset %s from KaraKeep for arXiv %s", asset_id, arxiv_id)
-            return await fetch_karakeep_asset(asset_id)
+            karakeep = config.fetcher.karakeep
+            return await fetch_karakeep_asset(
+                asset_id,
+                base_url=karakeep.base_url or None,
+                api_key=karakeep.api_key or None,
+            )
 
         raise BookmarkContentUnavailableError(f"Bookmark {bookmark.id} has PDF asset but no way to fetch it")
 
@@ -241,3 +253,5 @@ async def fetch_github_readme(
                     continue
 
     raise GitHubReadmeNotFoundError(f"No README found for {owner}/{repo}")
+
+

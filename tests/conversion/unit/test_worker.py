@@ -11,7 +11,7 @@ from unittest.mock import Mock
 import pytest
 from sqlmodel import Session
 
-from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.storage.s3_client import S3Error, S3UploadError
@@ -21,8 +21,8 @@ from aizk.conversion.workers import converter, errors as errors_mod, fetcher, lo
 from aizk.conversion.workers.types import ConversionInput, SupervisionResult
 
 
-def _create_bookmark(db_session: Session) -> Bookmark:
-    bookmark = Bookmark(
+def _create_bookmark(db_session: Session) -> Source:
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_poll_retryable",
         url="https://example.com",
         normalized_url="https://example.com",
@@ -43,7 +43,7 @@ def test_process_job_retries_upload(monkeypatch, db_session: Session, html_bookm
     fp.allow_unregistered(False)
 
     # Seed a bookmark/job so process_job can move through its normal workflow.
-    bookmark = Bookmark(
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_retry_test",
         url="https://example.com",
         normalized_url="https://example.com",
@@ -57,6 +57,7 @@ def test_process_job_retries_upload(monkeypatch, db_session: Session, html_bookm
 
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         idempotency_key="a" * 64,
         status=ConversionJobStatus.QUEUED,
@@ -74,7 +75,7 @@ def test_process_job_retries_upload(monkeypatch, db_session: Session, html_bookm
         )
 
     # Bypass network and conversion steps so we can focus on the upload retry loop.
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
     monkeypatch.setattr(orchestrator, "_prepare_conversion_input", _prepare_conversion_input)
     monkeypatch.setattr(orchestrator, "_run_conversion", lambda **_kwargs: None)
@@ -110,7 +111,7 @@ def test_process_job_stops_on_cancellation(monkeypatch, db_session: Session, htm
     """Stop processing before upload when a job is cancelled mid-run."""
     monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
     fp.allow_unregistered(False)
-    bookmark = Bookmark(
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_cancel_test",
         url="https://example.com",
         normalized_url="https://example.com",
@@ -124,6 +125,7 @@ def test_process_job_stops_on_cancellation(monkeypatch, db_session: Session, htm
 
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         idempotency_key="c" * 64,
         status=ConversionJobStatus.QUEUED,
@@ -153,7 +155,7 @@ def test_process_job_stops_on_cancellation(monkeypatch, db_session: Session, htm
         """If called, will increment, indicating failure to stop on cancellation."""
         upload_calls["count"] += 1
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
     monkeypatch.setattr(orchestrator, "_prepare_conversion_input", _prepare_conversion_input)
     monkeypatch.setattr(orchestrator, "_run_conversion", _run_conversion)
@@ -175,6 +177,7 @@ def test_poll_picks_retryable_job_after_delay(monkeypatch, db_session: Session) 
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         idempotency_key="a" * 64,
         status=ConversionJobStatus.FAILED_RETRYABLE,
@@ -210,6 +213,7 @@ def test_poll_skips_retryable_job_before_delay(monkeypatch, db_session: Session)
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         idempotency_key="b" * 64,
         status=ConversionJobStatus.FAILED_RETRYABLE,
@@ -235,6 +239,7 @@ def test_raise_if_cancelled_raises(db_session: Session) -> None:
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         idempotency_key="d" * 64,
         status=ConversionJobStatus.CANCELLED,
@@ -342,9 +347,10 @@ class _TestContext:
         )
 
 
-def _create_running_job(db_session: Session, bookmark: Bookmark) -> ConversionJob:
+def _create_running_job(db_session: Session, bookmark: Source) -> ConversionJob:
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title or "",
         idempotency_key="e" * 64,
         status=ConversionJobStatus.RUNNING,
@@ -354,6 +360,40 @@ def _create_running_job(db_session: Session, bookmark: Bookmark) -> ConversionJo
     db_session.commit()
     db_session.refresh(job)
     return job
+
+
+def test_process_job_supervised_times_out_with_phase(monkeypatch, db_session: Session, html_bookmark, fp) -> None:
+    """Timeouts use the last reported phase from the subprocess."""
+    import os
+
+    fp.allow_unregistered(False)
+
+    # Short timeout; stub stays alive for 3 cycles (3 * 0.01s = 30ms > 0.01s timeout)
+    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "0.01")
+    monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _TestContext(alive_cycles=3))
+    bookmark = _create_bookmark(db_session)
+    job = _create_running_job(db_session, bookmark)
+
+    monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
+    monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id, **_kwargs: html_bookmark)
+    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
+
+    killpg_calls = []
+    monkeypatch.setattr(os, "getpgid", lambda _pid: 222)
+    monkeypatch.setattr(os, "getpgrp", lambda: 111)
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: killpg_calls.append((pgid, sig)))
+
+    errors: list[Exception] = []
+    monkeypatch.setattr(orchestrator, "handle_job_error", lambda _job_id, error, _config: errors.append(error))
+
+    config = ConversionConfig(_env_file=None)
+    assert job.id is not None
+    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=0.01)
+
+    assert len(errors) == 1
+    assert isinstance(errors[0], errors_mod.ConversionTimeoutError)
+    assert len(killpg_calls) > 0, "Should call os.killpg() to terminate process group"
 
 
 def test_process_job_supervised_cancels_child(monkeypatch, db_session: Session, html_bookmark, fp) -> None:
@@ -368,7 +408,7 @@ def test_process_job_supervised_cancels_child(monkeypatch, db_session: Session, 
 
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: True)  # Immediately cancelled
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
 
     # Track os.killpg calls
@@ -402,7 +442,7 @@ def test_process_job_supervised_reports_subprocess_error(monkeypatch, db_session
 
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
 
     errors: list[Exception] = []
@@ -440,7 +480,7 @@ def test_timeout_during_subprocess_terminates_and_reports_phase(
     monkeypatch.setattr(
         orchestrator.mp, "get_context", lambda _ctx: _TestContext(alive_cycles=5, exitcode=0, on_start=_on_start)
     )
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
 
@@ -488,7 +528,7 @@ def test_timeout_before_upload_reports_uploading_phase(monkeypatch, db_session: 
     monkeypatch.setattr(orchestrator, "handle_job_error", lambda _job_id, error, _config: errors.append(error))
 
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     class _StubProcess:
@@ -526,7 +566,7 @@ def test_timeout_during_upload_retry_stops_retrying(monkeypatch, db_session: Ses
         lambda **_kwargs: SupervisionResult("converting", None, False, False),
     )
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     upload_calls = {"count": 0}
@@ -577,7 +617,7 @@ def test_timeout_logs_elapsed_with_phase(monkeypatch, db_session: Session, html_
     bookmark = _create_bookmark(db_session)
     job = _create_running_job(db_session, bookmark)
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
 
@@ -605,6 +645,7 @@ def test_process_job_skips_spawn_for_cancelled_job(monkeypatch, db_session: Sess
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title or "",
         idempotency_key="z" * 64,
         status=ConversionJobStatus.CANCELLED,
@@ -622,7 +663,7 @@ def test_process_job_skips_spawn_for_cancelled_job(monkeypatch, db_session: Sess
         spawned["count"] += 1
         return _InlineProcess(target, args)
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
     monkeypatch.setattr(ctx, "Process", _track_process)
 
@@ -643,7 +684,7 @@ def test_logs_cancellation_during_phase(monkeypatch, db_session: Session, html_b
 
     # Simulate a short-lived alive loop where cancellation is detected immediately
     monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _TestContext(alive_cycles=2, exitcode=0))
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     # Immediately report cancelled
@@ -680,7 +721,7 @@ def test_cancelled_before_upload_skips_upload(monkeypatch, db_session: Session, 
         upload_calls["count"] += 1
 
     monkeypatch.setattr(orchestrator, "_upload_converted", _upload_converted)
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     config = ConversionConfig(_env_file=None)
@@ -719,11 +760,11 @@ def test_process_group_creation_called_in_subprocess(monkeypatch) -> None:
     test_queue = queue_module.Queue()
     with tempfile.TemporaryDirectory() as tmpdir:
         workspace_path = Path(tmpdir)
-        payload_path = workspace_path / "payload.json"
+        source_ref_path = workspace_path / "source_ref.json"
         orchestrator._process_job_subprocess(
             job_id=1,
             workspace_path=str(workspace_path),
-            karakeep_payload_path=str(payload_path),
+            source_ref_path=str(source_ref_path),
             status_queue=test_queue,
         )
 
@@ -750,7 +791,7 @@ def test_process_group_termination_uses_killpg(monkeypatch, db_session: Session,
 
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: True)  # Trigger cancellation
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
     monkeypatch.setattr(os, "getpgid", lambda _pid: 222)
     monkeypatch.setattr(os, "getpgrp", lambda: 111)
@@ -783,7 +824,7 @@ def test_process_group_handles_esrch_gracefully(monkeypatch, db_session: Session
 
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: True)
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
+    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id, **_kwargs: html_bookmark)
     monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
     monkeypatch.setattr(os, "getpgid", lambda _pid: 222)
     monkeypatch.setattr(os, "getpgrp", lambda: 111)
@@ -803,6 +844,7 @@ def test_handle_job_error_retryable_sets_failed_retryable(monkeypatch, db_sessio
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         idempotency_key="r" * 64,
         status=ConversionJobStatus.QUEUED,
@@ -832,6 +874,7 @@ def test_handle_job_error_permanent_sets_failed_perm(monkeypatch, db_session: Se
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         idempotency_key="p" * 64,
         status=ConversionJobStatus.QUEUED,
@@ -857,6 +900,7 @@ def test_handle_job_error_missing_artifacts_is_permanent(monkeypatch, db_session
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         idempotency_key="q" * 64,
         status=ConversionJobStatus.QUEUED,
@@ -943,12 +987,12 @@ def _make_workspace_metadata(tmp_path: Path, *, markdown_hash: str) -> Path:
         "pipeline_name": "html",
         "fetched_at": "2026-01-01T00:00:00+00:00",
         "config_snapshot": {
-            "docling_pdf_max_pages": 250,
-            "docling_enable_ocr": True,
-            "docling_enable_table_structure": True,
-            "docling_picture_description_model": "none",
-            "docling_picture_timeout": 60.0,
-            "docling_enable_picture_classification": True,
+            "pdf_max_pages": 250,
+            "ocr_enabled": True,
+            "table_structure_enabled": True,
+            "picture_description_model": "none",
+            "picture_timeout": 60.0,
+            "picture_classification_enabled": True,
             "picture_description_enabled": False,
         },
     }
@@ -962,7 +1006,7 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
     """When content hash matches a prior output, S3 upload is skipped and existing keys are reused."""
     monkeypatch.setattr(uploader, "get_engine", lambda _url=None: db_session.get_bind())
 
-    bookmark = Bookmark(
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_hash_reuse",
         url="https://example.com",
         normalized_url="https://example.com",
@@ -976,6 +1020,7 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
 
     prior_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title="Hash Reuse",
         idempotency_key="p" * 64,
         status=ConversionJobStatus.SUCCEEDED,
@@ -988,6 +1033,7 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
     prior_output = ConversionOutput(
         job_id=prior_job.id,
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title="Hash Reuse",
         payload_version=1,
         s3_prefix=f"s3://bucket/{bookmark.aizk_uuid}/",
@@ -1003,6 +1049,7 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
 
     new_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title="Hash Reuse",
         idempotency_key="n" * 64,
         status=ConversionJobStatus.RUNNING,
@@ -1045,7 +1092,7 @@ def test_upload_converted_uploads_when_hash_differs(monkeypatch, db_session: Ses
     """When no prior output has a matching hash, the full S3 upload proceeds."""
     monkeypatch.setattr(uploader, "get_engine", lambda _url=None: db_session.get_bind())
 
-    bookmark = Bookmark(
+    bookmark = Source.from_karakeep_id(
         karakeep_id="bm_hash_upload",
         url="https://example.com",
         normalized_url="https://example.com",
@@ -1059,6 +1106,7 @@ def test_upload_converted_uploads_when_hash_differs(monkeypatch, db_session: Ses
 
     new_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title="Hash Upload",
         idempotency_key="u" * 64,
         status=ConversionJobStatus.RUNNING,
@@ -1097,6 +1145,7 @@ def test_initialize_running_job_returns_false_for_cancelled_after_running_set(
     # Simulate the state after poll_and_process_jobs committed RUNNING
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        source_ref=bookmark.source_ref,
         title=bookmark.title,
         idempotency_key="r" * 64,
         status=ConversionJobStatus.RUNNING,

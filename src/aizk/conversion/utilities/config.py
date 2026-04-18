@@ -3,19 +3,70 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import re
 
-from pydantic import Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _UNRESOLVED_ENV_PATTERN = re.compile(r"\$\{[^}]+\}|\$[A-Za-z_][A-Za-z0-9_]*")
 
 
+class DoclingConverterConfig(BaseModel):
+    """Per-adapter config for the Docling converter.
+
+    Populated from ``AIZK_CONVERTER__DOCLING__*`` environment variables.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    pdf_max_pages: int = 250
+    ocr_enabled: bool = True
+    table_structure_enabled: bool = True
+    picture_description_model: str = "openai/gpt-5.4-nano"
+    picture_timeout: float = 180.0
+    picture_classification_enabled: bool = True
+    picture_description_base_url: str = ""
+    picture_description_api_key: str = ""
+
+
+class ConverterConfig(BaseModel):
+    """Container for per-converter nested config models."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    docling: DoclingConverterConfig = Field(default_factory=DoclingConverterConfig)
+
+
+class KarakeepFetcherConfig(BaseModel):
+    """Per-adapter config for the KaraKeep bookmark resolver/fetcher.
+
+    Populated from ``AIZK_FETCHER__KARAKEEP__*`` environment variables.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    base_url: str = ""
+    api_key: str = ""
+
+
+class FetcherConfig(BaseModel):
+    """Container for per-fetcher nested config models."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    karakeep: KarakeepFetcherConfig = Field(default_factory=KarakeepFetcherConfig)
+
+
 class ConversionConfig(BaseSettings):
     """Environment-driven configuration for the conversion service."""
 
-    model_config = SettingsConfigDict(env_prefix="", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="",
+        env_nested_delimiter="__",
+        env_file=".env",
+        extra="ignore",
+        populate_by_name=True,
+    )
 
     database_url: str = Field(
         default="sqlite:///./data/conversion_service.db",
@@ -48,33 +99,18 @@ class ConversionConfig(BaseSettings):
         validation_alias="WORKER_DRAIN_TIMEOUT_SECONDS",
     )
 
-    docling_pdf_max_pages: int = Field(default=250, validation_alias="DOCLING_PDF_MAX_PAGES")
-    docling_enable_ocr: bool = Field(default=True, validation_alias="DOCLING_ENABLE_OCR")
-    docling_enable_table_structure: bool = Field(
-        default=True,
-        validation_alias="DOCLING_ENABLE_TABLE_STRUCTURE",
+    # `validation_alias` makes the env-var prefix (`AIZK_CONVERTER__…`) independent
+    # of the Python field name (`converter`); `env_nested_delimiter="__"` then
+    # splits the remainder into nested sub-model fields. Both are required.
+    converter: ConverterConfig = Field(
+        default_factory=ConverterConfig,
+        validation_alias="AIZK_CONVERTER",
     )
-    docling_picture_description_model: str = Field(
-        default="openai/gpt-5.4-nano",
-        validation_alias="DOCLING_PICTURE_DESCRIPTION_MODEL",
-    )
-    docling_picture_timeout: float = Field(
-        default=180.0,
-        validation_alias="DOCLING_PICTURE_TIMEOUT",
-    )
-    docling_enable_picture_classification: bool = Field(
-        default=True,
-        validation_alias="DOCLING_ENABLE_PICTURE_CLASSIFICATION",
+    fetcher: FetcherConfig = Field(
+        default_factory=FetcherConfig,
+        validation_alias="AIZK_FETCHER",
     )
 
-    docling_picture_description_base_url: str = Field(
-        default="",
-        validation_alias="DOCLING_PICTURE_DESCRIPTION_BASE_URL",
-    )
-    docling_picture_description_api_key: str = Field(
-        default="",
-        validation_alias="DOCLING_PICTURE_DESCRIPTION_API_KEY",
-    )
     mlflow_tracing_enabled: bool = Field(default=False, validation_alias="MLFLOW_TRACING_ENABLED")
     mlflow_tracking_uri: str = Field(default="", validation_alias="MLFLOW_TRACKING_URI")
     mlflow_experiment_name: str = Field(default="", validation_alias="MLFLOW_EXPERIMENT_NAME")
@@ -118,18 +154,20 @@ class ConversionConfig(BaseSettings):
     @model_validator(mode="after")
     def validate_picture_description_fields(self) -> ConversionConfig:
         """Expand env placeholders once, then fail fast if any remain unresolved."""
-        for field_name in ("docling_picture_description_base_url", "docling_picture_description_api_key"):
-            value = getattr(self, field_name).strip()
+        docling = self.converter.docling
+        for field_name in ("picture_description_base_url", "picture_description_api_key"):
+            value = getattr(docling, field_name).strip()
             if value:
                 value = os.path.expandvars(value).strip()
-                setattr(self, field_name, value)
+                setattr(docling, field_name, value)
             if value and _UNRESOLVED_ENV_PATTERN.search(value):
                 raise ValueError(
-                    f"{field_name} contains unresolved env placeholder syntax: {value!r}. "
-                    "Set a concrete value before constructing ConversionConfig."
+                    f"converter.docling.{field_name} contains unresolved env placeholder syntax: "
+                    f"{value!r}. Set a concrete value before constructing ConversionConfig."
                 )
         return self
 
     def is_picture_description_enabled(self) -> bool:
         """Return whether upstream picture-description chat calls are enabled."""
-        return bool(self.docling_picture_description_base_url.rstrip("/") and self.docling_picture_description_api_key)
+        docling = self.converter.docling
+        return bool(docling.picture_description_base_url.rstrip("/") and docling.picture_description_api_key)

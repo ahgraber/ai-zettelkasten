@@ -15,7 +15,7 @@ from sqlmodel import Session, select
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.db import get_engine
@@ -103,7 +103,7 @@ def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
     # Avoid KaraKeep network calls; reuse a fixed bookmark payload.
     monkeypatch.setattr(
         "aizk.conversion.workers.orchestrator.fetch_karakeep_bookmark",
-        lambda _karakeep_id: html_bookmark,
+        lambda _karakeep_id, **_kwargs: html_bookmark,
     )
     monkeypatch.setattr(
         "aizk.conversion.workers.orchestrator.validate_bookmark_content",
@@ -130,7 +130,7 @@ def test_conversion_flow_end_to_end(monkeypatch, html_bookmark):
         response = client.post(
             "/v1/jobs",
             json={
-                "karakeep_id": "bm_test_001",
+                "source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_test_001"},
             },
         )
         assert response.status_code == 201
@@ -154,7 +154,7 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch, html_bookmark):
 
     monkeypatch.setattr(
         "aizk.conversion.workers.orchestrator.fetch_karakeep_bookmark",
-        lambda _karakeep_id: html_bookmark,
+        lambda _karakeep_id, **_kwargs: html_bookmark,
     )
     monkeypatch.setattr(
         "aizk.conversion.workers.orchestrator.validate_bookmark_content",
@@ -187,7 +187,7 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch, html_bookmark):
         response = client.post(
             "/v1/jobs",
             json={
-                "karakeep_id": "bm_cancel_001",
+                "source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_cancel_001"},
             },
         )
         assert response.status_code == 201
@@ -208,8 +208,8 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch, html_bookmark):
 
 def test_submit_job_idempotency_key_disables_picture_description_without_api_key(monkeypatch, db_session) -> None:
     """Idempotency must reflect actual picture-description runtime enablement."""
-    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_BASE_URL", "https://openrouter.ai/api/v1")
-    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_API_KEY", "")
+    monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY", "")
 
     app = create_app()
     config = ConversionConfig(_env_file=None)
@@ -218,18 +218,26 @@ def test_submit_job_idempotency_key_disables_picture_description_without_api_key
         response = client.post(
             "/v1/jobs",
             json={
-                "karakeep_id": "bm_missing_picture_api_key",
+                "source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_missing_picture_api_key"},
             },
         )
 
     assert response.status_code == 201
     payload = response.json()
 
+    from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
+    from aizk.conversion.utilities.hashing import build_output_config_snapshot
+
+    source_ref_hash = compute_source_ref_hash(
+        KarakeepBookmarkRef(bookmark_id="bm_missing_picture_api_key")
+    )
     expected_key = compute_idempotency_key(
-        UUID(payload["aizk_uuid"]),
-        1,
-        config,
-        picture_description_enabled=False,
+        source_ref_hash=source_ref_hash,
+        converter_name="docling",
+        config_snapshot=build_output_config_snapshot(
+            config,
+            picture_description_enabled=False,
+        ),
     )
 
     assert payload["idempotency_key"] == expected_key

@@ -12,9 +12,23 @@ from typing import AbstractSet, Iterator
 import pytest
 from sqlmodel import Session
 
+from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.db import get_engine
 from aizk.conversion.utilities.config import ConversionConfig
 from karakeep_client.models import Bookmark
+
+
+def make_source(karakeep_id: str, **overrides) -> Source:
+    """Construct a Source row for a KaraKeep bookmark id with synthesized source_ref."""
+    ref = KarakeepBookmarkRef(bookmark_id=karakeep_id)
+    defaults = {
+        "karakeep_id": karakeep_id,
+        "source_ref": ref.model_dump(),
+        "source_ref_hash": compute_source_ref_hash(ref),
+    }
+    defaults.update(overrides)
+    return Source(**defaults)
 
 # Env-var aliases the harness intentionally owns — kept in sync with `set_test_env` below.
 # Aliases in this set survive the session-start cleanup so `set_test_env` can set them per test.
@@ -44,11 +58,18 @@ def _strip_unclaimed_aliases(
     aliases: AbstractSet[str],
     allowlist: AbstractSet[str],
 ) -> dict[str, str]:
-    """Remove every alias from `environ` that is not in `allowlist`. Return what was removed."""
+    """Remove every alias (and its nested descendants) from `environ` that is not in `allowlist`.
+
+    For nested-container aliases like `AIZK_CONVERTER`, also strips any key matching
+    `AIZK_CONVERTER__*` since pydantic-settings uses `__` as a nested delimiter.
+    """
     stripped: dict[str, str] = {}
     for alias in aliases - allowlist:
         if alias in environ:
             stripped[alias] = environ.pop(alias)
+        prefix = f"{alias}__"
+        for key in [k for k in environ if k.startswith(prefix)]:
+            stripped[key] = environ.pop(key)
     return stripped
 
 

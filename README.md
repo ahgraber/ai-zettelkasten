@@ -49,8 +49,8 @@ Configuration is driven by environment variables and `.env` (auto-loaded from th
 
 Required for API/worker:
 
-- `KARAKEEP_API_KEY`
-- `KARAKEEP_BASE_URL`
+- `AIZK_FETCHER__KARAKEEP__API_KEY`
+- `AIZK_FETCHER__KARAKEEP__BASE_URL`
 
 Storage (S3 or compatible):
 
@@ -81,8 +81,8 @@ Run the conversion CLI with uv:
 
 ```sh
 uv run aizk-conversion db-init
-KARAKEEP_API_KEY=... KARAKEEP_BASE_URL=... uv run aizk-conversion serve
-KARAKEEP_API_KEY=... KARAKEEP_BASE_URL=... uv run aizk-conversion worker
+AIZK_FETCHER__KARAKEEP__API_KEY=... AIZK_FETCHER__KARAKEEP__BASE_URL=... uv run aizk-conversion serve
+AIZK_FETCHER__KARAKEEP__API_KEY=... AIZK_FETCHER__KARAKEEP__BASE_URL=... uv run aizk-conversion worker
 ```
 
 ### Backfill KaraKeep bookmarks

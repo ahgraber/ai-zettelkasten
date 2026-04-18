@@ -9,12 +9,12 @@ from pathlib import Path
 
 from sqlmodel import Session, select
 
-from aizk.conversion.datamodel.bookmark import Bookmark as BookmarkRecord
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.conversion.datamodel.source import Source as SourceRecord
 from aizk.conversion.db import get_engine
 from aizk.conversion.storage.manifest import (
-    ManifestConfigSnapshot,
+    ManifestConfigSnapshotV2,
     generate_manifest,
     save_manifest,
 )
@@ -53,14 +53,14 @@ def _upload_converted(job_id: int, workspace: Path, config: ConversionConfig) ->
             return
         if job.status == ConversionJobStatus.CANCELLED:
             return
-        bookmark = session.exec(select(BookmarkRecord).where(BookmarkRecord.aizk_uuid == job.aizk_uuid)).one()
+        source = session.exec(select(SourceRecord).where(SourceRecord.aizk_uuid == job.aizk_uuid)).one()
 
         # Reuse existing S3 artifacts when the content hash matches a prior output for
-        # the same bookmark, avoiding redundant uploads of identical content.
+        # the same source, avoiding redundant uploads of identical content.
         new_hash = metadata["markdown_hash_xx64"]
         prior_output = session.exec(
             select(ConversionOutput)
-            .where(ConversionOutput.aizk_uuid == bookmark.aizk_uuid)
+            .where(ConversionOutput.aizk_uuid == source.aizk_uuid)
             .where(ConversionOutput.markdown_hash_xx64 == new_hash)
             .order_by(ConversionOutput.created_at.desc())
         ).first()
@@ -74,8 +74,8 @@ def _upload_converted(job_id: int, workspace: Path, config: ConversionConfig) ->
             )
             output = ConversionOutput(
                 job_id=job.id,
-                aizk_uuid=bookmark.aizk_uuid,
-                title=bookmark.title,
+                aizk_uuid=source.aizk_uuid,
+                title=source.title,
                 payload_version=job.payload_version,
                 s3_prefix=prior_output.s3_prefix,
                 markdown_key=prior_output.markdown_key,
@@ -99,7 +99,7 @@ def _upload_converted(job_id: int, workspace: Path, config: ConversionConfig) ->
         if not s3_client.bucket:
             raise S3Error("S3 bucket is not configured", "s3_upload_failed")
 
-        prefix = str(bookmark.aizk_uuid)
+        prefix = str(source.aizk_uuid)
         s3_prefix_uri = f"s3://{s3_client.bucket}/{prefix}/"
         markdown_key = f"{prefix}/{markdown_filename}"
         markdown_uri = s3_client.upload_file(markdown_file, markdown_key)
@@ -112,8 +112,9 @@ def _upload_converted(job_id: int, workspace: Path, config: ConversionConfig) ->
             figure_uris.append(s3_client.upload_file(fig_path, fig_key))
 
         job.finished_at = _utcnow()
+        converter_name = metadata.get("converter_name", "docling")
         manifest = generate_manifest(
-            bookmark=bookmark,
+            source=source,
             job=job,
             fetched_at=dt.datetime.fromisoformat(metadata["fetched_at"]),
             markdown_s3_uri=markdown_uri,
@@ -121,7 +122,10 @@ def _upload_converted(job_id: int, workspace: Path, config: ConversionConfig) ->
             figure_s3_uris=figure_uris,
             docling_version=metadata["docling_version"],
             pipeline_name=metadata["pipeline_name"],
-            config_snapshot=ManifestConfigSnapshot(**metadata["config_snapshot"]),
+            config_snapshot=ManifestConfigSnapshotV2(
+                converter_name=converter_name,
+                adapter=dict(metadata["config_snapshot"]),
+            ),
         )
         manifest_path = workspace / "manifest.json"
         save_manifest(manifest, manifest_path)
@@ -133,8 +137,8 @@ def _upload_converted(job_id: int, workspace: Path, config: ConversionConfig) ->
 
         output = ConversionOutput(
             job_id=job.id,
-            aizk_uuid=bookmark.aizk_uuid,
-            title=bookmark.title,
+            aizk_uuid=source.aizk_uuid,
+            title=source.title,
             payload_version=job.payload_version,
             s3_prefix=s3_prefix_uri,
             markdown_key=markdown_uri,
