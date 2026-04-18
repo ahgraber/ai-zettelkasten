@@ -1,24 +1,44 @@
 """Per-call usage capture + aggregation for pydantic-ai agents on OpenRouter.
 
-Pydantic-ai's `result.usage()` returns a `RunUsage` with token counts but no
-dollar amount. OpenRouter surfaces per-call cost in the response body when
-`extra_body={"usage": {"include": True}}` is set; pydantic-ai passes that
-through to `ModelResponse.provider_details`. We merge both here so every
-LLM call produces a single `UsageSample`.
+## How cost is recovered
+
+Use pydantic-ai's `OpenRouterModel` (pydantic_ai/models/openrouter.py)
+instead of `OpenAIChatModel + OpenRouterProvider`.  `OpenRouterModel` maps
+`usage.cost` into `ModelResponse.provider_details['cost']`.
+`_find_cost` below reads it back.
+
+## Fallback: out-of-band generation lookup (not wired in)
+
+`_resolve_openrouter_cost` below is a fully-implemented async helper that
+calls `GET https://openrouter.ai/api/v1/generation?id=<response_id>` with
+retry/backoff.  It is **not** called by `extract_usage`; use it when:
+- The subclass hook breaks (e.g. pydantic-ai renames `_process_provider_details`).
+- You need post-hoc reconciliation outside the live call path.
+
+To wire it back in, add to `extract_usage` after `_find_cost` returns None:
+    if cost is None:
+        response_id = _response_id(result)
+        cost = await _resolve_openrouter_cost(response_id, api_key=key)
+and make `extract_usage` async again.
 """
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable
+import logging
+import os
 from statistics import mean, median
 from typing import Any
 
+import httpx
 from pydantic_ai.messages import ModelResponse
 
 from _claimify.models import UsageSample
 
-# Keys OpenRouter uses to report cost within the usage block of its response.
-_COST_KEYS = ("cost", "total_cost", "cost_usd")
+logger = logging.getLogger(__name__)
+
+# ---------- primary path: read cost from provider_details ----------
 
 
 def _coerce_int(value: Any) -> int:
@@ -31,41 +51,29 @@ def _coerce_int(value: Any) -> int:
 
 
 def _find_cost(provider_details: dict[str, Any] | None) -> float | None:
-    """Recursively search OpenRouter's provider_details for a cost field.
+    """Read the cost field that `OpenRouterModel` injects into `provider_details`.
 
-    OpenRouter has shifted the location of `cost` in its payload across
-    versions; the value may sit at the top level, inside a nested `usage`
-    block, or under `cost_details`. A shallow recursive scan is cheap and
-    robust enough for a prototype.
+    `OpenRouterModel` (pydantic_ai/models/openrouter.py) maps `usage.cost` to
+    `provider_details['cost']`.  The extra keys are fallbacks for schema drift.
     """
     if not provider_details:
         return None
-
-    def _walk(node: Any, depth: int = 0) -> float | None:
-        if depth > 4 or node is None:
-            return None
-        if isinstance(node, dict):
-            for key in _COST_KEYS:
-                if key in node:
-                    try:
-                        return float(node[key])
-                    except (TypeError, ValueError):
-                        pass
-            for v in node.values():
-                found = _walk(v, depth + 1)
-                if found is not None:
-                    return found
-        return None
-
-    return _walk(provider_details)
+    for key in ("cost", "upstream_inference_cost", "total_cost"):
+        if key in provider_details:
+            try:
+                return float(provider_details[key])
+            except (TypeError, ValueError):
+                continue
+    return None
 
 
 def extract_usage(result: Any, *, model: str) -> UsageSample:
     """Build a `UsageSample` from a pydantic-ai agent run result.
 
-    Token counts come from `result.usage()`. Cost (when available) is read
-    from the final `ModelResponse.provider_details`, which OpenRouter
-    populates when usage-reporting is enabled.
+    Token counts come from `result.usage()`.  Cost is read from
+    `ModelResponse.provider_details['cost']` — populated by `OpenRouterModel`
+    when the response carries `usage.cost`.  Returns `cost_usd=None` when
+    the model is not `OpenRouterModel` or cost was absent.
     """
     usage = result.usage()
     input_tokens = _coerce_int(getattr(usage, "input_tokens", 0))
@@ -96,8 +104,98 @@ def extract_usage(result: Any, *, model: str) -> UsageSample:
     )
 
 
+# ---------- fallback: out-of-band generation lookup (not wired in) ----------
+
+OPENROUTER_GENERATION_URL = "https://openrouter.ai/api/v1/generation"
+
+_COST_CACHE: dict[str, float | None] = {}
+_HTTP_CLIENT: httpx.AsyncClient | None = None
+_HTTP_LOCK = asyncio.Lock()
+
+
+async def _get_http_client() -> httpx.AsyncClient:
+    global _HTTP_CLIENT
+    async with _HTTP_LOCK:
+        if _HTTP_CLIENT is None:
+            _HTTP_CLIENT = httpx.AsyncClient(timeout=10.0)
+        return _HTTP_CLIENT
+
+
+def _response_id(result: Any) -> str | None:
+    messages = getattr(result, "all_messages", None)
+    if not callable(messages):
+        return None
+    for msg in reversed(messages()):
+        if isinstance(msg, ModelResponse) and getattr(msg, "provider_response_id", None):
+            return msg.provider_response_id
+    return None
+
+
+async def _resolve_openrouter_cost(
+    response_id: str | None,
+    *,
+    api_key: str | None = None,
+    attempts: int = 4,
+    initial_backoff_s: float = 0.5,
+) -> float | None:
+    """Fetch a generation's `total_cost` from OpenRouter (fallback path).
+
+    Not called by `extract_usage`.  See module docstring for wiring instructions.
+
+    Returns None when:
+    - `response_id` or `api_key` is absent.
+    - The generation is not yet indexed after `attempts` retries (404 with backoff).
+    - Any other HTTP or parse error.
+    """
+    key = api_key or os.environ.get("OPENROUTER_API_KEY") or os.environ.get("_OPENROUTER_API_KEY")
+    if not response_id or not key:
+        return None
+    if response_id in _COST_CACHE:
+        return _COST_CACHE[response_id]
+
+    client = await _get_http_client()
+    headers = {"Authorization": f"Bearer {key}"}
+    backoff = initial_backoff_s
+    for _ in range(attempts):
+        try:
+            r = await client.get(OPENROUTER_GENERATION_URL, params={"id": response_id}, headers=headers)
+        except httpx.HTTPError as exc:
+            logger.debug("generation lookup transport error id=%s: %s", response_id, exc)
+            await asyncio.sleep(backoff)
+            backoff *= 2
+            continue
+
+        if r.status_code == 404:
+            await asyncio.sleep(backoff)
+            backoff *= 2
+            continue
+        if r.status_code >= 400:
+            logger.debug("generation lookup %s for id=%s: %s", r.status_code, response_id, r.text[:200])
+            break
+
+        payload = r.json()
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if isinstance(data, dict):
+            for key_name in ("total_cost", "cost", "cost_usd"):
+                if key_name in data:
+                    try:
+                        value = float(data[key_name])
+                        _COST_CACHE[response_id] = value
+                        return value
+                    except (TypeError, ValueError):
+                        continue
+        logger.debug("generation lookup id=%s returned no cost: %s", response_id, str(payload)[:200])
+        break
+
+    _COST_CACHE[response_id] = None
+    return None
+
+
+# ---------- aggregation ----------
+
+
 def summarize(samples: Iterable[UsageSample]) -> dict[str, Any]:
-    """Total / mean / median token + cost stats for a bunch of samples."""
+    """Total / mean / median token + cost stats for a collection of samples."""
     samples = list(samples)
     if not samples:
         return {
@@ -132,12 +230,7 @@ def summarize(samples: Iterable[UsageSample]) -> dict[str, Any]:
 
 
 def summarize_by(samples: Iterable[UsageSample], key: str) -> dict[str, dict[str, Any]]:
-    """Group samples by an attribute (e.g., `phase` from parent record) and summarize each bucket.
-
-    Since `UsageSample` itself doesn't carry a phase, callers typically pre-group
-    by inspecting the enclosing `UsageRecord`/`EvalRecord`. This helper works for
-    any attribute present on the sample (e.g., `model`).
-    """
+    """Group samples by a `UsageSample` attribute and summarize each bucket."""
     buckets: dict[str, list[UsageSample]] = {}
     for s in samples:
         k = str(getattr(s, key))

@@ -21,9 +21,9 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
-from pydantic_ai.providers.openrouter import OpenRouterProvider
+from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai.models.openai import OpenAIChatModelSettings
+from pydantic_ai.models.openrouter import OpenRouterModel
 
 from _claimify.adapters import (
     parse_coverage,
@@ -101,16 +101,32 @@ def _build_agent(
     system_prompt: str,
     result_model: type[BaseModel],
     path: AdapterPath,
+    deps_type: type | None = None,
 ) -> Agent:
-    chat = OpenAIChatModel(model, provider=OpenRouterProvider(api_key=api_key))
+    """Build a per-dimension agent.
+
+    `output_retries=2` covers both structured-output schema failures and,
+    when an `output_validator` is attached to a prose agent, parse failures
+    from the per-dimension `parse_*` adapter.  Prose agents pass `deps_type`
+    when the validator needs per-call context (e.g., `n_elements`, `claim`).
+    """
+    chat = OpenRouterModel(model, provider=make_openrouter_provider(api_key))
     settings = _settings_for(model)
     if path == "prose":
-        return Agent(chat, output_type=str, system_prompt=system_prompt, model_settings=settings)
+        return Agent(
+            chat,
+            output_type=str,
+            system_prompt=system_prompt,
+            model_settings=settings,
+            deps_type=deps_type,
+            output_retries=2,
+        )
     return Agent(
         chat,
         output_type=result_model,
         system_prompt=with_schema_suffix(system_prompt, result_model),
         model_settings=settings,
+        output_retries=2,
     )
 
 

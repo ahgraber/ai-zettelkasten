@@ -7,9 +7,9 @@ from collections.abc import Awaitable, Callable
 import logging
 from typing import Literal
 
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
-from pydantic_ai.providers.openrouter import OpenRouterProvider
+from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai.models.openai import OpenAIChatModelSettings
+from pydantic_ai.models.openrouter import OpenRouterModel
 
 from _claimify.adapters import (
     parse_decomposition,
@@ -35,6 +35,7 @@ from _claimify.models import (
     UsageRecord,
     UsageSample,
 )
+from _claimify.openrouter import make_openrouter_provider
 from _claimify.structuring import split_by_headings
 from _claimify.usage import extract_usage
 from aizk.ai.claimify.prompts.extraction import (
@@ -102,8 +103,8 @@ def _is_anthropic(model: str) -> bool:
     return model.startswith("anthropic/") or model.startswith("claude")
 
 
-def _chat_model(model: str, *, api_key: str | None) -> OpenAIChatModel:
-    return OpenAIChatModel(model, provider=OpenRouterProvider(api_key=api_key))
+def _chat_model(model: str, *, api_key: str | None) -> OpenRouterModel:
+    return OpenRouterModel(model, provider=make_openrouter_provider(api_key))
 
 
 def _settings_for(model: str) -> OpenAIChatModelSettings:

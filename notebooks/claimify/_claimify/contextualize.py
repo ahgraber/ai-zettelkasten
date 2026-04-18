@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
-from pydantic_ai.providers.openrouter import OpenRouterProvider
+from pydantic_ai.models.openai import OpenAIChatModelSettings
+from pydantic_ai.models.openrouter import OpenRouterModel
 
 from _claimify.models import LoadedDoc, Section, UsageSample
+from _claimify.openrouter import make_openrouter_provider
 from _claimify.usage import extract_usage
 
 CONTEXTUALIZE_SYSTEM_TEMPLATE = (
@@ -51,8 +52,7 @@ def make_context_agent(model: str, *, api_key: str | None = None) -> Agent[str, 
     on every run so a single agent can be reused across docs while keeping the
     system prompt stable per doc (cache-friendly).
     """
-    provider = OpenRouterProvider(api_key=api_key)
-    llm = OpenAIChatModel(model, provider=provider)
+    llm = OpenRouterModel(model, provider=make_openrouter_provider(api_key))
     settings = OpenAIChatModelSettings(extra_body=_extra_body_for(model))
     agent: Agent[str, SectionContext] = Agent(
         llm,
