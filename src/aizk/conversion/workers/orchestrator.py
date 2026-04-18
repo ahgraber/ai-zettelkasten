@@ -31,6 +31,12 @@ from typing import Literal
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
+from aizk.conversion.core.errors import (
+    ChainNotTerminated,
+    FetcherDepthExceeded,
+    FetcherNotRegistered,
+    NoConverterForFormat,
+)
 from aizk.conversion.core.source_ref import (
     ArxivRef,
     GithubReadmeRef,
@@ -356,6 +362,10 @@ def _process_job_subprocess(
         BookmarkContentUnavailableError,
         BookmarkContentError,
         JobDataIntegrityError,
+        FetcherNotRegistered,
+        FetcherDepthExceeded,
+        NoConverterForFormat,
+        ChainNotTerminated,
     ) as exc:
         error_code = getattr(exc, "error_code", "conversion_failed")
         retryable = exc.retryable

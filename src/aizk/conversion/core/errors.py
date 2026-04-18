@@ -8,6 +8,7 @@ from typing import ClassVar
 class FetcherNotRegistered(KeyError):
     """Raised when resolution is requested for a kind with no registered adapter."""
 
+    error_code: ClassVar[str] = "fetcher_not_registered"
     retryable: ClassVar[bool] = False
 
     def __init__(self, kind: str) -> None:
@@ -21,6 +22,7 @@ class FetcherNotRegistered(KeyError):
 class NoConverterForFormat(KeyError):
     """Raised when no converter is registered for the requested (content_type, name)."""
 
+    error_code: ClassVar[str] = "no_converter_for_format"
     retryable: ClassVar[bool] = False
 
     def __init__(self, content_type: object, name: str) -> None:
@@ -35,6 +37,7 @@ class NoConverterForFormat(KeyError):
 class FetcherDepthExceeded(RuntimeError):
     """Raised when the resolver chain exceeds the configured depth cap."""
 
+    error_code: ClassVar[str] = "fetcher_depth_exceeded"
     retryable: ClassVar[bool] = False
 
     def __init__(self, depth: int, kind: str) -> None:
@@ -55,6 +58,7 @@ class ChainNotTerminated(RuntimeError):
         cycle_path: the resolver-kind path forming the cycle, or None otherwise.
     """
 
+    error_code: ClassVar[str] = "chain_not_terminated"
     retryable: ClassVar[bool] = False
 
     def __init__(
