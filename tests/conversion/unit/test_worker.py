@@ -760,11 +760,11 @@ def test_process_group_creation_called_in_subprocess(monkeypatch) -> None:
     test_queue = queue_module.Queue()
     with tempfile.TemporaryDirectory() as tmpdir:
         workspace_path = Path(tmpdir)
-        payload_path = workspace_path / "payload.json"
+        source_ref_path = workspace_path / "source_ref.json"
         orchestrator._process_job_subprocess(
             job_id=1,
             workspace_path=str(workspace_path),
-            karakeep_payload_path=str(payload_path),
+            source_ref_path=str(source_ref_path),
             status_queue=test_queue,
         )
 
