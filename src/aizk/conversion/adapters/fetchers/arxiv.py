@@ -28,12 +28,7 @@ class ArxivFetcher:
         self._config = config
 
     def fetch(self, ref) -> ConversionInput:
-        import asyncio
-
-        import httpx
-
-        from aizk.conversion.utilities.arxiv_utils import ArxivClient, arxiv_pdf_url
-        from aizk.conversion.utilities.config import ConversionConfig
+        from aizk.conversion.utilities.safe_http import BodyTooLargeError, UnsafeUrlError, safe_get
         from aizk.conversion.workers.fetcher import ArxivPdfFetchError
 
         cfg = self._config
@@ -41,54 +36,35 @@ class ArxivFetcher:
 
         abstract_url = f"https://arxiv.org/abs/{ref.arxiv_id}"
 
+        def _hardened_get(target: str, *, step_label: str) -> ConversionInput:
+            try:
+                result = safe_get(target, timeout=timeout)
+            except (UnsafeUrlError, BodyTooLargeError):
+                raise
+            except Exception as exc:
+                raise ArxivPdfFetchError(
+                    f"Failed to fetch {step_label} for arXiv {ref.arxiv_id}: {exc}"
+                ) from exc
+            return ConversionInput(
+                content=result.content,
+                content_type=ContentType.PDF,
+                metadata={"source_url": abstract_url, "arxiv_id": ref.arxiv_id},
+            )
+
         # Step 1: KaraKeep asset URL (preferred — avoids arxiv.org rate limits)
         if getattr(ref, "karakeep_asset_url", None):
             logger.info("Fetching arXiv PDF from KaraKeep asset: %s", ref.karakeep_asset_url)
-            try:
-                with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-                    response = client.get(ref.karakeep_asset_url)
-                    response.raise_for_status()
-                    return ConversionInput(
-                        content=response.content,
-                        content_type=ContentType.PDF,
-                        metadata={"source_url": abstract_url, "arxiv_id": ref.arxiv_id},
-                    )
-            except Exception as exc:
-                raise ArxivPdfFetchError(
-                    f"Failed to fetch KaraKeep asset for arXiv {ref.arxiv_id}: {exc}"
-                ) from exc
+            return _hardened_get(ref.karakeep_asset_url, step_label="KaraKeep asset")
 
         # Step 2: explicit arxiv_pdf_url on the ref
         if getattr(ref, "arxiv_pdf_url", None):
             logger.info("Fetching arXiv PDF from explicit URL: %s", ref.arxiv_pdf_url)
-            try:
-                with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-                    response = client.get(ref.arxiv_pdf_url)
-                    response.raise_for_status()
-                    return ConversionInput(
-                        content=response.content,
-                        content_type=ContentType.PDF,
-                        metadata={"source_url": abstract_url, "arxiv_id": ref.arxiv_id},
-                    )
-            except Exception as exc:
-                raise ArxivPdfFetchError(
-                    f"Failed to fetch arXiv PDF from URL for {ref.arxiv_id}: {exc}"
-                ) from exc
+            return _hardened_get(ref.arxiv_pdf_url, step_label="arXiv PDF URL")
 
-        # Step 3: construct PDF URL from arxiv_id
+        # Step 3: construct PDF URL from arxiv_id via arxiv.org/pdf/<id>.pdf.
+        # The legacy ArxivClient path is replaced with a direct safe_get so
+        # the SSRF + body-cap checks apply to cross-origin redirects arxiv
+        # may issue (e.g. export.arxiv.org → arxiv.org mirrors).
+        pdf_url = f"https://arxiv.org/pdf/{ref.arxiv_id}"
         logger.info("Fetching arXiv PDF by ID: %s", ref.arxiv_id)
-        try:
-            async def _download() -> bytes:
-                async with ArxivClient(timeout=timeout) as client:
-                    return await client.download_paper_pdf(ref.arxiv_id, use_export_url=True)
-
-            pdf_bytes = asyncio.run(_download())
-            return ConversionInput(
-                content=pdf_bytes,
-                content_type=ContentType.PDF,
-                metadata={"source_url": abstract_url, "arxiv_id": ref.arxiv_id},
-            )
-        except Exception as exc:
-            raise ArxivPdfFetchError(
-                f"Failed to fetch arXiv PDF for {ref.arxiv_id}: {exc}"
-            ) from exc
+        return _hardened_get(pdf_url, step_label=f"arXiv PDF by id {ref.arxiv_id}")

@@ -32,8 +32,7 @@ class UrlFetcher:
         self._config = config
 
     def fetch(self, ref) -> ConversionInput:
-        import httpx
-
+        from aizk.conversion.utilities.safe_http import BodyTooLargeError, UnsafeUrlError, safe_get
         from aizk.conversion.workers.fetcher import FetchError
 
         cfg = self._config
@@ -42,15 +41,17 @@ class UrlFetcher:
         url = ref.url
         logger.info("Fetching URL: %s", url)
         try:
-            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-                response = client.get(url)
-                response.raise_for_status()
+            result = safe_get(url, timeout=timeout)
+        except (UnsafeUrlError, BodyTooLargeError):
+            # Hardened-boundary rejections are non-retryable; re-raise as-is
+            # so the classifier sees the typed error_code/retryable fields.
+            raise
         except Exception as exc:
             raise FetchError(f"Failed to fetch {url}: {exc}") from exc
 
-        content_type = _detect_content_type(url, response.headers.get("content-type", ""))
+        content_type = _detect_content_type(url, result.headers.get("content-type", ""))
         return ConversionInput(
-            content=response.content,
+            content=result.content,
             content_type=content_type,
-            metadata={"source_url": url},
+            metadata={"source_url": result.final_url},
         )
