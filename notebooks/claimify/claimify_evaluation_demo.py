@@ -62,6 +62,11 @@ KARAKEEP_IDS: list[str] = [
     "tufj0yp05tiqu485z4ocxs0u",  # OpenAI Sensitive Convos | Singlefile
     "mt2vc0ziqqt0pz6ptaqbf7yn",  # LLMs for Scientific Idea Generation | arXiv PDF
 ]
+# Alternate candidates (from notebooks/docling_demo.py):
+# "xt2omosp2erha7k4xd6mg9je",  # OpenAI ChatGPT Agent
+# "rpnt3mzc96g5uhovbv2runu4",  # Sycophancy and the Pepsi Challenge
+# "e8oks8mh930yfvcg2k0yzuvb",  # Treadmill 17 Jan 2025
+# "qks067chkb8t1kprtm7rqbxl",  # OpenAI Confessions
 
 # %%
 # Four-tier model congress. Fill with real OpenRouter IDs before running.
