@@ -78,7 +78,7 @@ def client(db_session, mock_s3) -> TestClient:
     return TestClient(app)
 
 
-# --- manifest ---
+# --- happy paths ---
 
 
 def test_get_manifest_returns_json_bytes(db_session, client, mock_s3) -> None:
@@ -95,36 +95,6 @@ def test_get_manifest_returns_json_bytes(db_session, client, mock_s3) -> None:
     mock_s3.get_object_bytes.assert_called_once_with(output.manifest_key)
 
 
-def test_get_manifest_404_unknown_output(client) -> None:
-    response = client.get("/v1/outputs/99999/manifest")
-    assert response.status_code == 404
-
-
-def test_get_manifest_404_when_s3_not_found(db_session, client, mock_s3) -> None:
-    bookmark = _create_bookmark(db_session, "bm_manifest_missing")
-    job = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="b" * 64)
-    output = _create_output(db_session, job_id=job.id, aizk_uuid=bookmark.aizk_uuid)
-    mock_s3.get_object_bytes.side_effect = S3NotFoundError("prefix/manifest.json")
-
-    response = client.get(f"/v1/outputs/{output.id}/manifest")
-
-    assert response.status_code == 404
-
-
-def test_get_manifest_502_on_s3_error(db_session, client, mock_s3) -> None:
-    bookmark = _create_bookmark(db_session, "bm_manifest_err")
-    job = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="c" * 64)
-    output = _create_output(db_session, job_id=job.id, aizk_uuid=bookmark.aizk_uuid)
-    mock_s3.get_object_bytes.side_effect = S3Error("storage down", "s3_error")
-
-    response = client.get(f"/v1/outputs/{output.id}/manifest")
-
-    assert response.status_code == 502
-
-
-# --- markdown ---
-
-
 def test_get_markdown_returns_text(db_session, client, mock_s3) -> None:
     bookmark = _create_bookmark(db_session, "bm_markdown")
     job = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="d" * 64)
@@ -139,36 +109,6 @@ def test_get_markdown_returns_text(db_session, client, mock_s3) -> None:
     mock_s3.get_object_bytes.assert_called_once_with(output.markdown_key)
 
 
-def test_get_markdown_404_unknown_output(client) -> None:
-    response = client.get("/v1/outputs/99999/markdown")
-    assert response.status_code == 404
-
-
-def test_get_markdown_404_when_s3_not_found(db_session, client, mock_s3) -> None:
-    bookmark = _create_bookmark(db_session, "bm_markdown_missing")
-    job = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="h" * 64)
-    output = _create_output(db_session, job_id=job.id, aizk_uuid=bookmark.aizk_uuid)
-    mock_s3.get_object_bytes.side_effect = S3NotFoundError("prefix/abc/output.md")
-
-    response = client.get(f"/v1/outputs/{output.id}/markdown")
-
-    assert response.status_code == 404
-
-
-def test_get_markdown_502_on_s3_error(db_session, client, mock_s3) -> None:
-    bookmark = _create_bookmark(db_session, "bm_markdown_err")
-    job = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="i" * 64)
-    output = _create_output(db_session, job_id=job.id, aizk_uuid=bookmark.aizk_uuid)
-    mock_s3.get_object_bytes.side_effect = S3Error("storage down", "s3_error")
-
-    response = client.get(f"/v1/outputs/{output.id}/markdown")
-
-    assert response.status_code == 502
-
-
-# --- figures ---
-
-
 def test_get_figure_returns_image_with_correct_content_type(db_session, client, mock_s3) -> None:
     bookmark = _create_bookmark(db_session, "bm_figure")
     job = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="e" * 64)
@@ -181,6 +121,46 @@ def test_get_figure_returns_image_with_correct_content_type(db_session, client, 
     assert response.content == b"\x89PNG\r\n"
     assert response.headers["content-type"] == "image/png"
     mock_s3.get_object_bytes.assert_called_once_with("prefix/fig/figures/image-001.png")
+
+
+# --- error scenarios (parametrized across endpoints) ---
+
+_ENDPOINT_SUFFIXES = ["manifest", "markdown", "figures/image-001.png"]
+
+
+@pytest.mark.parametrize("suffix", _ENDPOINT_SUFFIXES)
+def test_endpoint_404_unknown_output(client, suffix) -> None:
+    response = client.get(f"/v1/outputs/99999/{suffix}")
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize("suffix", _ENDPOINT_SUFFIXES)
+def test_endpoint_404_when_s3_not_found(db_session, client, mock_s3, suffix) -> None:
+    bookmark = _create_bookmark(db_session, f"bm_missing_{suffix.replace('/', '_')}")
+    key = suffix.replace("/", "_")
+    job = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key=key.ljust(64, "0"))
+    output = _create_output(db_session, job_id=job.id, aizk_uuid=bookmark.aizk_uuid)
+    mock_s3.get_object_bytes.side_effect = S3NotFoundError("missing")
+
+    response = client.get(f"/v1/outputs/{output.id}/{suffix}")
+
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize("suffix", _ENDPOINT_SUFFIXES)
+def test_endpoint_502_on_s3_error(db_session, client, mock_s3, suffix) -> None:
+    bookmark = _create_bookmark(db_session, f"bm_err_{suffix.replace('/', '_')}")
+    key = ("err_" + suffix.replace("/", "_")).ljust(64, "0")
+    job = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key=key)
+    output = _create_output(db_session, job_id=job.id, aizk_uuid=bookmark.aizk_uuid)
+    mock_s3.get_object_bytes.side_effect = S3Error("storage down", "s3_error")
+
+    response = client.get(f"/v1/outputs/{output.id}/{suffix}")
+
+    assert response.status_code == 502
+
+
+# --- figures: endpoint-specific cases ---
 
 
 @pytest.mark.parametrize("filename", ["../escape.png", "sub/dir.png", "/abs.png"])
@@ -205,19 +185,3 @@ def test_get_figure_404_when_no_figures(db_session, client, mock_s3) -> None:
 
     assert response.status_code == 404
     mock_s3.get_object_bytes.assert_not_called()
-
-
-def test_get_figure_404_unknown_output(client) -> None:
-    response = client.get("/v1/outputs/99999/figures/image-001.png")
-    assert response.status_code == 404
-
-
-def test_get_figure_502_on_s3_error(db_session, client, mock_s3) -> None:
-    bookmark = _create_bookmark(db_session, "bm_figure_err")
-    job = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="g" * 64)
-    output = _create_output(db_session, job_id=job.id, aizk_uuid=bookmark.aizk_uuid)
-    mock_s3.get_object_bytes.side_effect = S3Error("storage down", "s3_error")
-
-    response = client.get(f"/v1/outputs/{output.id}/figures/image-001.png")
-
-    assert response.status_code == 502

@@ -305,8 +305,8 @@ class TestRunWorkerShutdown:
 
         assert exit_code == 0
 
-    def test_immediate_shutdown_calls_os_exit(self, monkeypatch):
-        """Second signal (immediate shutdown) calls os._exit(1) to bypass thread join."""
+    def test_immediate_shutdown_calls_force_exit(self, monkeypatch):
+        """Second signal (immediate shutdown) invokes the force_exit seam to bypass thread join."""
         claim_count = {"n": 0}
 
         def _fake_claim(_config):
@@ -324,7 +324,7 @@ class TestRunWorkerShutdown:
         monkeypatch.setattr(loop, "process_job_supervised", _fake_process)
         monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
         monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
-        monkeypatch.setattr(os, "_exit", lambda code: exit_calls.append(code))
+        monkeypatch.setattr(loop, "force_exit", lambda code: exit_calls.append(code))
 
         config = ConversionConfig(_env_file=None)
         loop.run_worker(config, poll_interval_seconds=0.01)
@@ -332,9 +332,9 @@ class TestRunWorkerShutdown:
         assert exit_calls == [1]
 
     def test_forced_shutdown_with_real_executor_thread(self, monkeypatch):
-        """Real ThreadPoolExecutor thread that outlives drain triggers os._exit(1).
+        """Real ThreadPoolExecutor thread that outlives drain triggers force_exit(1).
 
-        Unlike test_immediate_shutdown_calls_os_exit (which uses an instant
+        Unlike test_immediate_shutdown_calls_force_exit (which uses an instant
         fake), this test submits a blocking task to a real executor so a
         genuine non-daemon thread is alive when drain reports timeout.
         pyleak's no_thread_leaks verifies no thread survives the test.
@@ -355,7 +355,7 @@ class TestRunWorkerShutdown:
 
         def _mock_exit(code: int) -> None:
             exit_calls.append(code)
-            stop.set()  # Unblock the thread (simulates os._exit killing all threads)
+            stop.set()  # Unblock the thread (simulates force_exit killing all threads)
 
         monkeypatch.setattr(loop, "claim_next_job", _fake_claim)
         monkeypatch.setattr(loop, "process_job_supervised", _blocking_process)
@@ -365,7 +365,7 @@ class TestRunWorkerShutdown:
         # has a 15-second buffer that would make this test unacceptably slow.
         # Drain behaviour itself is tested in TestDrainInFlight.
         monkeypatch.setattr(loop, "_drain_in_flight", lambda futures, config: bool(futures))
-        monkeypatch.setattr(os, "_exit", _mock_exit)
+        monkeypatch.setattr(loop, "force_exit", _mock_exit)
 
         config = ConversionConfig(_env_file=None)
 

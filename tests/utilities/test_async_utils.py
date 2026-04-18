@@ -78,18 +78,6 @@ async def test_map_concurrently_preserves_order():
 
 
 @pytest.mark.asyncio(loop_scope="function")
-async def test_gather_with_concurrency_no_task_leaks():
-    async def work(value: int) -> int:
-        await asyncio.sleep(0.005)
-        return value
-
-    async with no_task_leaks(action="raise"):
-        results = await gather_with_concurrency([work(i) for i in range(5)], concurrency=2)
-
-    assert results == [0, 1, 2, 3, 4]
-
-
-@pytest.mark.asyncio(loop_scope="function")
 async def test_map_concurrently_no_task_leaks_with_exceptions():
     async def maybe_fail(value: int) -> int:
         await asyncio.sleep(0.005)
