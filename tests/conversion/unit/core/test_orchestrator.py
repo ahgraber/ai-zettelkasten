@@ -27,6 +27,10 @@ class _FakeContentFetcher:
 
 
 class _FakeResolver:
+    # Declared on the class so ``isinstance(impl, RefResolver)`` succeeds — the
+    # runtime_checkable protocol requires the ``resolves_to`` ClassVar.
+    resolves_to: ClassVar[frozenset[str]] = frozenset()
+
     def __init__(self, target_ref) -> None:
         self._target_ref = target_ref
 
@@ -66,7 +70,7 @@ def _make_orchestrator(registry: dict, converter_registry: dict, depth_cap: int 
 def test_single_hop_content_fetcher():
     """A ref whose kind maps to a ContentFetcher returns ConversionInput directly."""
     fetcher = _FakeContentFetcher(ContentType.HTML)
-    registry = {"url": ("content_fetcher", fetcher)}
+    registry = {"url": fetcher}
     converter = _FakeConverter()
     converter_reg = {(ContentType.HTML, "fake"): converter}
 
@@ -81,7 +85,7 @@ def test_single_hop_content_fetcher():
 def test_single_hop_fetch_returns_conversion_input():
     """_fetch with a direct content fetcher returns the ConversionInput from the fetcher."""
     fetcher = _FakeContentFetcher(ContentType.PDF)
-    registry = {"url": ("content_fetcher", fetcher)}
+    registry = {"url": fetcher}
 
     orch = Orchestrator(
         resolve_fetcher=lambda kind: registry[kind],
@@ -106,8 +110,8 @@ def test_two_hop_resolver_then_fetcher():
     fetcher = _FakeContentFetcher(ContentType.PDF)
 
     registry = {
-        "karakeep_bookmark": ("resolver", resolver),
-        "arxiv": ("content_fetcher", fetcher),
+        "karakeep_bookmark": resolver,
+        "arxiv": fetcher,
     }
     converter = _FakeConverter()
     converter_reg = {(ContentType.PDF, "fake"): converter}
@@ -126,8 +130,8 @@ def test_two_hop_fetch_result_uses_resolved_ref():
     fetcher = _FakeContentFetcher(ContentType.PDF)
 
     registry = {
-        "karakeep_bookmark": ("resolver", resolver),
-        "arxiv": ("content_fetcher", fetcher),
+        "karakeep_bookmark": resolver,
+        "arxiv": fetcher,
     }
     orch = Orchestrator(
         resolve_fetcher=lambda kind: registry[kind],
@@ -149,8 +153,8 @@ def test_depth_limit_raises_fetcher_depth_exceeded():
     url_ref = UrlRef(url="https://example.com")
     # resolver always returns another UrlRef (infinite chain)
     registry = {
-        "karakeep_bookmark": ("resolver", _FakeResolver(target_ref=url_ref)),
-        "url": ("resolver", _FakeResolver(target_ref=url_ref)),
+        "karakeep_bookmark": _FakeResolver(target_ref=url_ref),
+        "url": _FakeResolver(target_ref=url_ref),
     }
     orch = Orchestrator(
         resolve_fetcher=lambda kind: registry[kind],
@@ -170,7 +174,7 @@ def test_depth_cap_one_allows_single_resolver_hop():
     """With depth_cap=1, a single resolver hop (depth 0) succeeds; depth 1 raises."""
     url_ref = UrlRef(url="https://a.com")
     registry = {
-        "url": ("resolver", _FakeResolver(target_ref=url_ref)),
+        "url": _FakeResolver(target_ref=url_ref),
     }
     orch = Orchestrator(
         resolve_fetcher=lambda kind: registry[kind],
@@ -189,8 +193,8 @@ def test_depth_cap_not_exceeded_for_valid_chain():
     arxiv_ref = ArxivRef(arxiv_id="2301.00002")
     fetcher = _FakeContentFetcher(ContentType.PDF)
     registry = {
-        "karakeep_bookmark": ("resolver", _FakeResolver(target_ref=arxiv_ref)),
-        "arxiv": ("content_fetcher", fetcher),
+        "karakeep_bookmark": _FakeResolver(target_ref=arxiv_ref),
+        "arxiv": fetcher,
     }
     orch = Orchestrator(
         resolve_fetcher=lambda kind: registry[kind],
@@ -241,7 +245,7 @@ def test_full_cycle_with_fakes_no_real_adapters():
     fetcher = _FakeContentFetcher(ContentType.HTML)
     converter = _FakeConverter()
 
-    registry = {"url": ("content_fetcher", fetcher)}
+    registry = {"url": fetcher}
     converter_reg = {(ContentType.HTML, "fake_converter"): converter}
 
     orch = _make_orchestrator(registry, converter_reg)
