@@ -47,6 +47,21 @@ class FetcherRegistry:
         """Union of all registered kinds across both roles."""
         return frozenset(self._entries)
 
+    def submittable_kinds(self) -> frozenset[str]:
+        """Subset of registered kinds whose adapters declare ``api_submittable == True``.
+
+        This is the authoritative set of kinds the public API may accept as
+        ingress. Worker-internal kinds (e.g. ``arxiv``, ``inline_html``) are
+        still registered for chain-closure validation but their adapters
+        declare ``api_submittable = False`` so they cannot be directly
+        submitted by external clients.
+        """
+        return frozenset(
+            kind
+            for kind, (_role, impl) in self._entries.items()
+            if getattr(type(impl), "api_submittable", False)
+        )
+
 
 class ConverterRegistry:
     """Maps `(ContentType, impl_name)` pairs to converter instances."""

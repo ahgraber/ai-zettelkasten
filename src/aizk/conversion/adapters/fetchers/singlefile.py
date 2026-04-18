@@ -16,6 +16,7 @@ class SingleFileFetcher:
     """
 
     produces: ClassVar[frozenset[ContentType]] = frozenset({ContentType.HTML})
+    api_submittable: ClassVar[bool] = False
 
     def fetch(self, ref) -> ConversionInput:
         raise NotImplementedError(

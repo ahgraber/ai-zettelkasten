@@ -26,6 +26,7 @@ class UrlFetcher:
     """ContentFetcher that retrieves content from an arbitrary URL via HTTP GET."""
 
     produces: ClassVar[frozenset[ContentType]] = frozenset({ContentType.PDF, ContentType.HTML})
+    api_submittable: ClassVar[bool] = False
 
     def __init__(self, config=None) -> None:
         self._config = config

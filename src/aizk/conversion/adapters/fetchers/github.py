@@ -18,6 +18,7 @@ class GithubReadmeFetcher:
     """
 
     produces: ClassVar[frozenset[ContentType]] = frozenset({ContentType.HTML})
+    api_submittable: ClassVar[bool] = False
 
     def __init__(self, config=None) -> None:
         self._config = config

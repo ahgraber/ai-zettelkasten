@@ -19,20 +19,14 @@ class ApiRuntime:
     converter_name: str = "docling"
 
 
-# Source-ref kinds the API endpoint accepts from callers.  Worker-internal
-# resolver targets (arxiv, url, inline_html, github_readme) are registered for
-# chain-closure validation but must not be directly submittable.
-_API_SUBMITTABLE_KINDS: frozenset[str] = frozenset({"karakeep_bookmark"})
-
-
 def build_api_runtime(cfg: object) -> ApiRuntime:
     """Build the API-process runtime.
 
     Registers the same fetcher adapters as the worker runtime so chain-closure
     validation covers all resolver edges.  The API gate then narrows
-    ``accepted_kinds`` to only the directly-submittable kinds; worker-internal
-    resolver targets (arxiv, url, etc.) are registered for chain-closure but
-    must not be API-submittable.
+    ``accepted_kinds`` to the subset declared ``api_submittable`` by each
+    adapter — worker-internal resolver targets (arxiv, url, etc.) declare
+    ``api_submittable = False`` so they cannot be directly submitted.
 
     Args:
         cfg: ``ConversionConfig`` (or compatible) instance.
@@ -50,11 +44,8 @@ def build_api_runtime(cfg: object) -> ApiRuntime:
         fetcher_registry, converter_registry, cfg, include_converters=False
     )
 
-    # Fetchers are registered for all supported kinds (so chain_closure can validate them),
-    # but the API gate only accepts directly-submitted kinds — worker-internal kinds like
-    # "arxiv" and "inline_html" must not be submittable via the public endpoint.
     capabilities = DeploymentCapabilities(
-        accepted_kinds=fetcher_registry.registered_kinds() & _API_SUBMITTABLE_KINDS,
+        accepted_kinds=fetcher_registry.submittable_kinds(),
         content_type_map=content_type_map,
         registered_content_types=registered_content_types,
         startup_probes=[],

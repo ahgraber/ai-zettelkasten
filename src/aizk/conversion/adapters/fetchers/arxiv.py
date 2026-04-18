@@ -22,6 +22,7 @@ class ArxivFetcher:
     """
 
     produces: ClassVar[frozenset[ContentType]] = frozenset({ContentType.PDF})
+    api_submittable: ClassVar[bool] = False
 
     def __init__(self, config=None) -> None:
         self._config = config

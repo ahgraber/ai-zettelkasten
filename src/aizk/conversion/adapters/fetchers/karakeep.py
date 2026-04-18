@@ -35,6 +35,7 @@ class KarakeepBookmarkResolver:
     resolves_to: ClassVar[frozenset[str]] = frozenset(
         {"arxiv", "github_readme", "url", "inline_html"}
     )
+    api_submittable: ClassVar[bool] = True
 
     def __init__(self, config: ConversionConfig) -> None:
         self._config = config

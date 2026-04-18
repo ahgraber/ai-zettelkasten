@@ -11,6 +11,7 @@ class InlineContentFetcher:
     """ContentFetcher that returns the bytes already embedded in an InlineHtmlRef."""
 
     produces: ClassVar[frozenset[ContentType]] = frozenset({ContentType.HTML})
+    api_submittable: ClassVar[bool] = False
 
     def fetch(self, ref) -> ConversionInput:
         return ConversionInput(content=ref.body, content_type=ContentType.HTML)
