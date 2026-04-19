@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 import datetime as dt
 import json
@@ -10,10 +9,11 @@ import logging
 import multiprocessing as mp
 import os
 from pathlib import Path
+import shutil
 import tempfile
 import threading
 import time
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
@@ -21,71 +21,29 @@ from sqlmodel import Session, select
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as SourceRecord
 from aizk.conversion.db import get_engine
-from aizk.conversion.utilities.bookmark_utils import (
-    BookmarkContentError,
-    detect_content_type,
-    detect_source_type,
-    fetch_karakeep_bookmark,
-    get_bookmark_asset_id,
-    get_bookmark_html_content,
-    get_bookmark_source_url,
-    get_bookmark_text_content,
-    is_pdf_asset,
-    is_precrawled_archive_asset,
-    validate_bookmark_content,
-)
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.utilities.hashing import build_output_config_snapshot, compute_markdown_hash
+from aizk.conversion.utilities.hashing import compute_markdown_hash
 from aizk.conversion.utilities.paths import (
     OUTPUT_MARKDOWN_FILENAME,
-    markdown_path,
     metadata_path,
 )
 from aizk.conversion.utilities.whitespace import normalize_whitespace
-from aizk.conversion.workers.converter import (
-    ConversionError,
-    convert_html,
-    convert_pdf,
-)
 from aizk.conversion.workers.errors import (
     ConversionCancelledError,
     ConversionSubprocessError,
     ConversionTimeoutError,
     JobDataIntegrityError,
-    PreflightError,
     ReportedChildError,
-)
-from aizk.conversion.workers.fetcher import (
-    BookmarkContentUnavailableError,
-    FetchError,
-    fetch_arxiv,
-    fetch_github_readme,
-    fetch_karakeep_asset,
 )
 from aizk.conversion.workers.shutdown import is_shutdown_requested
 from aizk.conversion.workers.supervision import _supervise_conversion_process
-from aizk.conversion.workers.types import (
-    ConversionArtifacts,
-    ConversionInput,
-    SupervisionResult,
-    _utcnow,
-)
+from aizk.conversion.workers.types import SupervisionResult, _utcnow
 from aizk.conversion.workers.uploader import _upload_converted
-from aizk.utilities.async_utils import run_async
-from aizk.utilities.url_utils import normalize_url
-from karakeep_client.models import Bookmark as KarakeepBookmark
+
+if TYPE_CHECKING:
+    from aizk.conversion.wiring.worker import WorkerRuntime
 
 logger = logging.getLogger(__name__)
-
-# Module-level GPU semaphore.  Limits concurrent conversion subprocesses
-# to prevent GPU OOM when multiple jobs run in parallel.
-_gpu_semaphore: threading.Semaphore | None = None
-
-
-def configure_gpu_semaphore(gpu_concurrency: int) -> None:
-    """Set the GPU concurrency limit.  Called once at worker startup."""
-    global _gpu_semaphore  # noqa: PLW0603
-    _gpu_semaphore = threading.Semaphore(gpu_concurrency)
 
 
 def _docling_version() -> str:
@@ -141,252 +99,52 @@ def _report_status(
         return
 
 
-def _prepare_bookmark_for_job(job_id: int, engine: Engine) -> tuple[SourceRecord, KarakeepBookmark]:
-    """Fetch, validate, and persist AIZK Bookmark for conversion.
+def _get_source_ref(job_id: int, engine: Engine):
+    """Read and deserialize source_ref from the job record."""
+    from pydantic import TypeAdapter
 
-    Runs in the parent process before spawning the conversion subprocess.
-    """
+    from aizk.conversion.core.source_ref import SourceRef
+
     with Session(engine) as session:
         job = session.get(ConversionJob, job_id)
         if not job:
             raise JobDataIntegrityError(f"Job {job_id} missing during preflight")
-        bookmark = session.exec(select(SourceRecord).where(SourceRecord.aizk_uuid == job.aizk_uuid)).one()
-
-    karakeep_bookmark = fetch_karakeep_bookmark(bookmark.karakeep_id)
-    if not karakeep_bookmark:
-        raise FetchError(f"Bookmark {bookmark.karakeep_id} not found in KaraKeep")
-    validate_bookmark_content(karakeep_bookmark)
-
-    source_url = get_bookmark_source_url(karakeep_bookmark)
-    updated_source_type = detect_source_type(source_url)
-    updated_content_type = detect_content_type(karakeep_bookmark)
-    updated_title = karakeep_bookmark.title or source_url
-    normalized_url = normalize_url(source_url) if source_url else None
-
-    with Session(engine) as session:
-        bookmark = session.exec(select(SourceRecord).where(SourceRecord.aizk_uuid == job.aizk_uuid)).one()
-        job_record = session.get(ConversionJob, job_id)
-        bookmark.url = source_url
-        bookmark.normalized_url = normalized_url
-        bookmark.title = updated_title
-        bookmark.content_type = updated_content_type
-        bookmark.source_type = updated_source_type
-        bookmark.updated_at = _utcnow()
-        if job_record:
-            job_record.title = updated_title
-            job_record.updated_at = _utcnow()
-            session.add(job_record)
-        session.add(bookmark)
-        session.commit()
-        session.refresh(bookmark)
-
-    return bookmark, karakeep_bookmark
+        if not job.source_ref:
+            raise JobDataIntegrityError(f"Job {job_id} has no source_ref")
+        return TypeAdapter(SourceRef).validate_python(json.loads(job.source_ref))
 
 
-def _prepare_conversion_input(
-    *,
-    bookmark_record: SourceRecord,
-    karakeep_bookmark: KarakeepBookmark,
-    config: ConversionConfig,
-) -> ConversionInput:
-    """Prepare conversion input bytes and determine pipeline."""
-    fetched_at = _utcnow()
-    if bookmark_record.source_type == "arxiv":
-        pdf_bytes = asyncio.run(fetch_arxiv(karakeep_bookmark, config))
-        return ConversionInput(pipeline="pdf", content_bytes=pdf_bytes, fetched_at=fetched_at)
-
-    if bookmark_record.source_type == "github":
-        readme_bytes = asyncio.run(fetch_github_readme(karakeep_bookmark, config))
-        return ConversionInput(pipeline="html", content_bytes=readme_bytes, fetched_at=fetched_at)
-
-    if is_pdf_asset(karakeep_bookmark):
-        asset_id = get_bookmark_asset_id(karakeep_bookmark)
-        if asset_id:
-            pdf_bytes = run_async(fetch_karakeep_asset, asset_id)
-            return ConversionInput(pipeline="pdf", content_bytes=pdf_bytes, fetched_at=fetched_at)
-
-    if is_precrawled_archive_asset(karakeep_bookmark):
-        asset_id = get_bookmark_asset_id(karakeep_bookmark)
-        if asset_id:
-            html_bytes = run_async(fetch_karakeep_asset, asset_id)
-            return ConversionInput(pipeline="html", content_bytes=html_bytes, fetched_at=fetched_at)
-
-    # Fallback to HTML content
-    html_content = get_bookmark_html_content(karakeep_bookmark)
-    if html_content:
-        return ConversionInput(pipeline="html", content_bytes=html_content.encode("utf-8"), fetched_at=fetched_at)
-
-    text_content = get_bookmark_text_content(karakeep_bookmark)
-    if text_content:
-        html = f"<html><body><pre>{text_content}</pre></body></html>"
-        return ConversionInput(pipeline="html", content_bytes=html.encode("utf-8"), fetched_at=fetched_at)
-
-    raise BookmarkContentUnavailableError(f"Bookmark {bookmark_record.karakeep_id} has no usable content")
-
-
-def _run_conversion(
-    *,
-    job: ConversionJob,
-    bookmark: SourceRecord,
-    conversion_input: ConversionInput,
-    config: ConversionConfig,
-    engine: Engine,
-    workspace: Path,
-) -> ConversionArtifacts:
-    """Run conversion and persist local artifacts for parent upload.
-
-    This is executed in the child process and performs cancellation checks.
-    """
-    _raise_if_cancelled(job.id, engine)
-    content_bytes = conversion_input.content_bytes
-    pipeline_name = conversion_input.pipeline
-    fetched_at = conversion_input.fetched_at
-
-    if pipeline_name == "pdf":
-        markdown_text, figure_paths = convert_pdf(content_bytes, workspace, config)
-    else:
-        markdown_text, figure_paths = convert_html(content_bytes, workspace, config, source_url=bookmark.url)
-
-    _raise_if_cancelled(job.id, engine)
-    markdown_filename = OUTPUT_MARKDOWN_FILENAME
-    markdown_file = markdown_path(workspace, markdown_filename)
-    # Normalize whitespace before writing and hashing
-    markdown_text = normalize_whitespace(markdown_text)
-    markdown_file.write_text(markdown_text)
-    markdown_hash = compute_markdown_hash(markdown_text)
-    picture_description_enabled = config.is_picture_description_enabled()
-    config_snapshot = build_output_config_snapshot(
-        config,
-        picture_description_enabled=picture_description_enabled,
-    )
-
-    metadata = {
-        "pipeline_name": pipeline_name,
-        "fetched_at": fetched_at.isoformat(),
-        "markdown_filename": markdown_filename,
-        "figure_files": [path.name for path in figure_paths],
-        "markdown_hash_xx64": markdown_hash,
-        "docling_version": _docling_version(),
-        "config_snapshot": config_snapshot,
-    }
-    metadata_file = metadata_path(workspace)
-    metadata_file.write_text(json.dumps(metadata, indent=2, sort_keys=False))
-
-    return ConversionArtifacts(
-        markdown_path=markdown_file,
-        figure_paths=figure_paths,
-        markdown_hash=markdown_hash,
-        pipeline_name=pipeline_name,
-        fetched_at=fetched_at,
-        docling_version=metadata["docling_version"],
-    )
-
-
-def _convert_job_artifacts(
-    *,
-    job_id: int,
-    workspace: Path,
-    karakeep_payload_path: Path,
-    status_queue: mp.Queue | None,
+def _enrich_source_metadata(
+    aizk_uuid: str,
+    terminal_ref,  # SourceRef
+    content_type_str: str | None,
+    engine,
 ) -> None:
-    """Prepare input and run conversion in the child process."""
-    config = ConversionConfig()
-    engine = get_engine(config.database_url)
+    """Best-effort update of mutable Source metadata. Logs on failure, never raises."""
+    from aizk.conversion.core.types import SOURCE_TYPE_BY_KIND
 
-    with Session(engine) as session:
-        job = session.get(ConversionJob, job_id)
-        if not job:
-            raise JobDataIntegrityError(f"Job {job_id} missing during conversion")
-        bookmark = session.exec(select(SourceRecord).where(SourceRecord.aizk_uuid == job.aizk_uuid)).one()
-
-    _raise_if_cancelled(job_id, engine)
-    karakeep_payload = json.loads(karakeep_payload_path.read_text())
-    karakeep_bookmark = KarakeepBookmark.model_validate(karakeep_payload)
-
-    _report_status(status_queue, event="phase", message="preparing_input")
-    conversion_input = _prepare_conversion_input(
-        bookmark_record=bookmark,
-        karakeep_bookmark=karakeep_bookmark,
-        config=config,
-    )
-
-    _report_status(status_queue, event="phase", message="converting")
-    _run_conversion(
-        job=job,
-        bookmark=bookmark,
-        config=config,
-        workspace=workspace,
-        conversion_input=conversion_input,
-        engine=engine,
-    )
-
-
-def _process_job_subprocess(
-    job_id: int,
-    workspace_path: str,
-    karakeep_payload_path: str,
-    status_queue: mp.Queue,
-) -> None:
-    """Subprocess entrypoint that reports conversion events to the parent."""
-    import traceback as tb_mod
-
-    os.setpgrp()  # Create new process group for cleanup of all descendants
     try:
-        _convert_job_artifacts(
-            job_id=job_id,
-            workspace=Path(workspace_path),
-            karakeep_payload_path=Path(karakeep_payload_path),
-            status_queue=status_queue,
+        source_type = SOURCE_TYPE_BY_KIND.get(terminal_ref.kind, "other")
+        with Session(engine) as session:
+            source = session.exec(select(SourceRecord).where(SourceRecord.aizk_uuid == aizk_uuid)).one_or_none()
+            if source is None:
+                logger.warning(
+                    "Source row not found for aizk_uuid=%s during enrichment",
+                    aizk_uuid,
+                )
+                return
+            # ONLY write mutable metadata columns — never write identity columns
+            source.source_type = source_type
+            if content_type_str:
+                source.content_type = content_type_str
+            source.updated_at = _utcnow()
+            session.add(source)
+            session.commit()
+    except Exception:
+        logger.exception(
+            "Source enrichment failed for aizk_uuid=%s (best-effort; job proceeds)",
+            aizk_uuid,
         )
-        _report_status(status_queue, event="completed", message="conversion completed")
-    except ConversionCancelledError:
-        _report_status(status_queue, event="cancelled", message="conversion cancelled")
-    except (
-        ConversionError,
-        FetchError,
-        BookmarkContentUnavailableError,
-        BookmarkContentError,
-        JobDataIntegrityError,
-    ) as exc:
-        error_code = getattr(exc, "error_code", "conversion_failed")
-        retryable = exc.retryable
-        _report_status(
-            status_queue,
-            event="failed",
-            message=str(exc),
-            error_code=error_code,
-            retryable=retryable,
-            traceback_text=tb_mod.format_exc(),
-        )
-        raise
-    except Exception as exc:
-        _report_status(
-            status_queue,
-            event="failed",
-            message=str(exc),
-            error_code="conversion_failed",
-            retryable=True,
-            traceback_text=tb_mod.format_exc(),
-        )
-        raise
-
-
-def _spawn_conversion_subprocess(
-    *,
-    job_id: int,
-    workspace: Path,
-    payload_path: Path,
-) -> tuple[mp.Process, mp.Queue]:
-    """Start the conversion subprocess and return the process and status queue."""
-    ctx = mp.get_context("spawn")
-    status_queue: mp.Queue = ctx.Queue()
-    process = ctx.Process(
-        target=_process_job_subprocess,
-        args=(job_id, str(workspace), str(payload_path), status_queue),
-        daemon=True,
-    )
-    process.start()
-    return process, status_queue
 
 
 def _initialize_running_job(job_id: int, engine: Engine) -> bool:
@@ -407,25 +165,142 @@ def _initialize_running_job(job_id: int, engine: Engine) -> bool:
     return True
 
 
+def _process_job_subprocess(
+    job_id: int,
+    workspace_path: str,
+    source_ref_json: str,
+    status_queue: mp.Queue,
+) -> None:
+    """Subprocess entrypoint — builds its own runtime and runs orchestrator.process_with_provenance()."""
+    import traceback as tb_mod
+
+    from pydantic import TypeAdapter
+
+    from aizk.conversion.core.source_ref import SourceRef as _SourceRef
+    from aizk.conversion.wiring.worker import build_worker_runtime
+
+    os.setpgrp()  # Create new process group for cleanup of all descendants
+
+    def _do_convert():
+        config = ConversionConfig()
+        engine = get_engine(config.database_url)
+
+        source_ref = TypeAdapter(_SourceRef).validate_python(json.loads(source_ref_json))
+        _raise_if_cancelled(job_id, engine)
+
+        runtime = build_worker_runtime(config)
+        converter_name = config.worker_converter_name
+
+        _report_status(status_queue, event="phase", message="preparing_input")
+
+        result = runtime.orchestrator.process_with_provenance(source_ref, converter_name)
+
+        _report_status(status_queue, event="phase", message="converting")
+
+        workspace = Path(workspace_path)
+
+        # Write markdown
+        markdown_text = normalize_whitespace(result.artifacts.markdown)
+        markdown_file = workspace / OUTPUT_MARKDOWN_FILENAME
+        markdown_file.write_text(markdown_text)
+        markdown_hash = compute_markdown_hash(markdown_text)
+
+        # Copy figures from converter's tempdir to workspace
+        figure_file_names = []
+        for fig in result.artifacts.figures:
+            if isinstance(fig, Path) and fig.exists():
+                dest = workspace / fig.name
+                shutil.copy2(fig, dest)
+                figure_file_names.append(fig.name)
+
+        # Config snapshot from the converter
+        converter = runtime.orchestrator._resolve_converter(result.conversion_input.content_type, converter_name)
+        adapter_snapshot = converter.config_snapshot() if hasattr(converter, "config_snapshot") else {}
+
+        pipeline_name = result.conversion_input.content_type.value  # "pdf" or "html"
+        docling_ver = result.artifacts.metadata.get("docling_version", _docling_version())
+
+        # fetched_at: use now() as fallback
+        fetched_at = dt.datetime.now(dt.timezone.utc)
+
+        metadata = {
+            "pipeline_name": pipeline_name,
+            "fetched_at": fetched_at.isoformat(),
+            "markdown_filename": OUTPUT_MARKDOWN_FILENAME,
+            "figure_files": figure_file_names,
+            "markdown_hash_xx64": markdown_hash,
+            "docling_version": docling_ver,
+            "config_snapshot": {
+                "converter_name": converter_name,
+                **adapter_snapshot,
+            },
+            # Extra fields for parent enrichment and v2 manifest
+            "terminal_ref": result.terminal_ref.model_dump(mode="json"),
+            "content_type": pipeline_name,
+        }
+        metadata_file = metadata_path(workspace)
+        metadata_file.write_text(json.dumps(metadata, indent=2, sort_keys=False))
+
+        _report_status(status_queue, event="completed", message="conversion completed")
+
+    try:
+        _do_convert()
+    except ConversionCancelledError:
+        _report_status(status_queue, event="cancelled", message="conversion cancelled")
+    except Exception as exc:
+        error_code = getattr(exc, "error_code", "conversion_failed")
+        retryable = getattr(exc, "retryable", True)
+        _report_status(
+            status_queue,
+            event="failed",
+            message=str(exc),
+            error_code=error_code,
+            retryable=retryable,
+            traceback_text=tb_mod.format_exc(),
+        )
+        raise
+
+
+def _spawn_conversion_subprocess(
+    *,
+    job_id: int,
+    workspace: Path,
+    source_ref_json: str,
+) -> tuple[mp.Process, mp.Queue]:
+    """Start the conversion subprocess and return the process and status queue."""
+    ctx = mp.get_context("spawn")
+    status_queue: mp.Queue = ctx.Queue()
+    process = ctx.Process(
+        target=_process_job_subprocess,
+        args=(job_id, str(workspace), source_ref_json, status_queue),
+        daemon=True,
+    )
+    process.start()
+    return process, status_queue
+
+
 def _spawn_and_supervise(
     *,
     job_id: int,
     workspace: Path,
-    payload_path: Path,
+    source_ref_json: str,
     poll_interval_seconds: float,
     timeout_seconds: float,
     is_cancelled_fn: Callable[[], bool],
     config: ConversionConfig,
+    resource_guard,
+    requires_gpu: bool,
 ) -> tuple[mp.Process, SupervisionResult, float | None]:
-    """Spawn a conversion subprocess under the GPU semaphore and supervise it."""
-    sem = _gpu_semaphore
-    if sem is not None:
-        sem.acquire()
-    try:
+    """Spawn and supervise; acquire resource_guard only if requires_gpu."""
+    from contextlib import nullcontext
+
+    guard_ctx = resource_guard if (requires_gpu and resource_guard is not None) else nullcontext()
+
+    with guard_ctx:
         process, status_queue = _spawn_conversion_subprocess(
             job_id=job_id,
             workspace=workspace,
-            payload_path=payload_path,
+            source_ref_json=source_ref_json,
         )
 
         deadline = None
@@ -443,17 +318,25 @@ def _spawn_and_supervise(
             shutdown_requested_fn=is_shutdown_requested,
             drain_timeout_seconds=float(config.worker_drain_timeout_seconds),
         )
-    finally:
-        if sem is not None:
-            sem.release()
     return process, result, deadline
 
 
-def process_job_supervised(job_id: int, config: ConversionConfig, poll_interval_seconds: float = 2.0) -> None:
+def process_job_supervised(
+    job_id: int,
+    config: ConversionConfig,
+    runtime: "WorkerRuntime | None" = None,
+    *,
+    poll_interval_seconds: float = 2.0,
+) -> None:
     """Run a supervised conversion attempt and upload artifacts on success.
 
     The parent process handles preflight, cancellation, timeout, and uploads.
     """
+    from aizk.conversion.wiring.worker import WorkerRuntime, build_worker_runtime
+
+    if runtime is None:
+        runtime = build_worker_runtime(config)
+
     engine = get_engine(config.database_url)
     timeout_seconds = float(config.worker_job_timeout_seconds)
 
@@ -461,26 +344,28 @@ def process_job_supervised(job_id: int, config: ConversionConfig, poll_interval_
         return
 
     try:
-        bookmark, karakeep_bookmark = _prepare_bookmark_for_job(job_id, engine)
-    except (FetchError, BookmarkContentError, JobDataIntegrityError) as exc:
+        source_ref = _get_source_ref(job_id, engine)
+    except JobDataIntegrityError as exc:
         handle_job_error(job_id, exc, config)
         return
-    except Exception as exc:
-        handle_job_error(job_id, PreflightError(f"Job {job_id} preflight failed: {exc}"), config)
-        return
+
+    converter_name = config.worker_converter_name
+    requires_gpu = runtime.capabilities.converter_requires_gpu(converter_name)
+
     with tempfile.TemporaryDirectory() as tmpdirname:
         workspace = Path(tmpdirname)
-        payload_path = workspace / "karakeep_bookmark.json"
-        payload_path.write_text(json.dumps(karakeep_bookmark.model_dump(mode="json"), indent=2))
+        source_ref_json = source_ref.model_dump_json()
 
         process, result, deadline = _spawn_and_supervise(
             job_id=job_id,
             workspace=workspace,
-            payload_path=payload_path,
+            source_ref_json=source_ref_json,
             poll_interval_seconds=poll_interval_seconds,
             timeout_seconds=timeout_seconds,
             is_cancelled_fn=lambda: _is_job_cancelled(job_id, engine),
             config=config,
+            resource_guard=runtime.resource_guard,
+            requires_gpu=requires_gpu,
         )
 
         if result.timed_out:
@@ -557,6 +442,28 @@ def process_job_supervised(job_id: int, config: ConversionConfig, poll_interval_
                 config,
             )
             return
+
+        # Best-effort Source enrichment from metadata written by subprocess
+        metadata_file = workspace / "metadata.json"
+        if metadata_file.exists():
+            try:
+                metadata = json.loads(metadata_file.read_text())
+                terminal_ref_data = metadata.get("terminal_ref")
+                content_type_str = metadata.get("content_type")
+                if terminal_ref_data:
+                    from pydantic import TypeAdapter
+
+                    from aizk.conversion.core.source_ref import SourceRef as _SourceRef
+
+                    terminal_ref = TypeAdapter(_SourceRef).validate_python(terminal_ref_data)
+
+                    with Session(engine) as session:
+                        job_rec = session.get(ConversionJob, job_id)
+                        if job_rec:
+                            aizk_uuid = job_rec.aizk_uuid
+                    _enrich_source_metadata(aizk_uuid, terminal_ref, content_type_str, engine)
+            except Exception:
+                logger.exception("Failed to read terminal_ref for enrichment; job proceeds")
 
         with Session(engine) as session:
             job_record = session.get(ConversionJob, job_id)

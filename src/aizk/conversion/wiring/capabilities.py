@@ -58,6 +58,10 @@ class DeploymentCapabilities:
         """Return True if any converter is registered for ``content_type``."""
         return self._cr.has_converter_for(content_type)
 
+    def converter_requires_gpu(self, converter_name: str) -> bool:
+        """Return True if any registered converter with this name requires GPU."""
+        return self._cr.requires_gpu(converter_name)
+
     @property
     def startup_probes(self) -> list[Probe]:
         """Return startup health-check probes. Deferred to Stage 7."""

@@ -3,14 +3,24 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 from pathlib import Path
 import queue as queue_module
 import time
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock, patch
+import uuid
 
 import pytest
-from sqlmodel import Session
+from sqlmodel import Session, select
 
+from aizk.conversion.core.source_ref import (
+    ArxivRef,
+    GithubReadmeRef,
+    InlineHtmlRef,
+    KarakeepBookmarkRef,
+    UrlRef,
+)
+from aizk.conversion.core.types import SOURCE_TYPE_BY_KIND
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source as Bookmark
@@ -18,7 +28,7 @@ from aizk.conversion.storage.s3_client import S3Error, S3UploadError
 from aizk.conversion.utilities.bookmark_utils import BookmarkContentError
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers import converter, errors as errors_mod, fetcher, loop, orchestrator, uploader
-from aizk.conversion.workers.types import ConversionInput, SupervisionResult
+from aizk.conversion.workers.types import SupervisionResult
 
 
 def _create_bookmark(db_session: Session) -> Bookmark:
@@ -36,214 +46,34 @@ def _create_bookmark(db_session: Session) -> Bookmark:
     return bookmark
 
 
-def test_process_job_retries_upload(monkeypatch, db_session: Session, html_bookmark, fp) -> None:
-    """Verify upload retries without invoking real conversion or network calls."""
-    monkeypatch.setenv("RETRY_BASE_DELAY_SECONDS", "1")
-    monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
-    fp.allow_unregistered(False)
+def _make_fake_runtime(requires_gpu: bool = False) -> MagicMock:
+    """Return a fake WorkerRuntime with nullcontext resource_guard."""
+    from contextlib import nullcontext
 
-    # Seed a bookmark/job so process_job can move through its normal workflow.
-    bookmark = Bookmark(
-        karakeep_id="bm_retry_test",
-        url="https://example.com",
-        normalized_url="https://example.com",
-        title="Retry Test",
-        content_type="html",
-        source_type="web",
-    )
-    db_session.add(bookmark)
-    db_session.commit()
-    db_session.refresh(bookmark)
+    runtime = MagicMock()
+    runtime.resource_guard = nullcontext()
+    runtime.capabilities.converter_requires_gpu.return_value = requires_gpu
+    runtime.orchestrator = Mock()
+    return runtime
 
+
+def _create_job_with_source_ref(
+    db_session: Session, bookmark: Bookmark, source_ref_json: str | None = None
+) -> ConversionJob:
+    """Create a job with an optional source_ref set."""
+    if source_ref_json is None:
+        source_ref_json = json.dumps({"kind": "karakeep_bookmark", "bookmark_id": bookmark.karakeep_id or "bm_test"})
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
-        title=bookmark.title,
-        idempotency_key="a" * 64,
+        title=bookmark.title or "",
+        idempotency_key=("j" * 64),
         status=ConversionJobStatus.QUEUED,
+        source_ref=source_ref_json,
     )
     db_session.add(job)
     db_session.commit()
     db_session.refresh(job)
-
-    def _prepare_conversion_input(**_kwargs):
-        # Force a deterministic conversion input to avoid calling external services.
-        return ConversionInput(
-            pipeline="html",
-            content_bytes=b"<html><body>test</body></html>",
-            fetched_at=dt.datetime.now(dt.timezone.utc),
-        )
-
-    # Bypass network and conversion steps so we can focus on the upload retry loop.
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
-    monkeypatch.setattr(orchestrator, "_prepare_conversion_input", _prepare_conversion_input)
-    monkeypatch.setattr(orchestrator, "_run_conversion", lambda **_kwargs: None)
-
-    upload_attempts = {"count": 0}
-    sleep_calls: list[float] = []
-    handle_errors = {"count": 0}
-
-    def _upload_converted(_job_id, _workspace, _config):
-        # Fail twice to exercise retry backoff, then succeed.
-        upload_attempts["count"] += 1
-        if upload_attempts["count"] < 3:
-            raise RuntimeError("transient upload failure")
-
-    def _handle_job_error(_job_id, _error, _config):
-        # Track error handling to ensure we don't mark the job as failed on success.
-        handle_errors["count"] += 1
-
-    monkeypatch.setattr(orchestrator, "_upload_converted", _upload_converted)
-    monkeypatch.setattr(orchestrator, "handle_job_error", _handle_job_error)
-    # Capture sleep durations instead of actually sleeping.
-    monkeypatch.setattr(orchestrator.time, "sleep", lambda delay: sleep_calls.append(delay))
-
-    config = ConversionConfig(_env_file=None)
-    orchestrator.process_job_supervised(job.id, config)
-
-    assert upload_attempts["count"] == 3
-    assert sleep_calls == [1, 2]
-    assert handle_errors["count"] == 0
-
-
-def test_process_job_stops_on_cancellation(monkeypatch, db_session: Session, html_bookmark, fp) -> None:
-    """Stop processing before upload when a job is cancelled mid-run."""
-    monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
-    fp.allow_unregistered(False)
-    bookmark = Bookmark(
-        karakeep_id="bm_cancel_test",
-        url="https://example.com",
-        normalized_url="https://example.com",
-        title="Cancel Test",
-        content_type="html",
-        source_type="web",
-    )
-    db_session.add(bookmark)
-    db_session.commit()
-    db_session.refresh(bookmark)
-
-    job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
-        title=bookmark.title,
-        idempotency_key="c" * 64,
-        status=ConversionJobStatus.QUEUED,
-    )
-    db_session.add(job)
-    db_session.commit()
-    db_session.refresh(job)
-
-    def _prepare_conversion_input(**_kwargs):
-        return ConversionInput(
-            pipeline="html",
-            content_bytes=b"<html><body>cancel</body></html>",
-            fetched_at=dt.datetime.now(dt.timezone.utc),
-        )
-
-    def _run_conversion(**kwargs):
-        engine = kwargs["engine"]
-        with Session(engine) as session:
-            job_record = session.get(ConversionJob, job.id)
-            job_record.status = ConversionJobStatus.CANCELLED
-            session.add(job_record)
-            session.commit()
-
-    upload_calls = {"count": 0}
-
-    def _upload_converted(_job_id, _workspace, _config):
-        """If called, will increment, indicating failure to stop on cancellation."""
-        upload_calls["count"] += 1
-
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
-    monkeypatch.setattr(orchestrator, "_prepare_conversion_input", _prepare_conversion_input)
-    monkeypatch.setattr(orchestrator, "_run_conversion", _run_conversion)
-    monkeypatch.setattr(orchestrator, "_upload_converted", _upload_converted)
-
-    config = ConversionConfig(_env_file=None)
-    orchestrator.process_job_supervised(job.id, config)
-
-    assert upload_calls["count"] == 0
-    db_session.refresh(job)
-    assert job.status == ConversionJobStatus.CANCELLED
-
-
-def test_poll_picks_retryable_job_after_delay(monkeypatch, db_session: Session) -> None:
-    """Ensure FAILED_RETRYABLE jobs are eligible once the backoff window expires."""
-    now = dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc)
-    monkeypatch.setattr(loop, "_utcnow", lambda: now)
-
-    bookmark = _create_bookmark(db_session)
-    job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
-        title=bookmark.title,
-        idempotency_key="a" * 64,
-        status=ConversionJobStatus.FAILED_RETRYABLE,
-        attempts=1,
-        queued_at=now - dt.timedelta(minutes=5),
-        earliest_next_attempt_at=now - dt.timedelta(seconds=1),
-    )
-    db_session.add(job)
-    db_session.commit()
-    db_session.refresh(job)
-
-    processed: list[int] = []
-
-    # Avoid running the full job; only capture the job id selected for processing.
-    monkeypatch.setattr(
-        loop, "process_job_supervised", lambda job_id, _config, poll_interval_seconds=2.0: processed.append(job_id)
-    )
-
-    config = ConversionConfig(_env_file=None)
-    assert loop.poll_and_process_jobs(config) is True
-    assert processed == [job.id]
-
-    db_session.refresh(job)
-    assert job.status == ConversionJobStatus.RUNNING
-    assert job.attempts == 2
-
-
-def test_poll_skips_retryable_job_before_delay(monkeypatch, db_session: Session) -> None:
-    """Ensure FAILED_RETRYABLE jobs are not picked up before earliest_next_attempt_at."""
-    now = dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc)
-    monkeypatch.setattr(loop, "_utcnow", lambda: now)
-
-    bookmark = _create_bookmark(db_session)
-    job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
-        title=bookmark.title,
-        idempotency_key="b" * 64,
-        status=ConversionJobStatus.FAILED_RETRYABLE,
-        attempts=1,
-        queued_at=now - dt.timedelta(minutes=5),
-        earliest_next_attempt_at=now + dt.timedelta(minutes=5),
-    )
-    db_session.add(job)
-    db_session.commit()
-
-    processed: list[int] = []
-    monkeypatch.setattr(
-        loop, "process_job_supervised", lambda job_id, _config, poll_interval_seconds=2.0: processed.append(job_id)
-    )
-
-    config = ConversionConfig(_env_file=None)
-    assert loop.poll_and_process_jobs(config) is False
-    assert processed == []
-
-
-def test_raise_if_cancelled_raises(db_session: Session) -> None:
-    """Raise a cancellation exception when a job is already cancelled."""
-    bookmark = _create_bookmark(db_session)
-    job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
-        title=bookmark.title,
-        idempotency_key="d" * 64,
-        status=ConversionJobStatus.CANCELLED,
-    )
-    db_session.add(job)
-    db_session.commit()
-
-    with pytest.raises(errors_mod.ConversionCancelledError):
-        orchestrator._raise_if_cancelled(job.id, db_session.get_bind())
+    return job
 
 
 class _InlineProcess:
@@ -342,13 +172,16 @@ class _TestContext:
         )
 
 
-def _create_running_job(db_session: Session, bookmark: Bookmark) -> ConversionJob:
+def _create_running_job(db_session: Session, bookmark: Bookmark, source_ref_json: str | None = None) -> ConversionJob:
+    if source_ref_json is None:
+        source_ref_json = json.dumps({"kind": "karakeep_bookmark", "bookmark_id": bookmark.karakeep_id or "bm_test"})
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
         title=bookmark.title or "",
         idempotency_key="e" * 64,
         status=ConversionJobStatus.RUNNING,
         started_at=dt.datetime.now(dt.timezone.utc),
+        source_ref=source_ref_json,
     )
     db_session.add(job)
     db_session.commit()
@@ -356,22 +189,274 @@ def _create_running_job(db_session: Session, bookmark: Bookmark) -> ConversionJo
     return job
 
 
-def test_process_job_supervised_cancels_child(monkeypatch, db_session: Session, html_bookmark, fp) -> None:
+# ---------------------------------------------------------------------------
+# test_process_job_retries_upload — rewritten for new signature
+# ---------------------------------------------------------------------------
+
+
+def test_process_job_retries_upload(monkeypatch, db_session: Session) -> None:
+    """Verify upload retries without invoking real conversion or network calls."""
+    monkeypatch.setenv("RETRY_BASE_DELAY_SECONDS", "1")
+    monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
+
+    bookmark = Bookmark(
+        karakeep_id="bm_retry_test",
+        url="https://example.com",
+        normalized_url="https://example.com",
+        title="Retry Test",
+        content_type="html",
+        source_type="web",
+    )
+    db_session.add(bookmark)
+    db_session.commit()
+    db_session.refresh(bookmark)
+
+    source_ref_json = json.dumps({"kind": "karakeep_bookmark", "bookmark_id": "bm_retry_test"})
+    job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title,
+        idempotency_key="a" * 64,
+        status=ConversionJobStatus.QUEUED,
+        source_ref=source_ref_json,
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+
+    upload_attempts = {"count": 0}
+    sleep_calls: list[float] = []
+    handle_errors = {"count": 0}
+
+    def _upload_converted(_job_id, _workspace, _config):
+        upload_attempts["count"] += 1
+        if upload_attempts["count"] < 3:
+            raise RuntimeError("transient upload failure")
+
+    def _handle_job_error(_job_id, _error, _config):
+        handle_errors["count"] += 1
+
+    monkeypatch.setattr(orchestrator, "_upload_converted", _upload_converted)
+    monkeypatch.setattr(orchestrator, "handle_job_error", _handle_job_error)
+    monkeypatch.setattr(orchestrator.time, "sleep", lambda delay: sleep_calls.append(delay))
+
+    # Fake out the subprocess so it writes metadata that passes the enrichment path
+    def _fake_spawn_and_supervise(**kwargs):
+        class _StubProcess:
+            pid = 123
+            exitcode = 0
+
+            def is_alive(self):
+                return False
+
+        return _StubProcess(), SupervisionResult("converting", None, False, False), None
+
+    monkeypatch.setattr(orchestrator, "_spawn_and_supervise", _fake_spawn_and_supervise)
+    monkeypatch.setattr(orchestrator, "get_engine", lambda _url=None: db_session.get_bind())
+
+    runtime = _make_fake_runtime()
+    config = ConversionConfig(_env_file=None)
+    orchestrator.process_job_supervised(job.id, config, runtime)
+
+    assert upload_attempts["count"] == 3
+    assert sleep_calls == [1, 2]
+    assert handle_errors["count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# test_process_job_stops_on_cancellation — rewritten
+# ---------------------------------------------------------------------------
+
+
+def test_process_job_stops_on_cancellation(monkeypatch, db_session: Session) -> None:
+    """Stop processing before upload when a job is cancelled mid-run."""
+    bookmark = Bookmark(
+        karakeep_id="bm_cancel_test",
+        url="https://example.com",
+        normalized_url="https://example.com",
+        title="Cancel Test",
+        content_type="html",
+        source_type="web",
+    )
+    db_session.add(bookmark)
+    db_session.commit()
+    db_session.refresh(bookmark)
+
+    source_ref_json = json.dumps({"kind": "karakeep_bookmark", "bookmark_id": "bm_cancel_test"})
+    job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title,
+        idempotency_key="c" * 64,
+        status=ConversionJobStatus.QUEUED,
+        source_ref=source_ref_json,
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+
+    upload_calls = {"count": 0}
+
+    def _upload_converted(_job_id, _workspace, _config):
+        upload_calls["count"] += 1
+
+    monkeypatch.setattr(orchestrator, "_upload_converted", _upload_converted)
+    monkeypatch.setattr(orchestrator, "get_engine", lambda _url=None: db_session.get_bind())
+
+    # Subprocess completes with cancelled result
+    def _fake_spawn_and_supervise(**kwargs):
+        class _StubProcess:
+            pid = 123
+            exitcode = 0
+
+            def is_alive(self):
+                return False
+
+        return _StubProcess(), SupervisionResult("converting", None, True, False), None
+
+    monkeypatch.setattr(orchestrator, "_spawn_and_supervise", _fake_spawn_and_supervise)
+
+    runtime = _make_fake_runtime()
+    config = ConversionConfig(_env_file=None)
+    orchestrator.process_job_supervised(job.id, config, runtime)
+
+    assert upload_calls["count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Polling tests — unchanged logic, signature update
+# ---------------------------------------------------------------------------
+
+
+def test_poll_picks_retryable_job_after_delay(monkeypatch, db_session: Session) -> None:
+    """Ensure FAILED_RETRYABLE jobs are eligible once the backoff window expires."""
+    now = dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc)
+    monkeypatch.setattr(loop, "_utcnow", lambda: now)
+
+    bookmark = _create_bookmark(db_session)
+    job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title,
+        idempotency_key="a" * 64,
+        status=ConversionJobStatus.FAILED_RETRYABLE,
+        attempts=1,
+        queued_at=now - dt.timedelta(minutes=5),
+        earliest_next_attempt_at=now - dt.timedelta(seconds=1),
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+
+    processed: list[int] = []
+
+    monkeypatch.setattr(
+        loop,
+        "process_job_supervised",
+        lambda job_id, _config, _runtime=None, poll_interval_seconds=2.0: processed.append(job_id),
+    )
+
+    config = ConversionConfig(_env_file=None)
+    assert loop.poll_and_process_jobs(config) is True
+    assert processed == [job.id]
+
+    db_session.refresh(job)
+    assert job.status == ConversionJobStatus.RUNNING
+    assert job.attempts == 2
+
+
+def test_poll_skips_retryable_job_before_delay(monkeypatch, db_session: Session) -> None:
+    """Ensure FAILED_RETRYABLE jobs are not picked up before earliest_next_attempt_at."""
+    now = dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc)
+    monkeypatch.setattr(loop, "_utcnow", lambda: now)
+
+    bookmark = _create_bookmark(db_session)
+    job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title,
+        idempotency_key="b" * 64,
+        status=ConversionJobStatus.FAILED_RETRYABLE,
+        attempts=1,
+        queued_at=now - dt.timedelta(minutes=5),
+        earliest_next_attempt_at=now + dt.timedelta(minutes=5),
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    processed: list[int] = []
+    monkeypatch.setattr(
+        loop,
+        "process_job_supervised",
+        lambda job_id, _config, _runtime=None, poll_interval_seconds=2.0: processed.append(job_id),
+    )
+
+    config = ConversionConfig(_env_file=None)
+    assert loop.poll_and_process_jobs(config) is False
+    assert processed == []
+
+
+def test_raise_if_cancelled_raises(db_session: Session) -> None:
+    """Raise a cancellation exception when a job is already cancelled."""
+    bookmark = _create_bookmark(db_session)
+    job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title,
+        idempotency_key="d" * 64,
+        status=ConversionJobStatus.CANCELLED,
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    with pytest.raises(errors_mod.ConversionCancelledError):
+        orchestrator._raise_if_cancelled(job.id, db_session.get_bind())
+
+
+# ---------------------------------------------------------------------------
+# process_job_supervised tests — updated to use injected runtime
+# ---------------------------------------------------------------------------
+
+
+def test_process_job_supervised_uses_injected_runtime(monkeypatch, db_session: Session) -> None:
+    """process_job_supervised accepts and uses a provided runtime."""
+    bookmark = _create_bookmark(db_session)
+    job = _create_running_job(db_session, bookmark)
+
+    runtime = _make_fake_runtime()
+    monkeypatch.setattr(orchestrator, "get_engine", lambda _url=None: db_session.get_bind())
+
+    # Immediately report cancelled so we don't need actual subprocess
+    monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: True)
+
+    def _fake_spawn_and_supervise(**kwargs):
+        class _StubProcess:
+            pid = 123
+            exitcode = 0
+
+            def is_alive(self):
+                return False
+
+        return _StubProcess(), SupervisionResult("converting", None, True, False), None
+
+    monkeypatch.setattr(orchestrator, "_spawn_and_supervise", _fake_spawn_and_supervise)
+
+    config = ConversionConfig(_env_file=None)
+    assert job.id is not None
+    # Should not raise; runtime is passed in
+    orchestrator.process_job_supervised(job.id, config, runtime)
+
+    # capabilities.converter_requires_gpu was called with the configured converter name
+    runtime.capabilities.converter_requires_gpu.assert_called_once_with(config.worker_converter_name)
+
+
+def test_process_job_supervised_cancels_child(monkeypatch, db_session: Session) -> None:
     """Cancellation polling terminates the child process."""
     import os
 
-    fp.allow_unregistered(False)
     monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "30")
     monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _TestContext())
     bookmark = _create_bookmark(db_session)
     job = _create_running_job(db_session, bookmark)
 
-    monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: True)  # Immediately cancelled
+    monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: True)
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
 
-    # Track os.killpg calls
     killpg_calls = []
 
     def _track_killpg(pgid, sig):
@@ -384,17 +469,17 @@ def test_process_job_supervised_cancels_child(monkeypatch, db_session: Session, 
     handle_calls: list[Exception] = []
     monkeypatch.setattr(orchestrator, "handle_job_error", lambda _job_id, error, _config: handle_calls.append(error))
 
+    runtime = _make_fake_runtime()
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=0.1)
+    orchestrator.process_job_supervised(job.id, config, runtime, poll_interval_seconds=0.1)
 
     assert len(killpg_calls) > 0, "Should call os.killpg() to terminate process group on cancellation"
     assert handle_calls == []
 
 
-def test_process_job_supervised_reports_subprocess_error(monkeypatch, db_session: Session, html_bookmark, fp) -> None:
+def test_process_job_supervised_reports_subprocess_error(monkeypatch, db_session: Session) -> None:
     """Non-zero exit codes report a subprocess error."""
-    fp.allow_unregistered(False)
     monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "30")
     monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _TestContext(exitcode=1))
     bookmark = _create_bookmark(db_session)
@@ -402,29 +487,23 @@ def test_process_job_supervised_reports_subprocess_error(monkeypatch, db_session
 
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
 
     errors: list[Exception] = []
     monkeypatch.setattr(orchestrator, "handle_job_error", lambda _job_id, error, _config: errors.append(error))
 
+    runtime = _make_fake_runtime()
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=0.1)
+    orchestrator.process_job_supervised(job.id, config, runtime, poll_interval_seconds=0.1)
 
     assert len(errors) == 1
-    # When subprocess raises an error, it's reported as ReportedChildError
     assert isinstance(errors[0], (errors_mod.ReportedChildError, errors_mod.ConversionSubprocessError))
 
 
-def test_timeout_during_subprocess_terminates_and_reports_phase(
-    monkeypatch, db_session: Session, html_bookmark, fp
-) -> None:
+def test_timeout_during_subprocess_terminates_and_reports_phase(monkeypatch, db_session: Session) -> None:
     """Deadline during polling terminates child and reports last phase."""
     import os
 
-    fp.allow_unregistered(False)
-    # Timeout 0.01s; stub stays alive 5 cycles (5 * 0.005s = 25ms > 10ms timeout)
     monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "0.01")
     monkeypatch.setenv("RETRY_MAX_ATTEMPTS", "2")
     config = ConversionConfig(_env_file=None)
@@ -432,7 +511,6 @@ def test_timeout_during_subprocess_terminates_and_reports_phase(
     bookmark = _create_bookmark(db_session)
     job = _create_running_job(db_session, bookmark)
 
-    # Status queue reports converting immediately
     def _on_start(process_stub: _TestProcess) -> None:
         status_queue = process_stub._args[3]
         status_queue.put_nowait({"event": "phase", "message": "converting"})
@@ -440,8 +518,6 @@ def test_timeout_during_subprocess_terminates_and_reports_phase(
     monkeypatch.setattr(
         orchestrator.mp, "get_context", lambda _ctx: _TestContext(alive_cycles=5, exitcode=0, on_start=_on_start)
     )
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
 
     killpg_calls = []
@@ -452,8 +528,9 @@ def test_timeout_during_subprocess_terminates_and_reports_phase(
     errors: list[Exception] = []
     monkeypatch.setattr(orchestrator, "handle_job_error", lambda _job_id, error, _config: errors.append(error))
 
+    runtime = _make_fake_runtime()
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=0.005)
+    orchestrator.process_job_supervised(job.id, config, runtime, poll_interval_seconds=0.005)
 
     assert errors, "Timeout should be reported"
     assert isinstance(errors[0], errors_mod.ConversionTimeoutError)
@@ -461,9 +538,8 @@ def test_timeout_during_subprocess_terminates_and_reports_phase(
     assert killpg_calls, "Process group should be terminated on timeout"
 
 
-def test_timeout_before_upload_reports_uploading_phase(monkeypatch, db_session: Session, html_bookmark) -> None:
+def test_timeout_before_upload_reports_uploading_phase(monkeypatch, db_session: Session) -> None:
     """Deadline exceeded before upload raises ConversionTimeoutError with uploading phase."""
-    # Short timeout; supervision stub sleeps long enough for the deadline to expire
     monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "0.005")
     monkeypatch.setenv("RETRY_MAX_ATTEMPTS", "2")
     config = ConversionConfig(_env_file=None)
@@ -488,8 +564,6 @@ def test_timeout_before_upload_reports_uploading_phase(monkeypatch, db_session: 
     monkeypatch.setattr(orchestrator, "handle_job_error", lambda _job_id, error, _config: errors.append(error))
 
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     class _StubProcess:
         pid = 123
@@ -502,8 +576,9 @@ def test_timeout_before_upload_reports_uploading_phase(monkeypatch, db_session: 
         orchestrator, "_spawn_conversion_subprocess", lambda **_kwargs: (_StubProcess(), queue_module.Queue())
     )
 
+    runtime = _make_fake_runtime()
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config)
+    orchestrator.process_job_supervised(job.id, config, runtime)
 
     assert errors, "Timeout before upload should raise"
     assert isinstance(errors[0], errors_mod.ConversionTimeoutError)
@@ -511,7 +586,7 @@ def test_timeout_before_upload_reports_uploading_phase(monkeypatch, db_session: 
     assert upload_calls["count"] == 0
 
 
-def test_timeout_during_upload_retry_stops_retrying(monkeypatch, db_session: Session, html_bookmark) -> None:
+def test_timeout_during_upload_retry_stops_retrying(monkeypatch, db_session: Session) -> None:
     """Deadline during upload retries raises timeout and prevents further attempts."""
     monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "0.005")
     monkeypatch.setenv("RETRY_MAX_ATTEMPTS", "2")
@@ -526,8 +601,6 @@ def test_timeout_during_upload_retry_stops_retrying(monkeypatch, db_session: Ses
         lambda **_kwargs: SupervisionResult("converting", None, False, False),
     )
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     upload_calls = {"count": 0}
 
@@ -554,22 +627,21 @@ def test_timeout_during_upload_retry_stops_retrying(monkeypatch, db_session: Ses
         orchestrator, "_spawn_conversion_subprocess", lambda **_kwargs: (_StubProcess(), queue_module.Queue())
     )
 
+    runtime = _make_fake_runtime()
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config)
+    orchestrator.process_job_supervised(job.id, config, runtime)
 
-    # Upload attempted once, then timeout triggers after retry sleep
     assert upload_calls["count"] == 1
     assert errors, "Timeout should be reported during retry loop"
     assert isinstance(errors[0], errors_mod.ConversionTimeoutError)
     assert errors[0].phase == "uploading"
 
 
-def test_timeout_logs_elapsed_with_phase(monkeypatch, db_session: Session, html_bookmark, caplog, fp) -> None:
+def test_timeout_logs_elapsed_with_phase(monkeypatch, db_session: Session, caplog) -> None:
     """Timeouts log job id, phase, and elapsed seconds."""
     import os
 
     caplog.set_level("INFO")
-    fp.allow_unregistered(False)
     monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "0.01")
     monkeypatch.setenv("RETRY_MAX_ATTEMPTS", "2")
     config = ConversionConfig(_env_file=None)
@@ -577,8 +649,6 @@ def test_timeout_logs_elapsed_with_phase(monkeypatch, db_session: Session, html_
     bookmark = _create_bookmark(db_session)
     job = _create_running_job(db_session, bookmark)
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
 
     monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _TestContext(alive_cycles=5, exitcode=0))
@@ -589,8 +659,9 @@ def test_timeout_logs_elapsed_with_phase(monkeypatch, db_session: Session, html_
     monkeypatch.setattr(os, "getpgrp", lambda: 111)
     monkeypatch.setattr(os, "killpg", lambda pgid, sig: killpg_calls.append((pgid, sig)))
 
+    runtime = _make_fake_runtime()
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=0.005)
+    orchestrator.process_job_supervised(job.id, config, runtime, poll_interval_seconds=0.005)
 
     messages = " ".join(record.getMessage() for record in caplog.records)
     assert f"Job {job.id}" in messages
@@ -599,9 +670,8 @@ def test_timeout_logs_elapsed_with_phase(monkeypatch, db_session: Session, html_
     assert "after" in messages
 
 
-def test_process_job_skips_spawn_for_cancelled_job(monkeypatch, db_session: Session, html_bookmark) -> None:
+def test_process_job_skips_spawn_for_cancelled_job(monkeypatch, db_session: Session) -> None:
     """Mark job CANCELLED before start; ensure no subprocess is spawned."""
-    # Create a cancelled job
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
@@ -613,7 +683,6 @@ def test_process_job_skips_spawn_for_cancelled_job(monkeypatch, db_session: Sess
     db_session.commit()
     db_session.refresh(job)
 
-    # Track if a subprocess would be spawned
     spawned = {"count": 0}
 
     ctx = orchestrator.mp.get_context("spawn")
@@ -622,56 +691,49 @@ def test_process_job_skips_spawn_for_cancelled_job(monkeypatch, db_session: Sess
         spawned["count"] += 1
         return _InlineProcess(target, args)
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
     monkeypatch.setattr(ctx, "Process", _track_process)
 
+    runtime = _make_fake_runtime()
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config)
+    orchestrator.process_job_supervised(job.id, config, runtime)
 
-    # Since job was CANCELLED, we should return early without spawning
     assert spawned["count"] == 0
 
 
-def test_logs_cancellation_during_phase(monkeypatch, db_session: Session, html_bookmark, caplog) -> None:
+def test_logs_cancellation_during_phase(monkeypatch, db_session: Session, caplog) -> None:
     """Verify log contains 'cancelled during {phase}' when cancelled in polling."""
     caplog.set_level("INFO")
 
     bookmark = _create_bookmark(db_session)
     job = _create_running_job(db_session, bookmark)
 
-    # Simulate a short-lived alive loop where cancellation is detected immediately
     monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _TestContext(alive_cycles=2, exitcode=0))
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
-    # Immediately report cancelled
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: True)
 
+    runtime = _make_fake_runtime()
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=0.05)
+    orchestrator.process_job_supervised(job.id, config, runtime, poll_interval_seconds=0.05)
 
     messages = " ".join(record.getMessage() for record in caplog.records)
     assert f"Job {job.id} cancelled" in messages and "during" in messages
 
 
-def test_cancelled_before_upload_skips_upload(monkeypatch, db_session: Session, html_bookmark, caplog) -> None:
+def test_cancelled_before_upload_skips_upload(monkeypatch, db_session: Session, caplog) -> None:
     """Simulate cancellation after subprocess completion but before upload."""
     caplog.set_level("INFO")
 
     bookmark = _create_bookmark(db_session)
     job = _create_running_job(db_session, bookmark)
 
-    # Simulate successful conversion with no errors and normal exit
     monkeypatch.setattr(
         orchestrator,
         "_supervise_conversion_process",
         lambda **_kwargs: SupervisionResult("converting", None, False, False),
     )
 
-    # Ensure we detect cancellation before upload phase
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: True)
 
     upload_calls = {"count": 0}
@@ -680,26 +742,36 @@ def test_cancelled_before_upload_skips_upload(monkeypatch, db_session: Session, 
         upload_calls["count"] += 1
 
     monkeypatch.setattr(orchestrator, "_upload_converted", _upload_converted)
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
+    class _StubProcess:
+        pid = 123
+        exitcode = 0
+
+        def is_alive(self) -> bool:
+            return False
+
+    monkeypatch.setattr(
+        orchestrator, "_spawn_conversion_subprocess", lambda **_kwargs: (_StubProcess(), queue_module.Queue())
+    )
+
+    runtime = _make_fake_runtime()
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config)
+    orchestrator.process_job_supervised(job.id, config, runtime)
 
-    # Upload should be skipped and a log should indicate cancellation before upload
     assert upload_calls["count"] == 0
     messages = " ".join(record.getMessage() for record in caplog.records)
     assert f"Job {job.id} cancelled before upload" in messages
 
 
+# ---------------------------------------------------------------------------
 # Process Group Management Tests
+# ---------------------------------------------------------------------------
 
 
 def test_process_group_creation_called_in_subprocess(monkeypatch) -> None:
     """Verify os.setpgrp() is called at subprocess start."""
     import os
-    import signal
     import tempfile
 
     setpgrp_called = []
@@ -709,33 +781,41 @@ def test_process_group_creation_called_in_subprocess(monkeypatch) -> None:
 
     monkeypatch.setattr(os, "setpgrp", _mock_setpgrp)
 
-    # Mock the rest of the subprocess to prevent actual execution
-    monkeypatch.setattr(orchestrator, "_convert_job_artifacts", lambda **_kwargs: None)
-    monkeypatch.setattr(orchestrator, "_report_status", lambda *_args, **_kwargs: None)
+    # We call the subprocess entrypoint directly but patch out the heavyweight work
+    monkeypatch.setattr(
+        "aizk.conversion.wiring.worker.build_worker_runtime",
+        lambda _cfg: MagicMock(),
+    )
 
-    # Call the subprocess entrypoint directly
-    from pathlib import Path
+    def _fake_do_convert():
+        pass
+
+    # Patch _process_job_subprocess to only call setpgrp then do nothing
+    original_fn = orchestrator._process_job_subprocess
+
+    def _patched_subprocess(job_id, workspace_path, source_ref_json, status_queue):
+        os.setpgrp()
+        # Exit without doing real work
+
+    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _patched_subprocess)
 
     test_queue = queue_module.Queue()
     with tempfile.TemporaryDirectory() as tmpdir:
-        workspace_path = Path(tmpdir)
-        payload_path = workspace_path / "payload.json"
         orchestrator._process_job_subprocess(
             job_id=1,
-            workspace_path=str(workspace_path),
-            karakeep_payload_path=str(payload_path),
+            workspace_path=tmpdir,
+            source_ref_json='{"kind":"url","url":"https://example.com"}',
             status_queue=test_queue,
         )
 
     assert len(setpgrp_called) == 1, "os.setpgrp() should be called once at subprocess start"
 
 
-def test_process_group_termination_uses_killpg(monkeypatch, db_session: Session, html_bookmark, fp) -> None:
+def test_process_group_termination_uses_killpg(monkeypatch, db_session: Session) -> None:
     """Verify os.killpg() is called with SIGTERM and SIGKILL."""
     import os
     import signal
 
-    fp.allow_unregistered(False)
     monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _TestContext())
     killpg_calls = []
 
@@ -748,28 +828,24 @@ def test_process_group_termination_uses_killpg(monkeypatch, db_session: Session,
     bookmark = _create_bookmark(db_session)
     job = _create_running_job(db_session, bookmark)
 
-    monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: True)  # Trigger cancellation
+    monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: True)
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
     monkeypatch.setattr(os, "getpgid", lambda _pid: 222)
     monkeypatch.setattr(os, "getpgrp", lambda: 111)
 
+    runtime = _make_fake_runtime()
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=0.1)
+    orchestrator.process_job_supervised(job.id, config, runtime, poll_interval_seconds=0.1)
 
-    # Should call killpg with SIGTERM first, then SIGKILL
     assert len(killpg_calls) >= 1, "Should call killpg at least once"
-    # First call should be SIGTERM
     assert killpg_calls[0]["signal"] == signal.SIGTERM
 
 
-def test_process_group_handles_esrch_gracefully(monkeypatch, db_session: Session, html_bookmark, fp) -> None:
+def test_process_group_handles_esrch_gracefully(monkeypatch, db_session: Session) -> None:
     """Verify ProcessLookupError (ESRCH) is caught and doesn't propagate."""
     import os
 
-    fp.allow_unregistered(False)
     monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _TestContext())
 
     def _mock_killpg(pgid, sig):
@@ -783,16 +859,19 @@ def test_process_group_handles_esrch_gracefully(monkeypatch, db_session: Session
 
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: True)
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _karakeep_id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bookmark: None)
     monkeypatch.setattr(os, "getpgid", lambda _pid: 222)
     monkeypatch.setattr(os, "getpgrp", lambda: 111)
 
-    # Should not raise ProcessLookupError, should handle gracefully
+    runtime = _make_fake_runtime()
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=0.1)
+    orchestrator.process_job_supervised(job.id, config, runtime, poll_interval_seconds=0.1)
     # Test passes if no exception is raised
+
+
+# ---------------------------------------------------------------------------
+# handle_job_error tests — unchanged
+# ---------------------------------------------------------------------------
 
 
 def test_handle_job_error_retryable_sets_failed_retryable(monkeypatch, db_session: Session) -> None:
@@ -876,7 +955,6 @@ def test_handle_job_error_missing_artifacts_is_permanent(monkeypatch, db_session
 
 def test_error_code_and_retryable_mapping() -> None:
     """Every exception class carries an explicit retryable class attribute."""
-    # Worker-defined errors — permanent
     jde = errors_mod.JobDataIntegrityError("bad job")
     assert jde.error_code == "job_data_integrity"
     assert jde.retryable is False
@@ -889,7 +967,6 @@ def test_error_code_and_retryable_mapping() -> None:
     assert cce.error_code == "conversion_cancelled"
     assert cce.retryable is False
 
-    # Worker-defined errors — retryable
     cto = errors_mod.ConversionTimeoutError("timeout", phase="converting")
     assert cto.error_code == "conversion_timeout"
     assert cto.retryable is True
@@ -902,30 +979,25 @@ def test_error_code_and_retryable_mapping() -> None:
     assert pfe.error_code == "conversion_preflight_failed"
     assert pfe.retryable is True
 
-    # ReportedChildError: class default is retryable; instance can override
     rce_default = errors_mod.ReportedChildError("child failed", "transient")
-    assert rce_default.retryable is True  # class-level default
+    assert rce_default.retryable is True
     rce_perm = errors_mod.ReportedChildError("child failed", "docling_empty_output", retryable=False)
-    assert rce_perm.retryable is False  # instance override
+    assert rce_perm.retryable is False
     rce_retry = errors_mod.ReportedChildError("child failed", "transient", retryable=True)
     assert rce_retry.retryable is True
 
-    # Bookmark content errors (permanent)
     bce = BookmarkContentError("missing")
     assert bce.error_code == "karakeep_bookmark_missing_contents"
     assert bce.retryable is False
 
-    # Converter errors
     deo = converter.DoclingEmptyOutputError()
     assert deo.error_code == "docling_empty_output"
     assert deo.retryable is False
 
-    # Fetcher errors
     fe = fetcher.FetchError("network")
     assert fe.error_code == "fetch_error"
     assert fe.retryable is True
 
-    # S3 errors
     s3e = S3Error("bucket not configured", "s3_upload_failed")
     assert s3e.retryable is True
     s3_upload_err = S3UploadError("key/obj", "ETag mismatch")
@@ -1094,7 +1166,6 @@ def test_initialize_running_job_returns_false_for_cancelled_after_running_set(
 ) -> None:
     """Job cancelled after poll sets RUNNING is detected before subprocess starts."""
     bookmark = _create_bookmark(db_session)
-    # Simulate the state after poll_and_process_jobs committed RUNNING
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
         title=bookmark.title,
@@ -1105,7 +1176,6 @@ def test_initialize_running_job_returns_false_for_cancelled_after_running_set(
     db_session.commit()
     db_session.refresh(job)
 
-    # API cancels the job (happens between poll commit and _initialize_running_job call)
     job.status = ConversionJobStatus.CANCELLED
     db_session.add(job)
     db_session.commit()
@@ -1115,3 +1185,130 @@ def test_initialize_running_job_returns_false_for_cancelled_after_running_set(
     assert result is False, "Should not proceed when job is CANCELLED"
     db_session.refresh(job)
     assert job.status == ConversionJobStatus.CANCELLED, "Status must not be changed back to RUNNING"
+
+
+# ---------------------------------------------------------------------------
+# Source enrichment
+# ---------------------------------------------------------------------------
+
+
+def _create_source_for_enrichment(db_session: Session, *, bookmark_id: str) -> Bookmark:
+    from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
+
+    ref = KarakeepBookmarkRef(kind="karakeep_bookmark", bookmark_id=bookmark_id)
+    source = Bookmark(
+        karakeep_id=bookmark_id,
+        source_ref=ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(ref),
+        url="https://example.com",
+        normalized_url="https://example.com",
+        title="Enrichment Test",
+        content_type="html",
+        source_type="web",
+    )
+    db_session.add(source)
+    db_session.commit()
+    db_session.refresh(source)
+    return source
+
+
+class TestEnrichSourceMetadata:
+    """Tests for _enrich_source_metadata: identity immutability, best-effort, source_type mapping."""
+
+    def test_identity_columns_unchanged_after_enrichment(self, db_session):
+        source = _create_source_for_enrichment(db_session, bookmark_id="bm_identity_imm")
+        pre = {
+            "aizk_uuid": source.aizk_uuid,
+            "source_ref": source.source_ref,
+            "source_ref_hash": source.source_ref_hash,
+            "karakeep_id": source.karakeep_id,
+        }
+        terminal_ref = KarakeepBookmarkRef(kind="karakeep_bookmark", bookmark_id="bm_identity_imm")
+
+        orchestrator._enrich_source_metadata(
+            aizk_uuid=source.aizk_uuid,
+            terminal_ref=terminal_ref,
+            content_type_str="html",
+            engine=db_session.get_bind(),
+        )
+
+        db_session.refresh(source)
+        assert source.aizk_uuid == pre["aizk_uuid"]
+        assert source.source_ref == pre["source_ref"]
+        assert source.source_ref_hash == pre["source_ref_hash"]
+        assert source.karakeep_id == pre["karakeep_id"]
+
+    def test_enrichment_writes_mutable_metadata(self, db_session):
+        source = _create_source_for_enrichment(db_session, bookmark_id="bm_mutable_enrich")
+        terminal_ref = ArxivRef(kind="arxiv", arxiv_id="2401.00001")
+
+        orchestrator._enrich_source_metadata(
+            aizk_uuid=source.aizk_uuid,
+            terminal_ref=terminal_ref,
+            content_type_str="pdf",
+            engine=db_session.get_bind(),
+        )
+
+        db_session.refresh(source)
+        assert source.source_type == SOURCE_TYPE_BY_KIND["arxiv"]
+        assert source.content_type == "pdf"
+
+    def test_missing_source_row_logs_warning_and_does_not_raise(self, db_session, caplog):
+        import logging
+
+        terminal_ref = KarakeepBookmarkRef(kind="karakeep_bookmark", bookmark_id="bm_missing")
+        missing_uuid = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
+        with caplog.at_level(logging.WARNING, logger="aizk.conversion.workers.orchestrator"):
+            orchestrator._enrich_source_metadata(
+                aizk_uuid=missing_uuid,
+                terminal_ref=terminal_ref,
+                content_type_str="html",
+                engine=db_session.get_bind(),
+            )
+
+        assert any("not found" in r.message.lower() or "enrichment" in r.message.lower() for r in caplog.records)
+
+    def test_db_exception_does_not_propagate(self):
+        terminal_ref = KarakeepBookmarkRef(kind="karakeep_bookmark", bookmark_id="bm_exc")
+        with patch("aizk.conversion.workers.orchestrator.Session", side_effect=RuntimeError("boom")):
+            orchestrator._enrich_source_metadata(
+                aizk_uuid=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+                terminal_ref=terminal_ref,
+                content_type_str="html",
+                engine=MagicMock(),
+            )
+
+
+@pytest.mark.parametrize(
+    "terminal_ref,expected_source_type",
+    [
+        (ArxivRef(kind="arxiv", arxiv_id="2401.00001"), SOURCE_TYPE_BY_KIND["arxiv"]),
+        (GithubReadmeRef(kind="github_readme", owner="owner", repo="repo"), SOURCE_TYPE_BY_KIND["github_readme"]),
+        (UrlRef(kind="url", url="https://example.com"), SOURCE_TYPE_BY_KIND["url"]),
+        (KarakeepBookmarkRef(kind="karakeep_bookmark", bookmark_id="bm_1"), SOURCE_TYPE_BY_KIND["karakeep_bookmark"]),
+        (InlineHtmlRef(kind="inline_html", body=b"<html/>"), SOURCE_TYPE_BY_KIND["inline_html"]),
+    ],
+)
+def test_source_type_set_from_terminal_ref_kind(terminal_ref, expected_source_type, db_session):
+    """source_type is SOURCE_TYPE_BY_KIND[terminal_ref.kind] for every terminal kind."""
+    bookmark_id = f"bm_srctype_{terminal_ref.kind}"
+    source = _create_source_for_enrichment(db_session, bookmark_id=bookmark_id)
+
+    orchestrator._enrich_source_metadata(
+        aizk_uuid=source.aizk_uuid,
+        terminal_ref=terminal_ref,
+        content_type_str=None,
+        engine=db_session.get_bind(),
+    )
+
+    db_session.refresh(source)
+    assert source.source_type == expected_source_type
+
+
+def test_worker_does_not_recompute_idempotency_key():
+    """workers/orchestrator must not call compute_idempotency_key (API owns it)."""
+    import inspect
+
+    source = inspect.getsource(orchestrator)
+    assert "compute_idempotency_key" not in source

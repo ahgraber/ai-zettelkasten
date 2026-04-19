@@ -14,7 +14,7 @@ from sqlmodel import Session
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.workers import loop, orchestrator, shutdown
+from aizk.conversion.workers import loop, shutdown
 
 
 @pytest.fixture(autouse=True)
@@ -22,14 +22,6 @@ def _reset_shutdown():
     shutdown.reset()
     yield
     shutdown.reset()
-
-
-@pytest.fixture(autouse=True)
-def _reset_gpu_semaphore():
-    """Reset GPU semaphore state between tests."""
-    orchestrator._gpu_semaphore = None
-    yield
-    orchestrator._gpu_semaphore = None
 
 
 def _create_bookmark(db_session: Session) -> Bookmark:
@@ -59,6 +51,17 @@ def _create_queued_job(db_session: Session, bookmark: Bookmark, *, suffix: str =
     db_session.commit()
     db_session.refresh(job)
     return job
+
+
+def _make_fake_runtime() -> MagicMock:
+    """Return a fake WorkerRuntime with nullcontext resource_guard."""
+    from contextlib import nullcontext
+
+    runtime = MagicMock()
+    runtime.resource_guard = nullcontext()
+    runtime.capabilities.converter_requires_gpu.return_value = False
+    runtime.orchestrator = MagicMock()
+    return runtime
 
 
 # ---------------------------------------------------------------------------
@@ -119,34 +122,30 @@ class TestReapCompleted:
 
 
 # ---------------------------------------------------------------------------
-# GPU semaphore
+# GPU guard (via _SemaphoreGuard in wiring.worker)
 # ---------------------------------------------------------------------------
 
 
-class TestGpuSemaphore:
-    def test_configure_sets_semaphore(self):
-        orchestrator.configure_gpu_semaphore(2)
-        assert orchestrator._gpu_semaphore is not None
-
-    def test_semaphore_limits_concurrent_access(self):
+class TestGpuSemaphoreGuard:
+    def test_semaphore_guard_limits_concurrent_access(self):
         """Verify only N threads can hold the semaphore simultaneously."""
+        from aizk.conversion.wiring.worker import _SemaphoreGuard
+
         sem = threading.Semaphore(1)
+        guard = _SemaphoreGuard(sem)
 
         max_concurrent = {"value": 0}
         current = {"value": 0}
         lock = threading.Lock()
 
         def _worker():
-            sem.acquire()
-            try:
+            with guard:
                 with lock:
                     current["value"] += 1
                     max_concurrent["value"] = max(max_concurrent["value"], current["value"])
                 time.sleep(0.01)
-            finally:
                 with lock:
                     current["value"] -= 1
-                sem.release()
 
         threads = [threading.Thread(target=_worker) for _ in range(3)]
         for t in threads:
@@ -155,6 +154,65 @@ class TestGpuSemaphore:
             t.join(timeout=5)
 
         assert max_concurrent["value"] == 1
+
+    def test_requires_gpu_false_does_not_acquire_guard(self, monkeypatch):
+        """_spawn_and_supervise with requires_gpu=False must not enter the guard."""
+        from pathlib import Path
+        import queue as queue_module
+
+        from aizk.conversion.workers import orchestrator as orchestrator_mod
+
+        acquire_calls: list[str] = []
+
+        class _TrackingGuard:
+            def __enter__(self):
+                acquire_calls.append("enter")
+                return self
+
+            def __exit__(self, *_):
+                acquire_calls.append("exit")
+
+        class _StubProcess:
+            pid = None
+            exitcode = 0
+
+            def start(self):
+                pass
+
+            def is_alive(self):
+                return False
+
+            def join(self, timeout=None):
+                pass
+
+            def terminate(self):
+                pass
+
+            def kill(self):
+                pass
+
+        class _InlineCtx:
+            def Queue(self):  # noqa: N802
+                return queue_module.Queue()
+
+            def Process(self, target, args, daemon):  # noqa: N802
+                return _StubProcess()
+
+        monkeypatch.setattr(orchestrator_mod.mp, "get_context", lambda _: _InlineCtx())
+
+        orchestrator_mod._spawn_and_supervise(
+            job_id=1,
+            workspace=Path("/tmp"),
+            source_ref_json='{"kind":"karakeep_bookmark","bookmark_id":"bm_x"}',
+            poll_interval_seconds=0.001,
+            timeout_seconds=0,
+            is_cancelled_fn=lambda: False,
+            config=ConversionConfig(_env_file=None),
+            resource_guard=_TrackingGuard(),
+            requires_gpu=False,
+        )
+
+        assert acquire_calls == [], "Guard must not be acquired when requires_gpu is False"
 
 
 # ---------------------------------------------------------------------------
@@ -179,11 +237,10 @@ class TestRunWorkerConcurrency:
             claim_count["n"] += 1
             if claim_count["n"] <= 4:
                 return claim_count["n"]
-            # No more jobs — trigger shutdown.
             shutdown.request_shutdown()
             return None
 
-        def _fake_process(_job_id, _config, poll_interval_seconds=2.0):
+        def _fake_process(_job_id, _config, _runtime=None, poll_interval_seconds=2.0):
             with lock:
                 current["value"] += 1
                 max_concurrent["value"] = max(max_concurrent["value"], current["value"])
@@ -195,8 +252,12 @@ class TestRunWorkerConcurrency:
         monkeypatch.setattr(loop, "claim_next_job", _fake_claim)
         monkeypatch.setattr(loop, "process_job_supervised", _fake_process)
         monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
-        monkeypatch.setattr(loop, "configure_gpu_semaphore", lambda _n: None)
         monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
+        # Patch build_worker_runtime so run_worker doesn't try to build a real runtime
+        monkeypatch.setattr(
+            "aizk.conversion.workers.loop.build_worker_runtime",
+            lambda _cfg: _make_fake_runtime(),
+        )
 
         exit_code = loop.run_worker(config, poll_interval_seconds=0.01)
 
@@ -220,7 +281,7 @@ class TestRunWorkerConcurrency:
             shutdown.request_shutdown()
             return None
 
-        def _fake_process(job_id, _config, poll_interval_seconds=2.0):
+        def _fake_process(job_id, _config, _runtime=None, poll_interval_seconds=2.0):
             time.sleep(0.03)
             with lock:
                 completed_jobs.append(job_id)
@@ -228,8 +289,11 @@ class TestRunWorkerConcurrency:
         monkeypatch.setattr(loop, "claim_next_job", _fake_claim)
         monkeypatch.setattr(loop, "process_job_supervised", _fake_process)
         monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
-        monkeypatch.setattr(loop, "configure_gpu_semaphore", lambda _n: None)
         monkeypatch.setattr(loop, "recover_stale_running_jobs", lambda _config: 0)
+        monkeypatch.setattr(
+            "aizk.conversion.workers.loop.build_worker_runtime",
+            lambda _cfg: _make_fake_runtime(),
+        )
 
         exit_code = loop.run_worker(config, poll_interval_seconds=0.01)
 
@@ -241,7 +305,10 @@ class TestRunWorkerConcurrency:
         shutdown.request_shutdown()
 
         monkeypatch.setattr(loop, "register_signal_handlers", lambda: None)
-        monkeypatch.setattr(loop, "configure_gpu_semaphore", lambda _n: None)
+        monkeypatch.setattr(
+            "aizk.conversion.workers.loop.build_worker_runtime",
+            lambda _cfg: _make_fake_runtime(),
+        )
 
         config = ConversionConfig(_env_file=None)
         exit_code = loop.run_worker(config, poll_interval_seconds=0.01)

@@ -47,7 +47,9 @@ def test_poll_and_process_jobs_is_atomic(db_session, monkeypatch):
 
     # Avoid running the full job pipeline; this test only cares about the claim step.
     monkeypatch.setattr(
-        loop_module, "process_job_supervised", lambda _job_id, _config, poll_interval_seconds=2.0: None
+        loop_module,
+        "process_job_supervised",
+        lambda _job_id, _config, _runtime=None, *, poll_interval_seconds=2.0: None,
     )
 
     config = ConversionConfig(_env_file=None)

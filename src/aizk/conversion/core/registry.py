@@ -107,3 +107,11 @@ class ConverterRegistry:
     def has_converter_for(self, content_type: ContentType) -> bool:
         """Return True if any converter is registered for ``content_type``."""
         return any(ct == content_type for ct, _ in self._converters)
+
+    def requires_gpu(self, name: str) -> bool:
+        """Return True if any registered converter with the given name requires GPU."""
+        return any(
+            getattr(converter, "requires_gpu", False)
+            for (_, conv_name), converter in self._converters.items()
+            if conv_name == name
+        )

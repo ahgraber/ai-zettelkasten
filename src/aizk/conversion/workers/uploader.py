@@ -16,6 +16,7 @@ from aizk.conversion.db import get_engine
 from aizk.conversion.storage.manifest import (
     ManifestConfigSnapshot,
     generate_manifest,
+    generate_manifest_v2,
     save_manifest,
 )
 from aizk.conversion.storage.s3_client import S3Client, S3Error
@@ -75,7 +76,7 @@ def _upload_converted(job_id: int, workspace: Path, config: ConversionConfig) ->
             output = ConversionOutput(
                 job_id=job.id,
                 aizk_uuid=bookmark.aizk_uuid,
-                title=bookmark.title,
+                title=bookmark.title or job.title,
                 payload_version=job.payload_version,
                 s3_prefix=prior_output.s3_prefix,
                 markdown_key=prior_output.markdown_key,
@@ -112,20 +113,59 @@ def _upload_converted(job_id: int, workspace: Path, config: ConversionConfig) ->
             figure_uris.append(s3_client.upload_file(fig_path, fig_key))
 
         job.finished_at = _utcnow()
-        manifest = generate_manifest(
-            bookmark=bookmark,
-            job=job,
-            fetched_at=dt.datetime.fromisoformat(metadata["fetched_at"]),
-            markdown_s3_uri=markdown_uri,
-            markdown_hash=metadata["markdown_hash_xx64"],
-            figure_s3_uris=figure_uris,
-            docling_version=metadata["docling_version"],
-            pipeline_name=metadata["pipeline_name"],
-            config_snapshot=ManifestConfigSnapshot(**metadata["config_snapshot"]),
-        )
-        manifest_path = workspace / "manifest.json"
-        save_manifest(manifest, manifest_path)
-        manifest_uri = s3_client.upload_file(manifest_path, f"{prefix}/manifest.json")
+
+        # Choose manifest format based on whether terminal_ref is present (v2) or not (v1).
+        terminal_ref_data = metadata.get("terminal_ref")
+        manifest_local_path = workspace / "manifest.json"
+
+        if terminal_ref_data:
+            from pydantic import TypeAdapter
+
+            from aizk.conversion.core.source_ref import SourceRef as _SourceRef
+
+            terminal_ref = TypeAdapter(_SourceRef).validate_python(terminal_ref_data)
+            # submitted_ref from the job's source_ref column
+            submitted_ref_raw = json.loads(job.source_ref) if job.source_ref else None
+            submitted_ref = (
+                TypeAdapter(_SourceRef).validate_python(submitted_ref_raw) if submitted_ref_raw else terminal_ref
+            )
+
+            converter_name = metadata.get("config_snapshot", {}).get("converter_name", "docling")
+            adapter_snapshot = {k: v for k, v in metadata.get("config_snapshot", {}).items() if k != "converter_name"}
+
+            manifest = generate_manifest_v2(
+                submitted_ref=submitted_ref,
+                terminal_ref=terminal_ref,
+                job=job,
+                fetched_at=dt.datetime.fromisoformat(metadata["fetched_at"]),
+                markdown_s3_uri=markdown_uri,
+                markdown_hash=metadata["markdown_hash_xx64"],
+                figure_s3_uris=figure_uris,
+                docling_version=metadata.get("docling_version", "unknown"),
+                pipeline_name=metadata["pipeline_name"],
+                converter_name=converter_name,
+                adapter_snapshot=adapter_snapshot,
+                source_url=bookmark.url,
+                source_normalized_url=bookmark.normalized_url,
+                source_title=bookmark.title or job.title,
+                source_type=bookmark.source_type,
+            )
+        else:
+            # Legacy v1 path — config_snapshot uses old ManifestConfigSnapshot shape
+            manifest = generate_manifest(
+                bookmark=bookmark,
+                job=job,
+                fetched_at=dt.datetime.fromisoformat(metadata["fetched_at"]),
+                markdown_s3_uri=markdown_uri,
+                markdown_hash=metadata["markdown_hash_xx64"],
+                figure_s3_uris=figure_uris,
+                docling_version=metadata["docling_version"],
+                pipeline_name=metadata["pipeline_name"],
+                config_snapshot=ManifestConfigSnapshot(**metadata["config_snapshot"]),
+            )
+
+        save_manifest(manifest, manifest_local_path)
+        manifest_uri = s3_client.upload_file(manifest_local_path, f"{prefix}/manifest.json")
 
         session.refresh(job)
         if job.status == ConversionJobStatus.CANCELLED:
@@ -134,7 +174,7 @@ def _upload_converted(job_id: int, workspace: Path, config: ConversionConfig) ->
         output = ConversionOutput(
             job_id=job.id,
             aizk_uuid=bookmark.aizk_uuid,
-            title=bookmark.title,
+            title=bookmark.title or job.title,
             payload_version=job.payload_version,
             s3_prefix=s3_prefix_uri,
             markdown_key=markdown_uri,

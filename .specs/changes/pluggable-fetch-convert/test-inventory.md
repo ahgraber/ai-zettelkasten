@@ -29,13 +29,13 @@ Classification key:
 
 ## Inventory — workers/orchestrator.py (legacy orchestrator, PR 7)
 
-- [ ] `tests/conversion/unit/test_worker.py` — **rewrite-post-cutover** (see above).
-- [ ] `tests/conversion/unit/test_worker_concurrency.py` — **rewrite-post-cutover** (GPU-semaphore + loop concurrency assumptions change with injected `ResourceGuard`).
-- [ ] `tests/conversion/unit/test_worker_shutdown.py` — **rewrite-post-cutover** (shutdown coupling to legacy orchestrator shape; rewrite against injected runtime in PR 7).
-- [ ] `tests/conversion/unit/test_error_tracebacks.py` — **rewrite-post-cutover** (imports `workers.orchestrator`; re-targets at new orchestrator in PR 7).
-- [ ] `tests/conversion/integration/test_worker_lifecycle.py` — **rewrite-post-cutover** (full worker loop; retargets at `build_worker_runtime(cfg)` in PR 7).
-- [ ] `tests/conversion/integration/test_whitespace_normalization.py` — **rewrite-post-cutover** (integrates `workers.orchestrator` with uploader; retargets in PR 7).
-- [ ] `tests/conversion/integration/test_conversion_flow.py` — **rewrite-post-cutover** (end-to-end integration; deferred test in PR 7 per tasks.md).
+- [x] `tests/conversion/unit/test_worker.py` — **rewrite-post-cutover** (rewritten in PR 7; passes against injected `WorkerRuntime`).
+- [x] `tests/conversion/unit/test_worker_concurrency.py` — **rewrite-post-cutover** (updated in PR 7; `process_job_supervised` signature updated to accept `runtime`).
+- [x] `tests/conversion/unit/test_worker_shutdown.py` — **rewrite-post-cutover** (rewritten in PR 7 against injected runtime; stale patches removed).
+- [x] `tests/conversion/unit/test_error_tracebacks.py` — **rewrite-post-cutover** (passes unchanged; imports still valid via new orchestrator).
+- [x] `tests/conversion/integration/test_worker_lifecycle.py` — **rewrite-post-cutover** (rewritten in PR 7; stale `fetch_karakeep_bookmark` patches removed, `source_ref` set on jobs, fake runtime passed).
+- [x] `tests/conversion/integration/test_whitespace_normalization.py` — **rewrite-post-cutover** (rewritten in PR 7; uses `_process_job_subprocess` stub with workspace writes).
+- [x] `tests/conversion/integration/test_conversion_flow.py` — **rewrite-post-cutover** (rewritten in PR 7; submits via `source_ref`, uses subprocess stub, new `compute_idempotency_key` signature).
 
 ## Notes
 
