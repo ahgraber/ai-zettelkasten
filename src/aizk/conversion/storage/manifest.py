@@ -5,10 +5,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from aizk.conversion.core.source_ref import SourceRef
 
 if TYPE_CHECKING:
     from aizk.conversion.datamodel.job import ConversionJob
@@ -95,6 +97,59 @@ class ConversionManifest(BaseModel):
     config_snapshot: ManifestConfigSnapshot
 
 
+# ---------------------------------------------------------------------------
+# v2.0 manifest models
+# ---------------------------------------------------------------------------
+
+
+class ManifestV1(BaseModel):
+    """Reader class for v1.0 manifests."""
+
+    model_config = ConfigDict(extra="forbid", json_encoders={datetime: lambda v: v.isoformat()})
+
+    version: str = "1.0"
+    aizk_uuid: UUID
+    karakeep_id: str
+    source: ManifestSource
+    conversion: ManifestConversionMetadata
+    artifacts: ManifestArtifacts
+    config_snapshot: ManifestConfigSnapshot
+
+
+class ManifestSourceV2(BaseModel):
+    """Source block for v2.0 manifests — all fields nullable."""
+
+    url: str | None = None
+    normalized_url: str | None = None
+    title: str | None = None
+    source_type: str | None = None
+    fetched_at: datetime | None = None
+
+
+class ManifestConfigSnapshotV2(BaseModel):
+    """Adapter-agnostic config snapshot for v2.0 manifests."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    converter_name: str
+    adapter_snapshot: dict[str, Any]  # opaque adapter-supplied output-affecting fields
+
+
+class ManifestV2(BaseModel):
+    """Complete v2.0 conversion manifest with SourceRef support."""
+
+    model_config = ConfigDict(extra="forbid", json_encoders={datetime: lambda v: v.isoformat()})
+
+    version: str = "2.0"
+    aizk_uuid: UUID
+    submitted_ref: SourceRef
+    terminal_ref: SourceRef
+    source: ManifestSourceV2
+    conversion: ManifestConversionMetadata
+    artifacts: ManifestArtifacts
+    config_snapshot: ManifestConfigSnapshotV2
+
+
 def _coerce_datetime(value: datetime | None, fallback: datetime) -> datetime:
     """Return datetime value or fallback if None."""
     chosen = value if value is not None else fallback
@@ -173,6 +228,100 @@ def generate_manifest(
         ),
         config_snapshot=config_snapshot,
     )
+
+
+def generate_manifest_v2(
+    submitted_ref: SourceRef,
+    terminal_ref: SourceRef,
+    job: ConversionJob,
+    fetched_at: datetime,
+    markdown_s3_uri: str,
+    markdown_hash: str,
+    figure_s3_uris: list[str],
+    docling_version: str,
+    pipeline_name: Literal["html", "pdf"],
+    converter_name: str,
+    adapter_snapshot: dict[str, Any],
+    *,
+    source_url: str | None = None,
+    source_normalized_url: str | None = None,
+    source_title: str | None = None,
+    source_type: str | None = None,
+) -> ManifestV2:
+    """Generate a v2.0 manifest for conversion artifacts.
+
+    Args:
+        submitted_ref: The SourceRef originally submitted to the pipeline.
+        terminal_ref: The SourceRef actually fetched (after resolution).
+        job: ConversionJob record with timing and job info.
+        fetched_at: Timestamp when content was fetched.
+        markdown_s3_uri: Absolute S3 URI for markdown (s3://bucket/key).
+        markdown_hash: Markdown xxHash64 hex digest.
+        figure_s3_uris: List of absolute S3 URIs for figures.
+        docling_version: Docling version used.
+        pipeline_name: Pipeline name (html/pdf).
+        converter_name: Name of the converter adapter used.
+        adapter_snapshot: Opaque dict of adapter-supplied output-affecting fields.
+        source_url: Optional source URL.
+        source_normalized_url: Optional normalized source URL.
+        source_title: Optional source title.
+        source_type: Optional source type string.
+
+    Returns:
+        ManifestV2 Pydantic model.
+    """
+    if job.id is None:
+        raise ValueError("ConversionJob.id must be set before manifest generation")
+
+    started_at = _coerce_datetime(job.started_at, fetched_at)
+    finished_at = _coerce_datetime(job.finished_at, fetched_at)
+    duration_seconds = max(0, int((finished_at - started_at).total_seconds()))
+
+    figures = [ManifestArtifactFigure(key=uri, created_at=finished_at) for uri in figure_s3_uris]
+
+    return ManifestV2(
+        aizk_uuid=job.aizk_uuid,
+        submitted_ref=submitted_ref,
+        terminal_ref=terminal_ref,
+        source=ManifestSourceV2(
+            url=source_url,
+            normalized_url=source_normalized_url,
+            title=source_title,
+            source_type=source_type,
+            fetched_at=fetched_at,
+        ),
+        conversion=ManifestConversionMetadata(
+            job_id=job.id,
+            payload_version=job.payload_version,
+            docling_version=docling_version,
+            pipeline_name=pipeline_name,
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_seconds=duration_seconds,
+        ),
+        artifacts=ManifestArtifacts(
+            markdown=ManifestArtifactMarkdown(
+                key=markdown_s3_uri,
+                hash_xx64=markdown_hash,
+                created_at=finished_at,
+            ),
+            figures=figures,
+        ),
+        config_snapshot=ManifestConfigSnapshotV2(
+            converter_name=converter_name,
+            adapter_snapshot=adapter_snapshot,
+        ),
+    )
+
+
+def load_manifest(data: dict) -> ManifestV1 | ManifestV2:
+    """Version-dispatching manifest loader. Selects reader class from 'version' field."""
+    version = data.get("version", "1.0")
+    if version == "1.0":
+        return ManifestV1.model_validate(data)
+    elif version == "2.0":
+        return ManifestV2.model_validate(data)
+    raise ValueError(f"Unknown manifest version: {version!r}")
 
 
 def save_manifest(manifest: ConversionManifest, output_path: Path) -> None:

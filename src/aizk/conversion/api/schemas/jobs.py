@@ -8,13 +8,15 @@ from uuid import UUID
 
 from pydantic import AnyUrl, BaseModel, Field
 
+from aizk.conversion.api.schemas.ingress import IngressSourceRef
+from aizk.conversion.core.source_ref import SourceRef
 from aizk.conversion.datamodel.job import ConversionJobStatus
 
 
 class JobSubmission(BaseModel):
     """Request schema for job submission."""
 
-    karakeep_id: str = Field(..., max_length=255)
+    source_ref: IngressSourceRef
     payload_version: int = Field(default=1, ge=1)
     idempotency_key: str | None = Field(default=None, max_length=64)
 
@@ -33,7 +35,8 @@ class JobResponse(BaseModel):
 
     id: int
     aizk_uuid: UUID
-    karakeep_id: str
+    karakeep_id: str | None = None
+    source_ref: SourceRef
     url: AnyUrl | None = None
     title: str | None = None
     source_type: str | None = None

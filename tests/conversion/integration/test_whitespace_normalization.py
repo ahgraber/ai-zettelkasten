@@ -132,11 +132,15 @@ def test_whitespace_normalization_produces_stable_output(monkeypatch, html_bookm
     with TestClient(app) as client:
         config = ConversionConfig(_env_file=None)
 
-        resp1 = client.post("/v1/jobs", json={"karakeep_id": "bm_ws_stable_001"})
+        resp1 = client.post(
+            "/v1/jobs", json={"source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_ws_stable_001"}}
+        )
         assert resp1.status_code == 201
         orchestrator.process_job_supervised(resp1.json()["id"], config)
 
-        resp2 = client.post("/v1/jobs", json={"karakeep_id": "bm_ws_stable_002"})
+        resp2 = client.post(
+            "/v1/jobs", json={"source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_ws_stable_002"}}
+        )
         assert resp2.status_code == 201
         orchestrator.process_job_supervised(resp2.json()["id"], config)
 

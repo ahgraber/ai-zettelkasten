@@ -39,6 +39,7 @@ def test_jobs_schemas_registered():
         "ConversionJobStatus",
         "BulkJobActionRequest",
         "BulkActionResponse",
+        "KarakeepBookmarkRef",
     ):
         assert schema_name in app_spec["components"]["schemas"], f"Missing schema: {schema_name}"
 
@@ -52,7 +53,7 @@ def test_list_jobs_query_params_declared():
 
     get_op = app_spec["paths"]["/v1/jobs"]["get"]
     declared = {p["name"] for p in get_op.get("parameters", [])}
-    expected = {"status", "aizk_uuid", "karakeep_id", "created_after", "created_before", "limit", "offset"}
+    expected = {"status", "aizk_uuid", "created_after", "created_before", "limit", "offset"}
     assert expected.issubset(declared), f"Missing query params: {expected - declared}"
 
 
@@ -66,3 +67,42 @@ def test_bulk_actions_request_schema_shape():
     schema = app_spec["components"]["schemas"]["BulkJobActionRequest"]
     assert set(schema["properties"].keys()) >= {"action", "job_ids"}
     assert set(schema.get("required", [])) >= {"action", "job_ids"}
+
+
+def test_openapi_source_ref_unions_are_distinct():
+    """JobSubmission.source_ref (narrow) and JobResponse.source_ref (wide) are distinct unions.
+
+    - JobSubmission.source_ref discriminator maps only 'karakeep_bookmark'.
+    - JobResponse.source_ref discriminator maps all 6 kinds.
+    - The two schema objects are not identical.
+    """
+    app_spec = create_app().openapi()
+
+    if not app_spec.get("components"):
+        pytest.xfail("API schemas not registered in FastAPI app yet.")
+
+    schemas = app_spec["components"]["schemas"]
+
+    # --- JobSubmission.source_ref (narrow ingress union) ---
+    submission_source_ref = schemas["JobSubmission"]["properties"]["source_ref"]
+    assert "discriminator" in submission_source_ref, "JobSubmission.source_ref must have a discriminator"
+    submission_discriminator = submission_source_ref["discriminator"]
+    assert submission_discriminator["propertyName"] == "kind"
+    assert set(submission_discriminator["mapping"].keys()) == {"karakeep_bookmark"}, (
+        f"IngressSourceRef must admit only 'karakeep_bookmark'; got {set(submission_discriminator['mapping'].keys())}"
+    )
+
+    # --- JobResponse.source_ref (wide union with all 6 variants) ---
+    response_source_ref = schemas["JobResponse"]["properties"]["source_ref"]
+    assert "discriminator" in response_source_ref, "JobResponse.source_ref must have a discriminator"
+    response_discriminator = response_source_ref["discriminator"]
+    assert response_discriminator["propertyName"] == "kind"
+    expected_response_kinds = {"karakeep_bookmark", "arxiv", "github_readme", "url", "singlefile", "inline_html"}
+    assert set(response_discriminator["mapping"].keys()) == expected_response_kinds, (
+        f"SourceRef must contain all 6 kinds; got {set(response_discriminator['mapping'].keys())}"
+    )
+
+    # --- The two schemas must be distinct ---
+    assert submission_source_ref != response_source_ref, (
+        "IngressSourceRef (narrow) and SourceRef (wide) must be distinct OpenAPI schemas"
+    )

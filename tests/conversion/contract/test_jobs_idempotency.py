@@ -17,7 +17,10 @@ def test_first_submission_returns_201(db_session) -> None:
     with TestClient(app) as client:
         resp = client.post(
             "/v1/jobs",
-            json={"karakeep_id": "bm_idem_first", "idempotency_key": "first-key".ljust(64, "0")},
+            json={
+                "source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_idem_first"},
+                "idempotency_key": "first-key".ljust(64, "0"),
+            },
         )
 
     assert resp.status_code == 201
@@ -30,8 +33,14 @@ def test_duplicate_submission_returns_200_with_original_payload(db_session) -> N
     app = create_app()
     key = "dup-key".ljust(64, "0")
     with TestClient(app) as client:
-        first = client.post("/v1/jobs", json={"karakeep_id": "bm_idem_dup", "idempotency_key": key})
-        second = client.post("/v1/jobs", json={"karakeep_id": "bm_idem_dup", "idempotency_key": key})
+        first = client.post(
+            "/v1/jobs",
+            json={"source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_idem_dup"}, "idempotency_key": key},
+        )
+        second = client.post(
+            "/v1/jobs",
+            json={"source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_idem_dup"}, "idempotency_key": key},
+        )
 
     assert first.status_code == 201
     assert second.status_code == 200
@@ -44,11 +53,17 @@ def test_distinct_keys_both_return_201(db_session) -> None:
     with TestClient(app) as client:
         a = client.post(
             "/v1/jobs",
-            json={"karakeep_id": "bm_idem_distinct", "idempotency_key": "key-a".ljust(64, "0")},
+            json={
+                "source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_idem_distinct"},
+                "idempotency_key": "key-a".ljust(64, "0"),
+            },
         )
         b = client.post(
             "/v1/jobs",
-            json={"karakeep_id": "bm_idem_distinct", "idempotency_key": "key-b".ljust(64, "0")},
+            json={
+                "source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_idem_distinct"},
+                "idempotency_key": "key-b".ljust(64, "0"),
+            },
         )
 
     assert a.status_code == 201
