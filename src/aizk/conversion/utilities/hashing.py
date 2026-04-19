@@ -54,7 +54,7 @@ def compute_idempotency_key(
     """Compute a stable SHA256 idempotency key.
 
     Args:
-        aizk_uuid: Bookmark UUID.
+        aizk_uuid: Source UUID.
         payload_version: Payload version for conversion.
         config: Conversion configuration.
         picture_description_enabled: Whether picture description via chat completions is active.

@@ -5,8 +5,8 @@ import datetime as dt
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.source import Source as Bookmark
 
 
 def test_ui_jobs_renders_table_and_filters(db_session) -> None:

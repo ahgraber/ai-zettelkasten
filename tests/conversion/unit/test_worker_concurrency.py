@@ -11,8 +11,8 @@ from unittest.mock import MagicMock
 import pytest
 from sqlmodel import Session
 
-from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers import loop, orchestrator, shutdown
 

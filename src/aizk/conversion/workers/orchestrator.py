@@ -18,8 +18,8 @@ from typing import Literal
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
-from aizk.conversion.datamodel.bookmark import Bookmark as BookmarkRecord
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.source import Source as SourceRecord
 from aizk.conversion.db import get_engine
 from aizk.conversion.utilities.bookmark_utils import (
     BookmarkContentError,
@@ -141,7 +141,7 @@ def _report_status(
         return
 
 
-def _prepare_bookmark_for_job(job_id: int, engine: Engine) -> tuple[BookmarkRecord, KarakeepBookmark]:
+def _prepare_bookmark_for_job(job_id: int, engine: Engine) -> tuple[SourceRecord, KarakeepBookmark]:
     """Fetch, validate, and persist AIZK Bookmark for conversion.
 
     Runs in the parent process before spawning the conversion subprocess.
@@ -150,7 +150,7 @@ def _prepare_bookmark_for_job(job_id: int, engine: Engine) -> tuple[BookmarkReco
         job = session.get(ConversionJob, job_id)
         if not job:
             raise JobDataIntegrityError(f"Job {job_id} missing during preflight")
-        bookmark = session.exec(select(BookmarkRecord).where(BookmarkRecord.aizk_uuid == job.aizk_uuid)).one()
+        bookmark = session.exec(select(SourceRecord).where(SourceRecord.aizk_uuid == job.aizk_uuid)).one()
 
     karakeep_bookmark = fetch_karakeep_bookmark(bookmark.karakeep_id)
     if not karakeep_bookmark:
@@ -164,7 +164,7 @@ def _prepare_bookmark_for_job(job_id: int, engine: Engine) -> tuple[BookmarkReco
     normalized_url = normalize_url(source_url) if source_url else None
 
     with Session(engine) as session:
-        bookmark = session.exec(select(BookmarkRecord).where(BookmarkRecord.aizk_uuid == job.aizk_uuid)).one()
+        bookmark = session.exec(select(SourceRecord).where(SourceRecord.aizk_uuid == job.aizk_uuid)).one()
         job_record = session.get(ConversionJob, job_id)
         bookmark.url = source_url
         bookmark.normalized_url = normalized_url
@@ -185,7 +185,7 @@ def _prepare_bookmark_for_job(job_id: int, engine: Engine) -> tuple[BookmarkReco
 
 def _prepare_conversion_input(
     *,
-    bookmark_record: BookmarkRecord,
+    bookmark_record: SourceRecord,
     karakeep_bookmark: KarakeepBookmark,
     config: ConversionConfig,
 ) -> ConversionInput:
@@ -227,7 +227,7 @@ def _prepare_conversion_input(
 def _run_conversion(
     *,
     job: ConversionJob,
-    bookmark: BookmarkRecord,
+    bookmark: SourceRecord,
     conversion_input: ConversionInput,
     config: ConversionConfig,
     engine: Engine,
@@ -297,7 +297,7 @@ def _convert_job_artifacts(
         job = session.get(ConversionJob, job_id)
         if not job:
             raise JobDataIntegrityError(f"Job {job_id} missing during conversion")
-        bookmark = session.exec(select(BookmarkRecord).where(BookmarkRecord.aizk_uuid == job.aizk_uuid)).one()
+        bookmark = session.exec(select(SourceRecord).where(SourceRecord.aizk_uuid == job.aizk_uuid)).one()
 
     _raise_if_cancelled(job_id, engine)
     karakeep_payload = json.loads(karakeep_payload_path.read_text())

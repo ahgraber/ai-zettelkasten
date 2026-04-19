@@ -15,8 +15,8 @@ from fastapi.templating import Jinja2Templates
 
 from aizk.conversion.api.dependencies import get_db_session
 from aizk.conversion.api.routes.jobs import _apply_job_cancel, _apply_job_delete, _apply_job_retry
-from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.source import Source as Bookmark
 
 router = APIRouter(prefix="/ui", tags=["ui"])
 

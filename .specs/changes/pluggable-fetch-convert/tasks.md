@@ -92,27 +92,27 @@
 
 ## Stage 6a — BREAKING (schema): Bookmark → Source generalization + Alembic migration
 
-- [ ] Rename `datamodel/bookmark.py` → `datamodel/source.py`; rename class `Bookmark` → `Source`
-- [ ] Make `karakeep_id` nullable on `Source`
-- [ ] Add `source_ref` (JSON column) and `source_ref_hash` (unique indexed text column) to `Source`
-- [ ] Add `source_ref` (JSON column) to `ConversionJob`
-- [ ] Update `ConversionJob` FK from `bookmarks.aizk_uuid` → `sources.aizk_uuid`
-- [ ] Update all internal references from `Bookmark` → `Source` (imports, type hints, variable names) across datamodel, repository, worker read-paths; leave API-layer changes to PR 6b
-- [ ] Write Alembic migration: rename `bookmarks` table → `sources`, add columns, backfill existing rows with `KarakeepBookmarkRef` and computed `source_ref_hash` (via `to_dedup_payload`)
-- [ ] Migration also recomputes historical `idempotency_key` values in place: for each existing job row, read its backfilled `source_ref_hash` from the Source it references, assume `converter_name = "docling"`, substitute today's Docling-specific config snapshot as the converter-supplied snapshot input, and overwrite the `idempotency_key` column with the new-formula hash; this keeps replay-idempotency intact across the cutover
-- [ ] Write Alembic `downgrade`: rename `sources` → `bookmarks`, drop `source_ref` / `source_ref_hash`.
+- [x] Rename `datamodel/bookmark.py` → `datamodel/source.py`; rename class `Bookmark` → `Source`
+- [x] Make `karakeep_id` nullable on `Source`
+- [x] Add `source_ref` (JSON column) and `source_ref_hash` (unique indexed text column) to `Source`
+- [x] Add `source_ref` (JSON column) to `ConversionJob`
+- [x] Update `ConversionJob` FK from `bookmarks.aizk_uuid` → `sources.aizk_uuid`
+- [x] Update all internal references from `Bookmark` → `Source` (imports, type hints, variable names) across datamodel, repository, worker read-paths; leave API-layer changes to PR 6b
+- [x] Write Alembic migration: rename `bookmarks` table → `sources`, add columns, backfill existing rows with `KarakeepBookmarkRef` and computed `source_ref_hash` (via `to_dedup_payload`)
+- [x] Migration also recomputes historical `idempotency_key` values in place: for each existing job row, read its backfilled `source_ref_hash` from the Source it references, assume `converter_name = "docling"`, substitute today's Docling-specific config snapshot as the converter-supplied snapshot input, and overwrite the `idempotency_key` column with the new-formula hash; this keeps replay-idempotency intact across the cutover
+- [x] Write Alembic `downgrade`: rename `sources` → `bookmarks`, drop `source_ref` / `source_ref_hash`.
   Downgrade SHALL abort with a clear error if any row has `karakeep_id IS NULL` (non-KaraKeep source), because the pre-migration schema cannot represent it.
   Document this as "downgrade is safe only before non-KaraKeep submissions land" in the migration's docstring
-- [ ] Backfill is idempotent: the backfill step SHALL skip rows whose `source_ref_hash` is already populated and skip `idempotency_key` recomputation for rows already under the new formula, so re-running the migration (or resuming after a partial failure) does not error or duplicate work
-- [ ] Backfill asserts zero hash collisions: the backfill SHALL count distinct `source_ref_hash` values and fail loudly if the count is less than the row count (invariant: `KarakeepBookmarkRef → {bookmark_id}` is collision-free by construction of unique `karakeep_id`; a collision would signal upstream data corruption)
-- [ ] Tests: downgrade migration round-trips cleanly on a pre-migration fixture (no non-KaraKeep rows); downgrade aborts with the documented error when a row has null `karakeep_id`
-- [ ] Tests: backfill is idempotent — running the upgrade twice leaves the same state; running after a simulated mid-backfill failure resumes cleanly
-- [ ] Tests: backfill's collision assertion fires on an injected fixture with two rows crafted to collide (manually constructed duplicate `karakeep_id`, which would itself be a data-integrity bug)
-- [ ] Tests: migration backfill — existing bookmark rows have valid `source_ref` and `source_ref_hash`
-- [ ] Tests: `idempotency_key` recomputation — a pre-refactor job row whose legacy key was produced by the old formula is, after migration, equal to the new-formula hash computed from the row's backfilled `source_ref_hash` + `"docling"` + today's Docling config snapshot
-- [ ] Tests: Source identity columns (`aizk_uuid`, `source_ref`, `source_ref_hash`, `karakeep_id`) are immutable after creation at the ORM/repository layer
-- [ ] Generate `schemas/after/` DB snapshot (table schema); verify the DB-schema portion of the diff matches `schemas/expected.md`
-- [ ] Docs alignment: grep the repo for references to `Bookmark` / `bookmarks` / `bookmark_id` in source comments, module docstrings, `CLAUDE.md`, architecture docs, and README; update language that refers to the old name to either describe the Source generalization or, where historically accurate, clarify that the scope has widened.
+- [x] Backfill is idempotent: the backfill step SHALL skip rows whose `source_ref_hash` is already populated and skip `idempotency_key` recomputation for rows already under the new formula, so re-running the migration (or resuming after a partial failure) does not error or duplicate work
+- [x] Backfill asserts zero hash collisions: the backfill SHALL count distinct `source_ref_hash` values and fail loudly if the count is less than the row count (invariant: `KarakeepBookmarkRef → {bookmark_id}` is collision-free by construction of unique `karakeep_id`; a collision would signal upstream data corruption)
+- [x] Tests: downgrade migration round-trips cleanly on a pre-migration fixture (no non-KaraKeep rows); downgrade aborts with the documented error when a row has null `karakeep_id`
+- [x] Tests: backfill is idempotent — running the upgrade twice leaves the same state; running after a simulated mid-backfill failure resumes cleanly
+- [x] Tests: backfill's collision assertion fires on an injected fixture with two rows crafted to collide (manually constructed duplicate `karakeep_id`, which would itself be a data-integrity bug)
+- [x] Tests: migration backfill — existing bookmark rows have valid `source_ref` and `source_ref_hash`
+- [x] Tests: `idempotency_key` recomputation — a pre-refactor job row whose legacy key was produced by the old formula is, after migration, equal to the new-formula hash computed from the row's backfilled `source_ref_hash` + `"docling"` + today's Docling config snapshot
+- [x] Tests: Source identity columns (`aizk_uuid`, `source_ref`, `source_ref_hash`, `karakeep_id`) are immutable after creation at the ORM/repository layer
+- [x] Generate `schemas/after/` DB snapshot (table schema); verify the DB-schema portion of the diff matches `schemas/expected.md`
+- [x] Docs alignment: grep the repo for references to `Bookmark` / `bookmarks` / `bookmark_id` in source comments, module docstrings, `CLAUDE.md`, architecture docs, and README; update language that refers to the old name to either describe the Source generalization or, where historically accurate, clarify that the scope has widened.
   Commit the doc touch-ups in the same PR so the schema change and its documentation land together
 
 ## Stage 6b — BREAKING (API + manifest): JobSubmission/JobResponse cutover + manifest v2.0

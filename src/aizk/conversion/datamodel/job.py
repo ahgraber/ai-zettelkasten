@@ -36,7 +36,7 @@ class ConversionJob(SQLModel, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True, nullable=False)
-    aizk_uuid: UUID = Field(foreign_key="bookmarks.aizk_uuid", nullable=False, index=True)
+    aizk_uuid: UUID = Field(foreign_key="sources.aizk_uuid", nullable=False, index=True)
     title: str = Field(max_length=500, nullable=False)
     payload_version: int = Field(default=1, nullable=False)
     status: ConversionJobStatus = Field(default=ConversionJobStatus.NEW, nullable=False, index=True)
@@ -45,6 +45,7 @@ class ConversionJob(SQLModel, table=True):
     error_message: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     error_detail: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     idempotency_key: str = Field(max_length=64, nullable=False, unique=True, index=True)
+    source_ref: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     earliest_next_attempt_at: Optional[datetime.datetime] = Field(default=None, index=True)
     last_error_at: Optional[datetime.datetime] = Field(default=None)
     queued_at: Optional[datetime.datetime] = Field(default=None)
@@ -60,10 +61,10 @@ class ConversionJob(SQLModel, table=True):
         nullable=False,
     )
 
-    bookmark: "Bookmark" = Relationship(back_populates="jobs")
+    source: "Source" = Relationship(back_populates="jobs")
     output: Optional["ConversionOutput"] = Relationship(back_populates="job")
 
 
 if TYPE_CHECKING:
-    from aizk.conversion.datamodel.bookmark import Bookmark
     from aizk.conversion.datamodel.output import ConversionOutput
+    from aizk.conversion.datamodel.source import Source

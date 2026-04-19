@@ -2,20 +2,20 @@
 
 from sqlmodel import SQLModel
 
-from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.conversion.datamodel.source import Source
 
 
 def test_indexed_columns():
     tables = SQLModel.metadata.tables
-    bookmark_table = tables["bookmarks"]
+    source_table = tables["sources"]
     job_table = tables["conversion_jobs"]
     output_table = tables["conversion_outputs"]
 
-    assert bookmark_table.columns["karakeep_id"].index is True
-    assert bookmark_table.columns["aizk_uuid"].index is True
-    assert bookmark_table.columns["normalized_url"].index is True
+    assert source_table.columns["karakeep_id"].index is True
+    assert source_table.columns["aizk_uuid"].index is True
+    assert source_table.columns["normalized_url"].index is True
 
     assert job_table.columns["aizk_uuid"].index is True
     assert job_table.columns["status"].index is True
