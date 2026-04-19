@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from uuid import UUID
 
 import xxhash
 
@@ -45,36 +44,22 @@ def build_output_config_snapshot(
 
 
 def compute_idempotency_key(
-    aizk_uuid: UUID,
-    payload_version: int,
-    config: ConversionConfig,
-    *,
-    picture_description_enabled: bool,
+    source_ref_hash: str,
+    converter_name: str,
+    config_snapshot: dict[str, object],
 ) -> str:
     """Compute a stable SHA256 idempotency key.
 
     Args:
-        aizk_uuid: Source UUID.
-        payload_version: Payload version for conversion.
-        config: Conversion configuration.
-        picture_description_enabled: Whether picture description via chat completions is active.
-            Affects Markdown output (figure alt-text), so must be part of the key.
+        source_ref_hash: SHA-256 hash of the source ref's dedup payload.
+        converter_name: Name of the converter (e.g. "docling").
+        config_snapshot: Converter-supplied output-affecting config dict.
 
     Returns:
         Hex-encoded SHA256 digest.
     """
-    from importlib.metadata import version
-
-    docling_version = version("docling")
-
-    config_snapshot = build_output_config_snapshot(
-        config,
-        picture_description_enabled=picture_description_enabled,
-    )
     config_json = json.dumps(config_snapshot, sort_keys=True, separators=(",", ":"))
-
-    raw = f"{str(aizk_uuid)}:{payload_version}:{docling_version}:{config_json}"
-
+    raw = f"{source_ref_hash}:{converter_name}:{config_json}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 

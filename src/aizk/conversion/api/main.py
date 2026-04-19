@@ -17,6 +17,8 @@ from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
 async def lifespan(_app: FastAPI):
     """Initialize resources needed for the API lifespan."""
     from aizk.conversion.migrations import run_migrations
+    from aizk.conversion.wiring.api import build_api_runtime
+    from aizk.conversion.wiring.ingress_policy import IngressPolicy
 
     config = ConversionConfig()
     _app.state.config = config
@@ -27,6 +29,9 @@ async def lifespan(_app: FastAPI):
         experiment_name=config.mlflow_experiment_name,
     )
     run_migrations()
+    _ingress_policy = IngressPolicy(_env_file=None)
+    _api_runtime = build_api_runtime(config, ingress_policy=_ingress_policy)
+    _app.state.submission_capabilities = _api_runtime.capabilities
     yield
 
 

@@ -9,13 +9,18 @@ from sqlmodel import select
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
+from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as Bookmark
 
 
-def _create_bookmark(session, karakeep_id: str) -> Bookmark:
+def _create_source(session, karakeep_id: str) -> Bookmark:
+    """Create a Source row with proper source_ref + source_ref_hash so API upserts match."""
+    ref = KarakeepBookmarkRef(bookmark_id=karakeep_id)
     bookmark = Bookmark(
         karakeep_id=karakeep_id,
+        source_ref=ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(ref),
         url="https://example.com",
         normalized_url="https://example.com",
         title="Test",
@@ -60,11 +65,13 @@ def _fill_queue(session, bookmark: Bookmark, count: int) -> list[ConversionJob]:
 def test_submit_rejected_when_queue_at_capacity(db_session, monkeypatch) -> None:
     monkeypatch.setenv("QUEUE_MAX_DEPTH", "3")
     app = create_app()
-    bookmark = _create_bookmark(db_session, "bp-reject")
+    bookmark = _create_source(db_session, "bp-reject")
     _fill_queue(db_session, bookmark, 3)
 
     with TestClient(app) as client:
-        response = client.post("/v1/jobs", json={"karakeep_id": "bp-new-job"})
+        response = client.post(
+            "/v1/jobs", json={"source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bp-new-job"}}
+        )
 
     assert response.status_code == 503
     body = response.json()
@@ -74,29 +81,37 @@ def test_submit_rejected_when_queue_at_capacity(db_session, monkeypatch) -> None
     assert isinstance(body["retry_after"], int)
 
 
-def test_rejected_submission_does_not_create_orphan_bookmark(db_session, monkeypatch) -> None:
-    """A queue-full rejection must not leave a bookmark row for the new karakeep_id."""
+def test_rejected_submission_does_not_create_orphan_job(db_session, monkeypatch) -> None:
+    """Queue-full rejection materializes the Source row but does NOT create a job."""
     monkeypatch.setenv("QUEUE_MAX_DEPTH", "1")
     app = create_app()
-    existing_bm = _create_bookmark(db_session, "bp-orphan-fill")
+    existing_bm = _create_source(db_session, "bp-orphan-fill")
     _fill_queue(db_session, existing_bm, 1)
 
     with TestClient(app) as client:
-        response = client.post("/v1/jobs", json={"karakeep_id": "bp-orphan-new"})
+        response = client.post(
+            "/v1/jobs", json={"source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bp-orphan-new"}}
+        )
 
     assert response.status_code == 503
-    orphan = db_session.exec(select(Bookmark).where(Bookmark.karakeep_id == "bp-orphan-new")).first()
-    assert orphan is None, "Rejected submission should not persist a bookmark row"
+    # Source identity IS materialized (design intent: immutable after first submit)
+    source = db_session.exec(select(Bookmark).where(Bookmark.karakeep_id == "bp-orphan-new")).first()
+    assert source is not None, "Source row must be persisted even for rejected submissions"
+    # No job is created for the rejected submission
+    jobs_for_source = db_session.exec(select(ConversionJob).where(ConversionJob.aizk_uuid == source.aizk_uuid)).all()
+    assert len(jobs_for_source) == 0, "Rejected submission must not persist a job row"
 
 
 def test_submit_accepted_when_queue_below_capacity(db_session, monkeypatch) -> None:
     monkeypatch.setenv("QUEUE_MAX_DEPTH", "5")
     app = create_app()
-    bookmark = _create_bookmark(db_session, "bp-accept")
+    bookmark = _create_source(db_session, "bp-accept")
     _fill_queue(db_session, bookmark, 2)
 
     with TestClient(app) as client:
-        response = client.post("/v1/jobs", json={"karakeep_id": "bp-new-accept"})
+        response = client.post(
+            "/v1/jobs", json={"source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bp-new-accept"}}
+        )
 
     assert response.status_code == 201
 
@@ -104,10 +119,11 @@ def test_submit_accepted_when_queue_below_capacity(db_session, monkeypatch) -> N
 def test_duplicate_bypasses_queue_depth_check(db_session, monkeypatch) -> None:
     monkeypatch.setenv("QUEUE_MAX_DEPTH", "2")
     app = create_app()
-    bookmark = _create_bookmark(db_session, "bp-dup")
+    # Source must have source_ref_hash set so the API upsert matches it
+    bookmark = _create_source(db_session, "bp-dup")
     _fill_queue(db_session, bookmark, 2)
 
-    # Submit a job that will become a duplicate
+    # Manually create a job that the API resubmission should match via idempotency_key
     existing = _create_queued_job(
         db_session,
         aizk_uuid=bookmark.aizk_uuid,
@@ -115,10 +131,13 @@ def test_duplicate_bypasses_queue_depth_check(db_session, monkeypatch) -> None:
     )
 
     with TestClient(app) as client:
-        # Resubmit with the same idempotency key — should return 200, not 503
+        # Resubmit with an explicit idempotency key — should return 200, not 503
         response = client.post(
             "/v1/jobs",
-            json={"karakeep_id": "bp-dup", "idempotency_key": "dup-key-00"},
+            json={
+                "source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bp-dup"},
+                "idempotency_key": "dup-key-00",
+            },
         )
 
     assert response.status_code == 200
@@ -129,11 +148,13 @@ def test_retry_after_header_present_on_503(db_session, monkeypatch) -> None:
     monkeypatch.setenv("QUEUE_MAX_DEPTH", "1")
     monkeypatch.setenv("QUEUE_RETRY_AFTER_SECONDS", "45")
     app = create_app()
-    bookmark = _create_bookmark(db_session, "bp-header")
+    bookmark = _create_source(db_session, "bp-header")
     _fill_queue(db_session, bookmark, 1)
 
     with TestClient(app) as client:
-        response = client.post("/v1/jobs", json={"karakeep_id": "bp-header-new"})
+        response = client.post(
+            "/v1/jobs", json={"source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bp-header-new"}}
+        )
 
     assert response.status_code == 503
     assert response.headers["Retry-After"] == "45"

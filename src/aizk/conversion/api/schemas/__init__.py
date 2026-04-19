@@ -1,6 +1,7 @@
 """Shared conversion service schemas."""
 
 from .health import CheckResult, HealthResponse
+from .ingress import IngressSourceRef
 from .jobs import (
     ArtifactSummary,
     BulkActionResponse,
@@ -23,6 +24,7 @@ __all__ = [
     "BulkJobActionRequest",
     "CheckResult",
     "HealthResponse",
+    "IngressSourceRef",
     "JobList",
     "JobResponse",
     "JobStatusCounts",

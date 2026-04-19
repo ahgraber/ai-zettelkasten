@@ -1,10 +1,7 @@
 """Unit tests for hashing utilities."""
 
 import hashlib
-from importlib.metadata import version
 import json
-
-import pytest
 
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.hashing import (
@@ -13,92 +10,33 @@ from aizk.conversion.utilities.hashing import (
     compute_markdown_hash,
 )
 
-_OUTPUT_IRRELEVANT_DOCLING_FIELDS = {
-    "docling_picture_description_base_url",
-    "docling_picture_description_api_key",
-}
+
+def test_compute_idempotency_key_matches_sha256():
+    """Verify formula: sha256(source_ref_hash:converter_name:config_json)."""
+    snapshot = {"a": 1, "b": True}
+    source_hash = "abc123"
+    converter = "docling"
+    config_json = json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
+    expected = hashlib.sha256(f"{source_hash}:{converter}:{config_json}".encode()).hexdigest()
+    assert compute_idempotency_key(source_hash, converter, snapshot) == expected
 
 
-def _expected_key(uuid: str, payload_version: int, config: ConversionConfig, picture_description_enabled: bool) -> str:
-    docling_version = version("docling")
-    config_snapshot = {
-        **{
-            k: v
-            for k, v in config.model_dump().items()
-            if k.startswith("docling_") and k not in _OUTPUT_IRRELEVANT_DOCLING_FIELDS
-        },
-        "picture_description_enabled": picture_description_enabled,
-    }
-    config_json = json.dumps(config_snapshot, sort_keys=True, separators=(",", ":"))
-    raw = f"{uuid}:{payload_version}:{docling_version}:{config_json}"
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+def test_compute_idempotency_key_differs_by_source_ref_hash():
+    snapshot = {"x": 1}
+    assert compute_idempotency_key("hash_a", "docling", snapshot) != compute_idempotency_key(
+        "hash_b", "docling", snapshot
+    )
 
 
-def test_compute_idempotency_key_matches_sha256_picture_description_disabled():
-    config = ConversionConfig(_env_file=None)
-    key = compute_idempotency_key("uuid-1", 2, config, picture_description_enabled=False)
-    assert key == _expected_key("uuid-1", 2, config, False)
-
-
-def test_compute_idempotency_key_matches_sha256_picture_description_enabled():
-    config = ConversionConfig(_env_file=None)
-    key = compute_idempotency_key("uuid-1", 2, config, picture_description_enabled=True)
-    assert key == _expected_key("uuid-1", 2, config, True)
-
-
-def test_compute_idempotency_key_differs_by_picture_description_flag():
-    config = ConversionConfig(_env_file=None)
-    key_off = compute_idempotency_key("uuid-1", 1, config, picture_description_enabled=False)
-    key_on = compute_idempotency_key("uuid-1", 1, config, picture_description_enabled=True)
-    assert key_off != key_on
+def test_compute_idempotency_key_differs_by_converter_name():
+    snapshot = {"x": 1}
+    assert compute_idempotency_key("hash", "docling", snapshot) != compute_idempotency_key("hash", "marker", snapshot)
 
 
 def test_compute_idempotency_key_stable_for_identical_inputs():
-    config = ConversionConfig(_env_file=None)
-    key_a = compute_idempotency_key("uuid-abc", 3, config, picture_description_enabled=True)
-    key_b = compute_idempotency_key("uuid-abc", 3, config, picture_description_enabled=True)
-    assert key_a == key_b
-
-
-@pytest.mark.parametrize("enabled", [True, False])
-def test_compute_idempotency_key_differs_by_uuid(enabled: bool):
-    config = ConversionConfig(_env_file=None)
-    key_a = compute_idempotency_key("uuid-1", 1, config, picture_description_enabled=enabled)
-    key_b = compute_idempotency_key("uuid-2", 1, config, picture_description_enabled=enabled)
-    assert key_a != key_b
-
-
-def test_compute_idempotency_key_stable_when_only_base_url_rotates():
-    """Endpoint identity does not affect replayable output — key must not change when it rotates."""
-    config_a = ConversionConfig(
-        _env_file=None,
-        DOCLING_PICTURE_DESCRIPTION_BASE_URL="https://provider-a.example.com/v1",
-        DOCLING_PICTURE_DESCRIPTION_API_KEY="sk-test-key",
-    )
-    config_b = ConversionConfig(
-        _env_file=None,
-        DOCLING_PICTURE_DESCRIPTION_BASE_URL="https://provider-b.example.com/v1",
-        DOCLING_PICTURE_DESCRIPTION_API_KEY="sk-test-key",
-    )
-    key_a = compute_idempotency_key("uuid-rotate", 1, config_a, picture_description_enabled=True)
-    key_b = compute_idempotency_key("uuid-rotate", 1, config_b, picture_description_enabled=True)
-    assert key_a == key_b
-
-
-def test_compute_idempotency_key_stable_when_only_api_key_rotates():
-    """Credentials are not output-affecting — rotating the api_key must not invalidate the key."""
-    config_a = ConversionConfig(
-        _env_file=None,
-        DOCLING_PICTURE_DESCRIPTION_BASE_URL="https://provider.example.com/v1",
-        DOCLING_PICTURE_DESCRIPTION_API_KEY="sk-original-key",
-    )
-    config_b = ConversionConfig(
-        _env_file=None,
-        DOCLING_PICTURE_DESCRIPTION_BASE_URL="https://provider.example.com/v1",
-        DOCLING_PICTURE_DESCRIPTION_API_KEY="sk-rotated-key",
-    )
-    key_a = compute_idempotency_key("uuid-rotate", 1, config_a, picture_description_enabled=True)
-    key_b = compute_idempotency_key("uuid-rotate", 1, config_b, picture_description_enabled=True)
+    snapshot = {"x": 1}
+    key_a = compute_idempotency_key("hash", "docling", snapshot)
+    key_b = compute_idempotency_key("hash", "docling", snapshot)
     assert key_a == key_b
 
 

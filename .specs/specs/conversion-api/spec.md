@@ -65,9 +65,9 @@ The system SHALL expose an endpoint to retrieve the status, timestamps, attempt 
 
 ### Requirement: List jobs with filters and pagination
 
-The system SHALL expose an endpoint to list conversion jobs filterable by status, internal bookmark identifier, KaraKeep identifier, and supporting pagination.
+The system SHALL expose an endpoint to list conversion jobs filterable by status, internal source identifier, and supporting pagination.
 
-**Schema reference:** `GET /v1/jobs` · query params: status, aizk_uuid, karakeep_id, created_after, created_before, limit (1–1000, default 50), offset (≥0, default 0) · response: `JobList`
+**Schema reference:** `GET /v1/jobs` · query params: status, aizk_uuid, created_after, created_before, limit (1–1000, default 50), offset (≥0, default 0) · response: `JobList`
 
 #### Scenario: Filter jobs by status
 
@@ -323,7 +323,7 @@ The system SHALL reject job submissions with HTTP 503 when the number of actiona
 - **Implementation**: `src/aizk/conversion/api/`
 - **Routes**:
   - `POST /v1/jobs` — submit job
-  - `GET /v1/jobs` — list jobs (filters: status, aizk_uuid, karakeep_id, created_after, created_before; pagination: limit, offset)
+  - `GET /v1/jobs` — list jobs (filters: status, aizk_uuid, created_after, created_before; pagination: limit, offset)
   - `GET /v1/jobs/status-counts` — aggregate counts by status
   - `GET /v1/jobs/{job_id}` — get single job
   - `POST /v1/jobs/{job_id}/retry` — retry failed/cancelled job

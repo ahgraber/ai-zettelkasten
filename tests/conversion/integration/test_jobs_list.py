@@ -96,22 +96,6 @@ def test_list_filters_by_status(db_session) -> None:
     assert [j["id"] for j in body["jobs"]] == [j_succ.id]
 
 
-def test_list_filters_by_karakeep_id(db_session) -> None:
-    bookmark_a = _create_bookmark(db_session, "bm_a")
-    bookmark_b = _create_bookmark(db_session, "bm_b")
-    j_a = _create_job(db_session, aizk_uuid=bookmark_a.aizk_uuid, idempotency_key="a" * 64)
-    _create_job(db_session, aizk_uuid=bookmark_b.aizk_uuid, idempotency_key="b" * 64)
-
-    app = create_app()
-    with TestClient(app) as client:
-        resp = client.get("/v1/jobs", params={"karakeep_id": "bm_a"})
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["total"] == 1
-    assert [j["id"] for j in body["jobs"]] == [j_a.id]
-
-
 def test_list_filters_by_aizk_uuid(db_session) -> None:
     bookmark_a = _create_bookmark(db_session, "bm_uuid_a")
     bookmark_b = _create_bookmark(db_session, "bm_uuid_b")

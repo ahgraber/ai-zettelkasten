@@ -7,7 +7,7 @@ import logging
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import AnyUrl
+from pydantic import AnyUrl, TypeAdapter
 from sqlalchemy import func, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import Session, select
@@ -28,14 +28,17 @@ from aizk.conversion.api.schemas import (
     JobSubmission,
     QueueFullResponse,
 )
+from aizk.conversion.core.source_ref import KarakeepBookmarkRef, SourceRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source as Bookmark
-from aizk.conversion.utilities.hashing import compute_idempotency_key
+from aizk.conversion.utilities.hashing import build_output_config_snapshot, compute_idempotency_key
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/jobs", tags=["jobs"])
+
+_source_ref_adapter = TypeAdapter(SourceRef)
 
 
 def _utcnow() -> dt.datetime:
@@ -64,10 +67,19 @@ def _job_to_response(
     bookmark_url = AnyUrl(bookmark.url) if bookmark.url else None
     bookmark_title = bookmark.title or job.title
 
+    # Parse source_ref from job or fall back to source row
+    source_ref_json = job.source_ref or bookmark.source_ref
+    if source_ref_json:
+        parsed_source_ref = _source_ref_adapter.validate_json(source_ref_json)
+    else:
+        # Legacy rows without source_ref: synthesize from karakeep_id
+        parsed_source_ref = KarakeepBookmarkRef(bookmark_id=bookmark.karakeep_id or "")
+
     return JobResponse(
         id=job.id,
         aizk_uuid=job.aizk_uuid,
         karakeep_id=bookmark.karakeep_id,
+        source_ref=parsed_source_ref,
         url=bookmark_url,
         title=bookmark_title,
         source_type=bookmark.source_type,
@@ -154,44 +166,67 @@ def submit_job(
     request: Request,
 ) -> JobResponse:
     """Submit a new conversion job."""
-    config = get_config(request)
+    from uuid import uuid4
 
-    bookmark = session.exec(select(Bookmark).where(Bookmark.karakeep_id == submission.karakeep_id)).first()
-    is_new_bookmark = bookmark is None
-    if is_new_bookmark:
-        # Create in memory only.  aizk_uuid is set by the Python default
-        # factory (uuid4), so it is available before the row is persisted.
-        # The INSERT is deferred to after the queue-depth check so a
-        # rejected submission does not leave an orphan bookmark row.
-        bookmark = Bookmark(
-            karakeep_id=submission.karakeep_id,
-            created_at=_utcnow(),
-            updated_at=_utcnow(),
+    config = get_config(request)
+    capabilities = request.app.state.submission_capabilities
+
+    source_ref = submission.source_ref  # already parsed as IngressSourceRef by pydantic
+
+    # Policy gate (defense-in-depth; pydantic already rejected non-IngressSourceRef kinds)
+    if source_ref.kind not in capabilities.accepted_submission_kinds:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "kind_not_accepted",
+                "message": f"Source kind '{source_ref.kind}' is not accepted for submission in this deployment",
+            },
         )
 
-    # End the auto-begun read transaction so BEGIN IMMEDIATE can start clean.
+    source_ref_json = source_ref.model_dump_json()
+    source_ref_hash = compute_source_ref_hash(source_ref)
+    karakeep_id = source_ref.bookmark_id if source_ref.kind == "karakeep_bookmark" else None
+
+    # Source materialization: INSERT OR IGNORE + SELECT
+    # Pre-generate UUID in case this is a new source row
+    candidate_uuid = uuid4()
+    now_utc = _utcnow()
+
+    session.commit()  # end any auto-begun read transaction
+
+    session.execute(
+        text(
+            "INSERT OR IGNORE INTO sources "
+            "(aizk_uuid, source_ref, source_ref_hash, karakeep_id, created_at, updated_at) "
+            "VALUES (:aizk_uuid, :source_ref, :source_ref_hash, :karakeep_id, :created_at, :updated_at)"
+        ),
+        {
+            "aizk_uuid": candidate_uuid.hex,
+            "source_ref": source_ref_json,
+            "source_ref_hash": source_ref_hash,
+            "karakeep_id": karakeep_id,
+            "created_at": now_utc,
+            "updated_at": now_utc,
+        },
+    )
     session.commit()
 
-    # BEGIN IMMEDIATE acquires the write lock upfront so the subsequent
-    # read-then-write sequence (idempotency check → queue depth → INSERT)
-    # cannot hit a non-retriable SQLITE_BUSY_SNAPSHOT on lock upgrade.
-    # Mirrors the worker's claim_next_job pattern in loop.py.
+    source = session.exec(select(Bookmark).where(Bookmark.source_ref_hash == source_ref_hash)).one()
+
+    # BEGIN IMMEDIATE for the idempotency-check + job-creation sequence
     session.exec(text("BEGIN IMMEDIATE"))
 
-    idempotency_key = submission.idempotency_key or compute_idempotency_key(
-        bookmark.aizk_uuid,
-        submission.payload_version,
-        config,
-        picture_description_enabled=config.is_picture_description_enabled(),
+    # Compute new-formula idempotency key
+    config_snap = build_output_config_snapshot(
+        config, picture_description_enabled=config.is_picture_description_enabled()
     )
+    idempotency_key = submission.idempotency_key or compute_idempotency_key(source_ref_hash, "docling", config_snap)
 
     existing_job = session.exec(select(ConversionJob).where(ConversionJob.idempotency_key == idempotency_key)).first()
     if existing_job:
         output = _get_output_summary(session, existing_job.id)
-        bookmark = session.exec(select(Bookmark).where(Bookmark.aizk_uuid == existing_job.aizk_uuid)).one()
         api_response.status_code = status.HTTP_200_OK
-        job_response = _job_to_response(existing_job, bookmark, output)
-        return job_response
+        return _job_to_response(existing_job, source, output)
 
     actionable_statuses = [ConversionJobStatus.QUEUED, ConversionJobStatus.FAILED_RETRYABLE]
     queue_depth = session.exec(
@@ -205,18 +240,15 @@ def submit_job(
             headers={"Retry-After": str(config.queue_retry_after_seconds)},
         )
 
-    if is_new_bookmark:
-        session.add(bookmark)
-        session.flush()
-
     now = _utcnow()
     job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
-        title=bookmark.title or bookmark.karakeep_id,
+        aizk_uuid=source.aizk_uuid,
+        title=source.title or source.karakeep_id or str(source.aizk_uuid),
         payload_version=submission.payload_version,
         status=ConversionJobStatus.QUEUED,
         attempts=0,
         idempotency_key=idempotency_key,
+        source_ref=source_ref_json,
         queued_at=now,
         created_at=now,
         updated_at=now,
@@ -224,10 +256,9 @@ def submit_job(
     session.add(job)
     session.commit()
     session.refresh(job)
-    session.refresh(bookmark)
+    session.refresh(source)
 
-    job_response = _job_to_response(job, bookmark, None)
-    return job_response
+    return _job_to_response(job, source, None)
 
 
 @router.get("/status-counts", response_model=JobStatusCounts)
@@ -263,7 +294,6 @@ def list_jobs(
     session: Annotated[Session, Depends(get_db_session)],
     status_filter: Annotated[ConversionJobStatus | None, Query(alias="status")] = None,
     aizk_uuid: Annotated[UUID | None, Query()] = None,
-    karakeep_id: Annotated[str | None, Query()] = None,
     created_after: Annotated[dt.datetime | None, Query()] = None,
     created_before: Annotated[dt.datetime | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=1000)] = 50,
@@ -279,9 +309,6 @@ def list_jobs(
     if aizk_uuid:
         query = query.where(ConversionJob.aizk_uuid == aizk_uuid)
         count_query = count_query.where(ConversionJob.aizk_uuid == aizk_uuid)
-    if karakeep_id:
-        query = query.join(Bookmark).where(Bookmark.karakeep_id == karakeep_id)
-        count_query = count_query.join(Bookmark).where(Bookmark.karakeep_id == karakeep_id)
     if created_after:
         query = query.where(ConversionJob.created_at >= created_after)
         count_query = count_query.where(ConversionJob.created_at >= created_after)

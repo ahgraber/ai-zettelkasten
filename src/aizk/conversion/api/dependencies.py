@@ -11,6 +11,7 @@ from fastapi import Request
 from aizk.conversion.db import get_engine, get_session
 from aizk.conversion.storage.s3_client import S3Client
 from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.wiring.capabilities import SubmissionCapabilities
 
 
 def get_config(request: Request) -> ConversionConfig:
@@ -27,3 +28,8 @@ def get_db_session(request: Request) -> Iterator[Session]:
 def get_s3_client(request: Request) -> S3Client:
     """Provide an S3Client configured from application state."""
     return S3Client(get_config(request))
+
+
+def get_submission_capabilities(request: Request) -> SubmissionCapabilities:
+    """Return the SubmissionCapabilities from application state."""
+    return request.app.state.submission_capabilities
