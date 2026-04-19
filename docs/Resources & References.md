@@ -64,6 +64,9 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [Intelligent Document Processing Leaderboard](https://idp-leaderboard.org/)
 - [getomni-ai/benchmark: OCR Benchmark](https://github.com/getomni-ai/benchmark)
 - [allenai/olmocr bench](https://github.com/allenai/olmocr/tree/main/olmocr/bench)
+
+## Retrieval
+
 - [OpenAI text-embedding-3-small](https://platform.openai.com/docs/models/text-embedding-3-small)
 - [OpenAI text-embedding-3-large](https://platform.openai.com/docs/models/text-embedding-3-large)
 - [Cohere Embed](https://cohere.com/embed)
@@ -81,6 +84,7 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [LlamaIndex](https://docs.llamaindex.ai/en/stable/)
 - [Late Interaction: Efficient Multi-Modal Retrievers (LanceDB)](https://lancedb.com/blog/late-interaction-efficient-multi-modal-retrievers-need-more-than-just-a-vector-index/)
 - [Late Interaction Overview (Weaviate)](https://weaviate.io/blog/late-interaction-overview)
+- [jorgebmann/pyturboquant: A Python implementation of Google's TurboQuant framework (WIP)](https://github.com/jorgebmann/pyturboquant)
 
 ### Sparse Retrieval
 

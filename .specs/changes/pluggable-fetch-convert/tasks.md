@@ -62,33 +62,33 @@
 
 ## Stage 5 — Wiring package with role-specific builders (additive, non-breaking)
 
-- [ ] Create `aizk/conversion/wiring/__init__.py`
-- [ ] Create `aizk/conversion/wiring/capabilities.py`: two descriptors.
+- [x] Create `aizk/conversion/wiring/__init__.py`
+- [x] Create `aizk/conversion/wiring/capabilities.py`: two descriptors.
   `DeploymentCapabilities` (worker-side) with `registered_kinds: frozenset[str]` (sourced from `FetcherRegistry.registered_kinds()`), `content_types_for(kind) -> frozenset[ContentType]`, `converter_available(content_type) -> bool`, `startup_probes: list[Probe]`.
   `SubmissionCapabilities` (API-side) with `accepted_submission_kinds: frozenset[str]` (sourced from `IngressPolicy.accepted_submission_kinds` in config).
   No `is_ready(kind)`, `resolver_chain_terminates(kind)`, or `submittable_kinds()` concepts.
-- [ ] Create `aizk/conversion/wiring/ingress_policy.py` (or add to config models): `IngressPolicy` config type with `accepted_submission_kinds: frozenset[str]`, populated from config (e.g., `AIZK_INGRESS__ACCEPTED_SUBMISSION_KINDS` or the equivalent pydantic config field).
+- [x] Create `aizk/conversion/wiring/ingress_policy.py` (or add to config models): `IngressPolicy` config type with `accepted_submission_kinds: frozenset[str]`, populated from config (e.g., `AIZK_INGRESS__ACCEPTED_SUBMISSION_KINDS` or the equivalent pydantic config field).
   Default value at cutover: `frozenset({"karakeep_bookmark"})`.
-- [ ] Create `aizk/conversion/wiring/registrations.py` (or similar): `register_ready_adapters(fetcher_registry, converter_registry, cfg)` — the single source of truth for which adapters are wired into the `FetcherRegistry`.
+- [x] Create `aizk/conversion/wiring/registrations.py` (or similar): `register_ready_adapters(fetcher_registry, converter_registry, cfg)` — the single source of truth for which adapters are wired into the `FetcherRegistry`.
   Called by both worker and API wiring so the registered dispatch kinds cannot drift (but the API's publicly accepted subset is independent — see `IngressPolicy`).
   Skeleton adapters (e.g., `SingleFileFetcher`) are NOT called from this helper.
   After all registrations complete, the helper SHALL invoke `validate_chain_closure(fetcher_registry, depth_cap)` before returning; the check walks each resolver's `resolves_to` edges against `FetcherRegistry.registered_kinds()`, asserts every produced kind is registered, and asserts the declared DAG has no cycles and no declared path exceeds the depth cap.
   On violation, raise `ChainNotTerminated` naming the resolver and missing kind (or the cycle); process startup fails before requests are accepted.
-- [ ] Create `aizk/conversion/wiring/worker.py`: `build_worker_runtime(cfg)` — calls `register_ready_adapters`, creates GPU `ResourceGuard` (wrapping `threading.Semaphore`), wires and returns `Orchestrator` + guard + `DeploymentCapabilities`
-- [ ] Create `aizk/conversion/wiring/api.py`: `build_api_runtime(cfg)` — calls `register_ready_adapters` against its own registry instance; reads `IngressPolicy` from `cfg`; validates `accepted_submission_kinds ⊆ registered_kinds()` and raises a typed configuration error at startup if the policy references a kind not registered; returns `SubmissionCapabilities` (NOT `DeploymentCapabilities`) for request validation
-- [ ] Create `aizk/conversion/wiring/testing.py`: `build_test_runtime(cfg)` — fake resolvers, in-memory registries, test-configurable registrations and test-configurable `IngressPolicy`
-- [ ] Verify: wiring package is the only package that imports both `core` and `adapters`
-- [ ] Tests: `build_worker_runtime` registers all expected fetcher kinds and converter formats; `DeploymentCapabilities.registered_kinds` contains every registered kind
-- [ ] Tests: `build_api_runtime` returns `SubmissionCapabilities` whose `accepted_submission_kinds == IngressPolicy.accepted_submission_kinds` from config (at cutover defaults: `{"karakeep_bookmark"}`)
-- [ ] Tests: worker and API intentionally diverge — for the default wiring (KaraKeep resolver + four terminal content fetchers registered; `IngressPolicy.accepted_submission_kinds = {"karakeep_bookmark"}`), `DeploymentCapabilities.registered_kinds` is the full five-kind set while `SubmissionCapabilities.accepted_submission_kinds` is `{"karakeep_bookmark"}`; the two are not equal
-- [ ] Tests: `accepted_submission_kinds ⊆ registered_kinds` invariant — `build_api_runtime` raises a typed configuration error at startup when `IngressPolicy.accepted_submission_kinds` contains a kind that `register_ready_adapters` did not register (fixture: policy contains `"singlefile"` but the helper does not wire `SingleFileFetcher`)
-- [ ] Tests: `"singlefile"` is not in `registered_kinds` because `register_ready_adapters` does not wire it (skeleton class is not invoked)
-- [ ] Tests: `validate_chain_closure` operates on `registered_kinds` (not on `accepted_submission_kinds`) — closure check passes when every `resolves_to` target is registered, regardless of whether those targets are publicly submittable
-- [ ] Tests: `validate_chain_closure` passes for the default wiring (KaraKeep resolver plus content fetchers for all four produced kinds)
-- [ ] Tests: `validate_chain_closure` raises `ChainNotTerminated` when a resolver declares a `resolves_to` kind that is not registered (fixture drops one downstream fetcher)
-- [ ] Tests: `validate_chain_closure` raises `ChainNotTerminated` when two resolvers declare a cycle in their `resolves_to` sets
-- [ ] Tests: `validate_chain_closure` raises `ChainNotTerminated` when the declared resolver DAG has a path longer than the depth cap
-- [ ] Tests: import graph lint — (a) no adapter module imports any other adapter module (enforces the cross-adapter invariant from design risks); (b) no module outside `aizk/conversion/wiring/` imports both `aizk.conversion.core` and `aizk.conversion.adapters`
+- [x] Create `aizk/conversion/wiring/worker.py`: `build_worker_runtime(cfg)` — calls `register_ready_adapters`, creates GPU `ResourceGuard` (wrapping `threading.Semaphore`), wires and returns `Orchestrator` + guard + `DeploymentCapabilities`
+- [x] Create `aizk/conversion/wiring/api.py`: `build_api_runtime(cfg)` — calls `register_ready_adapters` against its own registry instance; reads `IngressPolicy` from `cfg`; validates `accepted_submission_kinds ⊆ registered_kinds()` and raises a typed configuration error at startup if the policy references a kind not registered; returns `SubmissionCapabilities` (NOT `DeploymentCapabilities`) for request validation
+- [x] Create `aizk/conversion/wiring/testing.py`: `build_test_runtime(cfg)` — fake resolvers, in-memory registries, test-configurable registrations and test-configurable `IngressPolicy`
+- [x] Verify: wiring package is the only package that imports both `core` and `adapters`
+- [x] Tests: `build_worker_runtime` registers all expected fetcher kinds and converter formats; `DeploymentCapabilities.registered_kinds` contains every registered kind
+- [x] Tests: `build_api_runtime` returns `SubmissionCapabilities` whose `accepted_submission_kinds == IngressPolicy.accepted_submission_kinds` from config (at cutover defaults: `{"karakeep_bookmark"}`)
+- [x] Tests: worker and API intentionally diverge — for the default wiring (KaraKeep resolver + four terminal content fetchers registered; `IngressPolicy.accepted_submission_kinds = {"karakeep_bookmark"}`), `DeploymentCapabilities.registered_kinds` is the full five-kind set while `SubmissionCapabilities.accepted_submission_kinds` is `{"karakeep_bookmark"}`; the two are not equal
+- [x] Tests: `accepted_submission_kinds ⊆ registered_kinds` invariant — `build_api_runtime` raises a typed configuration error at startup when `IngressPolicy.accepted_submission_kinds` contains a kind that `register_ready_adapters` did not register (fixture: policy contains `"singlefile"` but the helper does not wire `SingleFileFetcher`)
+- [x] Tests: `"singlefile"` is not in `registered_kinds` because `register_ready_adapters` does not wire it (skeleton class is not invoked)
+- [x] Tests: `validate_chain_closure` operates on `registered_kinds` (not on `accepted_submission_kinds`) — closure check passes when every `resolves_to` target is registered, regardless of whether those targets are publicly submittable
+- [x] Tests: `validate_chain_closure` passes for the default wiring (KaraKeep resolver plus content fetchers for all four produced kinds)
+- [x] Tests: `validate_chain_closure` raises `ChainNotTerminated` when a resolver declares a `resolves_to` kind that is not registered (fixture drops one downstream fetcher)
+- [x] Tests: `validate_chain_closure` raises `ChainNotTerminated` when two resolvers declare a cycle in their `resolves_to` sets
+- [x] Tests: `validate_chain_closure` raises `ChainNotTerminated` when the declared resolver DAG has a path longer than the depth cap
+- [x] Tests: import graph lint — (a) no adapter module imports any other adapter module (enforces the cross-adapter invariant from design risks); (b) no module outside `aizk/conversion/wiring/` imports both `aizk.conversion.core` and `aizk.conversion.adapters`
 
 ## Stage 6a — BREAKING (schema): Bookmark → Source generalization + Alembic migration
 
