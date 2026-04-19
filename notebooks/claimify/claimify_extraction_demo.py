@@ -283,4 +283,13 @@ if usage_by_phase:
 else:
     print("No UsageRecords found — re-run extraction after enabling RUN_FULL.")
 
-# %%
+# %% [markdown]
+# | phase | calls | tot_tok | mean_tok | med_tok | cost_usd |
+# |---|---:|---:|---:|---:|---:|
+# | contextualize | 129 | 5,025,126 | 38,954.5 | 57,845.0 | $6.2725 |
+# | selection | 2,547 | 6,753,314 | 2,651.5 | 2,600.0 | $5.8420 |
+# | disambiguation | 2,426 | 8,910,878 | 3,673.1 | 3,621.5 | $7.1702 |
+# | decomposition | 2,388 | 13,000,907 | 5,444.3 | 5,348.0 | $8.8779 |
+# | **OVERALL** | **7,490** | **33,690,225** | **4,498.0** | **3,624.5** | **$28.1626** |
+#
+# cache tokens: read=12,032,380 write=0

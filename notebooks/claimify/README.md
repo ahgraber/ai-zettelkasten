@@ -1,6 +1,26 @@
 # Claimify demo
 
-## Status & scope
+Claimify (Metropolitansky & Larson, Microsoft Research, ACL 2025) is a method for breaking LLM-generated text into atomic, independently verifiable claims — a prerequisite for automated fact-checking and hallucination detection.
+The core insight is that naïve "proposition chunking" prompts produce claims that are inaccurate, incomplete, context-dependent, or unverifiable (opinions/normative statements), which poisons any downstream verification step.
+
+The method runs each sentence through three sequential LLM stages: **Selection** filters out unverifiable content (opinions, normative claims) and rewrites sentences that mix verifiable and unverifiable parts; **Disambiguation** resolves pronouns and ambiguous references using surrounding context, and critically drops sentences where the ambiguity is genuinely unresolvable rather than guessing; **Decomposition** splits the now-clean sentence into standalone atomic claims that embed enough context to be understood and verified in isolation.
+
+Claim extraction quality is then evaluated over six dimensions:
+
+- **invalid sentences** (did Selection correctly filter non-verifiable content?)
+- **element coverage** (are all ground-truth factual units present?)
+- **coverage** (is extracted claim set complete?), entailment (is each claim fully supported by its source sentence?)
+- **decontextualization** (is each claim self-contained without the original text?)
+- **invalid claims** (did any bad claims slip through Decomposition?).
+
+## Result
+
+Demo halted before full evaluation pipeline completion.
+Running 5 papers through an inexpensive (primarily `openai/gpt-5-mini`) cost just under $30.
+After estimating token counts, the full evaluation pipeline for the claims extracted from those 5 papers would cost _at minimum_ $20 -- that's for input tokens ONLY using models small enough to self-host (and therefore, very cheap).
+After making some guesses for output tokens on the eval pipeline, the full `claimify` process would cost _at minimum $10-25 per document_, an unsustainable amount for a zettelkasten over a rapidly evolving corpus.
+
+## Demo scope
 
 The demos are the reference implementation for a future production Claimify pipeline; if this graduates, the intended home is `src/aizk/extraction/` with `claimify` as a submodule owning its prompts.
 The existing `src/aizk/ai/claimify/prompts/` package is touched only to import prompt strings.

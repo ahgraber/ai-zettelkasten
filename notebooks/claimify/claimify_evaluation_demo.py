@@ -73,10 +73,10 @@ KARAKEEP_IDS: list[str] = [
 # Four-tier model congress. Fill with real OpenRouter IDs before running.
 # See https://openrouter.ai/models — pick one model per price/capability band.
 MODEL_TIERS: dict[str, list[str]] = {
-    "frontier": ["anthropic/claude-opus-4-6", "openai/gpt-5"],
-    "mid": ["anthropic/claude-sonnet-4-6", "openai/gpt-5-mini"],
-    "baseline": ["anthropic/claude-haiku-4-5", "openai/gpt-5-nano"],
-    "small": ["meta-llama/llama-3.3-70b-instruct", "google/gemini-2.5-flash"],
+    # "frontier": ["anthropic/claude-sonnet-4-6", "openai/gpt-5.4"],
+    # "mid": ["anthropic/claude-haiku-4.5", "openai/gpt-5.4-mini"],
+    # "small": ["openai/gpt-5.4-nano", "google/gemini-3.1-flash-lite-preview"],
+    "self-hostable": ["google/gemma-4-26b-a4b-it", "qwen/qwen3.5-9b"],
 }
 
 # Per-dimension adapter path overrides (default: "prose"). Tune per M5.5.
@@ -137,6 +137,136 @@ for tier_name, model_ids in MODEL_TIERS.items():
     total = sum(units * len(model_ids) for units in dim_units.values())
     print(f"tier={tier_name:<10s} models={len(model_ids)}  total calls={total}")
 print("# Flip RUN_FULL=True below to proceed")
+
+# %%
+# cost estimation: exact input token counts via tiktoken
+# static parts (SYSTEM_PROMPT + USER_TEMPLATE scaffolding) tokenized once;
+# variable parts summed over actual extraction records — no averaging.
+import re  # noqa: E402
+
+import tiktoken  # noqa: E402
+
+from aizk.ai.claimify.prompts.evaluation import (  # noqa: E402
+    coverage as _cov_p,
+    decontextualization as _decon_p,
+    element as _elem_p,
+    entailment as _ent_p,
+    invalid_claims as _ic_p,
+    invalid_sentences as _is_p,
+)
+
+_enc = tiktoken.get_encoding("cl100k_base")
+
+
+def _tok(s: str) -> int:
+    return len(_enc.encode(s))
+
+
+def _static_tokens(module) -> int:
+    scaffolding = re.sub(r"\{\{[^}]+\}\}", "", module.USER_TEMPLATE)
+    return _tok(module.SYSTEM_PROMPT) + _tok(scaffolding)
+
+
+_STATIC_TOK = {
+    "invalid_sentence": _static_tokens(_is_p),
+    "element": _static_tokens(_elem_p),
+    "coverage": _static_tokens(_cov_p),
+    "entailment": _static_tokens(_ent_p),
+    "decontextualization": _static_tokens(_decon_p),
+    "invalid_claim": _static_tokens(_ic_p),
+}
+
+_Q_TOK = 20  # "What does section '<heading>' in '<title>' describe?"
+
+# One pass over docs: build section tok table and sum invalid_sentence variable tokens.
+# invalid_sentence fires for ALL sentences (including those Selection dropped, which
+# aren't in the extraction records), so we iterate here rather than average.
+_sec_tok: dict = {}  # (uuid, sec_idx) -> tokens
+_is_var = 0  # variable token total for invalid_sentence
+for _d in docs:
+    for _si, _sec in enumerate(split_by_headings(_d.markdown)):
+        _stok = _tok(_sec.content)
+        _sec_tok[(_d.aizk_uuid, _si)] = _stok
+        for _ctx in build_sentence_contexts(_sec, _si, p=0, f=0):
+            _is_var += _Q_TOK + _stok + _tok(_ctx.sentence)
+
+# One pass over extraction records: sentence tok per key, claims grouped by sentence.
+# element / coverage fire per unique sentence-with-claims;
+# entailment / decontextualization / invalid_claim fire per claim.
+_sent_tok_key: dict = {}  # (uuid, sec_idx, sent_idx) -> tokens
+_claims_by_sent: dict = {}
+for _uuid, _recs in extraction_by_doc.items():
+    for _r in _recs:
+        if isinstance(_r, ClaimRecord):
+            _c = _r.claim
+            _k = (_uuid, _c.section_idx, _c.sentence_idx)
+            _sent_tok_key.setdefault(_k, _tok(_c.sentence))
+            _claims_by_sent.setdefault(_k, []).append(_c.claim.proposition)
+
+_elem_cov_var = sum(_Q_TOK + _sec_tok[(_uuid, _si)] + _stok for (_uuid, _si, _), _stok in _sent_tok_key.items())
+
+_ent_var = 0
+_decon_var = 0
+_ic_var = 0
+for _uuid, _recs in extraction_by_doc.items():
+    for _r in _recs:
+        if isinstance(_r, ClaimRecord):
+            _c = _r.claim
+            _k = (_uuid, _c.section_idx, _c.sentence_idx)
+            _base = _Q_TOK + _sec_tok[(_uuid, _c.section_idx)] + _sent_tok_key[_k]
+            _ctok = _tok(_c.claim.proposition)
+            _ent_var += _base + _ctok
+            _decon_var += _base + sum(_tok(p) for p in _claims_by_sent[_k]) + _ctok
+            _ic_var += _ctok
+
+_VAR_TOK_TOTAL = {
+    "invalid_sentence": _is_var,
+    "element": _elem_cov_var,
+    "coverage": _elem_cov_var,
+    "entailment": _ent_var,
+    "decontextualization": _decon_var,
+    "invalid_claim": _ic_var,
+}
+
+_dim_order = ["invalid_sentence", "element", "coverage", "entailment", "decontextualization", "invalid_claim"]
+print(f"static overhead (tokens): {_STATIC_TOK}")
+print(f"\n{'dimension':<22s} {'units':>8s} {'total_input_tok':>16s}")
+_grand_input_tok = 0.0
+for _dim in _dim_order:
+    _units = dim_units[_dim]
+    _total_tok = _STATIC_TOK[_dim] * _units + _VAR_TOK_TOTAL[_dim]
+    _grand_input_tok += _total_tok
+    print(f"{_dim:<22s} {_units:>8d} {_total_tok:>16,.0f}")
+print(f"\n{'TOTAL (1 model)':<31s} {_grand_input_tok:>16,.0f}")
+for _tier_name, _model_ids in MODEL_TIERS.items():
+    _tier_total = _grand_input_tok * len(_model_ids)
+    print(f"tier={_tier_name:<12s} models={len(_model_ids)}  total input tokens = {_tier_total:>16,.0f}")
+
+
+# %% [markdown]
+# static overhead (tokens) from template: {
+# 'invalid_sentence': 544,
+# 'element': 1427,
+# 'coverage': 2095,
+# 'entailment': 2009,
+# 'decontextualization': 760,
+# 'invalid_claim': 232
+# }
+#
+# | dimension           |  units | total_input_tok |
+# |---------------------|-------:|----------------:|
+# | invalid_sentence    |  2,547 |      16,386,224 |
+# | element             |  2,388 |      17,597,843 |
+# | coverage            |  2,388 |      19,193,027 |
+# | entailment          | 10,715 |      97,328,808 |
+# | decontextualization | 10,715 |      88,457,243 |
+# | invalid_claim       | 10,715 |       2,905,239 |
+#
+# TOTAL (1 model)                      241,868,384
+#
+# Even with "self-hostable" prices ($0.08/$0.35 per 1M input/output tokens), _input-only_ costs are still $20; output costs might triple that.
+#
+# Ballpark $10-20 _per document_ just for evaluation... the existing 5k+ document corpus makes 'claimify' completely unaffordable.
 
 # %%
 CONCURRENCY = 6  # in-flight OpenRouter calls; matches bakeoff
