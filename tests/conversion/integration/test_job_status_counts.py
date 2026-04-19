@@ -7,8 +7,8 @@ from uuid import UUID
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.source import Source as Bookmark
 
 
 def _create_bookmark(db_session, karakeep_id: str) -> Bookmark:

@@ -11,8 +11,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
-    from aizk.conversion.datamodel.bookmark import Bookmark
     from aizk.conversion.datamodel.job import ConversionJob
+    from aizk.conversion.datamodel.source import Source
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +104,7 @@ def _coerce_datetime(value: datetime | None, fallback: datetime) -> datetime:
 
 
 def generate_manifest(
-    bookmark: Bookmark,
+    bookmark: Source,
     job: ConversionJob,
     fetched_at: datetime,
     markdown_s3_uri: str,
@@ -118,7 +118,7 @@ def generate_manifest(
     """Generate manifest for conversion artifacts.
 
     Args:
-        bookmark: Bookmark record with source metadata.
+        source: Source record with source metadata.
         job: ConversionJob record with timing and job info.
         fetched_at: Timestamp when content was fetched.
         markdown_s3_uri: Absolute S3 URI for markdown (s3://bucket/key).

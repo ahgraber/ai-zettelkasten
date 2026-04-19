@@ -11,9 +11,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.storage.s3_client import S3Client, S3Error, S3NotFoundError
 
 

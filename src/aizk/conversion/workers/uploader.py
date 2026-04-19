@@ -9,9 +9,9 @@ from pathlib import Path
 
 from sqlmodel import Session, select
 
-from aizk.conversion.datamodel.bookmark import Bookmark as BookmarkRecord
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.conversion.datamodel.source import Source as BookmarkRecord
 from aizk.conversion.db import get_engine
 from aizk.conversion.storage.manifest import (
     ManifestConfigSnapshot,

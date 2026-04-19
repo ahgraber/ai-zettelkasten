@@ -28,9 +28,9 @@ from aizk.conversion.api.schemas import (
     JobSubmission,
     QueueFullResponse,
 )
-from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.utilities.hashing import compute_idempotency_key
 
 logger = logging.getLogger(__name__)
@@ -296,7 +296,7 @@ def list_jobs(
     # joinedload/selectinload eager-load in bulk to keep the number of queries bounded.
     jobs = session.exec(
         query.options(
-            joinedload(ConversionJob.bookmark),
+            joinedload(ConversionJob.source),
             selectinload(ConversionJob.output),
         )
         .order_by(ConversionJob.created_at.desc())
@@ -306,9 +306,9 @@ def list_jobs(
 
     responses = []
     for job in jobs:
-        if job.bookmark is None:
-            raise HTTPException(status_code=500, detail={"error": "bookmark_missing", "message": "Bookmark not found"})
-        responses.append(_job_to_response(job, job.bookmark, job.output))
+        if job.source is None:
+            raise HTTPException(status_code=500, detail={"error": "source_missing", "message": "Source not found"})
+        responses.append(_job_to_response(job, job.source, job.output))
 
     return JobList(jobs=responses, total=total, limit=limit, offset=offset)
 
