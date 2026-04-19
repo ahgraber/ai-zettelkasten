@@ -14,6 +14,7 @@ See:
 # %%
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -138,6 +139,7 @@ for tier_name, model_ids in MODEL_TIERS.items():
 print("# Flip RUN_FULL=True below to proceed")
 
 # %%
+CONCURRENCY = 6  # in-flight OpenRouter calls; matches bakeoff
 RUN_FULL = False
 
 
@@ -156,11 +158,16 @@ async def _run_eval(doc, records) -> Path:
 
 
 if RUN_FULL:
-    for d in docs:
+    _sem = asyncio.Semaphore(CONCURRENCY)
+
+    async def _one_doc(d):
         recs = extraction_by_doc.get(d.aizk_uuid)
         if not recs:
-            continue
-        await _run_eval(d, recs)
+            return
+        async with _sem:
+            await _run_eval(d, recs)
+
+    await asyncio.gather(*[_one_doc(d) for d in docs])
 
 # %%
 # Aggregation: load all eval verdicts, render per-model agreement table.

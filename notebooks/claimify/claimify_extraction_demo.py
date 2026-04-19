@@ -13,6 +13,7 @@ See:
 # %%
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -176,6 +177,7 @@ print(
 print("# Flip RUN_FULL=True below to proceed")
 
 # %%
+CONCURRENCY = 6  # in-flight OpenRouter calls; matches bakeoff
 RUN_FULL = False
 
 
@@ -199,8 +201,13 @@ async def _run_extraction(doc) -> Path:
 
 
 if RUN_FULL:
-    for doc in docs:
-        await _run_extraction(doc)
+    _sem = asyncio.Semaphore(CONCURRENCY)
+
+    async def _one_doc(doc):
+        async with _sem:
+            await _run_extraction(doc)
+
+    await asyncio.gather(*[_one_doc(doc) for doc in docs])
 
 
 # %%
