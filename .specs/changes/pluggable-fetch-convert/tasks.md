@@ -1,29 +1,29 @@
 # Tasks: pluggable-fetch-convert
 
-## PR 1 — Core protocols, types, registries, SourceRef union (additive, non-breaking)
+## Stage 1 — Core protocols, types, registries, SourceRef union (additive, non-breaking)
 
-- [ ] Create `aizk/conversion/core/__init__.py` package
-- [ ] Create `aizk/conversion/core/types.py`: `ContentType` enum (`pdf`, `html`, `image`, `docx`, `pptx`, `xlsx`, `csv`), `ConversionInput` (bytes + content_type + metadata), `ConversionArtifacts` (markdown + figures + metadata), and `SOURCE_TYPE_BY_KIND: Mapping[str, str]` — canonical mapping from `SourceRef.kind` to the `source_type` classification stored on the Source row (`arxiv` → `"arxiv"`, `github_readme` → `"github"`, `url` / `karakeep_bookmark` / `inline_html` / `singlefile` → `"other"`)
-- [ ] Create `aizk/conversion/core/source_ref.py`: `SourceRef` pydantic discriminated union with variants `KarakeepBookmarkRef`, `ArxivRef`, `GithubReadmeRef`, `UrlRef`, `SingleFileRef`, `InlineHtmlRef`; 64 KiB size cap on `InlineHtmlRef` enforced against the raw body bytes (not the serialized JSON)
-- [ ] Implement `to_dedup_payload() -> dict` on each `SourceRef` variant — returns a canonical, normalized dict of identity-defining fields only (e.g., `KarakeepBookmarkRef → {"kind": "karakeep_bookmark", "bookmark_id": ...}`, `ArxivRef → {"kind": "arxiv", "arxiv_id": <normalized>}`, `UrlRef → {"kind": "url", "url": <normalized>}`, `InlineHtmlRef → {"kind": "inline_html", "content_hash": sha256(body)}`)
-- [ ] Add `compute_source_ref_hash(ref)` helper: SHA-256 of `json.dumps(ref.to_dedup_payload(), sort_keys=True, separators=(",", ":"))`
-- [ ] Create `aizk/conversion/core/protocols.py`: `ContentFetcher` protocol (`fetch(ref) -> ConversionInput`, `produces: ClassVar[frozenset[ContentType]]`), `RefResolver` protocol (`resolve(ref) -> SourceRef`, `resolves_to: ClassVar[frozenset[str]]` class-level attribute enumerating every kind the resolver may emit), `Converter` protocol (`supported_formats: frozenset[ContentType]`, `requires_gpu: bool` class-level attribute, `convert(input) -> ConversionArtifacts`, `config_snapshot() -> dict`), `ResourceGuard` protocol (context manager; acquiring thread is sole releaser); all fetcher/resolver protocols are `@runtime_checkable`.
+- [x] Create `aizk/conversion/core/__init__.py` package
+- [x] Create `aizk/conversion/core/types.py`: `ContentType` enum (`pdf`, `html`, `image`, `docx`, `pptx`, `xlsx`, `csv`), `ConversionInput` (bytes + content_type + metadata), `ConversionArtifacts` (markdown + figures + metadata), and `SOURCE_TYPE_BY_KIND: Mapping[str, str]` — canonical mapping from `SourceRef.kind` to the `source_type` classification stored on the Source row (`arxiv` → `"arxiv"`, `github_readme` → `"github"`, `url` / `karakeep_bookmark` / `inline_html` / `singlefile` → `"other"`)
+- [x] Create `aizk/conversion/core/source_ref.py`: `SourceRef` pydantic discriminated union with variants `KarakeepBookmarkRef`, `ArxivRef`, `GithubReadmeRef`, `UrlRef`, `SingleFileRef`, `InlineHtmlRef`; 64 KiB size cap on `InlineHtmlRef` enforced against the raw body bytes (not the serialized JSON)
+- [x] Implement `to_dedup_payload() -> dict` on each `SourceRef` variant — returns a canonical, normalized dict of identity-defining fields only (e.g., `KarakeepBookmarkRef → {"kind": "karakeep_bookmark", "bookmark_id": ...}`, `ArxivRef → {"kind": "arxiv", "arxiv_id": <normalized>}`, `UrlRef → {"kind": "url", "url": <normalized>}`, `InlineHtmlRef → {"kind": "inline_html", "content_hash": sha256(body)}`)
+- [x] Add `compute_source_ref_hash(ref)` helper: SHA-256 of `json.dumps(ref.to_dedup_payload(), sort_keys=True, separators=(",", ":"))`
+- [x] Create `aizk/conversion/core/protocols.py`: `ContentFetcher` protocol (`fetch(ref) -> ConversionInput`, `produces: ClassVar[frozenset[ContentType]]`), `RefResolver` protocol (`resolve(ref) -> SourceRef`, `resolves_to: ClassVar[frozenset[str]]` class-level attribute enumerating every kind the resolver may emit), `Converter` protocol (`supported_formats: frozenset[ContentType]`, `requires_gpu: bool` class-level attribute, `convert(input) -> ConversionArtifacts`, `config_snapshot() -> dict`), `ResourceGuard` protocol (context manager; acquiring thread is sole releaser); all fetcher/resolver protocols are `@runtime_checkable`.
   Fetcher protocols SHALL NOT declare any `api_submittable` / public-ingress flag — public-ingress acceptability is a deployment policy (see PR 5 `IngressPolicy`), not an adapter attribute.
-- [ ] Create `aizk/conversion/core/registry.py`: `FetcherRegistry` with distinct registration entry points `register_content_fetcher(kind, impl)` and `register_resolver(kind, impl)` — role is declared at registration, AND each entry point validates structural conformance (`register_content_fetcher` raises `RegistrationRoleMismatch` if `isinstance(impl, RefResolver)` or if `impl` does not satisfy `ContentFetcher`; `register_resolver` raises `RegistrationRoleMismatch` if `impl` does not satisfy `RefResolver`); kind uniqueness enforced across both roles; `registered_kinds() -> frozenset[str]` returns the union of registered kinds (used for worker dispatch and chain-closure validation); raises `FetcherNotRegistered` on unknown kind; `ConverterRegistry` (maps `(content_type, impl_name)` -> converter, raises `NoConverterForFormat`).
+- [x] Create `aizk/conversion/core/registry.py`: `FetcherRegistry` with distinct registration entry points `register_content_fetcher(kind, impl)` and `register_resolver(kind, impl)` — role is declared at registration, AND each entry point validates structural conformance (`register_content_fetcher` raises `RegistrationRoleMismatch` if `isinstance(impl, RefResolver)` or if `impl` does not satisfy `ContentFetcher`; `register_resolver` raises `RegistrationRoleMismatch` if `impl` does not satisfy `RefResolver`); kind uniqueness enforced across both roles; `registered_kinds() -> frozenset[str]` returns the union of registered kinds (used for worker dispatch and chain-closure validation); raises `FetcherNotRegistered` on unknown kind; `ConverterRegistry` (maps `(content_type, impl_name)` -> converter, raises `NoConverterForFormat`).
   Registry exposes NO `submittable_kinds()` method — public-ingress acceptability is not a registry concern.
-- [ ] Create `aizk/conversion/core/errors.py`: `FetcherNotRegistered`, `NoConverterForFormat`, `FetcherDepthExceeded`, `ChainNotTerminated`, `RegistrationRoleMismatch` typed errors with retryability classification (`ChainNotTerminated` and `RegistrationRoleMismatch` are startup-time errors, not retryable)
-- [ ] Tests: `SourceRef` JSON round-trip for each variant; unknown kind rejected on deserialization; `InlineHtmlRef` rejected when raw body exceeds 64 KiB, accepted when raw body fits even if JSON-escaped form is larger
-- [ ] Tests: `to_dedup_payload` — equivalent refs with cosmetic differences produce identical hashes; identity-field changes produce different hashes; `InlineHtmlRef` hash is content-addressed
-- [ ] Tests: `FetcherRegistry` — `register_content_fetcher` and `register_resolver` register the correct role; duplicate kind across roles is rejected; unregistered kind raises `FetcherNotRegistered`; `registered_kinds()` returns the union of both roles
-- [ ] Tests: `FetcherRegistry` role-mismatch rejection — `register_content_fetcher` raises `RegistrationRoleMismatch` when given an impl that satisfies `RefResolver`; `register_resolver` raises `RegistrationRoleMismatch` when given an impl that does not satisfy `RefResolver`; registry state is unchanged in both rejection cases
-- [ ] Tests: `Converter.requires_gpu` is a class-level boolean inspectable without instantiation
-- [ ] Tests: `RefResolver.resolves_to` is a class-level `frozenset[str]` inspectable without instantiation
-- [ ] Tests: `ConverterRegistry` — register multi-format converter, resolve by `(content_type, name)`, missing combo error
-- [ ] Tests: `ContentType` enum has all 7 members
-- [ ] Tests: `SOURCE_TYPE_BY_KIND` has an entry for every `SourceRef` variant's `kind` literal (fail-fast on adding a new variant without classifying it)
-- [ ] Tests: dedup payload fixture-lock — a pinned fixture of `(SourceRef instance, expected SHA-256)` pairs (covering every variant and at least one non-trivial normalization case per variant, e.g., ArxivRef with and without `arxiv_pdf_url`, UrlRef before and after normalization) — `compute_source_ref_hash` output equals the pinned expected hash for every fixture entry; this test is intended to fail loudly on any accidental change to `to_dedup_payload()` output so the author must either revert the change or ship a data migration
+- [x] Create `aizk/conversion/core/errors.py`: `FetcherNotRegistered`, `NoConverterForFormat`, `FetcherDepthExceeded`, `ChainNotTerminated`, `RegistrationRoleMismatch` typed errors with retryability classification (`ChainNotTerminated` and `RegistrationRoleMismatch` are startup-time errors, not retryable)
+- [x] Tests: `SourceRef` JSON round-trip for each variant; unknown kind rejected on deserialization; `InlineHtmlRef` rejected when raw body exceeds 64 KiB, accepted when raw body fits even if JSON-escaped form is larger
+- [x] Tests: `to_dedup_payload` — equivalent refs with cosmetic differences produce identical hashes; identity-field changes produce different hashes; `InlineHtmlRef` hash is content-addressed
+- [x] Tests: `FetcherRegistry` — `register_content_fetcher` and `register_resolver` register the correct role; duplicate kind across roles is rejected; unregistered kind raises `FetcherNotRegistered`; `registered_kinds()` returns the union of both roles
+- [x] Tests: `FetcherRegistry` role-mismatch rejection — `register_content_fetcher` raises `RegistrationRoleMismatch` when given an impl that satisfies `RefResolver`; `register_resolver` raises `RegistrationRoleMismatch` when given an impl that does not satisfy `RefResolver`; registry state is unchanged in both rejection cases
+- [x] Tests: `Converter.requires_gpu` is a class-level boolean inspectable without instantiation
+- [x] Tests: `RefResolver.resolves_to` is a class-level `frozenset[str]` inspectable without instantiation
+- [x] Tests: `ConverterRegistry` — register multi-format converter, resolve by `(content_type, name)`, missing combo error
+- [x] Tests: `ContentType` enum has all 7 members
+- [x] Tests: `SOURCE_TYPE_BY_KIND` has an entry for every `SourceRef` variant's `kind` literal (fail-fast on adding a new variant without classifying it)
+- [x] Tests: dedup payload fixture-lock — a pinned fixture of `(SourceRef instance, expected SHA-256)` pairs (covering every variant and at least one non-trivial normalization case per variant, e.g., ArxivRef with and without `arxiv_pdf_url`, UrlRef before and after normalization) — `compute_source_ref_hash` output equals the pinned expected hash for every fixture entry; this test is intended to fail loudly on any accidental change to `to_dedup_payload()` output so the author must either revert the change or ship a data migration
 
-## PR 2 — Orchestrator class with fakes-based tests (additive, non-breaking)
+## Stage 2 — Orchestrator class with fakes-based tests (additive, non-breaking)
 
 - [ ] Create `aizk/conversion/core/orchestrator.py`: `Orchestrator.__init__(resolve_fetcher, resolve_converter)` with DI callables; `_fetch(ref, depth)` with recursive dispatch and depth cap (default 2); `process(ref, converter_name) -> ConversionArtifacts`
 - [ ] Tests: orchestrator with fake content fetcher — single-hop fetch returns `ConversionInput`
@@ -32,7 +32,7 @@
 - [ ] Tests: orchestrator has no transitive import of any adapter module (inspect import graph)
 - [ ] Tests: orchestrator constructed with injected fakes completes fetch-convert cycle with no dependency on real adapters
 
-## PR 3 — Docling adapter extraction (move + re-export, non-breaking)
+## Stage 3 — Docling adapter extraction (move + re-export, non-breaking)
 
 - [ ] Inventory existing conversion tests: enumerate every test module that imports `converter.py`, `fetcher.py`, `bookmark_utils.py`, `arxiv_utils.py`, `github_utils.py`, or the orchestrator.
   Classify each as (stays at current location, moves alongside its target adapter, or rewrites post-cutover in PR 7).
@@ -44,7 +44,7 @@
 - [ ] Tests: `DoclingConverter.config_snapshot()` returns the same field set as today's Docling-specific config hash
 - [ ] Tests: existing converter tests continue to pass (import path compatibility)
 
-## PR 4 — Fetcher adapter extraction (move + re-export, non-breaking)
+## Stage 4 — Fetcher adapter extraction (move + re-export, non-breaking)
 
 - [ ] Create `aizk/conversion/adapters/fetchers/__init__.py`
 - [ ] Create `aizk/conversion/adapters/fetchers/karakeep.py`: extract `KarakeepBookmarkResolver` (implements `RefResolver`); preserve exact 7-step resolution precedence from `orchestrator.py:194-224`; return `ArxivRef`, `GithubReadmeRef`, `UrlRef`, or `InlineHtmlRef` as appropriate; declare `resolves_to = frozenset({"arxiv", "github_readme", "url", "inline_html"})`
@@ -60,7 +60,7 @@
 - [ ] Tests: `InlineContentFetcher` returns embedded bytes as `ConversionInput` with `ContentType.HTML`
 - [ ] Tests: existing fetcher/utils tests continue to pass (import path compatibility)
 
-## PR 5 — Wiring package with role-specific builders (additive, non-breaking)
+## Stage 5 — Wiring package with role-specific builders (additive, non-breaking)
 
 - [ ] Create `aizk/conversion/wiring/__init__.py`
 - [ ] Create `aizk/conversion/wiring/capabilities.py`: two descriptors.
@@ -90,7 +90,7 @@
 - [ ] Tests: `validate_chain_closure` raises `ChainNotTerminated` when the declared resolver DAG has a path longer than the depth cap
 - [ ] Tests: import graph lint — (a) no adapter module imports any other adapter module (enforces the cross-adapter invariant from design risks); (b) no module outside `aizk/conversion/wiring/` imports both `aizk.conversion.core` and `aizk.conversion.adapters`
 
-## PR 6a — BREAKING (schema): Bookmark → Source generalization + Alembic migration
+## Stage 6a — BREAKING (schema): Bookmark → Source generalization + Alembic migration
 
 - [ ] Rename `datamodel/bookmark.py` → `datamodel/source.py`; rename class `Bookmark` → `Source`
 - [ ] Make `karakeep_id` nullable on `Source`
@@ -115,7 +115,7 @@
 - [ ] Docs alignment: grep the repo for references to `Bookmark` / `bookmarks` / `bookmark_id` in source comments, module docstrings, `CLAUDE.md`, architecture docs, and README; update language that refers to the old name to either describe the Source generalization or, where historically accurate, clarify that the scope has widened.
   Commit the doc touch-ups in the same PR so the schema change and its documentation land together
 
-## PR 6b — BREAKING (API + manifest): JobSubmission/JobResponse cutover + manifest v2.0
+## Stage 6b — BREAKING (API + manifest): JobSubmission/JobResponse cutover + manifest v2.0
 
 - [ ] Create `IngressSourceRef` discriminated union in `api/schemas/` (or equivalent API-schema module): at cutover, contains only `KarakeepBookmarkRef`; kept as a distinct narrow union so the OpenAPI request contract advertises exactly the kinds `IngressPolicy.accepted_submission_kinds` accepts.
   The internal `SourceRef` union (all six variants) remains unchanged — used for persistence, denormalization, manifests, and worker dispatch.
@@ -150,7 +150,7 @@
 - [ ] Docs alignment: grep the repo for references to `karakeep_id` in request-shape or query-param documentation (API reference docs, `CLAUDE.md` API section, README usage examples, architecture diagrams describing job submission), and update them to reflect `source_ref` as the submit-side identifier; retain `karakeep_id` documentation only where it describes the response-side compatibility field.
   Commit the doc touch-ups in the same PR so the API change and its documentation land together
 
-## PR 7 — BREAKING (behavior): Worker cutover to new orchestrator
+## Stage 7 — BREAKING (behavior): Worker cutover to new orchestrator
 
 - [ ] Replace worker's conversion loop to use `Orchestrator` from wiring (`build_worker_runtime`)
 - [ ] Worker reads `source_ref` from job record instead of bookmark metadata for fetch dispatch
@@ -183,7 +183,7 @@
 - [ ] Docs alignment: grep the repo for references to the legacy worker conversion loop, bookmark-based fetch dispatch, and the module-level GPU semaphore in source comments, module docstrings, `CLAUDE.md`, the worker section of architecture docs, and any runbook / on-call documentation; update them to reflect the injected `Orchestrator` + `ResourceGuard` + `source_ref`-driven dispatch.
   Commit the doc touch-ups in the same PR so the worker cutover and its documentation land together
 
-## PR 8 — Legacy module deletion (non-breaking)
+## Stage 8 — Legacy module deletion (non-breaking)
 
 - [ ] Remove re-exports from old module paths added in PRs 3-4 (`converter.py` re-export, `fetcher.py` re-export, `bookmark_utils.py` re-export, `arxiv_utils.py` re-export, `github_utils.py` re-export)
 - [ ] Delete now-empty legacy modules if fully superseded
@@ -192,7 +192,7 @@
 - [ ] Verify no internal imports reference old module paths
 - [ ] Tests: full test suite passes with no import warnings or deprecation notices
 
-## PR 9 — BREAKING (config): Env-var namespace rename
+## Stage 9 — BREAKING (config): Env-var namespace rename
 
 - [ ] Create per-adapter nested pydantic config models: `DoclingConverterConfig` under `AIZK_CONVERTER__DOCLING__*`, `KarakeepFetcherConfig` under `AIZK_FETCHER__KARAKEEP__*`, etc.
 - [ ] Remove flat `AIZK_DOCLING_*` / `DOCLING_*` env-var aliases from config — no compatibility shim
