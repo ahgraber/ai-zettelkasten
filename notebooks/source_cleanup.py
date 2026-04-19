@@ -26,9 +26,9 @@ from dotenv import load_dotenv
 from sqlalchemy.engine import make_url
 from sqlmodel import Session, select
 
-from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.db import get_engine
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.utilities.path_utils import get_repo_path

@@ -185,12 +185,12 @@
 
 ## Stage 8 — Legacy module deletion (non-breaking)
 
-- [ ] Remove re-exports from old module paths added in PRs 3-4 (`converter.py` re-export, `fetcher.py` re-export, `bookmark_utils.py` re-export, `arxiv_utils.py` re-export, `github_utils.py` re-export)
-- [ ] Delete now-empty legacy modules if fully superseded
-- [ ] Remove the old `if`/`elif` source-type dispatch ladder from old orchestrator code (if any remains)
-- [ ] Remove module-level GPU semaphore (replaced by injected `ResourceGuard`)
-- [ ] Verify no internal imports reference old module paths
-- [ ] Tests: full test suite passes with no import warnings or deprecation notices
+- [x] Remove re-exports from old module paths added in Stages 3-4 (`converter.py` re-export, `fetcher.py` re-export, `bookmark_utils.py` re-export, `arxiv_utils.py` re-export, `github_utils.py` re-export)
+- [x] Delete now-empty legacy modules if fully superseded
+- [x] Remove the old `if`/`elif` source-type dispatch ladder from old orchestrator code (if any remains)
+- [x] Remove module-level GPU semaphore (replaced by injected `ResourceGuard`)
+- [x] Verify no internal imports reference old module paths
+- [x] Tests: full test suite passes with no import warnings or deprecation notices
 
 ## Stage 9 — BREAKING (config): Env-var namespace rename
 
