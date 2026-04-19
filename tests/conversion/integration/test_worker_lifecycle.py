@@ -27,6 +27,7 @@ import psutil
 import pytest
 from sqlmodel import Session
 
+from aizk.conversion.core.source_ref import KarakeepBookmarkRef
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.utilities.config import ConversionConfig
@@ -43,7 +44,7 @@ pytestmark = [
 def _test_process_subprocess(
     job_id: int,
     workspace_path: str,
-    karakeep_payload_path: str,
+    source_ref_json: str,
     status_queue,
 ) -> None:
     import time
@@ -64,7 +65,7 @@ def _test_process_subprocess(
 def _process_job_subprocess_spawn_child(
     job_id: int,
     workspace_path: str,
-    karakeep_payload_path: str,
+    source_ref_json: str,
     status_queue,
 ) -> None:
     from pathlib import Path
@@ -87,7 +88,7 @@ def _process_job_subprocess_spawn_child(
 def _process_job_subprocess_graceful_sigterm(
     job_id: int,
     workspace_path: str,
-    karakeep_payload_path: str,
+    source_ref_json: str,
     status_queue,
 ) -> None:
     from pathlib import Path
@@ -119,7 +120,7 @@ def _process_job_subprocess_graceful_sigterm(
 def _process_job_subprocess_ignore_sigterm(
     job_id: int,
     workspace_path: str,
-    karakeep_payload_path: str,
+    source_ref_json: str,
     status_queue,
 ) -> None:
     import signal
@@ -182,6 +183,20 @@ def _wait_for_path(path: Path, *, timeout_seconds: float, interval_seconds: floa
     pytest.fail(f"Expected {path} to exist within {timeout_seconds} seconds")
 
 
+def _make_fake_runtime():
+    from unittest.mock import MagicMock
+
+    from aizk.conversion.wiring.worker import WorkerRuntime
+
+    fake_caps = MagicMock()
+    fake_caps.converter_requires_gpu.return_value = False
+    return WorkerRuntime(
+        orchestrator=MagicMock(),
+        resource_guard=MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False)),
+        capabilities=fake_caps,
+    )
+
+
 def _create_test_bookmark(db_session: Session) -> Bookmark:
     """Helper to create a test bookmark."""
     bookmark = Bookmark(
@@ -200,12 +215,13 @@ def _create_test_bookmark(db_session: Session) -> Bookmark:
 
 def _create_test_job(db_session: Session, bookmark: Bookmark, status: ConversionJobStatus) -> ConversionJob:
     """Helper to create a test job."""
+    source_ref = KarakeepBookmarkRef(kind="karakeep_bookmark", bookmark_id=bookmark.karakeep_id or "bm_lifecycle_test")
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
         title=bookmark.title or "Test Job",
         idempotency_key="lifecycle" * 8,
         status=status,
-        payload_version=1,
+        source_ref=source_ref.model_dump_json(),
     )
     if status == ConversionJobStatus.RUNNING:
         job.started_at = dt.datetime.now(dt.timezone.utc)
@@ -215,7 +231,7 @@ def _create_test_job(db_session: Session, bookmark: Bookmark, status: Conversion
     return job
 
 
-def test_real_subprocess_spawned_and_terminated(monkeypatch, db_session: Session, html_bookmark) -> None:
+def test_real_subprocess_spawned_and_terminated(monkeypatch, db_session: Session) -> None:
     """Verify process_job_supervised spawns real subprocess and can terminate it."""
     monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("WORKER_TEST_SLEEP_SECONDS", "10")
@@ -233,10 +249,6 @@ def test_real_subprocess_spawned_and_terminated(monkeypatch, db_session: Session
         spawned_process.append(proc)
         return proc
 
-    # Mock helper functions but let subprocess actually spawn
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
-
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
 
     # Mock mp.Process to track PID
@@ -247,7 +259,6 @@ def test_real_subprocess_spawned_and_terminated(monkeypatch, db_session: Session
     cancel_state = {"called": False}
 
     def _mock_is_cancelled(job_id, engine):
-        # Return True after first check to trigger cancellation
         if not cancel_state["called"]:
             cancel_state["called"] = True
             return False
@@ -259,7 +270,9 @@ def test_real_subprocess_spawned_and_terminated(monkeypatch, db_session: Session
     poll_interval_seconds = 0.1
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
+    orchestrator.process_job_supervised(
+        job.id, config, _make_fake_runtime(), poll_interval_seconds=poll_interval_seconds
+    )
 
     # Verify subprocess was spawned
     assert len(spawned_process) == 1, "Should have spawned one subprocess"
@@ -271,7 +284,7 @@ def test_real_subprocess_spawned_and_terminated(monkeypatch, db_session: Session
     _assert_no_zombie_processes(job.id)
 
 
-def test_cancelled_job_terminates_subprocess_with_no_zombies(monkeypatch, db_session: Session, html_bookmark) -> None:
+def test_cancelled_job_terminates_subprocess_with_no_zombies(monkeypatch, db_session: Session) -> None:
     """Verify cancelling a job terminates subprocess and leaves no zombie processes."""
     monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("WORKER_TEST_SLEEP_SECONDS", "10")
@@ -287,9 +300,6 @@ def test_cancelled_job_terminates_subprocess_with_no_zombies(monkeypatch, db_ses
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
-
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
 
     ctx = orchestrator.mp.get_context("spawn")
@@ -301,7 +311,9 @@ def test_cancelled_job_terminates_subprocess_with_no_zombies(monkeypatch, db_ses
     poll_interval_seconds = 1
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
+    orchestrator.process_job_supervised(
+        job.id, config, _make_fake_runtime(), poll_interval_seconds=poll_interval_seconds
+    )
 
     assert len(spawned_process) == 1
     spawned_pid = spawned_process[0].pid
@@ -310,7 +322,7 @@ def test_cancelled_job_terminates_subprocess_with_no_zombies(monkeypatch, db_ses
     _assert_no_zombie_processes(job.id)
 
 
-def test_timeout_terminates_subprocess(monkeypatch, db_session: Session, html_bookmark) -> None:
+def test_timeout_terminates_subprocess(monkeypatch, db_session: Session) -> None:
     """Verify timeout terminates subprocess near the configured deadline."""
     monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "5")  # Short timeout for test
     monkeypatch.setenv("WORKER_TEST_SLEEP_SECONDS", "10")
@@ -325,9 +337,6 @@ def test_timeout_terminates_subprocess(monkeypatch, db_session: Session, html_bo
         proc = original_process_class(target=target, args=args, daemon=daemon)
         spawned_process.append(proc)
         return proc
-
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
 
@@ -344,7 +353,9 @@ def test_timeout_terminates_subprocess(monkeypatch, db_session: Session, html_bo
     config = ConversionConfig(_env_file=None)
     start = time.monotonic()
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
+    orchestrator.process_job_supervised(
+        job.id, config, _make_fake_runtime(), poll_interval_seconds=poll_interval_seconds
+    )
     duration = time.monotonic() - start
 
     # Verify timeout error was raised
@@ -365,7 +376,6 @@ def test_timeout_terminates_subprocess(monkeypatch, db_session: Session, html_bo
 def test_subprocess_completes_normally_no_zombies(
     monkeypatch,
     db_session: Session,
-    html_bookmark,
 ) -> None:
     """Verify subprocess that completes normally leaves no zombie processes."""
     monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "30")
@@ -381,9 +391,6 @@ def test_subprocess_completes_normally_no_zombies(
         proc = original_process_class(target=target, args=args, daemon=daemon)
         spawned_process.append(proc)
         return proc
-
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
     monkeypatch.setattr(orchestrator, "_upload_converted", lambda _job_id, _workspace, _config: None)  # Skip upload
@@ -413,7 +420,9 @@ def test_subprocess_completes_normally_no_zombies(
     poll_interval_seconds = 0.1
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
+    orchestrator.process_job_supervised(
+        job.id, config, _make_fake_runtime(), poll_interval_seconds=poll_interval_seconds
+    )
 
     assert len(spawned_process) == 1
     spawned_pid = spawned_process[0].pid
@@ -429,7 +438,6 @@ def test_subprocess_completes_normally_no_zombies(
 def test_process_group_terminates_grandchild(
     monkeypatch,
     db_session: Session,
-    html_bookmark,
     tmp_path: Path,
 ) -> None:
     """Verify process group termination kills child and grandchild processes."""
@@ -448,9 +456,6 @@ def test_process_group_terminates_grandchild(
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
-
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _process_job_subprocess_spawn_child)
 
     ctx = orchestrator.mp.get_context("spawn")
@@ -464,7 +469,9 @@ def test_process_group_terminates_grandchild(
     poll_interval_seconds = 0.1
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
+    orchestrator.process_job_supervised(
+        job.id, config, _make_fake_runtime(), poll_interval_seconds=poll_interval_seconds
+    )
 
     assert len(spawned_process) == 1
     spawned_pid = spawned_process[0].pid
@@ -484,7 +491,6 @@ def test_process_group_terminates_grandchild(
 def test_sigterm_graceful_shutdown_within_grace_period(
     monkeypatch,
     db_session: Session,
-    html_bookmark,
     tmp_path: Path,
 ) -> None:
     """Verify SIGTERM shutdown completes within the grace period."""
@@ -505,9 +511,6 @@ def test_sigterm_graceful_shutdown_within_grace_period(
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
-
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _process_job_subprocess_graceful_sigterm)
 
     ctx = orchestrator.mp.get_context("spawn")
@@ -527,7 +530,9 @@ def test_sigterm_graceful_shutdown_within_grace_period(
     poll_interval_seconds = 0.1
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
+    orchestrator.process_job_supervised(
+        job.id, config, _make_fake_runtime(), poll_interval_seconds=poll_interval_seconds
+    )
 
     if cancel_state["cancel_time"] is not None:
         cancel_elapsed = time.monotonic() - cancel_state["cancel_time"]
@@ -541,7 +546,7 @@ def test_sigterm_graceful_shutdown_within_grace_period(
     _assert_no_zombie_processes(job.id)
 
 
-def test_sigkill_after_sigterm_on_timeout(monkeypatch, db_session: Session, html_bookmark) -> None:
+def test_sigkill_after_sigterm_on_timeout(monkeypatch, db_session: Session) -> None:
     """Verify SIGKILL is sent after SIGTERM when subprocess ignores termination."""
     timeout_seconds = 1.0
     monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", str(timeout_seconds))
@@ -557,9 +562,6 @@ def test_sigkill_after_sigterm_on_timeout(monkeypatch, db_session: Session, html
         spawned_process.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
-
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _process_job_subprocess_ignore_sigterm)
 
     ctx = orchestrator.mp.get_context("spawn")
@@ -574,7 +576,9 @@ def test_sigkill_after_sigterm_on_timeout(monkeypatch, db_session: Session, html
     poll_interval_seconds = 0.1
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
+    orchestrator.process_job_supervised(
+        job.id, config, _make_fake_runtime(), poll_interval_seconds=poll_interval_seconds
+    )
     duration = time.monotonic() - start
 
     assert len(errors) == 1
@@ -592,7 +596,6 @@ def test_sigkill_after_sigterm_on_timeout(monkeypatch, db_session: Session, html
 def test_cancel_mid_execution_terminates_within_poll_interval(
     monkeypatch,
     db_session: Session,
-    html_bookmark,
 ) -> None:
     """Verify cancellation ends the subprocess within the poll interval."""
     monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "30")
@@ -608,9 +611,6 @@ def test_cancel_mid_execution_terminates_within_poll_interval(
         proc = original_process_class(target=target, args=args, daemon=daemon)
         spawned_process.append(proc)
         return proc
-
-    monkeypatch.setattr(orchestrator, "fetch_karakeep_bookmark", lambda _id: html_bookmark)
-    monkeypatch.setattr(orchestrator, "validate_bookmark_content", lambda _bm: None)
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
 
@@ -632,7 +632,9 @@ def test_cancel_mid_execution_terminates_within_poll_interval(
     poll_interval_seconds = 0.1
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config, poll_interval_seconds=poll_interval_seconds)
+    orchestrator.process_job_supervised(
+        job.id, config, _make_fake_runtime(), poll_interval_seconds=poll_interval_seconds
+    )
 
     assert cancel_state["cancel_time"] is not None
     cancel_elapsed = time.monotonic() - cancel_state["cancel_time"]

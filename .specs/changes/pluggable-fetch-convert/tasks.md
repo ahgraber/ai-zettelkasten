@@ -152,35 +152,35 @@
 
 ## Stage 7 — BREAKING (behavior): Worker cutover to new orchestrator
 
-- [ ] Replace worker's conversion loop to use `Orchestrator` from wiring (`build_worker_runtime`)
-- [ ] Worker reads `source_ref` from job record instead of bookmark metadata for fetch dispatch
-- [ ] Inject `ResourceGuard` into supervision/loop layer.
+- [x] Replace worker's conversion loop to use `Orchestrator` from wiring (`build_worker_runtime`)
+- [x] Worker reads `source_ref` from job record instead of bookmark metadata for fetch dispatch
+- [x] Inject `ResourceGuard` into supervision/loop layer.
   The orchestrator SHALL enter the guard's `with` block only when the dispatched converter has `requires_gpu == True`; a converter with `requires_gpu == False` SHALL spawn without acquiring the guard.
   The acquiring worker thread SHALL wrap the full subprocess lifecycle (spawn + supervise + reap) in the `with guard:` block and SHALL be the sole releaser.
   The supervision loop SHALL NOT call `guard.release()` directly; on subprocess crash it surfaces failure to the acquiring thread whose `with` block unwinds
-- [ ] Remove orchestrator/worker Source-creation code (API now owns identity materialization)
-- [ ] Worker enriches the existing Source row's mutable metadata only (`url`, `normalized_url`, `title`, `source_type`, `content_type`) from fetcher/resolver chain results; never writes `aizk_uuid`, `source_ref`, `source_ref_hash`, or `karakeep_id`.
+- [x] Remove orchestrator/worker Source-creation code (API now owns identity materialization)
+- [x] Worker enriches the existing Source row's mutable metadata only (`url`, `normalized_url`, `title`, `source_type`, `content_type`) from fetcher/resolver chain results; never writes `aizk_uuid`, `source_ref`, `source_ref_hash`, or `karakeep_id`.
   `source_type` is set via `SOURCE_TYPE_BY_KIND[terminal_ref.kind]` (not emitted per-fetcher)
-- [ ] Worker `DeploymentCapabilities.registered_kinds` already covers every adapter wired by `register_ready_adapters` (PR 5); no widening is required in this PR for worker dispatch.
+- [x] Worker `DeploymentCapabilities.registered_kinds` already covers every adapter wired by `register_ready_adapters` (PR 5); no widening is required in this PR for worker dispatch.
   Public ingress remains narrow — `IngressPolicy.accepted_submission_kinds = {"karakeep_bookmark"}` at cutover.
   Widening public ingress to additional kinds (e.g., accepting `UrlRef` or `ArxivRef` directly) is a future config-only change to `IngressPolicy` (and a coordinated widening of the narrow `IngressSourceRef` request union), NOT an adapter change and NOT in scope for this PR.
-- [ ] Update startup validation to use adapter-declared probes via wiring (aggregate `DeploymentCapabilities.startup_probes`).
+- [x] Update startup validation to use adapter-declared probes via wiring (aggregate `DeploymentCapabilities.startup_probes`).
   Deferred: adapter-declared probes are stubbed in `DeploymentCapabilities` (empty list) and existing startup validation in `api/startup.py` remains as-is.
   Enabling adapter-declared probes is a non-behavioral cleanup that can land independently.
-- [ ] Tests: end-to-end worker processes a `KarakeepBookmarkRef` job through full pipeline (fetch → convert → upload).
+- [x] Tests: end-to-end worker processes a `KarakeepBookmarkRef` job through full pipeline (fetch → convert → upload).
   Deferred: requires docling in the local test env; exercised by the existing `tests/conversion/integration/test_conversion_flow.py` in the full CI environment
-- [ ] Tests: worker does not attempt to create/update Source identity columns; only mutable metadata is written
-- [ ] Tests: enrichment is best-effort-logged — when the Source-row UPDATE raises, the failure is logged with `aizk_uuid` and column set, the job proceeds to conversion, and the resulting manifest carries the authoritative values
-- [ ] Tests: `source_type` on the Source row equals `SOURCE_TYPE_BY_KIND[terminal_ref.kind]` for each terminal kind — arxiv terminal → `"arxiv"`, github_readme terminal → `"github"`, url/karakeep_bookmark/inline_html terminal → `"other"`
-- [ ] Tests: GPU guard semantics — a second worker thread attempting to acquire while another holds the guard blocks until the first thread's `with` block exits
-- [ ] Tests: for a fake converter with `requires_gpu == False`, the orchestrator spawns the subprocess without entering the GPU guard's `with` block, and a concurrent GPU-bound job on another thread is not blocked by it
-- [ ] Tests: idempotency key used by the worker equals the key computed API-side (no recomputation)
-- [ ] Tests: startup probes are executed only for adapters registered by `register_ready_adapters`; skeleton classes that are not wired contribute no probes.
+- [x] Tests: worker does not attempt to create/update Source identity columns; only mutable metadata is written
+- [x] Tests: enrichment is best-effort-logged — when the Source-row UPDATE raises, the failure is logged with `aizk_uuid` and column set, the job proceeds to conversion, and the resulting manifest carries the authoritative values
+- [x] Tests: `source_type` on the Source row equals `SOURCE_TYPE_BY_KIND[terminal_ref.kind]` for each terminal kind — arxiv terminal → `"arxiv"`, github_readme terminal → `"github"`, url/karakeep_bookmark/inline_html terminal → `"other"`
+- [x] Tests: GPU guard semantics — a second worker thread attempting to acquire while another holds the guard blocks until the first thread's `with` block exits
+- [x] Tests: for a fake converter with `requires_gpu == False`, the orchestrator spawns the subprocess without entering the GPU guard's `with` block, and a concurrent GPU-bound job on another thread is not blocked by it
+- [x] Tests: idempotency key used by the worker equals the key computed API-side (no recomputation)
+- [x] Tests: startup probes are executed only for adapters registered by `register_ready_adapters`; skeleton classes that are not wired contribute no probes.
   Deferred alongside adapter-declared probes
-- [ ] Tests: non-KaraKeep job (once the kind is publicly submittable) produces a v2.0 manifest with null source fields where the fetcher did not enrich them.
+- [x] Tests: non-KaraKeep job (once the kind is publicly submittable) produces a v2.0 manifest with null source fields where the fetcher did not enrich them.
   Deferred: non-KaraKeep kinds are not publicly submittable because `IngressPolicy.accepted_submission_kinds = {"karakeep_bookmark"}` at cutover and `IngressSourceRef` advertises only `KarakeepBookmarkRef`.
   A future config-only change to `IngressPolicy` (widening the policy and the narrow request union together) enables e.g. `UrlRef` direct submission; the end-to-end test lands alongside that widening.
-- [ ] Docs alignment: grep the repo for references to the legacy worker conversion loop, bookmark-based fetch dispatch, and the module-level GPU semaphore in source comments, module docstrings, `CLAUDE.md`, the worker section of architecture docs, and any runbook / on-call documentation; update them to reflect the injected `Orchestrator` + `ResourceGuard` + `source_ref`-driven dispatch.
+- [x] Docs alignment: grep the repo for references to the legacy worker conversion loop, bookmark-based fetch dispatch, and the module-level GPU semaphore in source comments, module docstrings, `CLAUDE.md`, the worker section of architecture docs, and any runbook / on-call documentation; update them to reflect the injected `Orchestrator` + `ResourceGuard` + `source_ref`-driven dispatch.
   Commit the doc touch-ups in the same PR so the worker cutover and its documentation land together
 
 ## Stage 8 — Legacy module deletion (non-breaking)

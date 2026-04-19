@@ -18,6 +18,16 @@ from aizk.conversion.utilities.hashing import build_output_config_snapshot
 from aizk.conversion.workers.converter import convert_html, convert_pdf
 
 
+def _get_docling_version() -> str:
+    """Return installed docling version, or 'unknown' if not found."""
+    try:
+        from importlib.metadata import version as _importlib_version
+
+        return _importlib_version("docling")
+    except Exception:
+        return "unknown"
+
+
 class DoclingConverter:
     """Converter adapter backed by Docling for PDF and HTML inputs."""
 
@@ -29,6 +39,8 @@ class DoclingConverter:
 
     def convert(self, input: ConversionInput) -> ConversionArtifacts:  # noqa: A002 — protocol argument name
         """Dispatch ``input`` to the appropriate Docling conversion function."""
+        metadata = {"docling_version": _get_docling_version()}
+
         if input.content_type is ContentType.PDF:
             temp_dir = Path(tempfile.mkdtemp(prefix="docling-pdf-"))
             markdown, figures = convert_pdf(
@@ -36,7 +48,7 @@ class DoclingConverter:
                 temp_dir=temp_dir,
                 config=self._config,
             )
-            return ConversionArtifacts(markdown=markdown, figures=list(figures))
+            return ConversionArtifacts(markdown=markdown, figures=list(figures), metadata=metadata)
 
         if input.content_type is ContentType.HTML:
             source_url = input.metadata.get("source_url") if input.metadata else None
@@ -47,7 +59,7 @@ class DoclingConverter:
                 config=self._config,
                 source_url=source_url,
             )
-            return ConversionArtifacts(markdown=markdown, figures=list(figures))
+            return ConversionArtifacts(markdown=markdown, figures=list(figures), metadata=metadata)
 
         raise ValueError(
             f"DoclingConverter does not support content_type={input.content_type!r}; "

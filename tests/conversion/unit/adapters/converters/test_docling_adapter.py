@@ -147,8 +147,8 @@ def test_docling_convert_dispatches_pdf_to_convert_pdf(monkeypatch: pytest.Monke
     assert artifacts.markdown == "# PDF markdown"
     assert len(artifacts.figures) == 1
     assert artifacts.figures[0] == tmp_path / "figure-001.png"
-    # Default ConversionArtifacts.metadata is {} — the adapter must not populate it.
-    assert artifacts.metadata == {}
+    # Adapter populates docling_version in metadata (Stage 7).
+    assert "docling_version" in artifacts.metadata
 
     # Verify the adapter passed the bytes, a temp_dir Path, and the config through.
     assert captured["pdf_bytes"] == b"%PDF-1.4"
@@ -187,7 +187,8 @@ def test_docling_convert_dispatches_html_to_convert_html(monkeypatch: pytest.Mon
     assert isinstance(artifacts, ConversionArtifacts)
     assert artifacts.markdown == "# HTML markdown"
     assert artifacts.figures == []
-    assert artifacts.metadata == {}
+    # Adapter populates docling_version in metadata (Stage 7).
+    assert "docling_version" in artifacts.metadata
 
     assert captured["html_bytes"] == b"<html></html>"
     assert isinstance(captured["temp_dir"], Path)

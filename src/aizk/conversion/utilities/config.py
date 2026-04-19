@@ -47,6 +47,7 @@ class ConversionConfig(BaseSettings):
         default=300,
         validation_alias="WORKER_DRAIN_TIMEOUT_SECONDS",
     )
+    worker_converter_name: str = Field(default="docling", validation_alias="WORKER_CONVERTER_NAME")
 
     docling_pdf_max_pages: int = Field(default=250, validation_alias="DOCLING_PDF_MAX_PAGES")
     docling_enable_ocr: bool = Field(default=True, validation_alias="DOCLING_ENABLE_OCR")

@@ -16,6 +16,7 @@ control stays in the parent process").
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass as _dataclass
 import logging
 
 from aizk.conversion.core.errors import FetcherDepthExceeded
@@ -24,6 +25,15 @@ from aizk.conversion.core.source_ref import SourceRef
 from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput
 
 logger = logging.getLogger(__name__)
+
+
+@_dataclass(frozen=True)
+class ProcessResult:
+    """Extended result from process_with_provenance including fetch provenance."""
+
+    artifacts: ConversionArtifacts
+    terminal_ref: SourceRef  # the SourceRef whose ContentFetcher produced the bytes
+    conversion_input: ConversionInput  # for content_type
 
 
 class Orchestrator:
@@ -82,8 +92,48 @@ class Orchestrator:
         # ContentFetcher (the registry guarantees exactly these two roles).
         return impl.fetch(ref)
 
+    def _fetch_with_terminal_ref(
+        self,
+        ref: SourceRef,
+        depth: int = 0,
+        kinds_seen: list[str] | None = None,
+    ) -> tuple[ConversionInput, SourceRef]:
+        """Like ``_fetch_with_trail`` but also returns the terminal ref.
+
+        The terminal ref is the ``SourceRef`` that was dispatched to a
+        ``ContentFetcher`` (as opposed to a ``RefResolver``).
+        """
+        if kinds_seen is None:
+            kinds_seen = []
+        trail = [*kinds_seen, ref.kind]
+        impl = self._resolve_fetcher(ref.kind)
+
+        if isinstance(impl, RefResolver):
+            if depth >= self._depth_cap:
+                raise FetcherDepthExceeded(
+                    cap=self._depth_cap,
+                    kinds_traversed=trail,
+                    config_key=self._depth_cap_config_key,
+                )
+            refined = impl.resolve(ref)
+            return self._fetch_with_terminal_ref(refined, depth + 1, trail)
+
+        # ContentFetcher: this ref is the terminal ref.
+        return impl.fetch(ref), ref
+
     def process(self, ref: SourceRef, converter_name: str) -> ConversionArtifacts:
         """Run the full fetch -> convert cycle for ``ref`` using ``converter_name``."""
         conversion_input = self._fetch(ref)
         converter = self._resolve_converter(conversion_input.content_type, converter_name)
         return converter.convert(conversion_input)
+
+    def process_with_provenance(self, ref: SourceRef, converter_name: str) -> ProcessResult:
+        """Like ``process`` but also returns fetch provenance (terminal ref and conversion input)."""
+        conversion_input, terminal_ref = self._fetch_with_terminal_ref(ref)
+        converter = self._resolve_converter(conversion_input.content_type, converter_name)
+        artifacts = converter.convert(conversion_input)
+        return ProcessResult(
+            artifacts=artifacts,
+            terminal_ref=terminal_ref,
+            conversion_input=conversion_input,
+        )
