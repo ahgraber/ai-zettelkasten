@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""Claimify extraction driver.
+
+Runs Contextualize -> Selection -> Disambiguation -> Decomposition across a
+handful of KaraKeep bookmarks and writes one JSONL per doc under
+`data/claimify_demo/extraction/`.
+
+See:
+- docs/superpowers/specs/2026-04-14-claimify-demo-design.md
+- docs/superpowers/specs/2026-04-14-claimify-demo-plan.md (Milestone 7)
+"""
+
+# %%
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+from pathlib import Path
+import random
+import subprocess  # noqa: E402
+
+from _claimify.contextualize import contextualize_section, make_context_agent
+from _claimify.io import (
+    EXTRACTION_DIR,
+    ensure_punkt_tab,
+    load_docs,
+    read_extraction_jsonl,
+    resolve_repo_root,
+    write_extraction_jsonl,
+)
+from _claimify.models import ClaimRecord, FailedRecord, UsageRecord
+from _claimify.pipeline import (
+    extract_claims,
+    extraction_question,
+    make_decomposition_runner,
+    make_disambiguation_runner,
+    make_selection_runner,
+)
+from _claimify.structuring import split_by_headings
+from _claimify.usage import summarize
+from dotenv import load_dotenv
+import nest_asyncio
+from setproctitle import setproctitle
+
+from aizk.conversion.utilities.config import ConversionConfig  # noqa: E402
+from aizk.conversion.utilities.litestream import (  # noqa: E402
+    _litestream_env,
+    _resolve_litestream_binary,
+    _write_config_file,
+)
+
+# %%
+nest_asyncio.apply()
+setproctitle(Path(__file__).stem)
+
+logging.basicConfig(level=logging.INFO)
+logging.getLogger("aizk").setLevel(logging.DEBUG)
+logging.getLogger("_claimify").setLevel(logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+REPO_ROOT = resolve_repo_root()
+os.chdir(REPO_ROOT)
+
+_ = load_dotenv()
+OPENROUTER_API_KEY = os.environ.get("_OPENROUTER_API_KEY")
+
+# %%
+# Restore the local SQLite DB from the Litestream S3 replica (read-only sync;
+# no replication subprocess). Wipe the stale local copy first since
+# `litestream restore` refuses to overwrite an existing file.
+
+_config = ConversionConfig()
+_db_path = (REPO_ROOT / "data" / "conversion_service.db").resolve()
+for _suffix in ("", "-wal", "-shm"):
+    (_db_path.parent / f"{_db_path.name}{_suffix}").unlink(missing_ok=True)
+
+_bucket = _config.litestream_s3_bucket_name or _config.s3_bucket_name
+_ls_config_path = _write_config_file(
+    db_path=_db_path,
+    bucket=_bucket,
+    config_path=Path(_config.litestream_config_path),
+    s3_prefix=_config.litestream_s3_prefix,
+    s3_region=_config.s3_region,
+    s3_endpoint_url=_config.s3_endpoint_url,
+    s3_force_path_style=_config.litestream_s3_force_path_style,
+    s3_sign_payload=_config.litestream_s3_sign_payload,
+)
+_ls_binary = _resolve_litestream_binary(_config.litestream_binary)
+subprocess.run(
+    [_ls_binary, "restore", "-config", str(_ls_config_path), str(_db_path)],
+    check=True,
+    env=_litestream_env(_config),
+)
+
+
+# %%
+# Five demo docs. Swap in/out; the commented entries below are alternates that
+# exercise different source shapes (PDF-derived, HTML-derived, arXiv, etc.).
+KARAKEEP_IDS: list[str] = [
+    "kbleumlsp93mtgx4r8dc6ext",  # Attention Is All You Need | arXiv PDF
+    "w1aiidzcsie8ug40nx21q9ko",  # Illustrated Guide to OAuth | HTML w/ images
+    "hojcn565u2m9smwtoehhjz3q",  # tinysearch | GitHub README
+    "tufj0yp05tiqu485z4ocxs0u",  # OpenAI Sensitive Convos | Singlefile
+    "mt2vc0ziqqt0pz6ptaqbf7yn",  # LLMs for Scientific Idea Generation | arXiv PDF
+]
+# Alternate candidates (from notebooks/docling_demo.py):
+# "xt2omosp2erha7k4xd6mg9je",  # OpenAI ChatGPT Agent
+# "rpnt3mzc96g5uhovbv2runu4",  # Sycophancy and the Pepsi Challenge
+# "e8oks8mh930yfvcg2k0yzuvb",  # Treadmill 17 Jan 2025
+# "qks067chkb8t1kprtm7rqbxl",  # OpenAI Confessions
+
+# %%
+docs = load_docs(KARAKEEP_IDS)
+for d in docs:
+    print(f"{d.title[:60]:60s}  chars={len(d.markdown):>7}  source={d.source}")
+
+# %%
+# Model IDs: fill in real OpenRouter model slugs before running.
+# See https://openrouter.ai/models for the registry.
+CONTEXT_MODEL = "anthropic/claude-haiku-4-5"  # cache-friendly tier
+SELECTION_MODEL = "openai/gpt-5-mini"
+DISAMBIG_MODEL = "openai/gpt-5-mini"
+DECOMP_MODEL = "openai/gpt-5-mini"
+
+# Per-stage adapter path ("prose" or "structured"). The M5.5 experiment picks
+# the winner; keep both wired so swapping costs nothing.
+SELECTION_PATH = "prose"
+DISAMBIG_PATH = "prose"
+DECOMP_PATH = "prose"
+
+context_agent = make_context_agent(CONTEXT_MODEL, api_key=OPENROUTER_API_KEY)
+selection_runner = make_selection_runner(SELECTION_MODEL, path=SELECTION_PATH, api_key=OPENROUTER_API_KEY)
+disambiguation_runner = make_disambiguation_runner(DISAMBIG_MODEL, path=DISAMBIG_PATH, api_key=OPENROUTER_API_KEY)
+decomposition_runner = make_decomposition_runner(DECOMP_MODEL, path=DECOMP_PATH, api_key=OPENROUTER_API_KEY)
+
+# %%
+# Cost guard: contextualize one doc's sections and surface rough cost signals.
+# Set RUN_CONTEXT_PROBE=False to skip.
+RUN_CONTEXT_PROBE = True
+
+
+async def _probe_context(doc) -> None:
+    sections = split_by_headings(doc.markdown)
+    print(f"probe doc={doc.title!r} sections={len(sections)}")
+    for idx, section in enumerate(sections[:3]):
+        ctx, usage = await contextualize_section(context_agent, doc, section)
+        cost = f"${usage.cost_usd:.4f}" if usage.cost_usd is not None else "n/a"
+        print(
+            f"  [{idx}] path={'/'.join(section.heading_path) or '<lead>'}: {ctx[:80]!r}  "
+            f"(tokens={usage.total_tokens} cache_read={usage.cache_read_tokens} cost={cost})"
+        )
+
+
+if RUN_CONTEXT_PROBE:
+    await _probe_context(docs[0])
+
+# %%
+# Rough cost estimate: sum sentence counts per doc. Each sentence fires up to
+# three stage calls (selection/disambig/decomp), plus one contextualize call
+# per section. Use this to decide whether to flip RUN_FULL.
+ensure_punkt_tab()
+from nltk.tokenize import sent_tokenize  # noqa: E402
+
+total_sentences = 0
+total_sections = 0
+for d in docs:
+    secs = split_by_headings(d.markdown)
+    total_sections += len(secs)
+    for s in secs:
+        total_sentences += len(sent_tokenize(s.content))
+print(f"docs={len(docs)}  sections={total_sections}  sentences={total_sentences}")
+print(
+    f"upper-bound LLM calls: contextualize={total_sections} "
+    f"stages={total_sentences * 3}  (selection filters a chunk of these)"
+)
+print("# Flip RUN_FULL=True below to proceed")
+
+# %%
+CONCURRENCY = 6  # in-flight OpenRouter calls; matches bakeoff
+RUN_FULL = False
+
+
+async def _run_extraction(doc) -> Path:
+    records = await extract_claims(
+        doc,
+        context_agent=context_agent,
+        selection=selection_runner,
+        disambiguation=disambiguation_runner,
+        decomposition=decomposition_runner,
+        p=5,
+        f=5,
+        question_for=extraction_question,
+    )
+    path = write_extraction_jsonl(doc.aizk_uuid, records)
+    n_claim = sum(1 for r in records if isinstance(r, ClaimRecord))
+    n_fail = sum(1 for r in records if isinstance(r, FailedRecord))
+    # SkippedRecord (non-text artifacts) is deferred — see pipeline TODOs.
+    print(f"{doc.title[:60]:60s}  claims={n_claim}  failed={n_fail}  -> {path.name}")
+    return path
+
+
+if RUN_FULL:
+    _sem = asyncio.Semaphore(CONCURRENCY)
+
+    async def _one_doc(doc):
+        async with _sem:
+            await _run_extraction(doc)
+
+    await asyncio.gather(*[_one_doc(doc) for doc in docs])
+
+
+# %%
+# Inspection: load all extraction JSONL back and summarize.
+def _load_all() -> dict:
+    by_doc: dict[str, list] = {}
+    for d in docs:
+        path = EXTRACTION_DIR / f"{d.aizk_uuid}.jsonl"
+        if path.exists():
+            by_doc[d.title] = read_extraction_jsonl(d.aizk_uuid)
+    return by_doc
+
+
+by_doc = _load_all()
+for title, records in by_doc.items():
+    claims = [r for r in records if isinstance(r, ClaimRecord)]
+    failed = [r for r in records if isinstance(r, FailedRecord)]
+    print(f"{title[:60]:60s}  claims={len(claims)}  failed={len(failed)}")
+
+# %%
+# Random claim sample across all docs.
+all_claims = [r for records in by_doc.values() for r in records if isinstance(r, ClaimRecord)]
+if all_claims:
+    for r in random.sample(all_claims, k=min(5, len(all_claims))):
+        c = r.claim
+        path = " > ".join(c.heading_path) or "<lead>"
+        print(f"[{path}]  {c.claim.proposition}")
+        if c.claim.essential_context:
+            print(f"    ctx: {c.claim.essential_context}")
+        print(f"    sentence: {c.sentence!r}")
+        print()
+
+# %%
+# Failure detail for debugging.
+for title, records in by_doc.items():
+    for r in records:
+        if isinstance(r, FailedRecord):
+            f = r.failure
+            print(f"FAIL [{title[:40]}] section={f.section_idx} sent={f.sentence_idx} stage={f.stage}: {f.error}")
+
+# %%
+# Usage accounting: total / mean / median per phase and overall.
+# Reads UsageRecord lines written alongside ClaimRecord/FailedRecord in each
+# doc's extraction JSONL. Cost figures show only when OpenRouter returned them.
+usage_by_phase: dict[str, list] = {}
+for records in by_doc.values():
+    for r in records:
+        if isinstance(r, UsageRecord):
+            usage_by_phase.setdefault(r.phase, []).append(r.usage)
+
+if usage_by_phase:
+    phase_order = ["contextualize", "selection", "disambiguation", "decomposition"]
+    print(f"{'phase':<16s} {'calls':>6s} {'tot_tok':>10s} {'mean_tok':>10s} {'med_tok':>10s} {'cost_usd':>10s}")
+    all_samples = []
+    for phase in phase_order:
+        samples = usage_by_phase.get(phase, [])
+        if not samples:
+            continue
+        s = summarize(samples)
+        all_samples.extend(samples)
+        cost = f"${s['total_cost_usd']:.4f}" if s["total_cost_usd"] is not None else "n/a"
+        print(
+            f"{phase:<16s} {s['calls']:>6d} {s['total_tokens']:>10d} "
+            f"{s['mean_total_tokens']:>10.1f} {s['median_total_tokens']:>10.1f} {cost:>10s}"
+        )
+    overall = summarize(all_samples)
+    overall_cost = f"${overall['total_cost_usd']:.4f}" if overall["total_cost_usd"] is not None else "n/a"
+    print(
+        f"{'OVERALL':<16s} {overall['calls']:>6d} {overall['total_tokens']:>10d} "
+        f"{overall['mean_total_tokens']:>10.1f} {overall['median_total_tokens']:>10.1f} {overall_cost:>10s}"
+    )
+    print(f"cache tokens: read={overall['total_cache_read_tokens']} write={overall['total_cache_write_tokens']}")
+else:
+    print("No UsageRecords found — re-run extraction after enabling RUN_FULL.")
+
+# %% [markdown]
+# | phase | calls | tot_tok | mean_tok | med_tok | cost_usd |
+# |---|---:|---:|---:|---:|---:|
+# | contextualize | 129 | 5,025,126 | 38,954.5 | 57,845.0 | $6.2725 |
+# | selection | 2,547 | 6,753,314 | 2,651.5 | 2,600.0 | $5.8420 |
+# | disambiguation | 2,426 | 8,910,878 | 3,673.1 | 3,621.5 | $7.1702 |
+# | decomposition | 2,388 | 13,000,907 | 5,444.3 | 5,348.0 | $8.8779 |
+# | **OVERALL** | **7,490** | **33,690,225** | **4,498.0** | **3,624.5** | **$28.1626** |
+#
+# cache tokens: read=12,032,380 write=0

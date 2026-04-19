@@ -85,6 +85,7 @@ nemotron-parse = [
 # e.g., cannot do `uv add aizk[dev]`
 dev = [
     "uv-ship>=0.3.0",
+    "chonkie[viz]",
     "gravis>=0.1.0",
     "lingua>=4.15.0",
     "pandas>=2.2",
@@ -174,8 +175,16 @@ module-root = "src/"
 [tool.uv.pip]
 prerelease = "if-necessary-or-explicit"
 
+[tool.uv.workspace]
+# Workspace members are not installed by `uv sync` alone.
+# Activate them explicitly so their packages are importable:
+#   uv sync --all-packages                 # installs root + every member
+#   uv sync --package claimify-demo        # installs root + only this member
+members = ["notebooks/claimify"]
+
 [tool.uv.sources]
 aizk = { path = "src/aizk", editable = true }
+claimify-demo = { workspace = true }
 karakeep-client = { git = "https://github.com/ahgraber/karakeep_client.git" }
 
 torch = [
