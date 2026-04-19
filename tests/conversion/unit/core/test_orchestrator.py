@@ -201,8 +201,18 @@ def test_depth_limit_exceeded_raises_fetcher_depth_exceeded():
 
 
 def test_orchestrator_has_no_transitive_import_of_adapter_modules():
-    # Ensure a clean import graph: remove any cached entries to guarantee the
-    # measurement reflects the orchestrator's own transitive closure.
+    # Ensure a clean import graph: remove any cached entries for the
+    # orchestrator and its candidate leak targets (adapters, wiring) so the
+    # subsequent re-import measures ONLY the orchestrator's own transitive
+    # closure — not whatever earlier tests happened to import.
+    for name in list(sys.modules):
+        if (
+            name == "aizk.conversion.core.orchestrator"
+            or name.startswith("aizk.conversion.adapters")
+            or name.startswith("aizk.conversion.wiring")
+        ):
+            del sys.modules[name]
+
     importlib.import_module("aizk.conversion.core.orchestrator")
 
     leaked_adapters = [name for name in sys.modules if name.startswith("aizk.conversion.adapters")]

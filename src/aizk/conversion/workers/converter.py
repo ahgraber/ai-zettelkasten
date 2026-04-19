@@ -52,6 +52,15 @@ from aizk.utilities.mlflow_tracing import trace_model_call
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    "ConversionError",
+    "DoclingConverter",
+    "DoclingEmptyOutputError",
+    "DoclingError",
+    "convert_html",
+    "convert_pdf",
+]
+
 # Generic alt-text prompt used for figures without a recognized classifier label.
 _ALT_TEXT_PROMPT = """
 Provide a detailed description for this figure that captures the main subject, action, and any critical visual information including key components, relationships, and outcomes shown with the goal that someone who reads the description would be able to redraw the figure. Prioritize detail over brevity.
@@ -524,3 +533,16 @@ def convert_pdf(
     else:
         figures = _extract_figures(doc, figure_dir(temp_dir))
         return markdown, figures
+
+
+# Re-export the adapter class so existing importers of this module path continue
+# to work after the Stage 3 move. Use a lazy module-level ``__getattr__`` to
+# avoid a circular import: the adapter module itself imports ``convert_pdf``
+# / ``convert_html`` from this module, so a top-level ``from … import
+# DoclingConverter`` at module load time would deadlock.
+def __getattr__(name: str) -> object:  # pragma: no cover — thin shim
+    if name == "DoclingConverter":
+        from aizk.conversion.adapters.converters.docling import DoclingConverter
+
+        return DoclingConverter
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

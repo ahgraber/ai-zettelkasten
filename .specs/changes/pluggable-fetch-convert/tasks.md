@@ -34,15 +34,15 @@
 
 ## Stage 3 — Docling adapter extraction (move + re-export, non-breaking)
 
-- [ ] Inventory existing conversion tests: enumerate every test module that imports `converter.py`, `fetcher.py`, `bookmark_utils.py`, `arxiv_utils.py`, `github_utils.py`, or the orchestrator.
+- [x] Inventory existing conversion tests: enumerate every test module that imports `converter.py`, `fetcher.py`, `bookmark_utils.py`, `arxiv_utils.py`, `github_utils.py`, or the orchestrator.
   Classify each as (stays at current location, moves alongside its target adapter, or rewrites post-cutover in PR 7).
   Commit the inventory as a checklist in the change directory so PRs 3-7 can track progress against it
-- [ ] Create `aizk/conversion/adapters/__init__.py` and `aizk/conversion/adapters/converters/__init__.py`
-- [ ] Create `aizk/conversion/adapters/converters/docling.py`: extract `DoclingConverter` from existing `converter.py`; implement `Converter` protocol with `supported_formats = frozenset({ContentType.PDF, ContentType.HTML})` and `requires_gpu = True`; supply `config_snapshot()` returning same output-affecting fields as today
-- [ ] Add re-export from old `converter.py` module path to avoid breaking internal imports
-- [ ] Tests: `DoclingConverter.supported_formats` contains `PDF` and `HTML`; `DoclingConverter.requires_gpu == True`
-- [ ] Tests: `DoclingConverter.config_snapshot()` returns the same field set as today's Docling-specific config hash
-- [ ] Tests: existing converter tests continue to pass (import path compatibility)
+- [x] Create `aizk/conversion/adapters/__init__.py` and `aizk/conversion/adapters/converters/__init__.py`
+- [x] Create `aizk/conversion/adapters/converters/docling.py`: extract `DoclingConverter` from existing `converter.py`; implement `Converter` protocol with `supported_formats = frozenset({ContentType.PDF, ContentType.HTML})` and `requires_gpu = True`; supply `config_snapshot()` returning same output-affecting fields as today
+- [x] Add re-export from old `converter.py` module path to avoid breaking internal imports
+- [x] Tests: `DoclingConverter.supported_formats` contains `PDF` and `HTML`; `DoclingConverter.requires_gpu == True`
+- [x] Tests: `DoclingConverter.config_snapshot()` returns the same field set as today's Docling-specific config hash
+- [x] Tests: existing converter tests continue to pass (import path compatibility)
 
 ## Stage 4 — Fetcher adapter extraction (move + re-export, non-breaking)
 
