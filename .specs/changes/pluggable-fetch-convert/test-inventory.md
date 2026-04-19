@@ -21,11 +21,11 @@ Classification key:
 
 ## Inventory — fetcher.py / bookmark_utils.py / arxiv_utils.py / github_utils.py (PR 4)
 
-- [ ] `tests/conversion/unit/test_fetcher.py` — **move-with-adapter** (moves alongside the fetcher adapter package once adapters land in PR 4).
-- [ ] `tests/conversion/unit/test_bookmark_utils.py` — **move-with-adapter** (moves alongside `adapters/fetchers/karakeep.py` in PR 4).
-- [ ] `tests/conversion/unit/test_url_utils.py` — **move-with-adapter** (exercises `detect_source_type` from `bookmark_utils`; moves with the resolver adapter in PR 4).
-- [ ] `tests/conversion/unit/test_arxiv_utils.py` — **move-with-adapter** (moves alongside `adapters/fetchers/arxiv.py` in PR 4).
-- [ ] `tests/conversion/unit/test_github_utils.py` — **move-with-adapter** (moves alongside `adapters/fetchers/github.py` in PR 4).
+- [x] `tests/conversion/unit/test_fetcher.py` → `tests/conversion/unit/adapters/fetchers/test_fetcher.py` — **moved** (PR 4).
+- [x] `tests/conversion/unit/test_bookmark_utils.py` → `tests/conversion/unit/adapters/fetchers/test_bookmark_utils.py` — **moved** (PR 4).
+- [x] `tests/conversion/unit/test_url_utils.py` → `tests/conversion/unit/adapters/fetchers/test_url_utils.py` — **moved** (PR 4).
+- [x] `tests/conversion/unit/test_arxiv_utils.py` → `tests/conversion/unit/adapters/fetchers/test_arxiv_utils.py` — **moved** (PR 4).
+- [x] `tests/conversion/unit/test_github_utils.py` → `tests/conversion/unit/adapters/fetchers/test_github_utils.py` — **moved** (PR 4).
 
 ## Inventory — workers/orchestrator.py (legacy orchestrator, PR 7)
 
