@@ -25,12 +25,12 @@
 
 ## Stage 2 — Orchestrator class with fakes-based tests (additive, non-breaking)
 
-- [ ] Create `aizk/conversion/core/orchestrator.py`: `Orchestrator.__init__(resolve_fetcher, resolve_converter)` with DI callables; `_fetch(ref, depth)` with recursive dispatch and depth cap (default 2); `process(ref, converter_name) -> ConversionArtifacts`
-- [ ] Tests: orchestrator with fake content fetcher — single-hop fetch returns `ConversionInput`
-- [ ] Tests: orchestrator with fake ref resolver + content fetcher — two-hop resolution succeeds
-- [ ] Tests: depth limit exceeded raises `FetcherDepthExceeded`; error message includes the configured cap, the sequence of kinds traversed, and the configuration key used to raise the cap (so operators know how to respond when the default is legitimately too low)
-- [ ] Tests: orchestrator has no transitive import of any adapter module (inspect import graph)
-- [ ] Tests: orchestrator constructed with injected fakes completes fetch-convert cycle with no dependency on real adapters
+- [x] Create `aizk/conversion/core/orchestrator.py`: `Orchestrator.__init__(resolve_fetcher, resolve_converter)` with DI callables; `_fetch(ref, depth)` with recursive dispatch and depth cap (default 2); `process(ref, converter_name) -> ConversionArtifacts`
+- [x] Tests: orchestrator with fake content fetcher — single-hop fetch returns `ConversionInput`
+- [x] Tests: orchestrator with fake ref resolver + content fetcher — two-hop resolution succeeds
+- [x] Tests: depth limit exceeded raises `FetcherDepthExceeded`; error message includes the configured cap, the sequence of kinds traversed, and the configuration key used to raise the cap (so operators know how to respond when the default is legitimately too low)
+- [x] Tests: orchestrator has no transitive import of any adapter module (inspect import graph)
+- [x] Tests: orchestrator constructed with injected fakes completes fetch-convert cycle with no dependency on real adapters
 
 ## Stage 3 — Docling adapter extraction (move + re-export, non-breaking)
 
