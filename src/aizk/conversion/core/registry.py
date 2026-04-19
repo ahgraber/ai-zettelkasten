@@ -103,3 +103,7 @@ class ConverterRegistry:
             raise NoConverterForFormat(
                 f"No converter registered for content_type={content_type!r}, name={name!r}"
             ) from exc
+
+    def has_converter_for(self, content_type: ContentType) -> bool:
+        """Return True if any converter is registered for ``content_type``."""
+        return any(ct == content_type for ct, _ in self._converters)
