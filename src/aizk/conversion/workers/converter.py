@@ -54,7 +54,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "ConversionError",
-    "DoclingConverter",
     "DoclingEmptyOutputError",
     "DoclingError",
     "convert_html",
@@ -533,16 +532,3 @@ def convert_pdf(
     else:
         figures = _extract_figures(doc, figure_dir(temp_dir))
         return markdown, figures
-
-
-# Re-export the adapter class so existing importers of this module path continue
-# to work after the Stage 3 move. Use a lazy module-level ``__getattr__`` to
-# avoid a circular import: the adapter module itself imports ``convert_pdf``
-# / ``convert_html`` from this module, so a top-level ``from … import
-# DoclingConverter`` at module load time would deadlock.
-def __getattr__(name: str) -> object:  # pragma: no cover — thin shim
-    if name == "DoclingConverter":
-        from aizk.conversion.adapters.converters.docling import DoclingConverter
-
-        return DoclingConverter
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
