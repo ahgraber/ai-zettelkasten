@@ -43,7 +43,13 @@
 ## New schema components
 
 - `SourceRef` discriminated union schema (oneOf with `kind` discriminator) — the wide internal union used by `JobResponse.source_ref` and manifest `submitted_ref` / `terminal_ref` blocks.
-  Variants: `KarakeepBookmarkRef`, `ArxivRef`, `GithubReadmeRef`, `UrlRef`, `SingleFileRef`, `InlineHtmlRef`.
+  Variants and their canonical fields (as surfaced in OpenAPI):
+  - `KarakeepBookmarkRef`: `{kind, bookmark_id}`.
+  - `ArxivRef`: `{kind, arxiv_id, arxiv_pdf_url?}` — `arxiv_pdf_url` is a cosmetic fetcher hint, excluded from the dedup payload.
+  - `GithubReadmeRef`: `{kind, owner, repo, branch?}` — `branch` is accepted for forward-compat but ignored by the fetcher at cutover (hardcoded `main`/`master` fallback); excluded from the dedup payload so `{owner, repo}` is the canonical identity.
+  - `UrlRef`: `{kind, url}` — `url` is stored post-normalization so cosmetic variants (scheme case, trailing slash, UTM) dedup identically.
+  - `SingleFileRef`: `{kind, url}` — skeleton variant; not registered at cutover.
+  - `InlineHtmlRef`: `{kind, body}` — raw bytes capped at 64 KiB; dedup payload stores the sha256 of `body`, not the bytes themselves.
 - `IngressSourceRef` discriminated union schema — the narrow public-ingress union used by `JobSubmission.source_ref`.
   At cutover the OpenAPI request-side schema advertises only `KarakeepBookmarkRef`; widening is a future config-only change via `IngressPolicy`.
 - OpenAPI `components.schemas` surfaces both unions as distinct schemas so the request and response contracts are separately discoverable.

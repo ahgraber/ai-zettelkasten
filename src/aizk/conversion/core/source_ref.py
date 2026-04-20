@@ -50,7 +50,14 @@ class ArxivRef(BaseModel):
 
 
 class GithubReadmeRef(BaseModel):
-    """Reference to a GitHub repo README."""
+    """Reference to a GitHub repo README.
+
+    ``branch`` is accepted for forward compatibility but currently ignored by
+    ``GithubReadmeFetcher``, which hardcodes a ``main``/``master`` fallback.
+    Wiring ``branch`` through to the fetcher is deferred until ``IngressPolicy``
+    widens to admit ``github_readme`` for public submission. The field is also
+    excluded from ``to_dedup_payload()`` so identity is ``(owner, repo)``.
+    """
 
     model_config = ConfigDict(frozen=True)
 

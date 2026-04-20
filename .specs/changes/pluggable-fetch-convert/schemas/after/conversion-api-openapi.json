@@ -822,24 +822,14 @@
               }
             ],
             "title": "Arxiv Pdf Url"
-          },
-          "karakeep_asset_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Karakeep Asset Url"
           }
         },
         "type": "object",
         "required": [
           "arxiv_id"
         ],
-        "title": "ArxivRef"
+        "title": "ArxivRef",
+        "description": "Reference to an arXiv paper."
       },
       "Body_ui_job_actions_ui_jobs_actions_post": {
         "properties": {
@@ -1102,6 +1092,17 @@
           "repo": {
             "type": "string",
             "title": "Repo"
+          },
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
           }
         },
         "type": "object",
@@ -1109,7 +1110,8 @@
           "owner",
           "repo"
         ],
-        "title": "GithubReadmeRef"
+        "title": "GithubReadmeRef",
+        "description": "Reference to a GitHub repo README."
       },
       "HTTPValidationError": {
         "properties": {
@@ -1167,7 +1169,8 @@
         "required": [
           "body"
         ],
-        "title": "InlineHtmlRef"
+        "title": "InlineHtmlRef",
+        "description": "Reference carrying inline HTML/text bytes directly, capped at 64 KiB raw."
       },
       "JobList": {
         "properties": {
@@ -1212,6 +1215,17 @@
             "format": "uuid",
             "title": "Aizk Uuid"
           },
+          "karakeep_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Karakeep Id"
+          },
           "source_ref": {
             "oneOf": [
               {
@@ -1245,17 +1259,6 @@
                 "url": "#/components/schemas/UrlRef"
               }
             }
-          },
-          "karakeep_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Karakeep Id"
           },
           "url": {
             "anyOf": [
@@ -1411,7 +1414,7 @@
           "updated_at"
         ],
         "title": "JobResponse",
-        "description": "Response schema for conversion jobs.\n\n``source_ref`` is the canonical identifier going forward. ``karakeep_id``\nis kept as a nullable convenience field so the existing UI (which filters\nby KaraKeep id) continues to work against the new schema. It is populated\nwhen ``source_ref.kind == \"karakeep_bookmark\"`` and ``None`` otherwise."
+        "description": "Response schema for conversion jobs."
       },
       "JobStatusCounts": {
         "properties": {
@@ -1441,33 +1444,13 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/KarakeepBookmarkRef"
-              },
-              {
-                "$ref": "#/components/schemas/ArxivRef"
-              },
-              {
-                "$ref": "#/components/schemas/GithubReadmeRef"
-              },
-              {
-                "$ref": "#/components/schemas/UrlRef"
-              },
-              {
-                "$ref": "#/components/schemas/SingleFileRef"
-              },
-              {
-                "$ref": "#/components/schemas/InlineHtmlRef"
               }
             ],
             "title": "Source Ref",
             "discriminator": {
               "propertyName": "kind",
               "mapping": {
-                "arxiv": "#/components/schemas/ArxivRef",
-                "github_readme": "#/components/schemas/GithubReadmeRef",
-                "inline_html": "#/components/schemas/InlineHtmlRef",
-                "karakeep_bookmark": "#/components/schemas/KarakeepBookmarkRef",
-                "singlefile": "#/components/schemas/SingleFileRef",
-                "url": "#/components/schemas/UrlRef"
+                "karakeep_bookmark": "#/components/schemas/KarakeepBookmarkRef"
               }
             }
           },
@@ -1495,7 +1478,7 @@
           "source_ref"
         ],
         "title": "JobSubmission",
-        "description": "Request schema for job submission.\n\n``source_ref`` is the canonical fetch instruction: a discriminated union\nover the supported source kinds (KaraKeep bookmark, arxiv, URL, etc.).\nThe API gates accepted kinds via the wiring-layer ``DeploymentCapabilities``."
+        "description": "Request schema for job submission."
       },
       "KarakeepBookmarkRef": {
         "properties": {
@@ -1514,7 +1497,8 @@
         "required": [
           "bookmark_id"
         ],
-        "title": "KarakeepBookmarkRef"
+        "title": "KarakeepBookmarkRef",
+        "description": "Reference to a KaraKeep bookmark; resolved to a more specific ref by the resolver."
       },
       "OutputResponse": {
         "properties": {
@@ -1619,16 +1603,17 @@
             "title": "Kind",
             "default": "singlefile"
           },
-          "path": {
+          "url": {
             "type": "string",
-            "title": "Path"
+            "title": "Url"
           }
         },
         "type": "object",
         "required": [
-          "path"
+          "url"
         ],
-        "title": "SingleFileRef"
+        "title": "SingleFileRef",
+        "description": "Reference to a SingleFile-archived page.\n\nSkeleton variant: unused at cutover; kept in the union so future wiring\ndoes not require a SourceRef migration."
       },
       "UrlRef": {
         "properties": {
@@ -1647,7 +1632,8 @@
         "required": [
           "url"
         ],
-        "title": "UrlRef"
+        "title": "UrlRef",
+        "description": "Reference to a URL. The URL is stored in normalized form for stable identity."
       },
       "ValidationError": {
         "properties": {
