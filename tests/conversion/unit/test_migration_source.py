@@ -17,6 +17,8 @@ from alembic.config import Config
 import pytest
 from sqlalchemy import create_engine, inspect, text
 
+from aizk.conversion.core.errors import IrreversibleMigrationError
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -266,7 +268,7 @@ def test_downgrade_round_trips_cleanly(tmp_path):
 
 
 def test_downgrade_aborts_when_karakeep_id_is_null(tmp_path):
-    """Downgrade raises RuntimeError when any source row has karakeep_id IS NULL."""
+    """Downgrade raises IrreversibleMigrationError when any source row has karakeep_id IS NULL."""
     url = _db_url(tmp_path)
     cfg = _alembic_cfg(url)
     _apply_up_to_prev(cfg)
@@ -295,7 +297,7 @@ def test_downgrade_aborts_when_karakeep_id_is_null(tmp_path):
             },
         )
 
-    with pytest.raises(Exception, match="NULL|downgrade|karakeep_id"):
+    with pytest.raises(IrreversibleMigrationError):
         command.downgrade(cfg, _PREV_REVISION)
 
 

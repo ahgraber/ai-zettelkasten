@@ -75,3 +75,37 @@ class ConfigurationError(RuntimeError):  # noqa: N818 — canonical spec name
 
     error_code = "configuration_error"
     retryable: ClassVar[bool] = False
+
+
+class IrreversibleMigrationError(RuntimeError):  # noqa: N818 — canonical spec name
+    """Raised when a migration downgrade would destroy data with no pre-migration representation."""
+
+    error_code = "irreversible_migration"
+    retryable: ClassVar[bool] = False
+
+
+class FetchError(Exception):  # noqa: N818 — canonical spec name
+    """Base exception for fetch errors. Network errors are typically transient and retryable."""
+
+    error_code = "fetch_error"
+    retryable: ClassVar[bool] = True
+
+
+class BookmarkContentUnavailableError(FetchError):  # noqa: N818 — canonical spec name
+    """Raised when a KaraKeep bookmark has no usable content. Permanent (not retryable)."""
+
+    error_code = "bookmark_content_unavailable"
+    retryable: ClassVar[bool] = False
+
+
+class ArxivPdfFetchError(FetchError):  # noqa: N818 — canonical spec name
+    """Raised when an arXiv PDF fetch fails."""
+
+    error_code = "arxiv_pdf_fetch_failed"
+
+
+class GitHubReadmeNotFoundError(FetchError):  # noqa: N818 — canonical spec name
+    """Raised when no GitHub README variant is found. Permanent (not retryable)."""
+
+    error_code = "github_readme_not_found"
+    retryable: ClassVar[bool] = False

@@ -14,7 +14,6 @@ from aizk.conversion.core.source_ref import SourceRef
 
 if TYPE_CHECKING:
     from aizk.conversion.datamodel.job import ConversionJob
-    from aizk.conversion.datamodel.source import Source
 
 logger = logging.getLogger(__name__)
 
@@ -83,20 +82,6 @@ class ManifestConfigSnapshot(BaseModel):
     picture_description_enabled: bool = Field(description="Whether figure alt-text was generated via chat completions")
 
 
-class ConversionManifest(BaseModel):
-    """Complete conversion manifest with all metadata."""
-
-    model_config = ConfigDict(json_encoders={datetime: lambda v: v.isoformat()})
-
-    version: str = "1.0"
-    aizk_uuid: UUID
-    karakeep_id: str
-    source: ManifestSource
-    conversion: ManifestConversionMetadata
-    artifacts: ManifestArtifacts
-    config_snapshot: ManifestConfigSnapshot
-
-
 # ---------------------------------------------------------------------------
 # v2.0 manifest models
 # ---------------------------------------------------------------------------
@@ -156,78 +141,6 @@ def _coerce_datetime(value: datetime | None, fallback: datetime) -> datetime:
     if chosen.tzinfo is None:
         return chosen.replace(tzinfo=timezone.utc)
     return chosen
-
-
-def generate_manifest(
-    bookmark: Source,
-    job: ConversionJob,
-    fetched_at: datetime,
-    markdown_s3_uri: str,
-    markdown_hash: str,
-    figure_s3_uris: list[str],
-    docling_version: str,
-    pipeline_name: Literal["html", "pdf"],
-    *,
-    config_snapshot: ManifestConfigSnapshot,
-) -> ConversionManifest:
-    """Generate manifest for conversion artifacts.
-
-    Args:
-        source: Source record with source metadata.
-        job: ConversionJob record with timing and job info.
-        fetched_at: Timestamp when content was fetched.
-        markdown_s3_uri: Absolute S3 URI for markdown (s3://bucket/key).
-        markdown_hash: Markdown xxHash64 hex digest.
-        figure_s3_uris: List of absolute S3 URIs for figures.
-        docling_version: Docling version used.
-        pipeline_name: Pipeline name (html/pdf).
-        config_snapshot: Replayable conversion config snapshot used for this output.
-
-    Returns:
-        ConversionManifest Pydantic model.
-    """
-    if job.id is None:
-        raise ValueError("ConversionJob.id must be set before manifest generation")
-
-    started_at = _coerce_datetime(job.started_at, fetched_at)
-    finished_at = _coerce_datetime(job.finished_at, fetched_at)
-    duration_seconds = max(0, int((finished_at - started_at).total_seconds()))
-
-    source_type = bookmark.source_type
-    if source_type not in {"arxiv", "github", "other"}:
-        source_type = "other"
-
-    figures = [ManifestArtifactFigure(key=uri, created_at=finished_at) for uri in figure_s3_uris]
-
-    return ConversionManifest(
-        aizk_uuid=bookmark.aizk_uuid,
-        karakeep_id=bookmark.karakeep_id,
-        source=ManifestSource(
-            url=bookmark.url,
-            normalized_url=bookmark.normalized_url,
-            title=bookmark.title,
-            source_type=source_type,  # type: ignore[arg-type]
-            fetched_at=fetched_at,
-        ),
-        conversion=ManifestConversionMetadata(
-            job_id=job.id,
-            payload_version=job.payload_version,
-            docling_version=docling_version,
-            pipeline_name=pipeline_name,
-            started_at=started_at,
-            finished_at=finished_at,
-            duration_seconds=duration_seconds,
-        ),
-        artifacts=ManifestArtifacts(
-            markdown=ManifestArtifactMarkdown(
-                key=markdown_s3_uri,
-                hash_xx64=markdown_hash,
-                created_at=finished_at,
-            ),
-            figures=figures,
-        ),
-        config_snapshot=config_snapshot,
-    )
 
 
 def generate_manifest_v2(
@@ -324,13 +237,8 @@ def load_manifest(data: dict) -> ManifestV1 | ManifestV2:
     raise ValueError(f"Unknown manifest version: {version!r}")
 
 
-def save_manifest(manifest: ConversionManifest, output_path: Path) -> None:
-    """Save manifest to JSON file.
-
-    Args:
-        manifest: ConversionManifest Pydantic model.
-        output_path: Path to save manifest.json.
-    """
+def save_manifest(manifest: ManifestV1 | ManifestV2, output_path: Path) -> None:
+    """Save manifest to JSON file."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(manifest.model_dump_json(indent=2, exclude_none=True))
     logger.info("Saved manifest to %s", output_path)
