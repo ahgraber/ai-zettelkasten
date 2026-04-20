@@ -7,7 +7,9 @@
   "paths": {
     "/health/live": {
       "get": {
-        "tags": ["health"],
+        "tags": [
+          "health"
+        ],
         "summary": "Liveness",
         "description": "Liveness probe \u2014 returns 200 if the process is running.",
         "operationId": "liveness_health_live_get",
@@ -27,7 +29,9 @@
     },
     "/health/ready": {
       "get": {
-        "tags": ["health"],
+        "tags": [
+          "health"
+        ],
         "summary": "Readiness",
         "description": "Readiness probe \u2014 validates DB connectivity and S3 reachability.",
         "operationId": "readiness_health_ready_get",
@@ -47,7 +51,9 @@
     },
     "/v1/jobs": {
       "post": {
-        "tags": ["jobs"],
+        "tags": [
+          "jobs"
+        ],
         "summary": "Submit Job",
         "description": "Submit a new conversion job.",
         "operationId": "submit_job_v1_jobs_post",
@@ -95,7 +101,9 @@
         }
       },
       "get": {
-        "tags": ["jobs"],
+        "tags": [
+          "jobs"
+        ],
         "summary": "List Jobs",
         "description": "List conversion jobs with filters.",
         "operationId": "list_jobs_v1_jobs_get",
@@ -131,22 +139,6 @@
                 }
               ],
               "title": "Aizk Uuid"
-            }
-          },
-          {
-            "name": "karakeep_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Karakeep Id"
             }
           },
           {
@@ -233,7 +225,9 @@
     },
     "/v1/jobs/status-counts": {
       "get": {
-        "tags": ["jobs"],
+        "tags": [
+          "jobs"
+        ],
         "summary": "Get Job Status Counts",
         "description": "Return aggregated counts of jobs by status.",
         "operationId": "get_job_status_counts_v1_jobs_status_counts_get",
@@ -253,7 +247,9 @@
     },
     "/v1/jobs/{job_id}": {
       "get": {
-        "tags": ["jobs"],
+        "tags": [
+          "jobs"
+        ],
         "summary": "Get Job",
         "description": "Get conversion job details.",
         "operationId": "get_job_v1_jobs__job_id__get",
@@ -294,7 +290,9 @@
     },
     "/v1/jobs/{job_id}/retry": {
       "post": {
-        "tags": ["jobs"],
+        "tags": [
+          "jobs"
+        ],
         "summary": "Retry Job",
         "description": "Retry a failed or cancelled job.",
         "operationId": "retry_job_v1_jobs__job_id__retry_post",
@@ -335,7 +333,9 @@
     },
     "/v1/jobs/{job_id}/cancel": {
       "post": {
-        "tags": ["jobs"],
+        "tags": [
+          "jobs"
+        ],
         "summary": "Cancel Job",
         "description": "Cancel a queued or running job.",
         "operationId": "cancel_job_v1_jobs__job_id__cancel_post",
@@ -376,7 +376,9 @@
     },
     "/v1/jobs/actions": {
       "post": {
-        "tags": ["jobs"],
+        "tags": [
+          "jobs"
+        ],
         "summary": "Bulk Job Actions",
         "description": "Apply retry or cancel actions across multiple jobs.",
         "operationId": "bulk_job_actions_v1_jobs_actions_post",
@@ -416,7 +418,9 @@
     },
     "/v1/bookmarks/{aizk_uuid}/outputs": {
       "get": {
-        "tags": ["bookmarks"],
+        "tags": [
+          "bookmarks"
+        ],
         "summary": "Get Bookmark Outputs",
         "description": "Return conversion outputs for a bookmark ordered by creation time descending.\n\nPass ``?latest=true`` to receive only the most recently created output.",
         "operationId": "get_bookmark_outputs_v1_bookmarks__aizk_uuid__outputs_get",
@@ -472,7 +476,9 @@
     },
     "/v1/outputs/{output_id}/manifest": {
       "get": {
-        "tags": ["outputs"],
+        "tags": [
+          "outputs"
+        ],
         "summary": "Get Output Manifest",
         "description": "Return the raw manifest JSON for a conversion output.",
         "operationId": "get_output_manifest_v1_outputs__output_id__manifest_get",
@@ -511,7 +517,9 @@
     },
     "/v1/outputs/{output_id}/markdown": {
       "get": {
-        "tags": ["outputs"],
+        "tags": [
+          "outputs"
+        ],
         "summary": "Get Output Markdown",
         "description": "Return the converted markdown for a conversion output.",
         "operationId": "get_output_markdown_v1_outputs__output_id__markdown_get",
@@ -550,7 +558,9 @@
     },
     "/v1/outputs/{output_id}/figures/{filename}": {
       "get": {
-        "tags": ["outputs"],
+        "tags": [
+          "outputs"
+        ],
         "summary": "Get Output Figure",
         "description": "Return a figure image for a conversion output by bare filename.",
         "operationId": "get_output_figure_v1_outputs__output_id__figures__filename__get",
@@ -598,7 +608,9 @@
     },
     "/ui/jobs": {
       "get": {
-        "tags": ["ui"],
+        "tags": [
+          "ui"
+        ],
         "summary": "Ui Jobs",
         "description": "Render the jobs Web UI.",
         "operationId": "ui_jobs_ui_jobs_get",
@@ -718,7 +730,9 @@
     },
     "/ui/jobs/actions": {
       "post": {
-        "tags": ["ui"],
+        "tags": [
+          "ui"
+        ],
         "summary": "Ui Job Actions",
         "description": "Apply retry, cancel, or delete actions from the Web UI.",
         "operationId": "ui_job_actions_ui_jobs_actions_post",
@@ -777,9 +791,45 @@
           }
         },
         "type": "object",
-        "required": ["s3_prefix", "markdown_key", "manifest_key", "figure_count"],
+        "required": [
+          "s3_prefix",
+          "markdown_key",
+          "manifest_key",
+          "figure_count"
+        ],
         "title": "ArtifactSummary",
         "description": "Summary of conversion artifacts for completed jobs."
+      },
+      "ArxivRef": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "arxiv",
+            "title": "Kind",
+            "default": "arxiv"
+          },
+          "arxiv_id": {
+            "type": "string",
+            "title": "Arxiv Id"
+          },
+          "arxiv_pdf_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arxiv Pdf Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "arxiv_id"
+        ],
+        "title": "ArxivRef",
+        "description": "Reference to an arXiv paper."
       },
       "Body_ui_job_actions_ui_jobs_actions_post": {
         "properties": {
@@ -862,14 +912,19 @@
           }
         },
         "type": "object",
-        "required": ["action"],
+        "required": [
+          "action"
+        ],
         "title": "Body_ui_job_actions_ui_jobs_actions_post"
       },
       "BulkActionResponse": {
         "properties": {
           "action": {
             "type": "string",
-            "enum": ["retry", "cancel"],
+            "enum": [
+              "retry",
+              "cancel"
+            ],
             "title": "Action"
           },
           "results": {
@@ -884,7 +939,11 @@
           }
         },
         "type": "object",
-        "required": ["action", "results", "summary"],
+        "required": [
+          "action",
+          "results",
+          "summary"
+        ],
         "title": "BulkActionResponse",
         "description": "Response schema for bulk job actions."
       },
@@ -896,7 +955,10 @@
           },
           "status": {
             "type": "string",
-            "enum": ["success", "error"],
+            "enum": [
+              "success",
+              "error"
+            ],
             "title": "Status"
           },
           "error": {
@@ -912,7 +974,10 @@
           }
         },
         "type": "object",
-        "required": ["job_id", "status"],
+        "required": [
+          "job_id",
+          "status"
+        ],
         "title": "BulkActionResult",
         "description": "Per-job result for bulk actions."
       },
@@ -928,7 +993,10 @@
           }
         },
         "type": "object",
-        "required": ["success", "errors"],
+        "required": [
+          "success",
+          "errors"
+        ],
         "title": "BulkActionSummary",
         "description": "Summary counts for bulk actions."
       },
@@ -936,7 +1004,10 @@
         "properties": {
           "action": {
             "type": "string",
-            "enum": ["retry", "cancel"],
+            "enum": [
+              "retry",
+              "cancel"
+            ],
             "title": "Action"
           },
           "job_ids": {
@@ -950,7 +1021,10 @@
           }
         },
         "type": "object",
-        "required": ["action", "job_ids"],
+        "required": [
+          "action",
+          "job_ids"
+        ],
         "title": "BulkJobActionRequest",
         "description": "Request schema for bulk job actions."
       },
@@ -962,7 +1036,10 @@
           },
           "status": {
             "type": "string",
-            "enum": ["ok", "unavailable"],
+            "enum": [
+              "ok",
+              "unavailable"
+            ],
             "title": "Status"
           },
           "detail": {
@@ -978,7 +1055,10 @@
           }
         },
         "type": "object",
-        "required": ["name", "status"],
+        "required": [
+          "name",
+          "status"
+        ],
         "title": "CheckResult",
         "description": "Result of an individual health check."
       },
@@ -997,6 +1077,42 @@
         "title": "ConversionJobStatus",
         "description": "Allowed statuses for conversion jobs."
       },
+      "GithubReadmeRef": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "github_readme",
+            "title": "Kind",
+            "default": "github_readme"
+          },
+          "owner": {
+            "type": "string",
+            "title": "Owner"
+          },
+          "repo": {
+            "type": "string",
+            "title": "Repo"
+          },
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          }
+        },
+        "type": "object",
+        "required": [
+          "owner",
+          "repo"
+        ],
+        "title": "GithubReadmeRef",
+        "description": "Reference to a GitHub repo README."
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1014,7 +1130,10 @@
         "properties": {
           "status": {
             "type": "string",
-            "enum": ["ok", "unavailable"],
+            "enum": [
+              "ok",
+              "unavailable"
+            ],
             "title": "Status"
           },
           "checks": {
@@ -1026,9 +1145,32 @@
           }
         },
         "type": "object",
-        "required": ["status"],
+        "required": [
+          "status"
+        ],
         "title": "HealthResponse",
         "description": "Health endpoint response."
+      },
+      "InlineHtmlRef": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "inline_html",
+            "title": "Kind",
+            "default": "inline_html"
+          },
+          "body": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Body"
+          }
+        },
+        "type": "object",
+        "required": [
+          "body"
+        ],
+        "title": "InlineHtmlRef",
+        "description": "Reference carrying inline HTML/text bytes directly, capped at 64 KiB raw."
       },
       "JobList": {
         "properties": {
@@ -1053,7 +1195,12 @@
           }
         },
         "type": "object",
-        "required": ["jobs", "total", "limit", "offset"],
+        "required": [
+          "jobs",
+          "total",
+          "limit",
+          "offset"
+        ],
         "title": "JobList",
         "description": "Response schema for job listing."
       },
@@ -1069,8 +1216,49 @@
             "title": "Aizk Uuid"
           },
           "karakeep_id": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Karakeep Id"
+          },
+          "source_ref": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/KarakeepBookmarkRef"
+              },
+              {
+                "$ref": "#/components/schemas/ArxivRef"
+              },
+              {
+                "$ref": "#/components/schemas/GithubReadmeRef"
+              },
+              {
+                "$ref": "#/components/schemas/UrlRef"
+              },
+              {
+                "$ref": "#/components/schemas/SingleFileRef"
+              },
+              {
+                "$ref": "#/components/schemas/InlineHtmlRef"
+              }
+            ],
+            "title": "Source Ref",
+            "discriminator": {
+              "propertyName": "kind",
+              "mapping": {
+                "arxiv": "#/components/schemas/ArxivRef",
+                "github_readme": "#/components/schemas/GithubReadmeRef",
+                "inline_html": "#/components/schemas/InlineHtmlRef",
+                "karakeep_bookmark": "#/components/schemas/KarakeepBookmarkRef",
+                "singlefile": "#/components/schemas/SingleFileRef",
+                "url": "#/components/schemas/UrlRef"
+              }
+            }
           },
           "url": {
             "anyOf": [
@@ -1217,7 +1405,7 @@
         "required": [
           "id",
           "aizk_uuid",
-          "karakeep_id",
+          "source_ref",
           "status",
           "attempts",
           "payload_version",
@@ -1243,16 +1431,28 @@
           }
         },
         "type": "object",
-        "required": ["counts", "total"],
+        "required": [
+          "counts",
+          "total"
+        ],
         "title": "JobStatusCounts",
         "description": "Aggregated conversion job counts by status."
       },
       "JobSubmission": {
         "properties": {
-          "karakeep_id": {
-            "type": "string",
-            "maxLength": 255,
-            "title": "Karakeep Id"
+          "source_ref": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/KarakeepBookmarkRef"
+              }
+            ],
+            "title": "Source Ref",
+            "discriminator": {
+              "propertyName": "kind",
+              "mapping": {
+                "karakeep_bookmark": "#/components/schemas/KarakeepBookmarkRef"
+              }
+            }
           },
           "payload_version": {
             "type": "integer",
@@ -1274,9 +1474,31 @@
           }
         },
         "type": "object",
-        "required": ["karakeep_id"],
+        "required": [
+          "source_ref"
+        ],
         "title": "JobSubmission",
         "description": "Request schema for job submission."
+      },
+      "KarakeepBookmarkRef": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "karakeep_bookmark",
+            "title": "Kind",
+            "default": "karakeep_bookmark"
+          },
+          "bookmark_id": {
+            "type": "string",
+            "title": "Bookmark Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bookmark_id"
+        ],
+        "title": "KarakeepBookmarkRef",
+        "description": "Reference to a KaraKeep bookmark; resolved to a more specific ref by the resolver."
       },
       "OutputResponse": {
         "properties": {
@@ -1366,9 +1588,52 @@
           }
         },
         "type": "object",
-        "required": ["detail", "retry_after"],
+        "required": [
+          "detail",
+          "retry_after"
+        ],
         "title": "QueueFullResponse",
         "description": "Response schema when the job queue is at capacity."
+      },
+      "SingleFileRef": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "singlefile",
+            "title": "Kind",
+            "default": "singlefile"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "SingleFileRef",
+        "description": "Reference to a SingleFile-archived page.\n\nSkeleton variant: unused at cutover; kept in the union so future wiring\ndoes not require a SourceRef migration."
+      },
+      "UrlRef": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "url",
+            "title": "Kind",
+            "default": "url"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "UrlRef",
+        "description": "Reference to a URL. The URL is stored in normalized form for stable identity."
       },
       "ValidationError": {
         "properties": {
@@ -1403,7 +1668,11 @@
           }
         },
         "type": "object",
-        "required": ["loc", "msg", "type"],
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
         "title": "ValidationError"
       }
     }

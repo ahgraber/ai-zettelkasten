@@ -10,21 +10,40 @@ It enforces idempotency, manages concurrency, and emits structured logs and metr
 
 ## Requirements
 
-### Requirement: Register bookmarks with stable internal identifiers
+### Requirement: Enrich Source metadata from fetcher chain results
 
-The system SHALL assign or look up a stable internal identifier for each bookmark keyed on the KaraKeep bookmark identifier, and SHALL persist the bookmark record before creating a conversion job.
+The system SHALL update the existing Source row's mutable metadata — `url`, `normalized_url`, `title`, `source_type`, `content_type` — from the resolver and fetcher chain results.
+`source_type` SHALL be derived from `terminal_ref.kind` via a canonical `SOURCE_TYPE_BY_KIND` mapping defined in `aizk.conversion.core.types` (not emitted per-fetcher), so that the same kind produces a consistent `source_type` regardless of which adapter runs.
+The worker SHALL NOT create Source rows, assign `aizk_uuid`, compute `source_ref_hash`, or modify the immutable identity columns (`aizk_uuid`, `source_ref`, `source_ref_hash`, `karakeep_id`); those are materialized by the API at submit time.
+Enrichment SHALL follow last-writer-wins semantics across concurrent jobs for the same Source: the mutable columns are an advisory cache for UI/search, and each job's authoritative values are preserved in its own manifest.
+Enrichment writes SHALL be best-effort: a failure writing to the Source row (e.g., a transient database error) SHALL be logged with the `aizk_uuid`, the failing column set, and the underlying error, but SHALL NOT fail the job — conversion proceeds and the manifest's authoritative values remain correct.
+Each enrichment write SHALL be scoped to a single UPDATE statement per Source row (not wrapped in the job transaction), so a partial failure leaves the job record unaffected.
+Replay after a retry is naturally idempotent under last-writer-wins; no retry-specific logic is required. (Previously: the orchestrator derived these fields from KaraKeep bookmark structure for every job.
+Now the API owns identity, and the worker owns enrichment of mutable metadata.)
 
-#### Scenario: New bookmark registered on first submission
+#### Scenario: Metadata enriched after fetch
 
-- **GIVEN** a submission references a KaraKeep bookmark identifier not previously seen
-- **WHEN** the worker processes the job
-- **THEN** a new bookmark record is created with a stable internal identifier and the KaraKeep identifier as a unique key
+- **GIVEN** a job references a Source row whose mutable metadata is empty and whose `source_ref` is a `UrlRef`
+- **WHEN** the fetcher chain completes and returns a `ConversionInput` with authoritative content type
+- **THEN** the Source row's `url`, `normalized_url`, `title`, `source_type`, and `content_type` are populated from the fetcher/resolver results
 
-#### Scenario: Existing bookmark reused on resubmission
+#### Scenario: Immutable columns never rewritten
 
-- **GIVEN** a submission references a KaraKeep bookmark identifier already in the system
-- **WHEN** the worker processes the job
-- **THEN** the existing bookmark record is reused and a new conversion job is created against it
+- **GIVEN** a Source row with existing `aizk_uuid`, `source_ref`, `source_ref_hash`, and `karakeep_id`
+- **WHEN** the worker enriches the row after a fetch
+- **THEN** those four columns are unchanged regardless of fetcher output
+
+#### Scenario: Enrichment failure does not fail the job
+
+- **GIVEN** a fetcher chain completes successfully but the Source-row UPDATE fails (e.g., transient database error)
+- **WHEN** the worker attempts to persist the enriched metadata
+- **THEN** the failure is logged with `aizk_uuid`, the column set attempted, and the underlying error, and the conversion job proceeds to conversion and produces a valid manifest with the authoritative values
+
+#### Scenario: source_type derived from terminal ref kind
+
+- **GIVEN** a fetcher chain that terminates at an `ArxivRef` (whether submitted directly or resolved from a KaraKeep bookmark)
+- **WHEN** the worker enriches the Source row
+- **THEN** the Source row's `source_type` column is set to the value mapped from `terminal_ref.kind` by the canonical `SOURCE_TYPE_BY_KIND` mapping defined in `aizk.conversion.core.types` (e.g., `arxiv` kind → `"arxiv"`; `github_readme` kind → `"github"`; `url`, `karakeep_bookmark`, `inline_html`, `singlefile` → `"other"`)
 
 ### Requirement: Normalize URLs for deduplication
 
@@ -66,139 +85,110 @@ A Docling configuration field contributes to the key if and only if its value af
 - **WHEN** the two submissions differ only in the value of `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` or `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY` (with both still configured in each case)
 - **THEN** the two submissions produce the same idempotency key and the second is rejected as a duplicate
 
+### Requirement: Store source reference on the job record
+
+The system SHALL store a `source_ref` JSON value on each conversion job record, carrying the typed source reference that the fetcher chain will resolve.
+The `source_ref` SHALL be a valid member of the `SourceRef` discriminated union and SHALL round-trip through JSON without loss.
+The `source_ref` is denormalized from the Source row onto the job record for fetch-chain use.
+
+#### Scenario: Job created with source ref
+
+- **GIVEN** a job is submitted with a `KarakeepBookmarkRef`
+- **WHEN** the job record is created
+- **THEN** the `source_ref` column contains the serialized ref with `kind: "karakeep_bookmark"`
+
+#### Scenario: Source ref survives persistence round-trip
+
+- **GIVEN** a job record with a stored `source_ref`
+- **WHEN** the record is read back
+- **THEN** the deserialized `SourceRef` matches the original variant and fields
+
 ### Requirement: Validate source content before conversion
 
-The system SHALL fetch the KaraKeep bookmark and validate it has at least one of: HTML content, text, or PDF asset.
-The system SHALL detect content type and source type from the bookmark structure and URL.
+The system SHALL validate that the fetched content is non-empty and carries a `ContentType` for which a converter is registered, before proceeding to conversion.
+Content-type and source-type detection are the responsibility of the fetcher/resolver chain, not the orchestrator. (Previously: detection was performed by the orchestrator from KaraKeep bookmark structure and URL.)
 
-#### Scenario: Bookmark with missing content rejected
+#### Scenario: Fetcher returns empty content
 
-- **GIVEN** a KaraKeep bookmark has no HTML content, text, or PDF asset
-- **WHEN** the worker processes the job
+- **GIVEN** a fetcher returns a `ConversionInput` with zero-length bytes
+- **WHEN** the orchestrator inspects the input
 - **THEN** the job is marked permanently failed with a missing-content error code
 
-#### Scenario: Content type detected from bookmark structure
+#### Scenario: No converter registered for content type
 
-- **GIVEN** a KaraKeep bookmark has a PDF asset
-- **WHEN** the worker inspects the bookmark
-- **THEN** the content type is recorded as PDF; if only HTML content or text is present, the content type is recorded as HTML
+- **GIVEN** a fetcher returns a `ConversionInput` with a content type for which no converter is registered
+- **WHEN** the orchestrator attempts to resolve a converter
+- **THEN** the job is marked permanently failed with a `NoConverterForFormat` error
 
-#### Scenario: Source type detected from URL
+### Requirement: Fetch source content via the registered fetcher
 
-- **GIVEN** a KaraKeep bookmark URL is inspected
-- **WHEN** the URL domain matches a known source pattern
-- **THEN** the source type is recorded as arxiv for arxiv.org URLs, github for github.com URLs, and other otherwise
+The system SHALL fetch source content by dispatching on the job's `source_ref` through the fetcher registry, following any ref-resolver chain to a terminal content fetcher.
+(Previously: the system fetched source content from KaraKeep as the single authoritative source.)
 
-### Requirement: Fetch source content from KaraKeep
+#### Scenario: Content fetched through resolver chain
 
-The system SHALL fetch source content from KaraKeep as the authoritative source using retry logic with exponential backoff and a configurable timeout.
+- **GIVEN** a job with a `KarakeepBookmarkRef` source ref whose registered resolver returns an `ArxivRef`
+- **WHEN** the worker fetches content
+- **THEN** the arxiv content fetcher is invoked, producing a `ConversionInput`
 
-#### Scenario: Successful content fetch
+#### Scenario: Content fetched directly
 
-- **GIVEN** a KaraKeep bookmark has accessible content
-- **WHEN** the worker fetches the bookmark
-- **THEN** the content is retrieved within the configured timeout
-
-#### Scenario: Fetch fails transiently
-
-- **GIVEN** KaraKeep returns an error or times out
-- **WHEN** the worker exhausts its retry attempts
-- **THEN** the job is marked as retryable-failed with the HTTP status or timeout recorded
-
-#### Scenario: PDF asset fetched from KaraKeep
-
-- **GIVEN** the bookmark has a PDF asset type
-- **WHEN** the worker processes the job
-- **THEN** the PDF asset bytes are fetched from KaraKeep before conversion
+- **GIVEN** a job with a `UrlRef` source ref mapped to a content fetcher
+- **WHEN** the worker fetches content
+- **THEN** the URL content fetcher is invoked directly without resolver delegation
 
 ### Requirement: Process arXiv bookmarks by downloading PDFs
 
-The system SHALL download arXiv papers as PDFs for conversion, using the abstract page URL to resolve the paper identifier when no PDF asset is present.
+(Unchanged in behavior.
+Relocated: this behavior is now provided by the `ArxivFetcher` content-fetcher adapter, invoked when the resolver chain produces an `ArxivRef`.)
 
-#### Scenario: Abstract page bookmark downloads PDF
+The `KarakeepBookmarkResolver` SHALL preserve the existing resolution precedence when determining that a bookmark is arXiv-sourced, and the `ArxivFetcher` SHALL preserve the existing PDF-source precedence.
 
-- **GIVEN** an arXiv bookmark with an abstract page URL (arxiv.org/abs/...)
-- **WHEN** the worker processes the job
-- **THEN** the system resolves the arXiv paper identifier and downloads the PDF for conversion
+#### Scenario: ArXiv resolution precedence preserved
 
-#### Scenario: arXiv PDF asset fetched from KaraKeep
+- **GIVEN** a `KarakeepBookmarkRef` for a bookmark whose `source_type == "arxiv"`
+- **WHEN** the `KarakeepBookmarkResolver` resolves the ref
+- **THEN** it returns an `ArxivRef` (not a `UrlRef` or `InlineHtmlRef`), preserving the arXiv-specific PDF pipeline
 
-- **GIVEN** an arXiv bookmark has a PDF asset stored in KaraKeep
-- **WHEN** the worker processes the job
-- **THEN** the PDF is fetched from KaraKeep and converted to Markdown
+#### Scenario: ArXiv PDF source precedence — KaraKeep asset preferred
 
-#### Scenario: arXiv link bookmark with HTML uses arxiv_pdf_url
+- **GIVEN** an `ArxivRef` for a bookmark that has both a KaraKeep PDF asset and an `arxiv_pdf_url` metadata field
+- **WHEN** the `ArxivFetcher` fetches the PDF
+- **THEN** the KaraKeep asset is used (avoids arxiv.org rate limits)
 
-- **GIVEN** an arXiv bookmark has HTML content and an arxiv_pdf_url metadata field
-- **WHEN** the worker processes the job
-- **THEN** the system downloads the PDF from the arxiv_pdf_url and converts it to Markdown
+#### Scenario: ArXiv PDF source precedence — arxiv_pdf_url fallback
+
+- **GIVEN** an `ArxivRef` for a bookmark with no KaraKeep PDF asset but an `arxiv_pdf_url` metadata field
+- **WHEN** the `ArxivFetcher` fetches the PDF
+- **THEN** the PDF is downloaded from the `arxiv_pdf_url`
+
+#### Scenario: ArXiv PDF source precedence — abstract page resolution
+
+- **GIVEN** an `ArxivRef` for a bookmark with only an abstract page URL (no asset, no `arxiv_pdf_url`)
+- **WHEN** the `ArxivFetcher` fetches the PDF
+- **THEN** the arXiv ID is resolved from the abstract URL and the PDF URL is constructed
 
 ### Requirement: Process GitHub bookmarks by fetching README content
 
-The system SHALL extract the repository owner and name from a GitHub URL and fetch the README from the default branch, preferring Markdown over reStructuredText over plain text.
-
-#### Scenario: GitHub README fetched and converted
-
-- **GIVEN** a GitHub bookmark with a valid repository URL
-- **WHEN** the worker processes the job
-- **THEN** the README content is fetched from the default branch and converted to Markdown
-
-#### Scenario: GitHub repository with no README fails permanently
-
-- **GIVEN** a GitHub bookmark's repository has no README file
-- **WHEN** the worker attempts to fetch the README
-- **THEN** the job is marked permanently failed
+(Unchanged in behavior.
+Relocated: this behavior is now provided by the `GithubReadmeFetcher` content-fetcher adapter, invoked when the resolver chain produces a `GithubReadmeRef`.)
 
 ### Requirement: Convert documents to Markdown and extract figures
 
-The system SHALL convert each source document to Markdown and SHALL extract every embedded figure as an individually addressable image file with a sequentially determined name.
-When picture classification is enabled and a picture-description endpoint is configured, each extracted figure SHALL receive a description whose form matches its figure type: chart-type figures receive chart summaries, table-type figures receive tabular-form descriptions, and all other figures receive generic alt-text.
-When picture classification is disabled, each figure SHALL receive a single generic description.
+The system SHALL convert each source document to Markdown and extract figures by invoking the converter resolved for the job's content type and the deployment's configured converter name.
+Converter-specific behavior (picture classification, figure enrichment, serialization annotations) is an internal concern of the converter adapter. (Previously: Docling was invoked directly by name with inline format dispatch.)
 
-#### Scenario: HTML document converted to Markdown
+#### Scenario: Converter resolved and invoked
 
-- **GIVEN** a bookmark with HTML content type
-- **WHEN** the worker runs conversion
-- **THEN** Markdown output and any extracted figures are produced using the HTML pipeline
+- **GIVEN** a `ConversionInput` with content type `pdf` and a configured converter name `"docling"`
+- **WHEN** the orchestrator invokes conversion
+- **THEN** the `DoclingConverter` is resolved from the registry and produces `ConversionArtifacts`
 
-#### Scenario: PDF document converted to Markdown with figures
+#### Scenario: Converter-specific enrichment remains internal
 
-- **GIVEN** a bookmark with PDF content type
-- **WHEN** the worker runs conversion
-- **THEN** Markdown output is produced and figures are extracted as sequentially named image files
-
-#### Scenario: Empty Markdown output fails permanently
-
-- **GIVEN** Docling conversion produces empty or invalid Markdown
-- **WHEN** the worker inspects the output
-- **THEN** the job is marked permanently failed and any existing successful output is preserved
-
-#### Scenario: Chart figure described with chart2summary prompt
-
-- **GIVEN** a PDF figure is classified as a chart type by DocumentFigureClassifier
-- **WHEN** the post-conversion enrichment pass runs
-- **THEN** the enrichment loop calls the VLM with a `<chart2summary>` prompt for that figure
-- **AND** the resulting description is injected as a `PictureDescriptionData` annotation
-
-#### Scenario: Table-image figure described with tables_html prompt
-
-- **GIVEN** a PDF figure is classified as a table type by DocumentFigureClassifier
-- **WHEN** the post-conversion enrichment pass runs
-- **THEN** the enrichment loop calls the VLM with a `<tables_html>` prompt for that figure
-- **AND** the resulting description is injected as a `PictureDescriptionData` annotation
-
-#### Scenario: Unclassified or photo figure uses generic prompt
-
-- **GIVEN** a PDF figure has no classification label, or is classified as photograph/logo/other
-- **WHEN** the post-conversion enrichment pass runs
-- **THEN** the enrichment loop calls the VLM with the existing generic alt-text prompt
-- **AND** the resulting description is injected as a `PictureDescriptionData` annotation
-
-#### Scenario: Picture classification disabled via config
-
-- **GIVEN** `AIZK_CONVERTER__DOCLING__PICTURE_CLASSIFICATION_ENABLED=false`
-- **WHEN** the PDF pipeline is configured
-- **THEN** `do_picture_classification=False` and the enrichment pass falls back to the existing single-prompt Docling built-in description (no classification-based routing)
+- **GIVEN** the `DoclingConverter` is invoked for a PDF with picture classification enabled
+- **WHEN** conversion completes
+- **THEN** figure descriptions and classification annotations are present in the output, as before, without the orchestrator having knowledge of these adapter-specific behaviors
 
 ### Requirement: Serialize Markdown output with figure annotations
 
@@ -391,20 +381,43 @@ Job claiming SHALL be atomic — the same job SHALL NOT be claimed and processed
 
 ### Requirement: Bound concurrency of GPU-consuming conversion phases
 
-The system SHALL bound the number of conversion phases running concurrently on the GPU by a configurable limit, to prevent GPU memory exhaustion.
-Phases that do not use the GPU (preflight, upload) SHALL NOT count against this limit, so they proceed concurrently with GPU-bound conversion phases.
+The system SHALL bound the number of GPU-consuming conversion subprocesses running concurrently via a GPU `ResourceGuard` context manager acquired in the parent process before subprocess spawn and held for the subprocess's full lifetime (spawn, supervision, and reap).
+The guard SHALL be a threading primitive shared across the parent's worker thread pool.
+The orchestrator SHALL acquire the guard if and only if the dispatched converter declares `requires_gpu == True`; a converter declaring `requires_gpu == False` SHALL spawn its subprocess without contending on the GPU guard.
+Converter adapters running inside forked child processes SHALL NOT own or acquire the cross-job GPU guard.
+The acquiring worker thread SHALL be the sole releaser; the supervision loop SHALL NOT call release directly, and the guard SHALL be released by normal or exceptional unwind of the acquiring thread's `with` block after subprocess reap.
+Today the only registered converter is `DoclingConverter` with `requires_gpu = True`, so every conversion subprocess acquires the guard in the current deployment; the bypass path is a defined protocol capability for future non-GPU converters. (Previously: bounded by a module-level `threading.Semaphore` in the orchestrator.
+Now the guard is wrapped as an injected `ResourceGuard` at the parent/supervision level, not inside converter adapters — because forked children would get independent semaphore copies, destroying the global cap.)
 
-#### Scenario: GPU concurrency limit enforced
+#### Scenario: GPU-consuming converter acquires guard
 
-- **GIVEN** the GPU concurrency limit is 1 and one conversion subprocess is already running
-- **WHEN** a second job reaches the conversion phase
-- **THEN** the second job blocks until the first subprocess completes before spawning its own subprocess
+- **GIVEN** a job dispatched to a converter whose `requires_gpu == True` (e.g., `DoclingConverter`)
+- **WHEN** the worker prepares to spawn the conversion subprocess
+- **THEN** the worker thread enters the GPU guard's `with` block before spawning the subprocess
 
-#### Scenario: Non-GPU phases run concurrently
+#### Scenario: Non-GPU converter bypasses guard
 
-- **GIVEN** the GPU concurrency limit is 1 and one job is converting on GPU
-- **WHEN** other jobs are in preflight or upload phases
-- **THEN** those phases proceed without waiting for the GPU slot
+- **GIVEN** a (hypothetical) converter whose `requires_gpu == False`
+- **WHEN** a job is dispatched to it
+- **THEN** the subprocess is spawned without acquiring the GPU guard; concurrent GPU-bound jobs on other threads are not blocked by it
+
+#### Scenario: Parent-side guard limits concurrent GPU subprocesses
+
+- **GIVEN** the GPU concurrency limit is 1 and one worker thread has entered the guard's `with` block and spawned a GPU-consuming conversion subprocess
+- **WHEN** a second worker thread attempts to enter the guard for another GPU-consuming job
+- **THEN** the second thread blocks until the first thread's `with` block exits (after its subprocess is reaped)
+
+#### Scenario: Guard held through subprocess reap
+
+- **GIVEN** a worker thread holds the GPU guard and its subprocess has finished writing artifacts
+- **WHEN** the supervision loop observes the subprocess exit
+- **THEN** the guard remains held until the acquiring thread's `with` block exits after reap, not at the moment of exit detection
+
+#### Scenario: Guard released on subprocess crash via acquiring thread
+
+- **GIVEN** a worker thread holds the GPU guard and its conversion subprocess crashes
+- **WHEN** the supervision loop surfaces the failure to the acquiring thread
+- **THEN** the acquiring thread's `with` block unwinds, releasing the guard, and other threads may proceed
 
 ### Requirement: Store Markdown output as a standardized filename
 
@@ -438,14 +451,21 @@ The system SHALL emit metrics for queue depth, job duration, job status counts, 
 
 ### Requirement: Load configuration from environment variables
 
-The system SHALL load all configuration (S3 credentials, KaraKeep endpoint, concurrency limits, timeouts) from environment variables with sensible defaults for local development, and SHALL validate required service reachability before entering the main processing loop.
-The picture description endpoint is configured via `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL`, `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY`, and `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_MODEL`.
+The system SHALL load configuration from environment variables organized into per-adapter nested namespaces.
+Converter-specific settings live under the converter's namespace (e.g., `AIZK_CONVERTER__DOCLING__*`); fetcher-specific settings live under the fetcher's namespace.
+Old flat-namespace env vars (`AIZK_DOCLING_*`) are removed without a compatibility shim. (Previously: flat `AIZK_DOCLING_*` namespace.)
 
-#### Scenario: Configuration loaded on startup
+#### Scenario: Nested env var read by adapter
 
-- **GIVEN** environment variables are set
-- **WHEN** the worker starts
-- **THEN** all configuration is read from the environment without requiring code changes
+- **GIVEN** `AIZK_CONVERTER__DOCLING__OCR_ENABLED=true` is set
+- **WHEN** the DoclingConverter's config is loaded
+- **THEN** the `ocr_enabled` field is `True`
+
+#### Scenario: Old flat-namespace env var ignored
+
+- **GIVEN** `AIZK_DOCLING_OCR_ENABLED=true` is set but no nested equivalent is present
+- **WHEN** configuration is loaded
+- **THEN** the value is not read; the field falls back to its library default
 
 ### Requirement: Load picture classification configuration from environment
 
@@ -465,52 +485,20 @@ The system SHALL expose `AIZK_CONVERTER__DOCLING__PICTURE_CLASSIFICATION_ENABLED
 
 ### Requirement: Validate required external services on startup
 
-The system SHALL probe required external services (S3 storage, KaraKeep API, and — when configured — the picture description endpoint) at process startup and SHALL refuse to start if any required service is unreachable.
-When `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` and `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY` are both set, the probe issues `GET {base_url}/models` with an `Authorization: Bearer` header and a 10-second timeout; a non-2xx response or connection error prevents startup.
-If neither field is set, the picture description probe is a no-op.
-Probes SHALL use bounded timeouts to avoid hanging on unresponsive services.
+The system SHALL probe required external services at process startup, with the set of probes determined by the registered adapters and their configuration. (Previously: probes were hard-coded for S3, KaraKeep, and the picture-description endpoint.
+Now each adapter may declare startup probes, and the composition root aggregates them.)
 
-#### Scenario: S3 reachable at startup
+#### Scenario: Adapter-declared probe executed at startup
 
-- **GIVEN** valid S3 credentials and endpoint are configured
-- **WHEN** the worker or API process starts
-- **THEN** a HEAD bucket probe succeeds within the timeout and the process continues startup
+- **GIVEN** the `DoclingConverter` adapter declares a probe for the picture-description endpoint
+- **WHEN** the worker starts
+- **THEN** the probe is executed alongside S3 and database probes
 
-#### Scenario: S3 unreachable at startup
+#### Scenario: Unused adapter probe skipped
 
-- **GIVEN** S3 credentials are invalid or the endpoint is unreachable
-- **WHEN** the worker or API process starts
-- **THEN** the process logs a structured error identifying the S3 failure and exits with a non-zero exit code
-
-#### Scenario: KaraKeep API reachable at startup
-
-- **GIVEN** a valid KaraKeep base URL and API key are configured
-- **WHEN** the worker or API process starts
-- **THEN** a health probe to the KaraKeep API succeeds within the timeout and the process continues startup
-
-#### Scenario: KaraKeep API unreachable at startup
-
-- **GIVEN** the KaraKeep API is unreachable or returns an error
-- **WHEN** the worker or API process starts
-- **THEN** the process logs a structured error identifying the KaraKeep failure and exits with a non-zero exit code
-
-#### Scenario: Picture description endpoint reachable at startup
-
-- **GIVEN** `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` and `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY` are configured
-- **WHEN** the worker or API process starts
-- **THEN** `GET {base_url}/models` is called with an Authorization header and the process continues if it returns 2xx
-
-#### Scenario: Picture description endpoint unreachable at startup
-
-- **GIVEN** `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` is configured but the endpoint is unreachable or returns non-2xx
-- **WHEN** the worker or API process starts
-- **THEN** the process logs a structured error identifying the failure and exits with a non-zero exit code
-
-#### Scenario: Picture description not configured — probe skipped
-
-- **GIVEN** `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` is not set
-- **WHEN** the worker or API process starts
-- **THEN** no probe is made for the picture description endpoint and startup proceeds normally
+- **GIVEN** no KaraKeep fetcher is registered (e.g., in a deployment using only URL-based ingestion)
+- **WHEN** the worker starts
+- **THEN** no KaraKeep API probe is attempted
 
 ### Requirement: Log optional feature status summary on startup
 
@@ -564,24 +552,22 @@ Every Python process (API server, worker, CLI) SHALL expose its role as a human-
 - **WHEN** an operator inspects the process list
 - **THEN** each process is labeled with its role (API, worker, or CLI)
 
-### Requirement: Declare KaraKeep as the authoritative raw input store
+### Requirement: Declare provenance per source type
 
-The system SHALL treat KaraKeep as the authoritative store for raw source content (HTML, text, and PDF assets) and SHALL record the KaraKeep bookmark identifier as the durable provenance reference for every conversion artifact.
-Local copies of raw bytes are not required provided KaraKeep access is stable and the identifier is persisted.
+For KaraKeep-sourced jobs, the system SHALL treat KaraKeep as the authoritative store for raw source content and record the KaraKeep bookmark identifier as the durable provenance reference.
+For non-KaraKeep-sourced jobs, the `source_ref` on the Source and job records SHALL serve as the durable provenance reference. (Previously: KaraKeep was unconditionally declared as the authoritative raw-input store.)
 
-#### Scenario: Provenance reference recorded for every bookmark
+#### Scenario: KaraKeep provenance preserved
 
-- **GIVEN** a bookmark is registered for conversion
-- **WHEN** the bookmark record is created or looked up
-- **THEN** the KaraKeep bookmark identifier is persisted as the stable provenance reference linking
-  every derived artifact back to its authoritative source
+- **GIVEN** a job sourced from a KaraKeep bookmark
+- **WHEN** the job completes
+- **THEN** the KaraKeep bookmark identifier (on the Source row) is recorded as provenance, as before
 
-#### Scenario: Raw bytes not stored locally
+#### Scenario: Non-KaraKeep provenance via source ref
 
-- **GIVEN** source content is fetched from KaraKeep for conversion
-- **WHEN** the conversion completes and artifacts are uploaded
-- **THEN** the raw HTML, text, or PDF bytes are not persisted beyond the ephemeral workspace; the
-  KaraKeep identifier is sufficient as the durable raw-input reference
+- **GIVEN** a job sourced from a `UrlRef`
+- **WHEN** the job completes
+- **THEN** the `source_ref` (containing the URL) on the Source row serves as the provenance reference
 
 ### Requirement: Include picture description capability in the idempotency key
 
@@ -603,35 +589,45 @@ with and without LLM figure descriptions produce distinct keys.
 - **WHEN** the idempotency key is computed
 - **THEN** the key matches the existing job and the submission is rejected as a duplicate
 
-### Requirement: Persist conversion config in the manifest
+### Requirement: Persist conversion config and source provenance in the manifest
 
-The system SHALL write the Docling configuration fields that affect replayable output into the S3 manifest as a `config_snapshot` section, so the conversion can be replayed with identical parameters.
-A Docling configuration field appears in `config_snapshot` if and only if its value affects replayable output; provider-identity fields, credentials, and transport-only controls SHALL NOT appear.
-Independent of the replay criterion, the system SHALL NOT persist any credential, secret, or access token into the manifest; secrets MUST NOT be written to durable artifact storage under any circumstance.
+The system SHALL write manifests in format version `"2.0"`.
+Version 2.0 manifests SHALL:
 
-#### Scenario: Manifest contains Docling config snapshot
+- Carry a `config_snapshot` section including `converter_name` and the converter-adapter-supplied output-affecting fields (the orchestrator treats adapter fields as opaque).
+  The config-snapshot model SHALL set `extra="forbid"` so unknown fields fail loudly at read time.
+- Allow `ManifestSource.url`, `normalized_url`, `title`, `source_type`, and `fetched_at` to be `null` (required in v1.0) so non-KaraKeep jobs can serialize.
+- Carry two typed ref blocks, both required:
+  - `submitted_ref` — the `SourceRef` the caller supplied at submit time (ingress shape).
+  - `terminal_ref` — the ref whose `ContentFetcher` actually produced the converted bytes (terminal fetch state), keyed on the terminal ref's kind (e.g., `bookmark_id` for `karakeep_bookmark`, `arxiv_id` for `arxiv`, `owner`/`repo` for `github_readme`, `url` for `url`, `content_hash` for `inline_html`).
+- Both blocks are always present; for direct submissions (no resolver hop) they carry equal values.
+- Move `karakeep_id` out of the top-level source block; it appears in `submitted_ref` (when the caller supplied a `KarakeepBookmarkRef`) and/or `terminal_ref` (when KaraKeep was the byte source).
 
-- **GIVEN** a conversion completes successfully
-- **WHEN** the manifest is written to the ephemeral workspace
-- **THEN** the manifest includes the Docling configuration fields that affect replayable output (OCR settings, table structure, picture description model (`picture_description_model`), page limit, picture timeout, picture classification enabled) and the picture description enabled flag as a `config_snapshot` section
+Readers SHALL be implemented as version-specific classes (`ManifestV1`, `ManifestV2`), both with `extra="forbid"`; a version-dispatching loader SHALL select the reader class from the serialized `version` string. (Previously: manifest version `"1.0"` with a Docling-specific config section and required KaraKeep source fields.)
 
-#### Scenario: Manifest captures picture classification flag
+#### Scenario: KaraKeep-terminal job — submitted_ref equals terminal_ref
 
-- **GIVEN** a conversion completes with `picture_classification_enabled=True`
+- **GIVEN** a conversion completes for a KaraKeep bookmark whose resolver chain terminates at the KaraKeep content fetcher (non-arxiv, non-github)
 - **WHEN** the manifest is written
-- **THEN** the `config_snapshot` section includes `"picture_classification_enabled": true`
+- **THEN** `version == "2.0"`, `submitted_ref.kind == "karakeep_bookmark"` and `terminal_ref.kind == "karakeep_bookmark"` with the `bookmark_id` populated in both, and the two blocks carry structurally equal values
 
-#### Scenario: Config snapshot matches idempotency key inputs
+#### Scenario: KaraKeep-to-arxiv job — submitted_ref and terminal_ref diverge
 
-- **GIVEN** a manifest is present for a completed conversion
-- **WHEN** the config snapshot is read from the manifest
-- **THEN** the fields present are exactly those used to compute the idempotency key, enabling exact replay
+- **GIVEN** a conversion completes for a KaraKeep bookmark whose resolver returned an `ArxivRef` and the arxiv content fetcher ran
+- **WHEN** the manifest is written
+- **THEN** `submitted_ref.kind == "karakeep_bookmark"` with the original `bookmark_id`, and `terminal_ref.kind == "arxiv"` with the `arxiv_id` populated
 
-#### Scenario: Manifest omits picture-description provider identity and credentials
+#### Scenario: Direct UrlRef submission — both blocks equal
 
-- **GIVEN** a conversion completes successfully with `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` and `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY` both configured to non-empty values
-- **WHEN** the `config_snapshot` section is read from the manifest
-- **THEN** the section contains no entry for the picture-description endpoint URL and no entry for the picture-description API key, illustrating the general rule that provider identity and credentials are not persisted
+- **GIVEN** a conversion completes for a `UrlRef`-sourced job where the fetcher populated `url` but no `title`
+- **WHEN** the manifest is written
+- **THEN** `ManifestSource.title` is `null`, the manifest is valid, and both `submitted_ref.kind == "url"` and `terminal_ref.kind == "url"` carry equal values
+
+#### Scenario: Reader dispatches by version
+
+- **GIVEN** a previously written v1.0 manifest on S3
+- **WHEN** the version-dispatching loader reads it
+- **THEN** it selects the `ManifestV1` reader class, deserialization succeeds, and the `karakeep_id` field is read from the top-level source block
 
 ## Technical Notes
 

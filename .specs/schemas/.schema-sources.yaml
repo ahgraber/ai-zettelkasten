@@ -2,6 +2,6 @@
 
 conversion-api-openapi.json:
   type: openapi
-  generated: 2026-03-30
-  source: uv run python -c 'from aizk.conversion.api.main import create_app; ...'
-  change: queue-backpressure
+  generated: 2026-04-20
+  source: uv run python -c 'from aizk.conversion.api.main import create_app; import json; print(json.dumps(create_app().openapi(), indent=2))'
+  change: pluggable-fetch-convert
