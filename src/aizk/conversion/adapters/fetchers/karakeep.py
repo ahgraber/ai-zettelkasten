@@ -6,7 +6,6 @@ bookmark from KaraKeep and applying a 7-step content-precedence chain.
 
 from __future__ import annotations
 
-import os
 from typing import ClassVar
 
 from aizk.conversion.core.source_ref import (
@@ -28,6 +27,7 @@ from aizk.conversion.utilities.bookmark_utils import (
     is_pdf_asset,
     is_precrawled_archive_asset,
 )
+from aizk.conversion.utilities.config import KarakeepFetcherConfig
 from aizk.conversion.utilities.github_utils import parse_github_owner_repo
 
 # BookmarkContentUnavailableError lives in workers.fetcher (inherits from both
@@ -46,6 +46,9 @@ class KarakeepBookmarkResolver:
     """
 
     resolves_to: ClassVar[frozenset[str]] = frozenset({"arxiv", "github_readme", "url", "inline_html"})
+
+    def __init__(self, karakeep_cfg: KarakeepFetcherConfig) -> None:
+        self._karakeep_cfg = karakeep_cfg
 
     def resolve(self, ref: SourceRef) -> SourceRef:
         """Fetch the KaraKeep bookmark and resolve it to a typed SourceRef.
@@ -74,7 +77,7 @@ class KarakeepBookmarkResolver:
         except Exception:
             source_url = None
 
-        karakeep_base_url = os.environ.get("KARAKEEP_BASE_URL", "").rstrip("/")
+        karakeep_base_url = self._karakeep_cfg.base_url.rstrip("/")
 
         # Step 1 — arXiv bookmark
         if source_url and detect_source_type(source_url) == "arxiv":

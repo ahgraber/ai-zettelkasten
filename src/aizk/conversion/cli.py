@@ -9,7 +9,7 @@ import sys
 from setproctitle import setproctitle
 import uvicorn
 
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
 from aizk.conversion.utilities.litestream import LitestreamManager
 from aizk.conversion.utilities.startup import StartupValidationError, log_feature_summary, validate_startup
 from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
@@ -30,7 +30,8 @@ def _cmd_serve(_args: argparse.Namespace) -> int:
     """Run the FastAPI server."""
     setproctitle("docling-api")
     config = ConversionConfig()
-    log_feature_summary(config, "api")
+    docling_cfg = DoclingConverterConfig()
+    log_feature_summary(config, docling_cfg, "api")
     configure_mlflow_tracing(
         enabled=config.mlflow_tracing_enabled,
         tracking_uri=config.mlflow_tracking_uri,
@@ -50,8 +51,10 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
     """Run the background worker."""
     setproctitle("docling-worker")
     config = ConversionConfig()
+    docling_cfg = DoclingConverterConfig()
+    karakeep_cfg = KarakeepFetcherConfig()
     try:
-        validate_startup(config, role="worker")
+        validate_startup(config, docling_cfg, karakeep_cfg, role="worker")
     except StartupValidationError:
         logger.exception("startup validation failed", extra={"role": "worker"})
         return 1

@@ -10,11 +10,15 @@ import pytest
 from aizk.conversion.adapters.fetchers.arxiv import ArxivFetcher
 from aizk.conversion.core.source_ref import ArxivRef
 from aizk.conversion.core.types import ContentType, ConversionInput
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
 
 
 def _config() -> ConversionConfig:
     return ConversionConfig(_env_file=None, fetch_timeout_seconds=30)
+
+
+def _karakeep_cfg(base_url: str = "") -> KarakeepFetcherConfig:
+    return KarakeepFetcherConfig(_env_file=None, base_url=base_url, api_key="")
 
 
 # ---------------------------------------------------------------------------
@@ -27,7 +31,7 @@ def test_arxiv_fetcher_produces_pdf_only():
 
 
 def test_arxiv_fetcher_satisfies_content_fetcher_structurally():
-    fetcher = ArxivFetcher(_config())
+    fetcher = ArxivFetcher(_config(), _karakeep_cfg())
     assert hasattr(fetcher, "fetch")
     assert hasattr(ArxivFetcher, "produces")
     assert callable(fetcher.fetch)
@@ -42,8 +46,6 @@ def test_arxiv_fetcher_satisfies_content_fetcher_structurally():
 
 
 def test_arxiv_fetcher_uses_karakeep_asset_when_arxiv_pdf_url_is_karakeep_url(monkeypatch):
-    monkeypatch.setenv("KARAKEEP_BASE_URL", "https://karakeep.example.com")
-
     pdf_bytes = b"%PDF-1.4 karakeep"
     calls = {"fetch_arxiv_pdf": 0}
 
@@ -64,7 +66,7 @@ def test_arxiv_fetcher_uses_karakeep_asset_when_arxiv_pdf_url_is_karakeep_url(mo
         _fake_fetch_arxiv_pdf,
     )
 
-    fetcher = ArxivFetcher(_config())
+    fetcher = ArxivFetcher(_config(), _karakeep_cfg("https://karakeep.example.com"))
     ref = ArxivRef(
         arxiv_id="2301.12345",
         arxiv_pdf_url="https://karakeep.example.com/api/v1/assets/asset-abc",
@@ -109,7 +111,7 @@ def test_arxiv_fetcher_uses_arxiv_pdf_url_when_non_karakeep(monkeypatch):
 
     monkeypatch.setattr("aizk.conversion.adapters.fetchers.arxiv.httpx.AsyncClient", _FakeAsyncClient)
 
-    fetcher = ArxivFetcher(_config())
+    fetcher = ArxivFetcher(_config(), _karakeep_cfg())
     ref = ArxivRef(
         arxiv_id="2301.12345",
         arxiv_pdf_url="https://arxiv.org/pdf/2301.12345",
@@ -137,7 +139,7 @@ def test_arxiv_fetcher_constructs_url_from_arxiv_id_when_no_pdf_url(monkeypatch)
         _fake_fetch_arxiv_pdf,
     )
 
-    fetcher = ArxivFetcher(_config())
+    fetcher = ArxivFetcher(_config(), _karakeep_cfg())
     ref = ArxivRef(arxiv_id="2301.12345", arxiv_pdf_url=None)
     result = fetcher.fetch(ref)
 

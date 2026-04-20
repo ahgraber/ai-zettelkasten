@@ -15,8 +15,11 @@ from aizk.conversion.core.source_ref import (
     KarakeepBookmarkRef,
     UrlRef,
 )
+from aizk.conversion.utilities.config import KarakeepFetcherConfig
 from aizk.conversion.workers.fetcher import BookmarkContentUnavailableError
 from karakeep_client.models import Bookmark
+
+_DEFAULT_CFG = KarakeepFetcherConfig(_env_file=None, base_url="", api_key="")
 
 # ---------------------------------------------------------------------------
 # Bookmark fixture helpers
@@ -104,7 +107,7 @@ def test_karakeep_resolver_resolves_to_frozenset_of_four_kinds():
 
 
 def test_karakeep_resolver_satisfies_refresolver_protocol_structurally():
-    resolver = KarakeepBookmarkResolver()
+    resolver = KarakeepBookmarkResolver(_DEFAULT_CFG)
     assert hasattr(resolver, "resolve")
     assert hasattr(KarakeepBookmarkResolver, "resolves_to")
     assert callable(resolver.resolve)
@@ -132,7 +135,7 @@ def test_karakeep_resolver_arxiv_bookmark_returns_arxiv_ref(monkeypatch):
         lambda url: "arxiv",
     )
 
-    resolver = KarakeepBookmarkResolver()
+    resolver = KarakeepBookmarkResolver(_DEFAULT_CFG)
     result = resolver.resolve(ref)
 
     assert isinstance(result, ArxivRef)
@@ -154,8 +157,6 @@ def test_karakeep_resolver_arxiv_pdf_asset_sets_arxiv_pdf_url(monkeypatch):
     )
     ref = KarakeepBookmarkRef(bookmark_id="bm-arxiv-pdf")
 
-    monkeypatch.setenv("KARAKEEP_BASE_URL", "https://karakeep.example.com")
-
     monkeypatch.setattr(
         "aizk.conversion.adapters.fetchers.karakeep.fetch_karakeep_bookmark",
         lambda _: bookmark,
@@ -165,7 +166,8 @@ def test_karakeep_resolver_arxiv_pdf_asset_sets_arxiv_pdf_url(monkeypatch):
         lambda url: "arxiv",
     )
 
-    resolver = KarakeepBookmarkResolver()
+    cfg = KarakeepFetcherConfig(_env_file=None, base_url="https://karakeep.example.com", api_key="")
+    resolver = KarakeepBookmarkResolver(cfg)
     result = resolver.resolve(ref)
 
     assert isinstance(result, ArxivRef)
@@ -191,7 +193,7 @@ def test_karakeep_resolver_github_bookmark_returns_github_readme_ref(monkeypatch
         lambda url: "github",
     )
 
-    resolver = KarakeepBookmarkResolver()
+    resolver = KarakeepBookmarkResolver(_DEFAULT_CFG)
     result = resolver.resolve(ref)
 
     assert isinstance(result, GithubReadmeRef)
@@ -211,8 +213,6 @@ def test_karakeep_resolver_pdf_asset_bookmark_returns_url_ref(monkeypatch):
     )
     ref = KarakeepBookmarkRef(bookmark_id="bm-pdf")
 
-    monkeypatch.setenv("KARAKEEP_BASE_URL", "https://karakeep.example.com")
-
     monkeypatch.setattr(
         "aizk.conversion.adapters.fetchers.karakeep.fetch_karakeep_bookmark",
         lambda _: bookmark,
@@ -222,7 +222,8 @@ def test_karakeep_resolver_pdf_asset_bookmark_returns_url_ref(monkeypatch):
         lambda url: "other",
     )
 
-    resolver = KarakeepBookmarkResolver()
+    cfg = KarakeepFetcherConfig(_env_file=None, base_url="https://karakeep.example.com", api_key="")
+    resolver = KarakeepBookmarkResolver(cfg)
     result = resolver.resolve(ref)
 
     assert isinstance(result, UrlRef)
@@ -250,7 +251,7 @@ def test_karakeep_resolver_html_content_returns_url_ref(monkeypatch):
         lambda url: "other",
     )
 
-    resolver = KarakeepBookmarkResolver()
+    resolver = KarakeepBookmarkResolver(_DEFAULT_CFG)
     result = resolver.resolve(ref)
 
     assert isinstance(result, UrlRef)
@@ -271,7 +272,7 @@ def test_karakeep_resolver_text_only_returns_inline_html_ref(monkeypatch):
         lambda _: bookmark,
     )
 
-    resolver = KarakeepBookmarkResolver()
+    resolver = KarakeepBookmarkResolver(_DEFAULT_CFG)
     result = resolver.resolve(ref)
 
     assert isinstance(result, InlineHtmlRef)
@@ -297,7 +298,7 @@ def test_karakeep_resolver_empty_bookmark_raises_content_unavailable(monkeypatch
         lambda url: "other",
     )
 
-    resolver = KarakeepBookmarkResolver()
+    resolver = KarakeepBookmarkResolver(_DEFAULT_CFG)
     with pytest.raises(BookmarkContentUnavailableError):
         resolver.resolve(ref)
 
@@ -315,6 +316,6 @@ def test_karakeep_resolver_missing_bookmark_raises_content_unavailable(monkeypat
         lambda _: None,
     )
 
-    resolver = KarakeepBookmarkResolver()
+    resolver = KarakeepBookmarkResolver(_DEFAULT_CFG)
     with pytest.raises(BookmarkContentUnavailableError):
         resolver.resolve(ref)

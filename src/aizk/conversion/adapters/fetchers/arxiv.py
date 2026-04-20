@@ -9,7 +9,6 @@ Fetches PDF bytes for an ArxivRef using a 3-step source-precedence chain:
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import ClassVar
 from urllib.parse import urlparse
 
@@ -17,7 +16,7 @@ import httpx
 
 from aizk.conversion.core.source_ref import ArxivRef, SourceRef
 from aizk.conversion.core.types import ContentType, ConversionInput
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
 from aizk.conversion.workers.fetcher import fetch_arxiv_pdf, fetch_karakeep_asset
 
 
@@ -26,8 +25,9 @@ class ArxivFetcher:
 
     produces: ClassVar[frozenset[ContentType]] = frozenset({ContentType.PDF})
 
-    def __init__(self, config: ConversionConfig) -> None:
+    def __init__(self, config: ConversionConfig, karakeep_cfg: KarakeepFetcherConfig) -> None:
         self._config = config
+        self._karakeep_cfg = karakeep_cfg
 
     def fetch(self, ref: SourceRef) -> ConversionInput:
         """Fetch PDF bytes for ``ref``.
@@ -49,7 +49,7 @@ class ArxivFetcher:
         """
         assert isinstance(ref, ArxivRef), f"Expected ArxivRef, got {type(ref)}"
 
-        karakeep_base_url = os.environ.get("KARAKEEP_BASE_URL", "").rstrip("/")
+        karakeep_base_url = self._karakeep_cfg.base_url.rstrip("/")
 
         # Step 1 — KaraKeep asset URL
         if ref.arxiv_pdf_url and karakeep_base_url and ref.arxiv_pdf_url.startswith(karakeep_base_url):

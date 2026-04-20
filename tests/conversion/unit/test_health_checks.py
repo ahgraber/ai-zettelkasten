@@ -14,7 +14,7 @@ from pyleak import no_task_leaks
 import pytest
 
 from aizk.conversion.api.routes.health import _check_db, _check_picture_description, _check_s3
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import DoclingConverterConfig
 
 
 @pytest.mark.asyncio
@@ -107,10 +107,12 @@ async def test_check_s3_timeout_no_task_leaks() -> None:
     assert result.detail == "timeout"
 
 
-def _make_picture_description_config(base_url: str = "http://vllm.local/v1", api_key: str = "key") -> ConversionConfig:
-    return ConversionConfig(
-        DOCLING_PICTURE_DESCRIPTION_BASE_URL=base_url,
-        DOCLING_PICTURE_DESCRIPTION_API_KEY=api_key,
+def _make_picture_description_config(
+    base_url: str = "http://vllm.local/v1", api_key: str = "key"
+) -> DoclingConverterConfig:
+    return DoclingConverterConfig(
+        picture_description_base_url=base_url,
+        picture_description_api_key=api_key,
         _env_file=None,
     )
 

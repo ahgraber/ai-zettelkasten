@@ -268,7 +268,7 @@ When the picture description endpoint is not configured, it SHALL be omitted fro
 
 #### Scenario: Picture description endpoint included when configured
 
-- **GIVEN** `DOCLING_PICTURE_DESCRIPTION_BASE_URL` and `DOCLING_PICTURE_DESCRIPTION_API_KEY` are set
+- **GIVEN** `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` and `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY` are set
 - **WHEN** a client requests `/health/ready`
 - **THEN** the response includes a `picture_description` check result alongside `database` and `s3`
 
@@ -280,7 +280,7 @@ When the picture description endpoint is not configured, it SHALL be omitted fro
 
 #### Scenario: Picture description omitted when not configured
 
-- **GIVEN** `DOCLING_PICTURE_DESCRIPTION_BASE_URL` is not set
+- **GIVEN** `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` is not set
 - **WHEN** a client requests `/health/ready`
 - **THEN** the response contains only `database` and `s3` check results, with no `picture_description` entry
 

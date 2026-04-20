@@ -15,6 +15,7 @@ from aizk.conversion.api.dependencies import get_config
 from aizk.conversion.api.schemas import CheckResult, HealthResponse
 from aizk.conversion.db import get_engine
 from aizk.conversion.storage.s3_client import S3Client
+from aizk.conversion.utilities.config import DoclingConverterConfig
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +45,8 @@ async def _check_db(engine: Engine) -> CheckResult:
 
 async def _check_picture_description(config) -> CheckResult:
     """Verify picture description endpoint reachability via GET /models."""
-    base_url = config.docling_picture_description_base_url.strip().rstrip("/")
-    api_key = config.docling_picture_description_api_key.strip()
+    base_url = config.picture_description_base_url.strip().rstrip("/")
+    api_key = config.picture_description_api_key.strip()
     url = f"{base_url}/models"
     headers = {"Authorization": f"Bearer {api_key}"}
 
@@ -93,9 +94,10 @@ async def readiness(request: Request, response: Response) -> HealthResponse:
     engine = get_engine(config.database_url)
     s3_client = S3Client(config)
 
+    docling_cfg = DoclingConverterConfig()
     check_coros = [_check_db(engine), _check_s3(s3_client)]
-    if config.is_picture_description_enabled():
-        check_coros.append(_check_picture_description(config))
+    if docling_cfg.is_picture_description_enabled():
+        check_coros.append(_check_picture_description(docling_cfg))
 
     checks = await asyncio.gather(*check_coros)
 

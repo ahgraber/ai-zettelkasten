@@ -194,13 +194,13 @@
 
 ## Stage 9 — BREAKING (config): Env-var namespace rename
 
-- [ ] Create per-adapter nested pydantic config models: `DoclingConverterConfig` under `AIZK_CONVERTER__DOCLING__*`, `KarakeepFetcherConfig` under `AIZK_FETCHER__KARAKEEP__*`, etc.
-- [ ] Remove flat `AIZK_DOCLING_*` / `DOCLING_*` env-var aliases from config — no compatibility shim
-- [ ] Update `.env.example` with new nested namespace structure
-- [ ] Update adapter constructors to accept their nested config models
-- [ ] Tests: `AIZK_CONVERTER__DOCLING__OCR_ENABLED=true` → `ocr_enabled` is `True`
-- [ ] Tests: old `AIZK_DOCLING_OCR_ENABLED=true` with no nested equivalent → field falls back to default
-- [ ] Tests: full test suite passes with new env-var names
-- [ ] Update deployment configuration documentation/scripts with new env-var names
-- [ ] Docs alignment: grep the repo for references to `AIZK_DOCLING_` / `DOCLING_` env-var names in source comments, module docstrings, `.env.example`, `CLAUDE.md`, configuration / deployment docs, and any runbook; update every occurrence to the nested `AIZK_CONVERTER__DOCLING__` / `AIZK_FETCHER__<ADAPTER>__` form.
+- [x] Create per-adapter nested pydantic config models: `DoclingConverterConfig` under `AIZK_CONVERTER__DOCLING__*`, `KarakeepFetcherConfig` under `AIZK_FETCHER__KARAKEEP__*`, etc.
+- [x] Remove flat `AIZK_DOCLING_*` / `DOCLING_*` env-var aliases from config — no compatibility shim
+- [x] Update `.env.example` with new nested namespace structure
+- [x] Update adapter constructors to accept their nested config models
+- [x] Tests: `AIZK_CONVERTER__DOCLING__OCR_ENABLED=true` → `ocr_enabled` is `True`
+- [x] Tests: old `AIZK_DOCLING_OCR_ENABLED=true` with no nested equivalent → field falls back to default
+- [x] Tests: full test suite passes with new env-var names
+- [x] Update deployment configuration documentation/scripts with new env-var names
+- [x] Docs alignment: grep the repo for references to `AIZK_DOCLING_` / `DOCLING_` env-var names in source comments, module docstrings, `.env.example`, `CLAUDE.md`, configuration / deployment docs, and any runbook; update every occurrence to the nested `AIZK_CONVERTER__DOCLING__` / `AIZK_FETCHER__<ADAPTER>__` form.
   Commit the doc touch-ups in the same PR so the env-var rename and its documentation land together

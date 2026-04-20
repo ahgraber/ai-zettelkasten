@@ -13,7 +13,7 @@ import tempfile
 from typing import Any, ClassVar
 
 from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import DoclingConverterConfig
 from aizk.conversion.utilities.hashing import build_output_config_snapshot
 from aizk.conversion.workers.converter import convert_html, convert_pdf
 
@@ -34,7 +34,7 @@ class DoclingConverter:
     supported_formats: ClassVar[frozenset[ContentType]] = frozenset({ContentType.PDF, ContentType.HTML})
     requires_gpu: ClassVar[bool] = True
 
-    def __init__(self, config: ConversionConfig) -> None:
+    def __init__(self, config: DoclingConverterConfig) -> None:
         self._config = config
 
     def convert(self, input: ConversionInput) -> ConversionArtifacts:  # noqa: A002 — protocol argument name

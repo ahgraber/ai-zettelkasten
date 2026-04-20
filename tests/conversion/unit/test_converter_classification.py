@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import DoclingConverterConfig
 import aizk.conversion.workers.converter as converter_module
 from aizk.conversion.workers.converter import (
     _ALT_TEXT_PROMPT,
@@ -96,12 +96,12 @@ def _make_config(
     api_key: str = "test-key",
     model: str = "test-model",
     enable_classification: bool = True,
-) -> ConversionConfig:
-    return ConversionConfig(
-        DOCLING_PICTURE_DESCRIPTION_BASE_URL=base_url,
-        DOCLING_PICTURE_DESCRIPTION_API_KEY=api_key,
-        DOCLING_PICTURE_DESCRIPTION_MODEL=model,
-        DOCLING_ENABLE_PICTURE_CLASSIFICATION=enable_classification,
+) -> DoclingConverterConfig:
+    return DoclingConverterConfig(
+        picture_description_base_url=base_url,
+        picture_description_api_key=api_key,
+        picture_description_model=model,
+        picture_classification_enabled=enable_classification,
         _env_file=None,
     )
 

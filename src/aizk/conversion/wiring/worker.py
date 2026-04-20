@@ -9,7 +9,7 @@ from aizk.conversion.core.orchestrator import Orchestrator
 from aizk.conversion.core.protocols import ResourceGuard
 from aizk.conversion.core.registry import ConverterRegistry, FetcherRegistry
 from aizk.conversion.core.types import ContentType
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
 from aizk.conversion.wiring.capabilities import DeploymentCapabilities
 from aizk.conversion.wiring.registrations import register_ready_adapters
 
@@ -51,7 +51,11 @@ def build_worker_runtime(cfg: ConversionConfig) -> WorkerRuntime:
     """
     fetcher_registry = FetcherRegistry()
     converter_registry = ConverterRegistry()
-    register_ready_adapters(fetcher_registry, converter_registry, cfg)
+    docling_cfg = DoclingConverterConfig(_env_file=None)
+    karakeep_cfg = KarakeepFetcherConfig(_env_file=None)
+    register_ready_adapters(
+        fetcher_registry, converter_registry, cfg, docling_cfg=docling_cfg, karakeep_cfg=karakeep_cfg
+    )
 
     semaphore = threading.Semaphore(cfg.worker_gpu_concurrency)
     resource_guard: ResourceGuard = _SemaphoreGuard(semaphore)

@@ -46,7 +46,7 @@ from docling_core.types.doc.document import (
 )
 from docling_core.types.io import DocumentStream
 
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import DoclingConverterConfig
 from aizk.conversion.utilities.paths import figure_dir
 from aizk.utilities.mlflow_tracing import trace_model_call
 
@@ -122,22 +122,22 @@ class DoclingEmptyOutputError(ConversionError):
         self.retryable = False
 
 
-def _get_picture_description_options(config: ConversionConfig) -> Optional[PictureDescriptionApiOptions]:
+def _get_picture_description_options(config: DoclingConverterConfig) -> Optional[PictureDescriptionApiOptions]:
     """Build picture description options from environment.
 
     Uses any OpenAI-compatible endpoint (OpenRouter, vLLM, Ollama, etc.) if configured.
     """
-    base_url = config.docling_picture_description_base_url.rstrip("/")
-    api_key = config.docling_picture_description_api_key
+    base_url = config.picture_description_base_url.rstrip("/")
+    api_key = config.picture_description_api_key
 
     if not base_url or not api_key:
         logger.warning(
-            "Picture description disabled: DOCLING_PICTURE_DESCRIPTION_BASE_URL or DOCLING_PICTURE_DESCRIPTION_API_KEY not set"
+            "Picture description disabled: AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL or AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY not set"
         )
         return None
 
-    model_name = config.docling_picture_description_model
-    timeout = float(config.docling_picture_timeout)
+    model_name = config.picture_description_model
+    timeout = float(config.picture_timeout)
 
     return PictureDescriptionApiOptions(
         url=HttpUrl(f"{base_url}/chat/completions"),
@@ -153,7 +153,7 @@ def _get_picture_description_options(config: ConversionConfig) -> Optional[Pictu
 
 
 def _create_document_converter(
-    config: ConversionConfig,
+    config: DoclingConverterConfig,
     source_url: Optional[str] = None,
 ) -> DocumentConverter:
     """Create a DocumentConverter with HTML and PDF format options."""
@@ -161,7 +161,7 @@ def _create_document_converter(
 
     # Two-phase approach: when classification is enabled and VLM is configured,
     # suppress Docling's built-in description; the enrichment loop handles it instead.
-    classification_active = config.docling_enable_picture_classification and bool(picture_opts)
+    classification_active = config.picture_classification_enabled and bool(picture_opts)
     builtin_description_active = bool(picture_opts) and not classification_active
 
     # HTML format options
@@ -198,13 +198,13 @@ def _create_document_converter(
     )
     pdf_pipeline_opts.enable_remote_services = bool(picture_opts)
     pdf_pipeline_opts.accelerator_options = accelerator_opts
-    pdf_pipeline_opts.do_ocr = config.docling_enable_ocr
+    pdf_pipeline_opts.do_ocr = config.ocr_enabled
     pdf_pipeline_opts.ocr_options = EasyOcrOptions()
     pdf_pipeline_opts.ocr_options.lang = ["en"]
     pdf_pipeline_opts.do_code_enrichment = True
     pdf_pipeline_opts.do_formula_enrichment = True
     pdf_pipeline_opts.generate_page_images = True
-    pdf_pipeline_opts.do_picture_classification = config.docling_enable_picture_classification
+    pdf_pipeline_opts.do_picture_classification = config.picture_classification_enabled
     if builtin_description_active:
         pdf_pipeline_opts.do_picture_description = True
         pdf_pipeline_opts.picture_description_options = picture_opts
@@ -212,7 +212,7 @@ def _create_document_converter(
         pdf_pipeline_opts.do_picture_description = False
     pdf_pipeline_opts.generate_picture_images = True
     pdf_pipeline_opts.images_scale = 2
-    pdf_pipeline_opts.do_table_structure = config.docling_enable_table_structure
+    pdf_pipeline_opts.do_table_structure = config.table_structure_enabled
     pdf_pipeline_opts.generate_table_images = True
     pdf_pipeline_opts.table_structure_options.do_cell_matching = True
 
@@ -236,7 +236,7 @@ def _get_classification_label(pic: PictureItem) -> str | None:
     return None
 
 
-def _call_vlm_api(image: Image.Image, prompt: str, config: ConversionConfig) -> str:
+def _call_vlm_api(image: Image.Image, prompt: str, config: DoclingConverterConfig) -> str:
     """Call the VLM chat completions API with an image and prompt.
 
     Args:
@@ -254,11 +254,11 @@ def _call_vlm_api(image: Image.Image, prompt: str, config: ConversionConfig) -> 
     image.save(buf, format="PNG")
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
-    base_url = config.docling_picture_description_base_url.strip().rstrip("/")
-    api_key = config.docling_picture_description_api_key.strip()
+    base_url = config.picture_description_base_url.strip().rstrip("/")
+    api_key = config.picture_description_api_key.strip()
 
     payload = {
-        "model": config.docling_picture_description_model,
+        "model": config.picture_description_model,
         "seed": 42,
         "reasoning_effort": "low",
         "messages": [
@@ -278,14 +278,14 @@ def _call_vlm_api(image: Image.Image, prompt: str, config: ConversionConfig) -> 
     url = f"{base_url}/chat/completions"
 
     try:
-        response = httpx.post(url, json=payload, headers=headers, timeout=config.docling_picture_timeout)
+        response = httpx.post(url, json=payload, headers=headers, timeout=config.picture_timeout)
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
     except (httpx.HTTPError, httpx.TimeoutException) as exc:
         raise DoclingError(f"VLM API call failed: {exc}") from exc
 
 
-def _enrich_picture_descriptions(doc: DoclingDocument, config: ConversionConfig) -> None:
+def _enrich_picture_descriptions(doc: DoclingDocument, config: DoclingConverterConfig) -> None:
     """Post-conversion enrichment: classify each figure and call VLM with task-specific prompt.
 
     Only runs when both picture description and picture classification are enabled.
@@ -298,14 +298,14 @@ def _enrich_picture_descriptions(doc: DoclingDocument, config: ConversionConfig)
     """
     if not config.is_picture_description_enabled():
         return
-    if not config.docling_enable_picture_classification:
+    if not config.picture_classification_enabled:
         return
 
     with trace_model_call(
         name="llm.chat.completions.docling_picture_description",
         span_type="CHAT_MODEL",
         attributes={
-            "model": config.docling_picture_description_model,
+            "model": config.picture_description_model,
             "pipeline": "enrichment",
             "provider_endpoint": "/chat/completions",
         },
@@ -433,7 +433,7 @@ def _extract_figures(doc: DoclingDocument, output_dir: Path) -> list[Path]:
 def convert_html(
     html_bytes: bytes,
     temp_dir: Path,
-    config: ConversionConfig,
+    config: DoclingConverterConfig,
     source_url: Optional[str] = None,
 ) -> tuple[str, list[Path]]:
     """Convert HTML to Markdown using Docling.
@@ -454,13 +454,13 @@ def convert_html(
     try:
         converter = _create_document_converter(config, source_url=source_url)
         source = DocumentStream(name="document.html", stream=BytesIO(html_bytes))
-        if config.is_picture_description_enabled() and not config.docling_enable_picture_classification:
+        if config.is_picture_description_enabled() and not config.picture_classification_enabled:
             # Fallback: built-in Docling description (classification disabled)
             with trace_model_call(
                 name="llm.chat.completions.docling_picture_description",
                 span_type="CHAT_MODEL",
                 attributes={
-                    "model": config.docling_picture_description_model,
+                    "model": config.picture_description_model,
                     "pipeline": "html",
                     "provider_endpoint": "/chat/completions",
                 },
@@ -486,7 +486,7 @@ def convert_html(
 def convert_pdf(
     pdf_bytes: bytes,
     temp_dir: Path,
-    config: ConversionConfig,
+    config: DoclingConverterConfig,
 ) -> tuple[str, list[Path]]:
     """Convert PDF to Markdown using Docling.
 
@@ -505,13 +505,13 @@ def convert_pdf(
     try:
         converter = _create_document_converter(config)
         source = DocumentStream(name="document.pdf", stream=BytesIO(pdf_bytes))
-        if config.is_picture_description_enabled() and not config.docling_enable_picture_classification:
+        if config.is_picture_description_enabled() and not config.picture_classification_enabled:
             # Fallback: built-in Docling description (classification disabled)
             with trace_model_call(
                 name="llm.chat.completions.docling_picture_description",
                 span_type="CHAT_MODEL",
                 attributes={
-                    "model": config.docling_picture_description_model,
+                    "model": config.picture_description_model,
                     "pipeline": "pdf",
                     "provider_endpoint": "/chat/completions",
                 },

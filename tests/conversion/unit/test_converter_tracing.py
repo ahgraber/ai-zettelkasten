@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import DoclingConverterConfig
 import aizk.conversion.workers.converter as converter
 
 
@@ -27,11 +27,13 @@ def test_convert_html_uses_llm_trace_when_picture_description_enabled(monkeypatc
     monkeypatch.setattr(converter, "_extract_figures", lambda _doc, _out: [])
     monkeypatch.setattr(converter, "trace_model_call", _capture_trace_model_call)
 
-    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_BASE_URL", "https://openrouter.ai/api/v1")
-    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_API_KEY", "test-key")
-    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_MODEL", "openai/gpt-5-nano")
+    config = DoclingConverterConfig(
+        _env_file=None,
+        picture_description_base_url="https://openrouter.ai/api/v1",
+        picture_description_api_key="test-key",
+        picture_description_model="openai/gpt-5-nano",
+    )
     # Classification enabled by default; enrichment loop owns the trace span
-    config = ConversionConfig(_env_file=None)
     markdown, figures = converter.convert_html(b"<html></html>", temp_dir=tmp_path, config=config)
 
     assert markdown == "markdown"
@@ -63,11 +65,13 @@ def test_convert_html_uses_builtin_trace_when_classification_disabled(monkeypatc
     monkeypatch.setattr(converter, "_extract_figures", lambda _doc, _out: [])
     monkeypatch.setattr(converter, "trace_model_call", _capture_trace_model_call)
 
-    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_BASE_URL", "https://openrouter.ai/api/v1")
-    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_API_KEY", "test-key")
-    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_MODEL", "openai/gpt-5-nano")
-    monkeypatch.setenv("DOCLING_ENABLE_PICTURE_CLASSIFICATION", "false")
-    config = ConversionConfig(_env_file=None)
+    config = DoclingConverterConfig(
+        _env_file=None,
+        picture_description_base_url="https://openrouter.ai/api/v1",
+        picture_description_api_key="test-key",
+        picture_description_model="openai/gpt-5-nano",
+        picture_classification_enabled=False,
+    )
     markdown, figures = converter.convert_html(b"<html></html>", temp_dir=tmp_path, config=config)
 
     assert markdown == "markdown"
@@ -98,9 +102,11 @@ def test_convert_html_skips_llm_trace_when_picture_description_disabled(monkeypa
     monkeypatch.setattr(converter, "_extract_figures", lambda _doc, _out: [])
     monkeypatch.setattr(converter, "trace_model_call", _capture_trace_model_call)
 
-    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_BASE_URL", "")
-    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_API_KEY", "")
-    config = ConversionConfig(_env_file=None)
+    config = DoclingConverterConfig(
+        _env_file=None,
+        picture_description_base_url="",
+        picture_description_api_key="",
+    )
     markdown, figures = converter.convert_html(b"<html></html>", temp_dir=tmp_path, config=config)
 
     assert markdown == "markdown"

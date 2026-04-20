@@ -7,32 +7,28 @@ import json
 
 import xxhash
 
-from aizk.conversion.utilities.config import ConversionConfig
-
-_OUTPUT_IRRELEVANT_DOCLING_FIELDS = frozenset(
-    {
-        "docling_picture_description_base_url",
-        "docling_picture_description_api_key",
-    }
-)
+from aizk.conversion.utilities.config import DoclingConverterConfig
 
 
-def _docling_config_payload(config: ConversionConfig) -> dict[str, object]:
-    """Return the subset of config fields that affect Docling output.
+def _docling_config_payload(config: DoclingConverterConfig) -> dict[str, object]:
+    """Return the subset of DoclingConverterConfig fields that affect Docling output.
 
     Excludes endpoint URL and API key: these identify the picture-description provider
     but do not affect replayable output, and the API key is a secret that must not be
     persisted into the manifest.
     """
     return {
-        key: value
-        for key, value in config.model_dump().items()
-        if key.startswith("docling_") and key not in _OUTPUT_IRRELEVANT_DOCLING_FIELDS
+        "pdf_max_pages": config.pdf_max_pages,
+        "ocr_enabled": config.ocr_enabled,
+        "table_structure_enabled": config.table_structure_enabled,
+        "picture_description_model": config.picture_description_model,
+        "picture_timeout": config.picture_timeout,
+        "picture_classification_enabled": config.picture_classification_enabled,
     }
 
 
 def build_output_config_snapshot(
-    config: ConversionConfig,
+    config: DoclingConverterConfig,
     *,
     picture_description_enabled: bool,
 ) -> dict[str, object]:

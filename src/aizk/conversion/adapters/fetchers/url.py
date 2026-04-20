@@ -7,7 +7,6 @@ Fetches content bytes for a UrlRef, supporting both KaraKeep asset URLs
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import ClassVar
 from urllib.parse import urlparse
 
@@ -15,7 +14,7 @@ import httpx
 
 from aizk.conversion.core.source_ref import SourceRef, UrlRef
 from aizk.conversion.core.types import ContentType, ConversionInput
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
 from aizk.conversion.workers.fetcher import FetchError, fetch_karakeep_asset
 
 
@@ -28,8 +27,9 @@ class UrlFetcher:
 
     produces: ClassVar[frozenset[ContentType]] = frozenset({ContentType.PDF, ContentType.HTML})
 
-    def __init__(self, config: ConversionConfig) -> None:
+    def __init__(self, config: ConversionConfig, karakeep_cfg: KarakeepFetcherConfig) -> None:
         self._config = config
+        self._karakeep_cfg = karakeep_cfg
 
     def fetch(self, ref: SourceRef) -> ConversionInput:
         """Fetch bytes for ``ref``.
@@ -46,7 +46,7 @@ class UrlFetcher:
         assert isinstance(ref, UrlRef), f"Expected UrlRef, got {type(ref)}"
 
         url = ref.url
-        karakeep_base_url = os.environ.get("KARAKEEP_BASE_URL", "").rstrip("/")
+        karakeep_base_url = self._karakeep_cfg.base_url.rstrip("/")
 
         # KaraKeep asset URL: extract asset_id from last path segment
         if karakeep_base_url and url.startswith(karakeep_base_url):

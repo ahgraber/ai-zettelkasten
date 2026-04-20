@@ -9,7 +9,7 @@ from botocore.exceptions import ClientError
 import httpx
 import pytest
 
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
 from aizk.conversion.utilities.startup import (
     StartupValidationError,
     log_feature_summary,
@@ -32,9 +32,19 @@ def config(monkeypatch: pytest.MonkeyPatch) -> ConversionConfig:
     monkeypatch.setenv("S3_REGION", "us-east-1")
     monkeypatch.setenv("S3_BUCKET_NAME", "test-bucket")
     monkeypatch.setenv("S3_ENDPOINT_URL", "http://localhost:9000")
-    monkeypatch.setenv("KARAKEEP_BASE_URL", "http://karakeep.local")
-    monkeypatch.setenv("KARAKEEP_API_KEY", "test-key")
     return ConversionConfig(_env_file=None)
+
+
+@pytest.fixture()
+def docling_cfg() -> DoclingConverterConfig:
+    """Return a DoclingConverterConfig with picture description disabled."""
+    return DoclingConverterConfig(_env_file=None, picture_description_base_url="", picture_description_api_key="")
+
+
+@pytest.fixture()
+def karakeep_cfg() -> KarakeepFetcherConfig:
+    """Return a KarakeepFetcherConfig with test values."""
+    return KarakeepFetcherConfig(_env_file=None, base_url="http://karakeep.local", api_key="test-key")
 
 
 # ---------------------------------------------------------------------------
@@ -82,16 +92,13 @@ def test_probe_s3_raises_on_connection_error(config: ConversionConfig) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_probe_karakeep_succeeds_when_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("KARAKEEP_BASE_URL", "http://karakeep.local")
-    monkeypatch.setenv("KARAKEEP_API_KEY", "test-key")
-
+def test_probe_karakeep_succeeds_when_reachable() -> None:
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 200
     mock_response.raise_for_status = MagicMock()
 
     with patch("aizk.conversion.utilities.startup.httpx.get", return_value=mock_response) as mock_get:
-        probe_karakeep()
+        probe_karakeep(KarakeepFetcherConfig(_env_file=None, base_url="http://karakeep.local", api_key="test-key"))
 
     mock_get.assert_called_once()
     call_kwargs = mock_get.call_args
@@ -100,26 +107,17 @@ def test_probe_karakeep_succeeds_when_reachable(monkeypatch: pytest.MonkeyPatch)
     assert "Bearer test-key" in call_kwargs.kwargs["headers"]["Authorization"]
 
 
-def test_probe_karakeep_raises_on_missing_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("KARAKEEP_BASE_URL", raising=False)
-    monkeypatch.delenv("KARAKEEP_API_KEY", raising=False)
-
+def test_probe_karakeep_raises_on_missing_env_vars() -> None:
     with pytest.raises(StartupValidationError, match="Missing required environment variables"):
-        probe_karakeep()
+        probe_karakeep(KarakeepFetcherConfig(_env_file=None, base_url="", api_key=""))
 
 
-def test_probe_karakeep_raises_on_missing_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("KARAKEEP_BASE_URL", raising=False)
-    monkeypatch.setenv("KARAKEEP_API_KEY", "test-key")
-
-    with pytest.raises(StartupValidationError, match="KARAKEEP_BASE_URL"):
-        probe_karakeep()
+def test_probe_karakeep_raises_on_missing_base_url() -> None:
+    with pytest.raises(StartupValidationError, match="AIZK_FETCHER__KARAKEEP__BASE_URL"):
+        probe_karakeep(KarakeepFetcherConfig(_env_file=None, base_url="", api_key="test-key"))
 
 
-def test_probe_karakeep_raises_on_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("KARAKEEP_BASE_URL", "http://karakeep.local")
-    monkeypatch.setenv("KARAKEEP_API_KEY", "bad-key")
-
+def test_probe_karakeep_raises_on_http_error() -> None:
     mock_response = httpx.Response(status_code=401, request=httpx.Request("GET", "http://test"))
     with (
         patch(
@@ -128,18 +126,15 @@ def test_probe_karakeep_raises_on_http_error(monkeypatch: pytest.MonkeyPatch) ->
         ),
         pytest.raises(StartupValidationError, match="HTTP 401"),
     ):
-        probe_karakeep()
+        probe_karakeep(KarakeepFetcherConfig(_env_file=None, base_url="http://karakeep.local", api_key="bad-key"))
 
 
-def test_probe_karakeep_raises_on_connection_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("KARAKEEP_BASE_URL", "http://karakeep.local")
-    monkeypatch.setenv("KARAKEEP_API_KEY", "test-key")
-
+def test_probe_karakeep_raises_on_connection_error() -> None:
     with (
         patch("aizk.conversion.utilities.startup.httpx.get", side_effect=httpx.ConnectError("refused")),
         pytest.raises(StartupValidationError, match="unreachable"),
     ):
-        probe_karakeep()
+        probe_karakeep(KarakeepFetcherConfig(_env_file=None, base_url="http://karakeep.local", api_key="test-key"))
 
 
 # ---------------------------------------------------------------------------
@@ -148,26 +143,32 @@ def test_probe_karakeep_raises_on_connection_error(monkeypatch: pytest.MonkeyPat
 
 
 def test_log_feature_summary_all_enabled(config: ConversionConfig, caplog: pytest.LogCaptureFixture) -> None:
+    docling_cfg = DoclingConverterConfig(
+        _env_file=None,
+        picture_description_base_url="http://llm.local/v1",
+        picture_description_api_key="key",
+    )
     config.mlflow_tracing_enabled = True
-    config.docling_picture_description_base_url = "http://llm.local/v1"
-    config.docling_picture_description_api_key = "key"
     config.litestream_enabled = True
     config.litestream_s3_bucket_name = "backup-bucket"
 
     with caplog.at_level(logging.INFO):
-        log_feature_summary(config, "worker")
+        log_feature_summary(config, docling_cfg, "worker")
 
     assert "startup feature summary" in caplog.text
 
 
 def test_log_feature_summary_all_disabled(config: ConversionConfig, caplog: pytest.LogCaptureFixture) -> None:
+    docling_cfg = DoclingConverterConfig(
+        _env_file=None,
+        picture_description_base_url="",
+        picture_description_api_key="",
+    )
     config.mlflow_tracing_enabled = False
-    config.docling_picture_description_base_url = ""
-    config.docling_picture_description_api_key = ""
     config.litestream_enabled = False
 
     with caplog.at_level(logging.INFO):
-        log_feature_summary(config, "api")
+        log_feature_summary(config, docling_cfg, "api")
 
     assert "startup feature summary" in caplog.text
 
@@ -205,14 +206,17 @@ def test_log_feature_summary_combinations(
     litestream_bucket: str,
     expected_disabled: set[str],
 ) -> None:
-    config.docling_picture_description_base_url = base_url
-    config.docling_picture_description_api_key = api_key
+    docling_cfg = DoclingConverterConfig(
+        _env_file=None,
+        picture_description_base_url=base_url,
+        picture_description_api_key=api_key,
+    )
     config.mlflow_tracing_enabled = mlflow
     config.litestream_enabled = litestream_enabled
     config.litestream_s3_bucket_name = litestream_bucket
 
     with patch("aizk.conversion.utilities.startup.logger") as mock_logger:
-        log_feature_summary(config, "worker")
+        log_feature_summary(config, docling_cfg, "worker")
 
     call_kwargs = mock_logger.info.call_args
     features = call_kwargs.kwargs["extra"]["features"]
@@ -225,37 +229,49 @@ def test_log_feature_summary_combinations(
 # ---------------------------------------------------------------------------
 
 
-def test_validate_startup_succeeds_when_all_probes_pass(config: ConversionConfig) -> None:
+def test_validate_startup_succeeds_when_all_probes_pass(
+    config: ConversionConfig,
+    docling_cfg: DoclingConverterConfig,
+    karakeep_cfg: KarakeepFetcherConfig,
+) -> None:
     with (
         patch("aizk.conversion.utilities.startup.probe_s3") as mock_s3,
         patch("aizk.conversion.utilities.startup.probe_karakeep") as mock_kk,
         patch("aizk.conversion.utilities.startup.log_feature_summary") as mock_log,
     ):
-        validate_startup(config, "worker")
+        validate_startup(config, docling_cfg, karakeep_cfg, role="worker")
 
     mock_s3.assert_called_once_with(config)
     mock_kk.assert_called_once()
-    mock_log.assert_called_once_with(config, "worker")
+    mock_log.assert_called_once_with(config, docling_cfg, "worker")
 
 
-def test_validate_startup_raises_on_s3_failure(config: ConversionConfig) -> None:
+def test_validate_startup_raises_on_s3_failure(
+    config: ConversionConfig,
+    docling_cfg: DoclingConverterConfig,
+    karakeep_cfg: KarakeepFetcherConfig,
+) -> None:
     with (
         patch("aizk.conversion.utilities.startup.probe_s3", side_effect=StartupValidationError("s3 down")),
         patch("aizk.conversion.utilities.startup.probe_karakeep") as mock_kk,
         pytest.raises(StartupValidationError, match="s3 down"),
     ):
-        validate_startup(config, "worker")
+        validate_startup(config, docling_cfg, karakeep_cfg, role="worker")
 
     mock_kk.assert_not_called()
 
 
-def test_validate_startup_raises_on_karakeep_failure(config: ConversionConfig) -> None:
+def test_validate_startup_raises_on_karakeep_failure(
+    config: ConversionConfig,
+    docling_cfg: DoclingConverterConfig,
+    karakeep_cfg: KarakeepFetcherConfig,
+) -> None:
     with (
         patch("aizk.conversion.utilities.startup.probe_s3"),
         patch("aizk.conversion.utilities.startup.probe_karakeep", side_effect=StartupValidationError("kk down")),
         pytest.raises(StartupValidationError, match="kk down"),
     ):
-        validate_startup(config, "api")
+        validate_startup(config, docling_cfg, karakeep_cfg, role="api")
 
 
 # ---------------------------------------------------------------------------
@@ -263,31 +279,39 @@ def test_validate_startup_raises_on_karakeep_failure(config: ConversionConfig) -
 # ---------------------------------------------------------------------------
 
 
-def test_probe_picture_description_noop_when_not_configured(config: ConversionConfig) -> None:
-    config.docling_picture_description_base_url = ""
-    config.docling_picture_description_api_key = ""
+def test_probe_picture_description_noop_when_not_configured() -> None:
+    docling_cfg = DoclingConverterConfig(
+        _env_file=None, picture_description_base_url="", picture_description_api_key=""
+    )
     # Should complete without making any HTTP calls
-    probe_picture_description(config)
+    probe_picture_description(docling_cfg)
 
 
-def test_probe_picture_description_noop_when_only_url_set(config: ConversionConfig) -> None:
-    config.docling_picture_description_base_url = "http://vllm.local/v1"
-    config.docling_picture_description_api_key = ""
-    probe_picture_description(config)
+def test_probe_picture_description_noop_when_only_url_set() -> None:
+    docling_cfg = DoclingConverterConfig(
+        _env_file=None, picture_description_base_url="http://vllm.local/v1", picture_description_api_key=""
+    )
+    probe_picture_description(docling_cfg)
 
 
-def test_probe_picture_description_succeeds_on_200(config: ConversionConfig) -> None:
-    config.docling_picture_description_base_url = "http://vllm.local/v1"
-    config.docling_picture_description_api_key = "test-key"
+def test_probe_picture_description_succeeds_on_200() -> None:
+    docling_cfg = DoclingConverterConfig(
+        _env_file=None,
+        picture_description_base_url="http://vllm.local/v1",
+        picture_description_api_key="test-key",
+    )
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
     with patch("aizk.conversion.utilities.startup.httpx.get", return_value=mock_response):
-        probe_picture_description(config)
+        probe_picture_description(docling_cfg)
 
 
-def test_probe_picture_description_raises_on_non_2xx(config: ConversionConfig) -> None:
-    config.docling_picture_description_base_url = "http://vllm.local/v1"
-    config.docling_picture_description_api_key = "test-key"
+def test_probe_picture_description_raises_on_non_2xx() -> None:
+    docling_cfg = DoclingConverterConfig(
+        _env_file=None,
+        picture_description_base_url="http://vllm.local/v1",
+        picture_description_api_key="test-key",
+    )
     with (
         patch(
             "aizk.conversion.utilities.startup.httpx.get",
@@ -295,12 +319,15 @@ def test_probe_picture_description_raises_on_non_2xx(config: ConversionConfig) -
         ),
         pytest.raises(StartupValidationError, match="401"),
     ):
-        probe_picture_description(config)
+        probe_picture_description(docling_cfg)
 
 
-def test_probe_picture_description_raises_on_connection_error(config: ConversionConfig) -> None:
-    config.docling_picture_description_base_url = "http://vllm.local/v1"
-    config.docling_picture_description_api_key = "test-key"
+def test_probe_picture_description_raises_on_connection_error() -> None:
+    docling_cfg = DoclingConverterConfig(
+        _env_file=None,
+        picture_description_base_url="http://vllm.local/v1",
+        picture_description_api_key="test-key",
+    )
     with (
         patch(
             "aizk.conversion.utilities.startup.httpx.get",
@@ -308,4 +335,4 @@ def test_probe_picture_description_raises_on_connection_error(config: Conversion
         ),
         pytest.raises(StartupValidationError, match="unreachable"),
     ):
-        probe_picture_description(config)
+        probe_picture_description(docling_cfg)

@@ -23,7 +23,7 @@ Test outcomes SHALL NOT vary based on the contents of any configuration source t
 #### Scenario: Identical test run on workstations with differing shell environment
 
 - **GIVEN** two workstations running the same test suite against the same commit
-- **AND** one workstation has shell-exported variables that correspond to `ConversionConfig` fields (for example `DOCLING_PICTURE_DESCRIPTION_MODEL` set in a shell profile)
+- **AND** one workstation has shell-exported variables that correspond to `ConversionConfig` fields (for example `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_MODEL` set in a shell profile)
 - **AND** the other workstation has none of those variables set
 - **WHEN** the test suite executes on each
 - **THEN** every test produces the same pass/fail outcome on both workstations
@@ -49,7 +49,7 @@ It SHALL NOT read an environment file from disk, and it SHALL NOT inherit values
 
 #### Scenario: Shell-exported variable is not inherited by a config
 
-- **GIVEN** a developer has exported a variable (e.g., `DOCLING_PICTURE_DESCRIPTION_MODEL=custom-model`) in the shell that launches pytest
+- **GIVEN** a developer has exported a variable (e.g., `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_MODEL=custom-model`) in the shell that launches pytest
 - **AND** no fixture or test explicitly sets that variable
 - **WHEN** a test constructs a `ConversionConfig` or uses the FastAPI app
 - **THEN** the resulting config has the library default for that field, not `custom-model`
