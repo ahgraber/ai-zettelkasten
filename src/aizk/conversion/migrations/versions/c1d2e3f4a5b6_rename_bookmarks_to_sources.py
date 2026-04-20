@@ -284,16 +284,19 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     # 9. Recompute idempotency_key: sha256(source_ref_hash:docling:config_json).
     #
-    # New formula incorporates the config snapshot (not the old key) so that
-    # a resubmission after migration produces an identical key.
-    # config_json is computed from the current deployed ConversionConfig, which
-    # is intentional: the migration and new submissions use the same config.
+    # Frozen at the defaults shipped with this migration. Using live config
+    # would make the hash differ between migration-time and a fresh job
+    # submitted post-migration with non-default settings.
     # ------------------------------------------------------------------
-    from aizk.conversion.utilities.config import DoclingConverterConfig
-    from aizk.conversion.utilities.hashing import build_output_config_snapshot
-
-    _cfg = DoclingConverterConfig(_env_file=None)
-    _snapshot = build_output_config_snapshot(_cfg, picture_description_enabled=_cfg.is_picture_description_enabled())
+    _snapshot = {
+        "pdf_max_pages": 250,
+        "ocr_enabled": True,
+        "table_structure_enabled": True,
+        "picture_description_model": "openai/gpt-5.4-nano",
+        "picture_timeout": 180.0,
+        "picture_classification_enabled": True,
+        "picture_description_enabled": False,
+    }
     _config_json = json.dumps(_snapshot, sort_keys=True, separators=(",", ":"))
 
     job_rows = conn.execute(
