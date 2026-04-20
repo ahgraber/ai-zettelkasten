@@ -5,14 +5,18 @@ import datetime as dt
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
+from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as Bookmark
 
 
 def test_ui_jobs_renders_table_and_filters(db_session) -> None:
     app = create_app()
+    _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_jobs")
     bookmark = Bookmark(
         karakeep_id="bm_ui_jobs",
+        source_ref=_ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref),
         url="https://example.com/ui",
         normalized_url="https://example.com/ui",
         title="UI Example",
@@ -66,8 +70,11 @@ def test_ui_jobs_filters_across_all_jobs(db_session) -> None:
     app = create_app()
     base_time = dt.datetime(2024, 1, 1, tzinfo=dt.timezone.utc)
 
+    _ref_target = KarakeepBookmarkRef(bookmark_id="bm_ui_target")
     target_bookmark = Bookmark(
         karakeep_id="bm_ui_target",
+        source_ref=_ref_target.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref_target),
         url="https://example.com/target",
         normalized_url="https://example.com/target",
         title="Special Target",
@@ -92,8 +99,11 @@ def test_ui_jobs_filters_across_all_jobs(db_session) -> None:
     db_session.add(target_job)
 
     for idx in range(60):
+        _ref_noise = KarakeepBookmarkRef(bookmark_id=f"bm_ui_jobs_{idx}")
         bookmark = Bookmark(
             karakeep_id=f"bm_ui_jobs_{idx}",
+            source_ref=_ref_noise.model_dump_json(),
+            source_ref_hash=compute_source_ref_hash(_ref_noise),
             url=f"https://example.com/{idx}",
             normalized_url=f"https://example.com/{idx}",
             title=f"Noise {idx}",
@@ -132,8 +142,11 @@ def test_ui_jobs_filters_across_all_jobs(db_session) -> None:
 
 def test_ui_jobs_delete_action_removes_failed_and_cancelled_jobs(db_session) -> None:
     app = create_app()
+    _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_delete")
     bookmark = Bookmark(
         karakeep_id="bm_ui_delete",
+        source_ref=_ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref),
         url="https://example.com/delete",
         normalized_url="https://example.com/delete",
         title="Delete Example",
@@ -185,8 +198,11 @@ def test_ui_jobs_delete_action_removes_failed_and_cancelled_jobs(db_session) -> 
 
 def test_ui_jobs_delete_action_rejects_non_deletable_status(db_session) -> None:
     app = create_app()
+    _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_delete_reject")
     bookmark = Bookmark(
         karakeep_id="bm_ui_delete_reject",
+        source_ref=_ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref),
         url="https://example.com/delete-reject",
         normalized_url="https://example.com/delete-reject",
         title="Delete Reject Example",
@@ -236,8 +252,11 @@ def test_ui_jobs_empty_unfiltered_shows_system_empty_message(db_session) -> None
 
 def test_ui_jobs_search_with_no_matches_shows_filtered_empty_message(db_session) -> None:
     app = create_app()
+    _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_search_empty")
     bookmark = Bookmark(
         karakeep_id="bm_ui_search_empty",
+        source_ref=_ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref),
         url="https://example.com/search-empty",
         normalized_url="https://example.com/search-empty",
         title="Findable Title",
@@ -269,8 +288,11 @@ def test_ui_jobs_search_with_no_matches_shows_filtered_empty_message(db_session)
 
 def test_ui_jobs_status_filter_with_no_matches_shows_filtered_empty_message(db_session) -> None:
     app = create_app()
+    _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_status_empty")
     bookmark = Bookmark(
         karakeep_id="bm_ui_status_empty",
+        source_ref=_ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref),
         url="https://example.com/status-empty",
         normalized_url="https://example.com/status-empty",
         title="Status Filter Example",
@@ -311,8 +333,11 @@ def test_ui_jobs_status_filter_with_no_matches_shows_filtered_empty_message(db_s
 
 def test_ui_jobs_bulk_cancel_mixed_eligibility_splits_applied_and_ineligible(db_session) -> None:
     app = create_app()
+    _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_mixed_cancel")
     bookmark = Bookmark(
         karakeep_id="bm_ui_mixed_cancel",
+        source_ref=_ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref),
         url="https://example.com/mixed-cancel",
         normalized_url="https://example.com/mixed-cancel",
         title="Mixed Cancel Example",
@@ -365,8 +390,11 @@ def test_ui_jobs_bulk_cancel_mixed_eligibility_splits_applied_and_ineligible(db_
 
 def test_ui_jobs_bulk_action_missing_job_counted_as_ineligible(db_session) -> None:
     app = create_app()
+    _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_missing_id")
     bookmark = Bookmark(
         karakeep_id="bm_ui_missing_id",
+        source_ref=_ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref),
         url="https://example.com/missing-id",
         normalized_url="https://example.com/missing-id",
         title="Missing ID Example",
@@ -405,8 +433,11 @@ def test_ui_jobs_bulk_action_missing_job_counted_as_ineligible(db_session) -> No
 
 def test_ui_jobs_bulk_action_all_eligible_omits_skipped_phrase(db_session) -> None:
     app = create_app()
+    _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_all_eligible")
     bookmark = Bookmark(
         karakeep_id="bm_ui_all_eligible",
+        source_ref=_ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref),
         url="https://example.com/all-eligible",
         normalized_url="https://example.com/all-eligible",
         title="All Eligible Example",
