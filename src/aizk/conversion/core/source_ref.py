@@ -14,6 +14,9 @@ import json
 from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+import validators
+
+from aizk.utilities.url_utils import normalize_url
 
 # 64 KiB enforced on RAW body bytes (not serialized JSON length).
 # Typical HTML escaping expands ~1.3x, so the persisted JSON column can be
@@ -27,11 +30,11 @@ class KarakeepBookmarkRef(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     kind: Literal["karakeep_bookmark"] = "karakeep_bookmark"
-    bookmark_id: str
+    bookmark_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
 
     def to_dedup_payload(self) -> dict:
         """Return the canonical identity payload: ``{"kind", "bookmark_id"}``."""
-        return {"kind": self.kind, "bookmark_id": self.bookmark_id}
+        return {"kind": self.kind, "bookmark_id": self.bookmark_id.strip()}
 
 
 class ArxivRef(BaseModel):
@@ -69,7 +72,8 @@ class GithubReadmeRef(BaseModel):
     def to_dedup_payload(self) -> dict:
         """Return the canonical identity payload: ``{"kind", "owner", "repo"}`` (branch excluded)."""
         # branch is fetch metadata; identity is (owner, repo).
-        return {"kind": self.kind, "owner": self.owner, "repo": self.repo}
+        # GitHub org/repo names are case-insensitive; casefold prevents duplicate rows.
+        return {"kind": self.kind, "owner": self.owner.lower(), "repo": self.repo.lower()}
 
 
 class UrlRef(BaseModel):
@@ -85,19 +89,15 @@ class UrlRef(BaseModel):
     def _normalize(cls, value: object) -> object:
         # Apply canonical URL normalization so dedup identity is stable across
         # cosmetic variation (scheme case, trailing slash, UTM params, www).
-        # Falls back to whitespace strip + scheme/host lowercase when the input
-        # is not a recognizable URL (e.g., placeholder fixtures).
+        # Falls back to deterministic casefold when the input is not a
+        # recognizable URL (e.g., placeholder fixtures, non-HTTP schemes).
         if not isinstance(value, str):
             return value
         stripped = value.strip()
         try:
-            from aizk.utilities.url_utils import normalize_url
-        except Exception:
-            return stripped
-        try:
             return normalize_url(stripped)
-        except Exception:
-            return stripped
+        except (ValueError, validators.ValidationError):
+            return stripped.casefold().rstrip("/")
 
     def to_dedup_payload(self) -> dict:
         """Return the canonical identity payload: ``{"kind", "url"}`` (already normalized)."""

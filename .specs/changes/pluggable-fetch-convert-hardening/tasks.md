@@ -21,26 +21,26 @@ Within a cluster, order is dependency-first.
 
 ## Cluster B — Input validation + dedup canonicalization (H3, H9, M3)
 
-- [ ] `core/source_ref.py`: hoist `from aizk.utilities.url_utils import normalize_url` to
+- [x] `core/source_ref.py`: hoist `from aizk.utilities.url_utils import normalize_url` to
   module scope (not inside the validator body).
-- [ ] `core/source_ref.py` — `UrlRef._normalize`: replace bare `except Exception` (on the
+- [x] `core/source_ref.py` — `UrlRef._normalize`: replace bare `except Exception` (on the
   import and on the call) with `except (ValueError, validators.ValidationError)`; change the
   fallback to `stripped.casefold().rstrip("/")`.
-- [ ] `core/source_ref.py` — `KarakeepBookmarkRef.bookmark_id`: add
+- [x] `core/source_ref.py` — `KarakeepBookmarkRef.bookmark_id`: add
   `Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")`.
-- [ ] `core/source_ref.py` — `KarakeepBookmarkRef.to_dedup_payload`: apply `.strip()` to
+- [x] `core/source_ref.py` — `KarakeepBookmarkRef.to_dedup_payload`: apply `.strip()` to
   `bookmark_id` in the returned dict.
-- [ ] `core/source_ref.py` — `GithubReadmeRef.to_dedup_payload`: apply `.lower()` to `owner`
+- [x] `core/source_ref.py` — `GithubReadmeRef.to_dedup_payload`: apply `.lower()` to `owner`
   and `repo` in the returned dict.
-- [ ] `tests/conversion/unit/core/test_source_ref.py`: update the fixture-lock expected hashes
+- [x] `tests/conversion/unit/core/test_source_ref.py`: update the fixture-lock expected hashes
   for `GithubReadmeRef` (casefolding now applies) and add one normalization-sensitive fixture
   instance per variant (e.g., `GithubReadmeRef(owner="MyOrg", repo="MyRepo")` hashes the
   same as `GithubReadmeRef(owner="myorg", repo="myrepo")`).
-- [ ] `tests/conversion/unit/core/test_source_ref.py`: add property-based test (hypothesis)
+- [x] `tests/conversion/unit/core/test_source_ref.py`: add property-based test (hypothesis)
   asserting `compute_source_ref_hash` is stable under leading/trailing whitespace variation for
   `KarakeepBookmarkRef.bookmark_id` (values within the allowed pattern) and under case variation
   for `GithubReadmeRef.owner`/`repo`.
-- [ ] `tests/conversion/unit/core/test_source_ref.py`: add test asserting that
+- [x] `tests/conversion/unit/core/test_source_ref.py`: add test asserting that
   `KarakeepBookmarkRef(bookmark_id=" bad id")` raises `ValidationError` (whitespace violates
   pattern); add test for oversized ID (>64 chars).
 
