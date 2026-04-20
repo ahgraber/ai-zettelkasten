@@ -338,7 +338,7 @@ The system SHALL create a conversion output record capturing artifact locations,
 
 - **GIVEN** all artifacts are uploaded and verified
 - **WHEN** the worker finalizes the job
-- **THEN** a conversion output record is created with S3 prefixes, Markdown key, manifest key, content hash, figure count, Docling version, pipeline name, and timestamps
+- **THEN** a conversion output record is created with S3 prefixes, bare S3 Markdown key (e.g. `{uuid}/output.md`, no `s3://` URI prefix), bare S3 manifest key (e.g. `{uuid}/manifest.json`), content hash, figure count, Docling version, pipeline name, and timestamps
 
 ### Requirement: Transition job status atomically
 
