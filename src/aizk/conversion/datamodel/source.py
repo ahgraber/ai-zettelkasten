@@ -1,9 +1,10 @@
 """SQLModel entity for conversion sources."""
 
 import datetime
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, List, Self
 from uuid import UUID, uuid4
 
+from pydantic import model_validator
 from sqlalchemy import Column, Text, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -39,6 +40,12 @@ class Source(SQLModel, table=True):
 
     jobs: List["ConversionJob"] = Relationship(back_populates="source")
     outputs: List["ConversionOutput"] = Relationship(back_populates="source")
+
+    @model_validator(mode="after")
+    def _require_source_ref_when_persisted(self) -> Self:
+        if self.id is not None and (self.source_ref is None or self.source_ref_hash is None):
+            raise ValueError("Persisted Source row must have source_ref and source_ref_hash set")
+        return self
 
 
 if TYPE_CHECKING:

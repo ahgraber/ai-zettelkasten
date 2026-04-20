@@ -23,6 +23,38 @@ from aizk.conversion.core.registry import ConverterRegistry, FetcherRegistry
 from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
 
 
+def register_fetchers(
+    fetcher_registry: FetcherRegistry,
+    cfg: ConversionConfig,
+    *,
+    karakeep_cfg: KarakeepFetcherConfig,
+) -> None:
+    """Populate the fetcher registry with all production-ready fetchers and resolvers.
+
+    Registers the KaraKeep resolver and the four content fetchers (arxiv,
+    github_readme, url, inline_html). ``SingleFileFetcher`` is intentionally
+    excluded (skeleton, raises ``NotImplementedError``).
+
+    Calls ``validate_chain_closure`` after registration; raises
+    ``ChainNotTerminated`` if the resolver DAG is broken.
+    """
+    fetcher_registry.register_resolver("karakeep_bookmark", KarakeepBookmarkResolver(karakeep_cfg))
+    fetcher_registry.register_content_fetcher("arxiv", ArxivFetcher(cfg, karakeep_cfg))
+    fetcher_registry.register_content_fetcher("github_readme", GithubReadmeFetcher(cfg))
+    fetcher_registry.register_content_fetcher("url", UrlFetcher(cfg, karakeep_cfg))
+    fetcher_registry.register_content_fetcher("inline_html", InlineContentFetcher())
+    validate_chain_closure(fetcher_registry, depth_cap=2)
+
+
+def register_converters(
+    converter_registry: ConverterRegistry,
+    *,
+    docling_cfg: DoclingConverterConfig,
+) -> None:
+    """Populate the converter registry with all production-ready converters."""
+    converter_registry.register(DoclingConverter(docling_cfg), "docling")
+
+
 def register_ready_adapters(
     fetcher_registry: FetcherRegistry,
     converter_registry: ConverterRegistry,
@@ -31,36 +63,13 @@ def register_ready_adapters(
     docling_cfg: DoclingConverterConfig,
     karakeep_cfg: KarakeepFetcherConfig,
 ) -> None:
-    """Populate registries with all production-ready adapters.
+    """Populate both registries with all production-ready adapters.
 
-    Registers fetchers and resolvers in the ``fetcher_registry`` and the
-    Docling converter in the ``converter_registry``. ``SingleFileFetcher`` is
-    intentionally excluded (skeleton, raises ``NotImplementedError``).
-
-    Calls ``validate_chain_closure`` after all registrations; raises
-    ``ChainNotTerminated`` if the resolver DAG is broken.
-
-    Args:
-        fetcher_registry: Registry to populate with fetchers and resolvers.
-        converter_registry: Registry to populate with converters.
-        cfg: Conversion configuration for adapters that require it.
-        docling_cfg: Docling-specific converter configuration.
-        karakeep_cfg: KaraKeep-specific fetcher configuration.
+    Delegates to ``register_fetchers`` and ``register_converters``.
+    Kept for use by the worker runtime which requires both registries.
     """
-    # Resolvers
-    fetcher_registry.register_resolver("karakeep_bookmark", KarakeepBookmarkResolver(karakeep_cfg))
-
-    # Content fetchers
-    fetcher_registry.register_content_fetcher("arxiv", ArxivFetcher(cfg, karakeep_cfg))
-    fetcher_registry.register_content_fetcher("github_readme", GithubReadmeFetcher(cfg))
-    fetcher_registry.register_content_fetcher("url", UrlFetcher(cfg, karakeep_cfg))
-    fetcher_registry.register_content_fetcher("inline_html", InlineContentFetcher())
-
-    # Converters
-    converter_registry.register(DoclingConverter(docling_cfg), "docling")
-
-    # Validate resolver DAG before returning
-    validate_chain_closure(fetcher_registry, depth_cap=2)
+    register_fetchers(fetcher_registry, cfg, karakeep_cfg=karakeep_cfg)
+    register_converters(converter_registry, docling_cfg=docling_cfg)
 
 
 def validate_chain_closure(fetcher_registry: FetcherRegistry, *, depth_cap: int) -> None:

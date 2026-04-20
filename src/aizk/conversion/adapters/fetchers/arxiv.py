@@ -17,7 +17,7 @@ import httpx
 from aizk.conversion.core.source_ref import ArxivRef, SourceRef
 from aizk.conversion.core.types import ContentType, ConversionInput
 from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
-from aizk.conversion.workers.fetcher import fetch_arxiv_pdf, fetch_karakeep_asset
+from aizk.conversion.utilities.fetch_helpers import fetch_arxiv_pdf, fetch_karakeep_asset
 
 
 class ArxivFetcher:

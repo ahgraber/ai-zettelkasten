@@ -6,8 +6,10 @@ bookmark from KaraKeep and applying a 7-step content-precedence chain.
 
 from __future__ import annotations
 
+import html as _html
 from typing import ClassVar
 
+from aizk.conversion.core.errors import BookmarkContentUnavailableError
 from aizk.conversion.core.source_ref import (
     ArxivRef,
     GithubReadmeRef,
@@ -29,13 +31,6 @@ from aizk.conversion.utilities.bookmark_utils import (
 )
 from aizk.conversion.utilities.config import KarakeepFetcherConfig
 from aizk.conversion.utilities.github_utils import parse_github_owner_repo
-
-# BookmarkContentUnavailableError lives in workers.fetcher (inherits from both
-# FetchError and bookmark_utils.BookmarkContentError).  The workers.fetcher
-# module's lazy __getattr__ shim only fires when *adapter class names* are
-# looked up, so importing BookmarkContentUnavailableError at module load time
-# does NOT create a circular import.
-from aizk.conversion.workers.fetcher import BookmarkContentUnavailableError
 
 
 class KarakeepBookmarkResolver:
@@ -117,7 +112,7 @@ class KarakeepBookmarkResolver:
         # Step 6 — text content only
         text_content = get_bookmark_text_content(bookmark)
         if text_content:
-            html = f"<html><body><pre>{text_content}</pre></body></html>"
+            html = f"<html><body><pre>{_html.escape(text_content)}</pre></body></html>"
             return InlineHtmlRef(body=html.encode("utf-8"))
 
         # Step 7 — no usable content

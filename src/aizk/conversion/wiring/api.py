@@ -5,11 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from aizk.conversion.core.errors import ConfigurationError
-from aizk.conversion.core.registry import ConverterRegistry, FetcherRegistry
-from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
+from aizk.conversion.core.registry import FetcherRegistry
+from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
 from aizk.conversion.wiring.capabilities import SubmissionCapabilities
 from aizk.conversion.wiring.ingress_policy import IngressPolicy
-from aizk.conversion.wiring.registrations import register_ready_adapters
+from aizk.conversion.wiring.registrations import register_fetchers
 
 
 @dataclass
@@ -45,12 +45,8 @@ def build_api_runtime(
         ingress_policy = IngressPolicy(_env_file=None)
 
     fetcher_registry = FetcherRegistry()
-    converter_registry = ConverterRegistry()
-    docling_cfg = DoclingConverterConfig(_env_file=None)
     karakeep_cfg = KarakeepFetcherConfig(_env_file=None)
-    register_ready_adapters(
-        fetcher_registry, converter_registry, cfg, docling_cfg=docling_cfg, karakeep_cfg=karakeep_cfg
-    )
+    register_fetchers(fetcher_registry, cfg, karakeep_cfg=karakeep_cfg)
 
     registered = fetcher_registry.registered_kinds()
     unknown = ingress_policy.accepted_submission_kinds - registered
