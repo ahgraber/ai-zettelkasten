@@ -461,7 +461,7 @@ def process_job_supervised(
                         job_rec = session.get(ConversionJob, job_id)
                         if job_rec:
                             aizk_uuid = job_rec.aizk_uuid
-                    _enrich_source_metadata(aizk_uuid, terminal_ref, content_type_str, engine)
+                            _enrich_source_metadata(aizk_uuid, terminal_ref, content_type_str, engine)
             except Exception:
                 logger.exception("Failed to read terminal_ref for enrichment; job proceeds")
 

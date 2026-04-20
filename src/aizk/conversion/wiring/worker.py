@@ -17,7 +17,7 @@ from aizk.conversion.wiring.registrations import register_ready_adapters
 class _SemaphoreGuard:
     """Wraps a ``threading.Semaphore`` as a ``ResourceGuard`` context manager."""
 
-    def __init__(self, semaphore: threading.Semaphore) -> None:
+    def __init__(self, semaphore: threading.BoundedSemaphore) -> None:
         self._semaphore = semaphore
 
     def __enter__(self) -> "_SemaphoreGuard":
@@ -57,7 +57,7 @@ def build_worker_runtime(cfg: ConversionConfig) -> WorkerRuntime:
         fetcher_registry, converter_registry, cfg, docling_cfg=docling_cfg, karakeep_cfg=karakeep_cfg
     )
 
-    semaphore = threading.Semaphore(cfg.worker_gpu_concurrency)
+    semaphore = threading.BoundedSemaphore(cfg.worker_gpu_concurrency)
     resource_guard: ResourceGuard = _SemaphoreGuard(semaphore)
 
     def resolve_fetcher(kind: str):
