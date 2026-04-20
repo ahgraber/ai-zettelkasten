@@ -1111,7 +1111,7 @@
           "repo"
         ],
         "title": "GithubReadmeRef",
-        "description": "Reference to a GitHub repo README."
+        "description": "Reference to a GitHub repo README.\n\n``branch`` is accepted for forward compatibility but currently ignored by\n``GithubReadmeFetcher``, which hardcodes a ``main``/``master`` fallback.\nWiring ``branch`` through to the fetcher is deferred until ``IngressPolicy``\nwidens to admit ``github_readme`` for public submission. The field is also\nexcluded from ``to_dedup_payload()`` so identity is ``(owner, repo)``."
       },
       "HTTPValidationError": {
         "properties": {
@@ -1490,6 +1490,7 @@
           },
           "bookmark_id": {
             "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
             "title": "Bookmark Id"
           }
         },
