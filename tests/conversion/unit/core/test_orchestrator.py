@@ -20,7 +20,7 @@ from typing import Any, ClassVar
 import pytest
 
 from aizk.conversion.core.errors import FetcherDepthExceeded
-from aizk.conversion.core.orchestrator import Orchestrator
+from aizk.conversion.core.orchestrator import Orchestrator, ProcessResult
 from aizk.conversion.core.protocols import ContentFetcher, Converter, RefResolver
 from aizk.conversion.core.source_ref import (
     ArxivRef,
@@ -276,6 +276,31 @@ def test_default_depth_cap_of_2_allows_one_hop_chain():
     # No exception — the one-hop chain is within cap=2.
     result = orch._fetch(KarakeepBookmarkRef(bookmark_id="b1"))
     assert result.content_type is ContentType.PDF
+
+
+def test_process_with_provenance_carries_converter_name_and_config_snapshot():
+    fetcher = _FakePdfFetcher(payload=b"pdf-bytes")
+    converter = _FakeConverter(markdown="# out")
+
+    resolve_calls: list[tuple[ContentType, str]] = []
+    base_resolve = _make_converter_resolver({(ContentType.PDF, "fake_conv"): converter})
+
+    def _tracked_resolve(content_type: ContentType, name: str) -> Converter:
+        resolve_calls.append((content_type, name))
+        return base_resolve(content_type, name)
+
+    orch = Orchestrator(
+        resolve_fetcher=_make_fetcher_resolver({"arxiv": fetcher}),
+        resolve_converter=_tracked_resolve,
+    )
+
+    result = orch.process_with_provenance(ArxivRef(arxiv_id="2301.12345"), "fake_conv")
+
+    assert isinstance(result, ProcessResult)
+    assert result.converter_name == "fake_conv"
+    assert result.config_snapshot == {"converter_name": "fake"}
+    # Orchestrator resolves the converter exactly once; callers must NOT re-resolve.
+    assert resolve_calls == [(ContentType.PDF, "fake_conv")]
 
 
 def test_fetch_raises_with_correctly_ordered_kinds_trail_from_top():

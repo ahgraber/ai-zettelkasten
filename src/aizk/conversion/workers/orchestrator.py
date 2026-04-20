@@ -213,10 +213,6 @@ def _process_job_subprocess(
                 shutil.copy2(fig, dest)
                 figure_file_names.append(fig.name)
 
-        # Config snapshot from the converter
-        converter = runtime.orchestrator._resolve_converter(result.conversion_input.content_type, converter_name)
-        adapter_snapshot = converter.config_snapshot() if hasattr(converter, "config_snapshot") else {}
-
         pipeline_name = result.conversion_input.content_type.value  # "pdf" or "html"
         docling_ver = result.artifacts.metadata.get("docling_version", _docling_version())
 
@@ -231,8 +227,8 @@ def _process_job_subprocess(
             "markdown_hash_xx64": markdown_hash,
             "docling_version": docling_ver,
             "config_snapshot": {
-                "converter_name": converter_name,
-                **adapter_snapshot,
+                "converter_name": result.converter_name,
+                **result.config_snapshot,
             },
             # Extra fields for parent enrichment and v2 manifest
             "terminal_ref": result.terminal_ref.model_dump(mode="json"),

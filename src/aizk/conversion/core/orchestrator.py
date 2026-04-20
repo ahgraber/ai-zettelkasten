@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass as _dataclass
 import logging
+from typing import Any
 
 from aizk.conversion.core.errors import FetcherDepthExceeded
 from aizk.conversion.core.protocols import ContentFetcher, Converter, RefResolver
@@ -34,6 +35,8 @@ class ProcessResult:
     artifacts: ConversionArtifacts
     terminal_ref: SourceRef  # the SourceRef whose ContentFetcher produced the bytes
     conversion_input: ConversionInput  # for content_type
+    converter_name: str
+    config_snapshot: dict[str, Any]
 
 
 class Orchestrator:
@@ -132,8 +135,11 @@ class Orchestrator:
         conversion_input, terminal_ref = self._fetch_with_terminal_ref(ref)
         converter = self._resolve_converter(conversion_input.content_type, converter_name)
         artifacts = converter.convert(conversion_input)
+        config_snapshot = converter.config_snapshot() if hasattr(converter, "config_snapshot") else {}
         return ProcessResult(
             artifacts=artifacts,
             terminal_ref=terminal_ref,
             conversion_input=conversion_input,
+            converter_name=converter_name,
+            config_snapshot=config_snapshot,
         )
