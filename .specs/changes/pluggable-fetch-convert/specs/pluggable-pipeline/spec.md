@@ -311,6 +311,21 @@ Each variant SHALL expose a `to_dedup_payload() -> dict` method returning a cano
 Exception: `InlineHtmlRef` MAY embed content bytes directly, subject to a hard size cap of 64 KiB measured on the raw body bytes (not the serialized JSON form), as a documented exception for small inline-text payloads.
 Serialized-JSON bloat from escaping is accepted; typical expansion is ~1.3× for HTML-shaped content.
 
+Variants MAY carry cosmetic or forward-compatibility fields that are excluded from `to_dedup_payload()` and MAY also be ignored by the current fetcher implementation.
+At cutover the following fields are accepted at deserialization but intentionally non-load-bearing:
+
+- `ArxivRef.arxiv_pdf_url` — cosmetic fetcher hint preserved for observability; does not affect fetch behavior or identity.
+- `GithubReadmeRef.branch` — accepted for forward compatibility but currently ignored by `GithubReadmeFetcher`, which hardcodes a `main`/`master` fallback.
+  Wiring branch through to the fetcher is deferred until `IngressPolicy` widens to admit `github_readme` for public submission.
+
+Accepted-but-ignored fields SHALL be documented both on the model (docstring) and in this specification so that consumers are not misled into believing the field is load-bearing at cutover.
+
+#### Scenario: Accepted-but-ignored field round-trips without affecting identity
+
+- **GIVEN** two `GithubReadmeRef` instances with identical `owner` and `repo` but different `branch` values (one `"main"`, one `"develop"`)
+- **WHEN** `source_ref_hash` is computed for each
+- **THEN** the hashes are identical because `branch` is excluded from `to_dedup_payload()`
+
 #### Scenario: SourceRef round-trips through JSON
 
 - **GIVEN** a `SourceRef` variant (e.g., `ArxivRef(arxiv_id="2301.12345")`)

@@ -43,6 +43,11 @@ The only truly KaraKeep-specific column is `karakeep_id`; `url`, `normalized_url
 - Source dedup and job idempotency are separate concerns.
   A single Source can have many jobs.
 
+**Known schema-vs-invariant gap (deferred to follow-up):** `source_ref` and `source_ref_hash` are modelled as `nullable=True` at cutover because the cutover migration only populates them for rows with non-null `karakeep_id`; any legacy row without a `karakeep_id` would otherwise fail the backfill.
+Every row written by the post-cutover API has both columns populated, and no code path emits a Source without them.
+A follow-up change SHALL add an Alembic revision that asserts non-null coverage and alters both columns to `NOT NULL`, closing this gap before any Postgres migration or widening of `IngressPolicy`.
+Until then, `Source.source_ref` and `Source.source_ref_hash` MUST be treated as non-null in application code even though the schema permits null.
+
 **Dedup model:** `source_ref_hash` is computed from each variant's `to_dedup_payload()` method — a canonical, normalized dict containing only the fields that define semantic identity for that variant.
 The hash encodes the payload via `json.dumps(payload, sort_keys=True, separators=(",", ":"))` before SHA-256, so field declaration order, optional-default appearance, and future additive fields do not cause hash churn.
 Two submissions with structurally identical `source_ref` share one Source row.
