@@ -19,6 +19,7 @@ from aizk.conversion.core.source_ref import (
     InlineHtmlRef,
     KarakeepBookmarkRef,
     UrlRef,
+    compute_source_ref_hash,
 )
 from aizk.conversion.core.types import SOURCE_TYPE_BY_KIND
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
@@ -32,8 +33,11 @@ from aizk.conversion.workers.types import SupervisionResult
 
 
 def _create_bookmark(db_session: Session) -> Bookmark:
+    _ref = KarakeepBookmarkRef(bookmark_id="bm_poll_retryable")
     bookmark = Bookmark(
         karakeep_id="bm_poll_retryable",
+        source_ref=_ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref),
         url="https://example.com",
         normalized_url="https://example.com",
         title="Poll Retryable",
@@ -199,8 +203,11 @@ def test_process_job_retries_upload(monkeypatch, db_session: Session) -> None:
     monkeypatch.setenv("RETRY_BASE_DELAY_SECONDS", "1")
     monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
 
+    _ref_retry = KarakeepBookmarkRef(bookmark_id="bm_retry_test")
     bookmark = Bookmark(
         karakeep_id="bm_retry_test",
+        source_ref=_ref_retry.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref_retry),
         url="https://example.com",
         normalized_url="https://example.com",
         title="Retry Test",
@@ -269,8 +276,11 @@ def test_process_job_retries_upload(monkeypatch, db_session: Session) -> None:
 
 def test_process_job_stops_on_cancellation(monkeypatch, db_session: Session) -> None:
     """Stop processing before upload when a job is cancelled mid-run."""
+    _ref_cancel = KarakeepBookmarkRef(bookmark_id="bm_cancel_test")
     bookmark = Bookmark(
         karakeep_id="bm_cancel_test",
+        source_ref=_ref_cancel.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref_cancel),
         url="https://example.com",
         normalized_url="https://example.com",
         title="Cancel Test",
@@ -1034,8 +1044,11 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
     """When content hash matches a prior output, S3 upload is skipped and existing keys are reused."""
     monkeypatch.setattr(uploader, "get_engine", lambda _url=None: db_session.get_bind())
 
+    _ref_reuse = KarakeepBookmarkRef(bookmark_id="bm_hash_reuse")
     bookmark = Bookmark(
         karakeep_id="bm_hash_reuse",
+        source_ref=_ref_reuse.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref_reuse),
         url="https://example.com",
         normalized_url="https://example.com",
         title="Hash Reuse",
@@ -1117,8 +1130,11 @@ def test_upload_converted_uploads_when_hash_differs(monkeypatch, db_session: Ses
     """When no prior output has a matching hash, the full S3 upload proceeds."""
     monkeypatch.setattr(uploader, "get_engine", lambda _url=None: db_session.get_bind())
 
+    _ref_upload = KarakeepBookmarkRef(bookmark_id="bm_hash_upload")
     bookmark = Bookmark(
         karakeep_id="bm_hash_upload",
+        source_ref=_ref_upload.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref_upload),
         url="https://example.com",
         normalized_url="https://example.com",
         title="Hash Upload",
@@ -1193,7 +1209,7 @@ def test_initialize_running_job_returns_false_for_cancelled_after_running_set(
 
 
 def _create_source_for_enrichment(db_session: Session, *, bookmark_id: str) -> Bookmark:
-    from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
+    from aizk.conversion.core.source_ref import KarakeepBookmarkRef
 
     ref = KarakeepBookmarkRef(kind="karakeep_bookmark", bookmark_id=bookmark_id)
     source = Bookmark(

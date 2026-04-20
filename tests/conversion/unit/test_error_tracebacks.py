@@ -7,8 +7,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlmodel import Session
 
+from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
-from aizk.conversion.datamodel.source import Source as Bookmark
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers.errors import ReportedChildError
 from aizk.conversion.workers.orchestrator import (
@@ -34,10 +35,13 @@ def config(monkeypatch: pytest.MonkeyPatch) -> ConversionConfig:
 
 
 @pytest.fixture()
-def bookmark(db_session: Session) -> Bookmark:
-    """Create and return a test bookmark."""
-    bm = Bookmark(
+def bookmark(db_session: Session) -> Source:
+    """Create and return a test source."""
+    _ref = KarakeepBookmarkRef(bookmark_id="bm_traceback_test")
+    bm = Source(
         karakeep_id="bm_traceback_test",
+        source_ref=_ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref),
         url="https://example.com",
         normalized_url="https://example.com",
         title="Traceback Test",
@@ -51,7 +55,7 @@ def bookmark(db_session: Session) -> Bookmark:
 
 
 @pytest.fixture()
-def job(db_session: Session, bookmark: Bookmark) -> ConversionJob:
+def job(db_session: Session, bookmark: Source) -> ConversionJob:
     """Create and return a RUNNING test job."""
     j = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
@@ -201,7 +205,7 @@ def test_handle_job_error_logs_error_with_detail(
 # ---------------------------------------------------------------------------
 
 
-def test_error_detail_column_exists_after_migration(db_session: Session, bookmark: Bookmark) -> None:
+def test_error_detail_column_exists_after_migration(db_session: Session, bookmark: Source) -> None:
     """Verify the error_detail column is writable after migrations run."""
     j = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,

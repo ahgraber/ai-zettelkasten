@@ -31,7 +31,7 @@ from aizk.conversion.api.schemas import (
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, SourceRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
-from aizk.conversion.datamodel.source import Source as Bookmark
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.utilities.hashing import build_output_config_snapshot, compute_idempotency_key
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ def _utcnow() -> dt.datetime:
 
 def _job_to_response(
     job: ConversionJob,
-    bookmark: Bookmark,
+    source: Source,
     output: ConversionOutput | None,
 ) -> JobResponse:
     """Convert job and optional output into API response."""
@@ -64,25 +64,25 @@ def _job_to_response(
             figure_count=output.figure_count,
         )
 
-    bookmark_url = AnyUrl(bookmark.url) if bookmark.url else None
-    bookmark_title = bookmark.title or job.title
+    source_url = AnyUrl(source.url) if source.url else None
+    source_title = source.title or job.title
 
     # Parse source_ref from job or fall back to source row
-    source_ref_json = job.source_ref or bookmark.source_ref
+    source_ref_json = job.source_ref or source.source_ref
     if source_ref_json:
         parsed_source_ref = _source_ref_adapter.validate_json(source_ref_json)
     else:
         # Legacy rows without source_ref: synthesize from karakeep_id
-        parsed_source_ref = KarakeepBookmarkRef(bookmark_id=bookmark.karakeep_id or "")
+        parsed_source_ref = KarakeepBookmarkRef(bookmark_id=source.karakeep_id or "")
 
     return JobResponse(
         id=job.id,
         aizk_uuid=job.aizk_uuid,
-        karakeep_id=bookmark.karakeep_id,
+        karakeep_id=source.karakeep_id,
         source_ref=parsed_source_ref,
-        url=bookmark_url,
-        title=bookmark_title,
-        source_type=bookmark.source_type,
+        url=source_url,
+        title=source_title,
+        source_type=source.source_type,
         status=job.status,
         attempts=job.attempts,
         payload_version=job.payload_version,
@@ -211,7 +211,7 @@ def submit_job(
     )
     session.commit()
 
-    source = session.exec(select(Bookmark).where(Bookmark.source_ref_hash == source_ref_hash)).one()
+    source = session.exec(select(Source).where(Source.source_ref_hash == source_ref_hash)).one()
 
     # BEGIN IMMEDIATE for the idempotency-check + job-creation sequence
     session.exec(text("BEGIN IMMEDIATE"))
@@ -286,8 +286,8 @@ def get_job(
     if not job:
         raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
     output = _get_output_summary(session, job_id)
-    bookmark = session.exec(select(Bookmark).where(Bookmark.aizk_uuid == job.aizk_uuid)).one()
-    return _job_to_response(job, bookmark, output)
+    source = session.exec(select(Source).where(Source.aizk_uuid == job.aizk_uuid)).one()
+    return _job_to_response(job, source, output)
 
 
 @router.get("", response_model=JobList)
@@ -362,9 +362,9 @@ def retry_job(
     session.add(job)
     session.commit()
     session.refresh(job)
-    bookmark = session.exec(select(Bookmark).where(Bookmark.aizk_uuid == job.aizk_uuid)).one()
+    source = session.exec(select(Source).where(Source.aizk_uuid == job.aizk_uuid)).one()
     output = _get_output_summary(session, job_id)
-    return _job_to_response(job, bookmark, output)
+    return _job_to_response(job, source, output)
 
 
 @router.post("/{job_id}/cancel", response_model=JobResponse)
@@ -388,9 +388,9 @@ def cancel_job(
     session.add(job)
     session.commit()
     session.refresh(job)
-    bookmark = session.exec(select(Bookmark).where(Bookmark.aizk_uuid == job.aizk_uuid)).one()
+    source = session.exec(select(Source).where(Source.aizk_uuid == job.aizk_uuid)).one()
     output = _get_output_summary(session, job_id)
-    return _job_to_response(job, bookmark, output)
+    return _job_to_response(job, source, output)
 
 
 @router.post("/actions", response_model=BulkActionResponse)
