@@ -49,10 +49,13 @@ def build_worker_runtime(cfg: ConversionConfig) -> WorkerRuntime:
     Returns:
         A ``WorkerRuntime`` ready for use in a worker process.
     """
+    from dotenv import load_dotenv
+
+    load_dotenv()
     fetcher_registry = FetcherRegistry()
     converter_registry = ConverterRegistry()
-    docling_cfg = DoclingConverterConfig(_env_file=None)
-    karakeep_cfg = KarakeepFetcherConfig(_env_file=None)
+    docling_cfg = DoclingConverterConfig()
+    karakeep_cfg = KarakeepFetcherConfig()
     register_ready_adapters(
         fetcher_registry, converter_registry, cfg, docling_cfg=docling_cfg, karakeep_cfg=karakeep_cfg
     )

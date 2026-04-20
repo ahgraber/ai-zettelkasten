@@ -16,7 +16,7 @@ class DoclingConverterConfig(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="AIZK_CONVERTER__DOCLING__",
-        env_file=".env",
+        env_file=None,
         extra="ignore",
     )
 
@@ -54,7 +54,7 @@ class KarakeepFetcherConfig(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="AIZK_FETCHER__KARAKEEP__",
-        env_file=".env",
+        env_file=None,
         extra="ignore",
     )
 
@@ -65,7 +65,7 @@ class KarakeepFetcherConfig(BaseSettings):
 class ConversionConfig(BaseSettings):
     """Environment-driven configuration for the conversion service."""
 
-    model_config = SettingsConfigDict(env_prefix="", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="", env_file=None, extra="ignore")
 
     database_url: str = Field(
         default="sqlite:///./data/conversion_service.db",

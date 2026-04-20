@@ -135,7 +135,11 @@ class Orchestrator:
         conversion_input, terminal_ref = self._fetch_with_terminal_ref(ref)
         converter = self._resolve_converter(conversion_input.content_type, converter_name)
         artifacts = converter.convert(conversion_input)
-        config_snapshot = converter.config_snapshot() if hasattr(converter, "config_snapshot") else {}
+        if hasattr(converter, "config_snapshot"):
+            config_snapshot = converter.config_snapshot()
+        else:
+            logger.debug("converter %r has no config_snapshot(); recording empty snapshot", converter_name)
+            config_snapshot = {}
         return ProcessResult(
             artifacts=artifacts,
             terminal_ref=terminal_ref,

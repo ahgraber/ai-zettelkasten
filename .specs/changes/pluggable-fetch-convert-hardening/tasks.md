@@ -48,23 +48,23 @@ Within a cluster, order is dependency-first.
 
 ## Cluster C — Settings hermeticity (H7)
 
-- [ ] `utilities/config.py`: change every `BaseSettings` subclass `model_config` to use
+- [x] `utilities/config.py`: change every `BaseSettings` subclass `model_config` to use
   `env_file=None` as the default (remove `env_file=".env"` where present or absent-and-
   implicit); confirm `dotenv.load_dotenv()` is called at the composition root before any
   settings construction.
-- [ ] `wiring/ingress_policy.py`: change `IngressPolicy.model_config` to `env_file=None`.
-- [ ] `wiring/api.py` (`build_api_runtime`): construct `DoclingConverterConfig` once inside the
+- [x] `wiring/ingress_policy.py`: change `IngressPolicy.model_config` to `env_file=None`.
+- [x] `wiring/api.py` (`build_api_runtime`): construct `DoclingConverterConfig` once inside the
   builder; attach as `app.state.docling_config`.
-- [ ] `wiring/worker.py` (`build_worker_runtime`): construct `DoclingConverterConfig` once
+- [x] `wiring/worker.py` (`build_worker_runtime`): construct `DoclingConverterConfig` once
   inside the builder; pass it directly to the orchestrator or store where the worker loop reads
   it.
-- [ ] `api/routes/jobs.py`: replace `DoclingConverterConfig()` call with
+- [x] `api/routes/jobs.py`: replace `DoclingConverterConfig()` call with
   `request.app.state.docling_config`.
-- [ ] `api/routes/health.py`: replace `DoclingConverterConfig()` call with
+- [x] `api/routes/health.py`: replace `DoclingConverterConfig()` call with
   `request.app.state.docling_config`.
-- [ ] `cli.py`: replace per-command `DoclingConverterConfig()` calls with a single instance
+- [x] `cli.py`: replace per-command `DoclingConverterConfig()` calls with a single instance
   constructed at the top of each command function (before any branching).
-- [ ] Tests: add test asserting that `DoclingConverterConfig()` constructed with no arguments
+- [x] Tests: add test asserting that `DoclingConverterConfig()` constructed with no arguments
   (default `env_file=None`) does not read a `.env` file from disk; verify the existing app
   fixture does not call `DoclingConverterConfig()` after `app.state.config` is set.
 

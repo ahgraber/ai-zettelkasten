@@ -15,7 +15,6 @@ from aizk.conversion.api.dependencies import get_config
 from aizk.conversion.api.schemas import CheckResult, HealthResponse
 from aizk.conversion.db import get_engine
 from aizk.conversion.storage.s3_client import S3Client
-from aizk.conversion.utilities.config import DoclingConverterConfig
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +93,7 @@ async def readiness(request: Request, response: Response) -> HealthResponse:
     engine = get_engine(config.database_url)
     s3_client = S3Client(config)
 
-    docling_cfg = DoclingConverterConfig()
+    docling_cfg = request.app.state.docling_config
     check_coros = [_check_db(engine), _check_s3(s3_client)]
     if docling_cfg.is_picture_description_enabled():
         check_coros.append(_check_picture_description(docling_cfg))

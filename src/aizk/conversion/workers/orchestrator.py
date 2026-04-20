@@ -182,6 +182,9 @@ def _process_job_subprocess(
     os.setpgrp()  # Create new process group for cleanup of all descendants
 
     def _do_convert():
+        from dotenv import load_dotenv
+
+        load_dotenv()
         config = ConversionConfig()
         engine = get_engine(config.database_url)
 

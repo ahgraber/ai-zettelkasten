@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from aizk.conversion.core.errors import ConfigurationError
 from aizk.conversion.core.registry import FetcherRegistry
-from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
+from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
 from aizk.conversion.wiring.capabilities import SubmissionCapabilities
 from aizk.conversion.wiring.ingress_policy import IngressPolicy
 from aizk.conversion.wiring.registrations import register_fetchers
@@ -17,6 +17,7 @@ class ApiRuntime:
     """Assembled API-side runtime: submission capability descriptor."""
 
     capabilities: SubmissionCapabilities
+    docling_config: DoclingConverterConfig
 
 
 def build_api_runtime(
@@ -41,11 +42,15 @@ def build_api_runtime(
     Raises:
         ConfigurationError: If the ingress policy references an unregistered kind.
     """
+    from dotenv import load_dotenv
+
+    load_dotenv()
     if ingress_policy is None:
-        ingress_policy = IngressPolicy(_env_file=None)
+        ingress_policy = IngressPolicy()
 
     fetcher_registry = FetcherRegistry()
-    karakeep_cfg = KarakeepFetcherConfig(_env_file=None)
+    docling_config = DoclingConverterConfig()
+    karakeep_cfg = KarakeepFetcherConfig()
     register_fetchers(fetcher_registry, cfg, karakeep_cfg=karakeep_cfg)
 
     registered = fetcher_registry.registered_kinds()
@@ -54,7 +59,7 @@ def build_api_runtime(
         raise ConfigurationError(f"IngressPolicy references kinds not registered: {sorted(unknown)}")
 
     capabilities = SubmissionCapabilities(ingress_policy.accepted_submission_kinds)
-    return ApiRuntime(capabilities=capabilities)
+    return ApiRuntime(capabilities=capabilities, docling_config=docling_config)
 
 
 __all__ = ["ApiRuntime", "build_api_runtime"]
