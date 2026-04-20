@@ -13,7 +13,7 @@ import pytest
 from sqlmodel import Session
 
 from aizk.conversion.db import get_engine
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
 from karakeep_client.models import Bookmark
 
 # Env-var aliases the harness intentionally owns — kept in sync with `set_test_env` below.
@@ -32,11 +32,18 @@ _HARNESS_ENV_ALLOWLIST: frozenset[str] = frozenset(
 
 
 def _conversion_config_aliases() -> frozenset[str]:
-    return frozenset(
-        field.validation_alias
-        for field in ConversionConfig.model_fields.values()
-        if isinstance(field.validation_alias, str)
-    )
+    """Return all env-var names read by any conversion config class."""
+    aliases: set[str] = set()
+    # ConversionConfig uses explicit validation_alias per field
+    for field in ConversionConfig.model_fields.values():
+        if isinstance(field.validation_alias, str):
+            aliases.add(field.validation_alias)
+    # Adapter configs use env_prefix + field_name
+    for cls in (DoclingConverterConfig, KarakeepFetcherConfig):
+        prefix = cls.model_config.get("env_prefix", "")
+        for field_name in cls.model_fields:
+            aliases.add((prefix + field_name).upper())
+    return frozenset(aliases)
 
 
 def _strip_unclaimed_aliases(
@@ -62,7 +69,11 @@ def _hermetic_conversion_config() -> Iterator[None]:
     allowlist are removed from `os.environ` before any test runs and restored at session end.
     """
     original_env_file = ConversionConfig.model_config.get("env_file")
+    original_docling_env_file = DoclingConverterConfig.model_config.get("env_file")
+    original_karakeep_env_file = KarakeepFetcherConfig.model_config.get("env_file")
     ConversionConfig.model_config["env_file"] = None
+    DoclingConverterConfig.model_config["env_file"] = None
+    KarakeepFetcherConfig.model_config["env_file"] = None
 
     stripped = _strip_unclaimed_aliases(os.environ, _conversion_config_aliases(), _HARNESS_ENV_ALLOWLIST)
 
@@ -70,6 +81,8 @@ def _hermetic_conversion_config() -> Iterator[None]:
         yield
     finally:
         ConversionConfig.model_config["env_file"] = original_env_file
+        DoclingConverterConfig.model_config["env_file"] = original_docling_env_file
+        KarakeepFetcherConfig.model_config["env_file"] = original_karakeep_env_file
         for alias, value in stripped.items():
             os.environ[alias] = value
 

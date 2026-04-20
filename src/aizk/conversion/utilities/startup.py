@@ -7,12 +7,11 @@ the worker or API process begins accepting work.
 from __future__ import annotations
 
 import logging
-import os
 
 import httpx
 
 from aizk.conversion.storage.s3_client import S3Client
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
 
 logger = logging.getLogger(__name__)
 
@@ -37,25 +36,22 @@ def probe_s3(config: ConversionConfig) -> None:
         raise StartupValidationError(f"S3 bucket '{config.s3_bucket_name}' is unreachable: {exc}") from exc
 
 
-def probe_karakeep() -> None:
+def probe_karakeep(karakeep_cfg: KarakeepFetcherConfig) -> None:
     """Verify KaraKeep API is reachable and credentials are valid.
-
-    Reads KARAKEEP_BASE_URL and KARAKEEP_API_KEY from environment variables
-    (same source as KarakeepClient).
 
     Raises:
         StartupValidationError: If the KaraKeep API is unreachable, returns
-            an error, or required env vars are missing.
+            an error, or required config values are missing.
     """
-    base_url = os.environ.get("KARAKEEP_BASE_URL", "")
-    api_key = os.environ.get("KARAKEEP_API_KEY", "")
+    base_url = karakeep_cfg.base_url
+    api_key = karakeep_cfg.api_key
 
     if not base_url or not api_key:
         missing = []
         if not base_url:
-            missing.append("KARAKEEP_BASE_URL")
+            missing.append("AIZK_FETCHER__KARAKEEP__BASE_URL")
         if not api_key:
-            missing.append("KARAKEEP_API_KEY")
+            missing.append("AIZK_FETCHER__KARAKEEP__API_KEY")
         raise StartupValidationError(f"Missing required environment variables: {', '.join(missing)}")
 
     url = f"{base_url.rstrip('/')}/api/v1/bookmarks"
@@ -78,7 +74,7 @@ def probe_karakeep() -> None:
         raise StartupValidationError(f"KaraKeep API unreachable at {url}: {exc}") from exc
 
 
-def probe_picture_description(config: ConversionConfig) -> None:
+def probe_picture_description(docling_cfg: DoclingConverterConfig) -> None:
     """Verify the picture description endpoint is reachable via GET /models.
 
     No-op when the endpoint is not configured (picture description disabled).
@@ -86,8 +82,8 @@ def probe_picture_description(config: ConversionConfig) -> None:
     Raises:
         StartupValidationError: If the endpoint returns non-2xx or is unreachable.
     """
-    base_url = config.docling_picture_description_base_url.strip().rstrip("/")
-    api_key = config.docling_picture_description_api_key.strip()
+    base_url = docling_cfg.picture_description_base_url.strip().rstrip("/")
+    api_key = docling_cfg.picture_description_api_key.strip()
 
     if not base_url or not api_key:
         return
@@ -106,34 +102,35 @@ def probe_picture_description(config: ConversionConfig) -> None:
         raise StartupValidationError(f"Picture description endpoint unreachable at {url}: {exc}") from exc
 
 
-def log_feature_summary(config: ConversionConfig, role: str) -> None:
+def log_feature_summary(config: ConversionConfig, docling_cfg: DoclingConverterConfig, role: str) -> None:
     """Log a structured summary of optional feature states.
 
     Args:
         config: Conversion service configuration.
+        docling_cfg: Docling-specific configuration.
         role: Process role (e.g. "worker", "api").
     """
     features: dict[str, dict[str, str]] = {}
 
     # Picture descriptions
-    if config.is_picture_description_enabled():
+    if docling_cfg.is_picture_description_enabled():
         features["picture_descriptions"] = {"status": "enabled"}
     else:
         features["picture_descriptions"] = {
             "status": "disabled",
-            "reason": "DOCLING_PICTURE_DESCRIPTION_BASE_URL not configured",
+            "reason": "AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL not configured",
         }
 
     # Picture classification (requires both the config flag and a VLM endpoint)
-    if not config.is_picture_description_enabled():
+    if not docling_cfg.is_picture_description_enabled():
         features["picture_classification"] = {
             "status": "disabled",
             "reason": "picture description not enabled",
         }
-    elif not config.docling_enable_picture_classification:
+    elif not docling_cfg.picture_classification_enabled:
         features["picture_classification"] = {
             "status": "disabled",
-            "reason": "DOCLING_ENABLE_PICTURE_CLASSIFICATION=false",
+            "reason": "AIZK_CONVERTER__DOCLING__PICTURE_CLASSIFICATION_ENABLED=false",
         }
     else:
         features["picture_classification"] = {"status": "enabled"}
@@ -166,7 +163,12 @@ def log_feature_summary(config: ConversionConfig, role: str) -> None:
     )
 
 
-def validate_startup(config: ConversionConfig, role: str) -> None:
+def validate_startup(
+    config: ConversionConfig,
+    docling_cfg: DoclingConverterConfig,
+    karakeep_cfg: KarakeepFetcherConfig,
+    role: str,
+) -> None:
     """Run all startup validation checks.
 
     Probes required services (S3, KaraKeep) and the optional picture description
@@ -175,6 +177,8 @@ def validate_startup(config: ConversionConfig, role: str) -> None:
 
     Args:
         config: Conversion service configuration.
+        docling_cfg: Docling-specific configuration.
+        karakeep_cfg: KaraKeep-specific configuration.
         role: Process role (e.g. "worker", "api").
 
     Raises:
@@ -185,11 +189,11 @@ def validate_startup(config: ConversionConfig, role: str) -> None:
     probe_s3(config)
     logger.info("S3 probe passed", extra={"role": role})
 
-    probe_karakeep()
+    probe_karakeep(karakeep_cfg)
     logger.info("KaraKeep probe passed", extra={"role": role})
 
-    probe_picture_description(config)
-    if config.is_picture_description_enabled():
+    probe_picture_description(docling_cfg)
+    if docling_cfg.is_picture_description_enabled():
         logger.info("picture description endpoint probe passed", extra={"role": role})
 
-    log_feature_summary(config, role)
+    log_feature_summary(config, docling_cfg, role)

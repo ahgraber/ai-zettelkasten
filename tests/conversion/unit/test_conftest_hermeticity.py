@@ -60,20 +60,21 @@ def test_harness_allowlist_is_subset_of_conversion_config_aliases():
 def test_session_fixture_strips_a_known_docling_alias_at_session_start(monkeypatch):
     """Adversarial check that the session-scoped fixture removed an unclaimed alias.
 
-    Sets a stray `DOCLING_PDF_MAX_PAGES` directly via `os.environ` (bypassing monkeypatch's
-    per-test setup) and verifies the fixture would have popped it. Uses the helper directly
-    because the fixture itself runs once per session and cannot be re-invoked mid-test.
+    Sets a stray `AIZK_CONVERTER__DOCLING__PDF_MAX_PAGES` directly via `os.environ`
+    (bypassing monkeypatch's per-test setup) and verifies the fixture would have popped
+    it. Uses the helper directly because the fixture itself runs once per session and
+    cannot be re-invoked mid-test.
     """
     import os
 
-    monkeypatch.setenv("DOCLING_PDF_MAX_PAGES", "999")
+    monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PDF_MAX_PAGES", "999")
     aliases = _conversion_config_aliases()
-    assert "DOCLING_PDF_MAX_PAGES" in aliases
-    assert "DOCLING_PDF_MAX_PAGES" not in _HARNESS_ENV_ALLOWLIST
+    assert "AIZK_CONVERTER__DOCLING__PDF_MAX_PAGES" in aliases
+    assert "AIZK_CONVERTER__DOCLING__PDF_MAX_PAGES" not in _HARNESS_ENV_ALLOWLIST
 
     snapshot = dict(os.environ)
     stripped = _strip_unclaimed_aliases(snapshot, aliases, _HARNESS_ENV_ALLOWLIST)
 
-    assert "DOCLING_PDF_MAX_PAGES" in stripped
-    assert stripped["DOCLING_PDF_MAX_PAGES"] == "999"
-    assert "DOCLING_PDF_MAX_PAGES" not in snapshot
+    assert "AIZK_CONVERTER__DOCLING__PDF_MAX_PAGES" in stripped
+    assert stripped["AIZK_CONVERTER__DOCLING__PDF_MAX_PAGES"] == "999"
+    assert "AIZK_CONVERTER__DOCLING__PDF_MAX_PAGES" not in snapshot

@@ -57,13 +57,13 @@ A Docling configuration field contributes to the key if and only if its value af
 #### Scenario: Key differs when picture classification enabled vs disabled
 
 - **GIVEN** two conversion submissions for the same bookmark with identical other config
-- **WHEN** one has `DOCLING_ENABLE_PICTURE_CLASSIFICATION=true` and the other `false`
+- **WHEN** one has `AIZK_CONVERTER__DOCLING__PICTURE_CLASSIFICATION_ENABLED=true` and the other `false`
 - **THEN** the two submissions produce different idempotency keys and are treated as distinct jobs
 
 #### Scenario: Key stable when only the picture-description endpoint URL or API key rotates
 
 - **GIVEN** two submissions with identical bookmark, payload version, Docling version, Docling output-affecting configuration, and picture-description enablement
-- **WHEN** the two submissions differ only in the value of `DOCLING_PICTURE_DESCRIPTION_BASE_URL` or `DOCLING_PICTURE_DESCRIPTION_API_KEY` (with both still configured in each case)
+- **WHEN** the two submissions differ only in the value of `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` or `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY` (with both still configured in each case)
 - **THEN** the two submissions produce the same idempotency key and the second is rejected as a duplicate
 
 ### Requirement: Validate source content before conversion
@@ -196,7 +196,7 @@ When picture classification is disabled, each figure SHALL receive a single gene
 
 #### Scenario: Picture classification disabled via config
 
-- **GIVEN** `DOCLING_ENABLE_PICTURE_CLASSIFICATION=false`
+- **GIVEN** `AIZK_CONVERTER__DOCLING__PICTURE_CLASSIFICATION_ENABLED=false`
 - **WHEN** the PDF pipeline is configured
 - **THEN** `do_picture_classification=False` and the enrichment pass falls back to the existing single-prompt Docling built-in description (no classification-based routing)
 
@@ -439,7 +439,7 @@ The system SHALL emit metrics for queue depth, job duration, job status counts, 
 ### Requirement: Load configuration from environment variables
 
 The system SHALL load all configuration (S3 credentials, KaraKeep endpoint, concurrency limits, timeouts) from environment variables with sensible defaults for local development, and SHALL validate required service reachability before entering the main processing loop.
-The picture description endpoint is configured via `DOCLING_PICTURE_DESCRIPTION_BASE_URL`, `DOCLING_PICTURE_DESCRIPTION_API_KEY`, and `DOCLING_PICTURE_DESCRIPTION_MODEL`.
+The picture description endpoint is configured via `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL`, `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY`, and `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_MODEL`.
 
 #### Scenario: Configuration loaded on startup
 
@@ -449,24 +449,24 @@ The picture description endpoint is configured via `DOCLING_PICTURE_DESCRIPTION_
 
 ### Requirement: Load picture classification configuration from environment
 
-The system SHALL expose `DOCLING_ENABLE_PICTURE_CLASSIFICATION` as a boolean environment variable (default: `True`) that controls whether the DocumentFigureClassifier runs during PDF conversion and whether the post-conversion enrichment pass performs classification-based prompt routing.
+The system SHALL expose `AIZK_CONVERTER__DOCLING__PICTURE_CLASSIFICATION_ENABLED` as a boolean environment variable (default: `True`) that controls whether the DocumentFigureClassifier runs during PDF conversion and whether the post-conversion enrichment pass performs classification-based prompt routing.
 
 #### Scenario: Classification enabled by default
 
-- **GIVEN** `DOCLING_ENABLE_PICTURE_CLASSIFICATION` is not set
+- **GIVEN** `AIZK_CONVERTER__DOCLING__PICTURE_CLASSIFICATION_ENABLED` is not set
 - **WHEN** the worker starts
 - **THEN** the PDF pipeline runs with `do_picture_classification=True`
 
 #### Scenario: Classification disabled via environment
 
-- **GIVEN** `DOCLING_ENABLE_PICTURE_CLASSIFICATION=false`
+- **GIVEN** `AIZK_CONVERTER__DOCLING__PICTURE_CLASSIFICATION_ENABLED=false`
 - **WHEN** the worker starts
 - **THEN** the PDF pipeline runs with `do_picture_classification=False` and the enrichment pass does not attempt classification-based routing
 
 ### Requirement: Validate required external services on startup
 
 The system SHALL probe required external services (S3 storage, KaraKeep API, and — when configured — the picture description endpoint) at process startup and SHALL refuse to start if any required service is unreachable.
-When `DOCLING_PICTURE_DESCRIPTION_BASE_URL` and `DOCLING_PICTURE_DESCRIPTION_API_KEY` are both set, the probe issues `GET {base_url}/models` with an `Authorization: Bearer` header and a 10-second timeout; a non-2xx response or connection error prevents startup.
+When `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` and `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY` are both set, the probe issues `GET {base_url}/models` with an `Authorization: Bearer` header and a 10-second timeout; a non-2xx response or connection error prevents startup.
 If neither field is set, the picture description probe is a no-op.
 Probes SHALL use bounded timeouts to avoid hanging on unresponsive services.
 
@@ -496,19 +496,19 @@ Probes SHALL use bounded timeouts to avoid hanging on unresponsive services.
 
 #### Scenario: Picture description endpoint reachable at startup
 
-- **GIVEN** `DOCLING_PICTURE_DESCRIPTION_BASE_URL` and `DOCLING_PICTURE_DESCRIPTION_API_KEY` are configured
+- **GIVEN** `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` and `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY` are configured
 - **WHEN** the worker or API process starts
 - **THEN** `GET {base_url}/models` is called with an Authorization header and the process continues if it returns 2xx
 
 #### Scenario: Picture description endpoint unreachable at startup
 
-- **GIVEN** `DOCLING_PICTURE_DESCRIPTION_BASE_URL` is configured but the endpoint is unreachable or returns non-2xx
+- **GIVEN** `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` is configured but the endpoint is unreachable or returns non-2xx
 - **WHEN** the worker or API process starts
 - **THEN** the process logs a structured error identifying the failure and exits with a non-zero exit code
 
 #### Scenario: Picture description not configured — probe skipped
 
-- **GIVEN** `DOCLING_PICTURE_DESCRIPTION_BASE_URL` is not set
+- **GIVEN** `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` is not set
 - **WHEN** the worker or API process starts
 - **THEN** no probe is made for the picture description endpoint and startup proceeds normally
 
@@ -516,7 +516,7 @@ Probes SHALL use bounded timeouts to avoid hanging on unresponsive services.
 
 The system SHALL log a structured summary of all optional feature states on startup, indicating which features are enabled and which are disabled with the reason (missing configuration).
 Optional features include picture descriptions, picture classification, MLflow tracing, and Litestream replication.
-Picture classification reports as enabled only when both `DOCLING_ENABLE_PICTURE_CLASSIFICATION=true` and `DOCLING_PICTURE_DESCRIPTION_BASE_URL` is configured; otherwise it reports as disabled with a specific reason.
+Picture classification reports as enabled only when both `AIZK_CONVERTER__DOCLING__PICTURE_CLASSIFICATION_ENABLED=true` and `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` is configured; otherwise it reports as disabled with a specific reason.
 
 #### Scenario: All optional features enabled
 
@@ -526,9 +526,9 @@ Picture classification reports as enabled only when both `DOCLING_ENABLE_PICTURE
 
 #### Scenario: Optional feature disabled due to missing config
 
-- **GIVEN** `DOCLING_PICTURE_DESCRIPTION_BASE_URL` or `DOCLING_PICTURE_DESCRIPTION_API_KEY` is not configured
+- **GIVEN** `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` or `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY` is not configured
 - **WHEN** the process starts
-- **THEN** the startup summary log entry lists picture descriptions as disabled with the reason `"DOCLING_PICTURE_DESCRIPTION_BASE_URL not configured"`
+- **THEN** the startup summary log entry lists picture descriptions as disabled with the reason `"AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL not configured"`
 
 #### Scenario: Multiple features disabled
 
@@ -538,19 +538,19 @@ Picture classification reports as enabled only when both `DOCLING_ENABLE_PICTURE
 
 #### Scenario: Picture classification enabled in startup summary
 
-- **GIVEN** `DOCLING_ENABLE_PICTURE_CLASSIFICATION=true` and `DOCLING_PICTURE_DESCRIPTION_BASE_URL` is configured
+- **GIVEN** `AIZK_CONVERTER__DOCLING__PICTURE_CLASSIFICATION_ENABLED=true` and `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` is configured
 - **WHEN** the process starts
 - **THEN** the startup summary log entry lists picture classification as enabled
 
 #### Scenario: Picture classification disabled due to config flag
 
-- **GIVEN** `DOCLING_ENABLE_PICTURE_CLASSIFICATION=false`
+- **GIVEN** `AIZK_CONVERTER__DOCLING__PICTURE_CLASSIFICATION_ENABLED=false`
 - **WHEN** the process starts
-- **THEN** the startup summary log entry lists picture classification as disabled with reason "DOCLING_ENABLE_PICTURE_CLASSIFICATION=false"
+- **THEN** the startup summary log entry lists picture classification as disabled with reason "AIZK_CONVERTER\_\_DOCLING\_\_PICTURE_CLASSIFICATION_ENABLED=false"
 
 #### Scenario: Picture classification implicitly disabled due to no VLM endpoint
 
-- **GIVEN** `DOCLING_PICTURE_DESCRIPTION_BASE_URL` is not configured (picture description is disabled)
+- **GIVEN** `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` is not configured (picture description is disabled)
 - **WHEN** the process starts
 - **THEN** the startup summary log entry lists picture classification as disabled with reason "picture description not enabled"
 
@@ -586,14 +586,14 @@ Local copies of raw bytes are not required provided KaraKeep access is stable an
 ### Requirement: Include picture description capability in the idempotency key
 
 The system SHALL include whether picture description is enabled (derived from the presence of a
-configured `DOCLING_PICTURE_DESCRIPTION_BASE_URL` and `DOCLING_PICTURE_DESCRIPTION_API_KEY`) as an input to the idempotency key, so that jobs processed
+configured `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` and `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY`) as an input to the idempotency key, so that jobs processed
 with and without LLM figure descriptions produce distinct keys.
 
 #### Scenario: Key differs when picture description enabled vs disabled
 
 - **GIVEN** two conversion submissions for the same bookmark with identical Docling config and
   payload version
-- **WHEN** one submission has `DOCLING_PICTURE_DESCRIPTION_BASE_URL` and `DOCLING_PICTURE_DESCRIPTION_API_KEY` configured and the other does not
+- **WHEN** one submission has `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` and `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY` configured and the other does not
 - **THEN** the two submissions produce different idempotency keys and are treated as distinct jobs
 
 #### Scenario: Key stable when picture description capability unchanged
@@ -613,13 +613,13 @@ Independent of the replay criterion, the system SHALL NOT persist any credential
 
 - **GIVEN** a conversion completes successfully
 - **WHEN** the manifest is written to the ephemeral workspace
-- **THEN** the manifest includes the Docling configuration fields that affect replayable output (OCR settings, table structure, picture description model (`docling_picture_description_model`), page limit, picture timeout, picture classification enabled) and the picture description enabled flag as a `config_snapshot` section
+- **THEN** the manifest includes the Docling configuration fields that affect replayable output (OCR settings, table structure, picture description model (`picture_description_model`), page limit, picture timeout, picture classification enabled) and the picture description enabled flag as a `config_snapshot` section
 
 #### Scenario: Manifest captures picture classification flag
 
-- **GIVEN** a conversion completes with `docling_enable_picture_classification=True`
+- **GIVEN** a conversion completes with `picture_classification_enabled=True`
 - **WHEN** the manifest is written
-- **THEN** the `config_snapshot` section includes `"docling_enable_picture_classification": true`
+- **THEN** the `config_snapshot` section includes `"picture_classification_enabled": true`
 
 #### Scenario: Config snapshot matches idempotency key inputs
 
@@ -629,7 +629,7 @@ Independent of the replay criterion, the system SHALL NOT persist any credential
 
 #### Scenario: Manifest omits picture-description provider identity and credentials
 
-- **GIVEN** a conversion completes successfully with `DOCLING_PICTURE_DESCRIPTION_BASE_URL` and `DOCLING_PICTURE_DESCRIPTION_API_KEY` both configured to non-empty values
+- **GIVEN** a conversion completes successfully with `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` and `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY` both configured to non-empty values
 - **WHEN** the `config_snapshot` section is read from the manifest
 - **THEN** the section contains no entry for the picture-description endpoint URL and no entry for the picture-description API key, illustrating the general rule that provider identity and credentials are not persisted
 
@@ -638,12 +638,12 @@ Independent of the replay criterion, the system SHALL NOT persist any credential
 - **Implementation**: `aizk/conversion/`
 - **Dependencies**: conversion-api (shared data model); mlflow-llm-tracing (optional instrumentation); worker-process-management (subprocess lifecycle)
 - **Data model**: Bookmark (karakeep_id unique key, aizk_uuid internal identifier), ConversionJob (status, idempotency_key unique, retry scheduling), ConversionOutput (artifact locations, content hash, pipeline metadata)
-- **Idempotency key**: hash of `aizk_uuid + payload_version + docling_version + config_hash + picture_description_enabled`; `config_hash` covers the `docling_`-prefixed fields that affect replayable output (e.g., OCR, table structure, page limit, picture timeout, picture description model, `docling_enable_picture_classification`) and excludes provider identity and credentials (`docling_picture_description_base_url`, `docling_picture_description_api_key`)
+- **Idempotency key**: hash of `aizk_uuid + payload_version + docling_version + config_hash + picture_description_enabled`; `config_hash` covers the converter output-affecting fields (e.g., OCR, table structure, page limit, picture timeout, picture description model, `picture_classification_enabled`) and excludes provider identity and credentials (`picture_description_base_url`, `picture_description_api_key`)
 - **Raw source provenance**: KaraKeep is the authoritative store for raw source content; `karakeep_id` is the durable provenance reference.
   Raw bytes are not archived locally.
 - **Whitespace normalization**: `aizk/conversion/utilities/whitespace.py` → `normalize_whitespace()`; applied in `_run_conversion()` before file write and hash computation; preserves code-fence content, list indentation, and strips trailing spaces
 - **Content hash**: xxhash64 of normalized Markdown (UTF-8, LF line endings) stored in the output record
-- **Manifest config_snapshot**: manifest includes a `config_snapshot` section with the Docling config fields that affect replayable output (including `docling_enable_picture_classification`) and `picture_description_enabled` to enable exact replay; provider identity and credentials are excluded, and secrets are never persisted to durable artifact storage.
+- **Manifest config_snapshot**: manifest includes a `config_snapshot` section with the Docling config fields that affect replayable output (including `picture_classification_enabled`) and `picture_description_enabled` to enable exact replay; provider identity and credentials are excluded, and secrets are never persisted to durable artifact storage.
   The snapshot contract is enforced by `ManifestConfigSnapshot` (pydantic model with `extra="forbid"`) in `aizk/conversion/storage/manifest.py`.
 - **S3 layout**: artifacts at `s3://<bucket>/<aizk_uuid>/`; upload verification via ETag match (single-part) or content length (multipart)
 - **Database**: SQLite in WAL mode with foreign keys, synchronous=NORMAL, and busy timeout; indexes on job status/scheduling, bookmark URL, and output lookup by bookmark identifier
@@ -651,4 +651,4 @@ Independent of the replay criterion, the system SHALL NOT persist any credential
 - **arXiv client**: `aizk.utilities.arxiv_utils`; URL parsing: `aizk.utilities.url_utils`
 - **Process role labeling**: implemented via `setproctitle`
 - **Startup validation**: `aizk/conversion/utilities/startup.py` → `validate_startup()`; probes S3 (HEAD bucket), KaraKeep (GET bookmarks?limit=1), and — when configured — picture description endpoint (GET /models) with 10s timeouts; logs feature summary for picture descriptions, picture classification, MLflow, and Litestream
-- **Picture classification**: `DOCLING_ENABLE_PICTURE_CLASSIFICATION` (default: `True`); controls `ThreadedPdfPipelineOptions.do_picture_classification` and the post-conversion enrichment loop in `converter.py`; prompt routing table `_LABEL_TO_PROMPT` maps classifier labels to `<chart2summary>` / `<tables_html>` / generic alt-text
+- **Picture classification**: `AIZK_CONVERTER__DOCLING__PICTURE_CLASSIFICATION_ENABLED` (default: `True`); controls `ThreadedPdfPipelineOptions.do_picture_classification` and the post-conversion enrichment loop in `converter.py`; prompt routing table `_LABEL_TO_PROMPT` maps classifier labels to `<chart2summary>` / `<tables_html>` / generic alt-text

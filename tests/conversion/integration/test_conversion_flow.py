@@ -17,7 +17,7 @@ from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.db import get_engine
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig
 from aizk.conversion.utilities.hashing import build_output_config_snapshot, compute_idempotency_key
 from aizk.conversion.workers import orchestrator
 
@@ -210,11 +210,11 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch):
 
 def test_submit_job_idempotency_key_disables_picture_description_without_api_key(monkeypatch) -> None:
     """Idempotency must reflect actual picture-description runtime enablement."""
-    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_BASE_URL", "https://openrouter.ai/api/v1")
-    monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_API_KEY", "")
+    monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY", "")
 
     app = create_app()
-    config = ConversionConfig(_env_file=None)
+    docling_cfg = DoclingConverterConfig(_env_file=None)
 
     bookmark_id = "bm_missing_picture_api_key"
     with TestClient(app) as client:
@@ -228,7 +228,7 @@ def test_submit_job_idempotency_key_disables_picture_description_without_api_key
 
     source_ref = KarakeepBookmarkRef(kind="karakeep_bookmark", bookmark_id=bookmark_id)
     source_ref_hash = compute_source_ref_hash(source_ref)
-    config_snap = build_output_config_snapshot(config, picture_description_enabled=False)
+    config_snap = build_output_config_snapshot(docling_cfg, picture_description_enabled=False)
     expected_key = compute_idempotency_key(source_ref_hash, "docling", config_snap)
 
     assert payload["idempotency_key"] == expected_key

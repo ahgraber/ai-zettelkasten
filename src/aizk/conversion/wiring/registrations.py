@@ -20,13 +20,16 @@ from aizk.conversion.adapters.fetchers.url import UrlFetcher
 from aizk.conversion.core.errors import ChainNotTerminated
 from aizk.conversion.core.protocols import RefResolver
 from aizk.conversion.core.registry import ConverterRegistry, FetcherRegistry
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
 
 
 def register_ready_adapters(
     fetcher_registry: FetcherRegistry,
     converter_registry: ConverterRegistry,
     cfg: ConversionConfig,
+    *,
+    docling_cfg: DoclingConverterConfig,
+    karakeep_cfg: KarakeepFetcherConfig,
 ) -> None:
     """Populate registries with all production-ready adapters.
 
@@ -41,18 +44,20 @@ def register_ready_adapters(
         fetcher_registry: Registry to populate with fetchers and resolvers.
         converter_registry: Registry to populate with converters.
         cfg: Conversion configuration for adapters that require it.
+        docling_cfg: Docling-specific converter configuration.
+        karakeep_cfg: KaraKeep-specific fetcher configuration.
     """
     # Resolvers
-    fetcher_registry.register_resolver("karakeep_bookmark", KarakeepBookmarkResolver())
+    fetcher_registry.register_resolver("karakeep_bookmark", KarakeepBookmarkResolver(karakeep_cfg))
 
     # Content fetchers
-    fetcher_registry.register_content_fetcher("arxiv", ArxivFetcher(cfg))
+    fetcher_registry.register_content_fetcher("arxiv", ArxivFetcher(cfg, karakeep_cfg))
     fetcher_registry.register_content_fetcher("github_readme", GithubReadmeFetcher(cfg))
-    fetcher_registry.register_content_fetcher("url", UrlFetcher(cfg))
+    fetcher_registry.register_content_fetcher("url", UrlFetcher(cfg, karakeep_cfg))
     fetcher_registry.register_content_fetcher("inline_html", InlineContentFetcher())
 
     # Converters
-    converter_registry.register(DoclingConverter(cfg), "docling")
+    converter_registry.register(DoclingConverter(docling_cfg), "docling")
 
     # Validate resolver DAG before returning
     validate_chain_closure(fetcher_registry, depth_cap=2)

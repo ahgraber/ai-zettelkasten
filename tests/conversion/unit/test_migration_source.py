@@ -316,7 +316,7 @@ def test_idempotency_key_recomputed_with_new_formula(tmp_path):
 
     import json as _json
 
-    from aizk.conversion.utilities.config import ConversionConfig
+    from aizk.conversion.utilities.config import DoclingConverterConfig
     from aizk.conversion.utilities.hashing import build_output_config_snapshot
 
     expected_source_ref = _json.dumps(
@@ -325,7 +325,7 @@ def test_idempotency_key_recomputed_with_new_formula(tmp_path):
         separators=(",", ":"),
     )
     expected_source_ref_hash = _sha256_hex(expected_source_ref)
-    _cfg = ConversionConfig(_env_file=None)
+    _cfg = DoclingConverterConfig(_env_file=None)
     _snapshot = build_output_config_snapshot(_cfg, picture_description_enabled=_cfg.is_picture_description_enabled())
     _config_json = _json.dumps(_snapshot, sort_keys=True, separators=(",", ":"))
     expected_new_key = _sha256_hex(f"{expected_source_ref_hash}:docling:{_config_json}")

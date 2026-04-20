@@ -15,25 +15,25 @@ from aizk.conversion.adapters.converters import docling as docling_module
 from aizk.conversion.adapters.converters.docling import DoclingConverter
 from aizk.conversion.core.protocols import Converter
 from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import DoclingConverterConfig
 from aizk.conversion.utilities.hashing import build_output_config_snapshot
 
 
-def _make_disabled_config() -> ConversionConfig:
+def _make_disabled_config() -> DoclingConverterConfig:
     """Config with picture-description provider NOT configured (disabled path)."""
-    return ConversionConfig(
+    return DoclingConverterConfig(
         _env_file=None,
-        DOCLING_PICTURE_DESCRIPTION_BASE_URL="",
-        DOCLING_PICTURE_DESCRIPTION_API_KEY="",
+        picture_description_base_url="",
+        picture_description_api_key="",
     )
 
 
-def _make_enabled_config() -> ConversionConfig:
+def _make_enabled_config() -> DoclingConverterConfig:
     """Config with picture-description provider fully configured (enabled path)."""
-    return ConversionConfig(
+    return DoclingConverterConfig(
         _env_file=None,
-        DOCLING_PICTURE_DESCRIPTION_BASE_URL="https://provider.example.com/v1",
-        DOCLING_PICTURE_DESCRIPTION_API_KEY="sk-test-key",
+        picture_description_base_url="https://provider.example.com/v1",
+        picture_description_api_key="sk-test-key",
     )
 
 
@@ -73,19 +73,15 @@ def test_docling_satisfies_converter_protocol_structurally() -> None:
     assert "config_snapshot" in dir(Converter)
 
 
-def test_docling_config_snapshot_matches_legacy_field_set() -> None:
+def test_docling_config_snapshot_matches_output_config_snapshot() -> None:
     config = _make_enabled_config()
     adapter = DoclingConverter(config)
-
     snapshot = adapter.config_snapshot()
-    legacy_snapshot = build_output_config_snapshot(
-        config,
-        picture_description_enabled=config.is_picture_description_enabled(),
+    expected = build_output_config_snapshot(
+        config, picture_description_enabled=config.is_picture_description_enabled()
     )
-
-    # Both the key SET and the values must match the legacy payload exactly.
-    assert set(snapshot.keys()) == set(legacy_snapshot.keys())
-    assert snapshot == legacy_snapshot
+    assert set(snapshot.keys()) == set(expected.keys())
+    assert snapshot == expected
 
 
 def test_docling_config_snapshot_excludes_endpoint_and_api_key() -> None:
@@ -94,8 +90,8 @@ def test_docling_config_snapshot_excludes_endpoint_and_api_key() -> None:
     config = _make_enabled_config()
     snapshot = DoclingConverter(config).config_snapshot()
 
-    assert "docling_picture_description_base_url" not in snapshot
-    assert "docling_picture_description_api_key" not in snapshot
+    assert "picture_description_base_url" not in snapshot
+    assert "picture_description_api_key" not in snapshot
 
 
 def test_docling_config_snapshot_includes_picture_description_enabled_flag() -> None:
@@ -129,7 +125,7 @@ def test_docling_convert_dispatches_pdf_to_convert_pdf(monkeypatch: pytest.Monke
         pdf_bytes: bytes,
         *,
         temp_dir: Path,
-        config: ConversionConfig,
+        config: DoclingConverterConfig,
     ) -> tuple[str, list[Path]]:
         captured["pdf_bytes"] = pdf_bytes
         captured["temp_dir"] = temp_dir
@@ -163,7 +159,7 @@ def test_docling_convert_dispatches_html_to_convert_html(monkeypatch: pytest.Mon
         html_bytes: bytes,
         *,
         temp_dir: Path,
-        config: ConversionConfig,
+        config: DoclingConverterConfig,
         source_url: str | None = None,
     ) -> tuple[str, list[Path]]:
         captured["html_bytes"] = html_bytes
@@ -206,7 +202,7 @@ def test_docling_convert_html_without_source_url_passes_none(
         html_bytes: bytes,
         *,
         temp_dir: Path,
-        config: ConversionConfig,
+        config: DoclingConverterConfig,
         source_url: str | None = None,
     ) -> tuple[str, list[Path]]:
         captured["source_url"] = source_url

@@ -3,13 +3,63 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import re
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _UNRESOLVED_ENV_PATTERN = re.compile(r"\$\{[^}]+\}|\$[A-Za-z_][A-Za-z0-9_]*")
+
+
+class DoclingConverterConfig(BaseSettings):
+    """Per-adapter config for the Docling converter."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIZK_CONVERTER__DOCLING__",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    pdf_max_pages: int = 250
+    ocr_enabled: bool = True
+    table_structure_enabled: bool = True
+    picture_description_model: str = "openai/gpt-5.4-nano"
+    picture_timeout: float = 180.0
+    picture_classification_enabled: bool = True
+    picture_description_base_url: str = ""
+    picture_description_api_key: str = ""
+
+    @model_validator(mode="after")
+    def validate_picture_description_fields(self) -> "DoclingConverterConfig":
+        """Expand env placeholders once, then fail fast if any remain unresolved."""
+        for field_name in ("picture_description_base_url", "picture_description_api_key"):
+            value = getattr(self, field_name).strip()
+            if value:
+                value = os.path.expandvars(value).strip()
+                setattr(self, field_name, value)
+            if value and _UNRESOLVED_ENV_PATTERN.search(value):
+                raise ValueError(
+                    f"{field_name} contains unresolved env placeholder syntax: {value!r}. "
+                    "Set a concrete value before constructing DoclingConverterConfig."
+                )
+        return self
+
+    def is_picture_description_enabled(self) -> bool:
+        """Return whether upstream picture-description chat calls are enabled."""
+        return bool(self.picture_description_base_url.rstrip("/") and self.picture_description_api_key)
+
+
+class KarakeepFetcherConfig(BaseSettings):
+    """Per-adapter config for KaraKeep bookmark fetching."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIZK_FETCHER__KARAKEEP__",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    base_url: str = ""
+    api_key: str = ""
 
 
 class ConversionConfig(BaseSettings):
@@ -49,33 +99,6 @@ class ConversionConfig(BaseSettings):
     )
     worker_converter_name: str = Field(default="docling", validation_alias="WORKER_CONVERTER_NAME")
 
-    docling_pdf_max_pages: int = Field(default=250, validation_alias="DOCLING_PDF_MAX_PAGES")
-    docling_enable_ocr: bool = Field(default=True, validation_alias="DOCLING_ENABLE_OCR")
-    docling_enable_table_structure: bool = Field(
-        default=True,
-        validation_alias="DOCLING_ENABLE_TABLE_STRUCTURE",
-    )
-    docling_picture_description_model: str = Field(
-        default="openai/gpt-5.4-nano",
-        validation_alias="DOCLING_PICTURE_DESCRIPTION_MODEL",
-    )
-    docling_picture_timeout: float = Field(
-        default=180.0,
-        validation_alias="DOCLING_PICTURE_TIMEOUT",
-    )
-    docling_enable_picture_classification: bool = Field(
-        default=True,
-        validation_alias="DOCLING_ENABLE_PICTURE_CLASSIFICATION",
-    )
-
-    docling_picture_description_base_url: str = Field(
-        default="",
-        validation_alias="DOCLING_PICTURE_DESCRIPTION_BASE_URL",
-    )
-    docling_picture_description_api_key: str = Field(
-        default="",
-        validation_alias="DOCLING_PICTURE_DESCRIPTION_API_KEY",
-    )
     mlflow_tracing_enabled: bool = Field(default=False, validation_alias="MLFLOW_TRACING_ENABLED")
     mlflow_tracking_uri: str = Field(default="", validation_alias="MLFLOW_TRACKING_URI")
     mlflow_experiment_name: str = Field(default="", validation_alias="MLFLOW_EXPERIMENT_NAME")
@@ -115,22 +138,3 @@ class ConversionConfig(BaseSettings):
     api_host: str = Field(default="0.0.0.0", validation_alias="API_HOST")  # NOQA: S104
     api_port: int = Field(default=8000, validation_alias="API_PORT")
     api_reload: bool = Field(default=False, validation_alias="API_RELOAD")
-
-    @model_validator(mode="after")
-    def validate_picture_description_fields(self) -> ConversionConfig:
-        """Expand env placeholders once, then fail fast if any remain unresolved."""
-        for field_name in ("docling_picture_description_base_url", "docling_picture_description_api_key"):
-            value = getattr(self, field_name).strip()
-            if value:
-                value = os.path.expandvars(value).strip()
-                setattr(self, field_name, value)
-            if value and _UNRESOLVED_ENV_PATTERN.search(value):
-                raise ValueError(
-                    f"{field_name} contains unresolved env placeholder syntax: {value!r}. "
-                    "Set a concrete value before constructing ConversionConfig."
-                )
-        return self
-
-    def is_picture_description_enabled(self) -> bool:
-        """Return whether upstream picture-description chat calls are enabled."""
-        return bool(self.docling_picture_description_base_url.rstrip("/") and self.docling_picture_description_api_key)

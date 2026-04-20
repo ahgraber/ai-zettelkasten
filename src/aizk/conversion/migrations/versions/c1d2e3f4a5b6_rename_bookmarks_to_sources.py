@@ -287,10 +287,10 @@ def upgrade() -> None:
     # config_json is computed from the current deployed ConversionConfig, which
     # is intentional: the migration and new submissions use the same config.
     # ------------------------------------------------------------------
-    from aizk.conversion.utilities.config import ConversionConfig
+    from aizk.conversion.utilities.config import DoclingConverterConfig
     from aizk.conversion.utilities.hashing import build_output_config_snapshot
 
-    _cfg = ConversionConfig(_env_file=None)
+    _cfg = DoclingConverterConfig(_env_file=None)
     _snapshot = build_output_config_snapshot(_cfg, picture_description_enabled=_cfg.is_picture_description_enabled())
     _config_json = json.dumps(_snapshot, sort_keys=True, separators=(",", ":"))
 

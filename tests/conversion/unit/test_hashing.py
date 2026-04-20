@@ -3,7 +3,7 @@
 import hashlib
 import json
 
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import DoclingConverterConfig
 from aizk.conversion.utilities.hashing import (
     build_output_config_snapshot,
     compute_idempotency_key,
@@ -47,28 +47,28 @@ def test_compute_markdown_hash_normalizes_line_endings_and_trim():
 
 
 def test_build_output_config_snapshot_matches_manifest_contract():
-    config = ConversionConfig(_env_file=None)
+    config = DoclingConverterConfig(_env_file=None)
     snapshot = build_output_config_snapshot(config, picture_description_enabled=True)
     assert set(snapshot) == {
-        "docling_pdf_max_pages",
-        "docling_enable_ocr",
-        "docling_enable_table_structure",
-        "docling_picture_description_model",
-        "docling_picture_timeout",
-        "docling_enable_picture_classification",
+        "pdf_max_pages",
+        "ocr_enabled",
+        "table_structure_enabled",
+        "picture_description_model",
+        "picture_timeout",
+        "picture_classification_enabled",
         "picture_description_enabled",
     }
     assert snapshot["picture_description_enabled"] is True
-    assert snapshot["docling_enable_picture_classification"] is True
+    assert snapshot["picture_classification_enabled"] is True
 
 
 def test_build_output_config_snapshot_omits_provider_identity_and_credentials():
     """Provider identity and credentials MUST NOT appear in the manifest snapshot, even when configured."""
-    config = ConversionConfig(
+    config = DoclingConverterConfig(
         _env_file=None,
-        DOCLING_PICTURE_DESCRIPTION_BASE_URL="https://provider.example.com/v1",
-        DOCLING_PICTURE_DESCRIPTION_API_KEY="sk-real-looking-value",
+        picture_description_base_url="https://provider.example.com/v1",
+        picture_description_api_key="sk-real-looking-value",
     )
     snapshot = build_output_config_snapshot(config, picture_description_enabled=True)
-    assert "docling_picture_description_base_url" not in snapshot
-    assert "docling_picture_description_api_key" not in snapshot
+    assert "picture_description_base_url" not in snapshot
+    assert "picture_description_api_key" not in snapshot

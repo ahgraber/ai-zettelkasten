@@ -129,8 +129,8 @@ class TestReadinessPictureDescription:
 
     @pytest.fixture()
     def _client_with_pd(self, monkeypatch):
-        monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_BASE_URL", "http://vlm.local/v1")
-        monkeypatch.setenv("DOCLING_PICTURE_DESCRIPTION_API_KEY", "test-key")
+        monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL", "http://vlm.local/v1")
+        monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY", "test-key")
         app = create_app()
         with TestClient(app) as tc:
             yield tc
@@ -138,8 +138,8 @@ class TestReadinessPictureDescription:
     @pytest.fixture()
     def _client_without_pd(self, monkeypatch):
         # Explicitly clear so config resolves is_picture_description_enabled() == False.
-        monkeypatch.delenv("DOCLING_PICTURE_DESCRIPTION_BASE_URL", raising=False)
-        monkeypatch.delenv("DOCLING_PICTURE_DESCRIPTION_API_KEY", raising=False)
+        monkeypatch.delenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL", raising=False)
+        monkeypatch.delenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY", raising=False)
         app = create_app()
         with TestClient(app) as tc:
             yield tc
