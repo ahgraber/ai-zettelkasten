@@ -11,10 +11,10 @@ from typing import ClassVar
 
 import httpx
 
+from aizk.conversion.core.errors import GitHubReadmeNotFoundError
 from aizk.conversion.core.source_ref import GithubReadmeRef, SourceRef
 from aizk.conversion.core.types import ContentType, ConversionInput
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.workers.fetcher import GitHubReadmeNotFoundError
 
 
 class GithubReadmeFetcher:

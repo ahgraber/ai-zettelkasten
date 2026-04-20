@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 from aizk.conversion.adapters.fetchers.karakeep import KarakeepBookmarkResolver
+from aizk.conversion.core.errors import BookmarkContentUnavailableError
 from aizk.conversion.core.source_ref import (
     ArxivRef,
     GithubReadmeRef,
@@ -16,7 +17,6 @@ from aizk.conversion.core.source_ref import (
     UrlRef,
 )
 from aizk.conversion.utilities.config import KarakeepFetcherConfig
-from aizk.conversion.workers.fetcher import BookmarkContentUnavailableError
 from karakeep_client.models import Bookmark
 
 _DEFAULT_CFG = KarakeepFetcherConfig(_env_file=None, base_url="", api_key="")

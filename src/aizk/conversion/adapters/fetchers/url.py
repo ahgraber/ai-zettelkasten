@@ -12,10 +12,11 @@ from urllib.parse import urlparse
 
 import httpx
 
+from aizk.conversion.core.errors import FetchError
 from aizk.conversion.core.source_ref import SourceRef, UrlRef
 from aizk.conversion.core.types import ContentType, ConversionInput
 from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
-from aizk.conversion.workers.fetcher import FetchError, fetch_karakeep_asset
+from aizk.conversion.utilities.fetch_helpers import fetch_karakeep_asset
 
 
 class UrlFetcher:

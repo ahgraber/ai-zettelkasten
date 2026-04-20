@@ -12,6 +12,7 @@ import httpx
 from pyleak import no_task_leaks
 import pytest
 
+from aizk.conversion.utilities import fetch_helpers as _fetch_helpers
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers import fetcher
 
@@ -61,7 +62,7 @@ async def test_fetch_karakeep_asset_returns_bytes(monkeypatch):
         async def get_asset(self, asset_id: str) -> bytes:
             return f"bytes-{asset_id}".encode()
 
-    monkeypatch.setattr(fetcher, "KarakeepClient", lambda: _DummyClient())
+    monkeypatch.setattr(_fetch_helpers, "KarakeepClient", lambda: _DummyClient())
 
     async with no_task_leaks(action="raise"):
         result = await fetcher.fetch_karakeep_asset("asset-1")
@@ -85,7 +86,7 @@ async def test_fetch_karakeep_asset_wraps_errors_as_retryable():
 
     import unittest.mock as _mock
 
-    with _mock.patch.object(fetcher, "KarakeepClient", lambda: _FailingClient()):
+    with _mock.patch.object(_fetch_helpers, "KarakeepClient", lambda: _FailingClient()):
         with pytest.raises(fetcher.FetchError) as excinfo:
             await fetcher.fetch_karakeep_asset("asset-X")
 

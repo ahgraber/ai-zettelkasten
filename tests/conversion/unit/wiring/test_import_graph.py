@@ -143,3 +143,28 @@ def test_non_wiring_module_does_not_import_both_core_and_adapters(source_file: P
         f"aizk.conversion.core and aizk.conversion.adapters — "
         f"only wiring/ modules may do this."
     )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 3: fetcher adapters must not import from workers
+# ---------------------------------------------------------------------------
+
+_FETCHERS_ROOT = _ADAPTERS_ROOT / "fetchers"
+
+
+def _fetcher_py_files() -> list[Path]:
+    return _py_files_under(_FETCHERS_ROOT)
+
+
+@pytest.mark.parametrize("fetcher_file", _fetcher_py_files(), ids=lambda p: p.name)
+def test_fetcher_adapter_does_not_import_workers(fetcher_file: Path) -> None:
+    """Fetcher adapter modules must not import from aizk.conversion.workers.
+
+    workers/ is a higher layer than adapters/; importing from it inverts the
+    dependency direction and couples adapters to worker-specific concerns.
+    Error classes and HTTP helpers are now in core.errors and
+    utilities.fetch_helpers respectively.
+    """
+    imports = _collect_imports(fetcher_file)
+    violations = [imp for imp in imports if imp.startswith("aizk.conversion.workers")]
+    assert violations == [], f"{fetcher_file.relative_to(_CONVERSION_ROOT)} imports from workers layer: {violations}"

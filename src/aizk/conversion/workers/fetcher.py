@@ -1,4 +1,11 @@
-"""Content fetching utilities for conversion workers."""
+"""Content fetching utilities for conversion workers.
+
+Error classes and low-level HTTP helpers now live in canonical locations:
+  - aizk.conversion.core.errors  (FetchError, BookmarkContentUnavailableError, etc.)
+  - aizk.conversion.adapters.fetchers._http  (fetch_karakeep_asset, fetch_arxiv_pdf)
+
+Re-exported here for backward compatibility.
+"""
 
 from __future__ import annotations
 
@@ -7,15 +14,21 @@ from urllib.parse import urlparse
 
 import httpx
 
-from aizk.conversion.utilities.arxiv_utils import ArxivClient, get_arxiv_id, is_arxiv_url
+from aizk.conversion.core.errors import (
+    ArxivPdfFetchError,
+    BookmarkContentUnavailableError,
+    FetchError,
+    GitHubReadmeNotFoundError,
+)
+from aizk.conversion.utilities.arxiv_utils import get_arxiv_id, is_arxiv_url
 from aizk.conversion.utilities.bookmark_utils import (
-    BookmarkContentError,
     get_bookmark_asset_id,
     get_bookmark_html_content,
     get_bookmark_source_url,
     is_pdf_asset,
 )
 from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.fetch_helpers import fetch_arxiv_pdf, fetch_karakeep_asset
 from aizk.conversion.utilities.github_utils import (
     is_github_pages_url,
     is_github_repo_root,
@@ -23,48 +36,9 @@ from aizk.conversion.utilities.github_utils import (
     parse_github_owner_repo,
     source_mentions_readme,
 )
-from karakeep_client.karakeep import KarakeepClient
 from karakeep_client.models import Bookmark
 
 logger = logging.getLogger(__name__)
-
-
-class FetchError(Exception):
-    """Base exception for fetch errors.
-
-    Network and remote fetch errors are typically transient and
-    should be retried.
-    """
-
-    error_code = "fetch_error"
-    retryable = True
-
-
-class BookmarkContentUnavailableError(FetchError, BookmarkContentError):
-    """Raised when KaraKeep bookmark has no usable content.
-
-    Permanent: mirrors BookmarkContentError semantics. Explicitly override
-    retryable to False to avoid MRO picking FetchError.retryable=True.
-    """
-
-    retryable = False
-
-
-class ArxivPdfFetchError(FetchError):
-    """Raised when arXiv PDF fetch fails."""
-
-    error_code = "arxiv_pdf_fetch_failed"
-
-
-class GitHubReadmeNotFoundError(FetchError):
-    """Raised when GitHub README not found.
-
-    Permanent: repository has no README content reachable via typical
-    locations; retrying will not change the outcome.
-    """
-
-    error_code = "github_readme_not_found"
-    retryable = False
 
 
 def _is_arxiv_abstract_url(url: str) -> bool:
@@ -74,47 +48,6 @@ def _is_arxiv_abstract_url(url: str) -> bool:
         return parsed.path.startswith("/abs")
     except Exception:
         return False
-
-
-async def fetch_karakeep_asset(asset_id: str) -> bytes:
-    """Fetch asset bytes from KaraKeep.
-
-    Args:
-        asset_id: Asset identifier.
-
-    Returns:
-        Asset bytes.
-
-    Raises:
-        FetchError: If asset fetch fails.
-    """
-    try:
-        async with KarakeepClient() as client:
-            return await client.get_asset(asset_id=asset_id)
-    except Exception as exc:
-        raise FetchError(f"Failed to fetch KaraKeep asset {asset_id}: {exc}") from exc
-
-
-async def fetch_arxiv_pdf(arxiv_id: str, config: ConversionConfig) -> bytes:
-    """Fetch PDF from arXiv.
-
-    Args:
-        arxiv_id: arXiv paper ID.
-        config: Conversion configuration.
-
-    Returns:
-        PDF content as bytes.
-
-    Raises:
-        ArxivPdfFetchError: If PDF fetch fails.
-    """
-    logger.info("Fetching arXiv PDF by id: %s", arxiv_id)
-
-    try:
-        async with ArxivClient(timeout=float(config.fetch_timeout_seconds)) as client:
-            return await client.download_paper_pdf(arxiv_id, use_export_url=True)
-    except Exception as exc:
-        raise ArxivPdfFetchError(f"Failed to fetch arXiv PDF for {arxiv_id}: {exc}") from exc
 
 
 async def fetch_arxiv(
