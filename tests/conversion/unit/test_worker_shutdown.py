@@ -12,6 +12,7 @@ from pyleak import no_thread_leaks
 import pytest
 from sqlmodel import Session
 
+from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.utilities.config import ConversionConfig
@@ -28,8 +29,11 @@ def _reset_shutdown():
 
 
 def _create_bookmark(db_session: Session) -> Bookmark:
+    _ref = KarakeepBookmarkRef(bookmark_id="bm_shutdown_test")
     bookmark = Bookmark(
         karakeep_id="bm_shutdown_test",
+        source_ref=_ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref),
         url="https://example.com",
         normalized_url="https://example.com",
         title="Shutdown Test",
@@ -220,7 +224,6 @@ class TestOrchestratorShutdownTerminated:
 
     def test_shutdown_terminated_calls_handle_job_error(self, monkeypatch, db_session, fp):
         """Shutdown termination transitions job to FAILED_RETRYABLE via handle_job_error."""
-        from aizk.conversion.core.source_ref import KarakeepBookmarkRef
 
         fp.allow_unregistered(False)
 

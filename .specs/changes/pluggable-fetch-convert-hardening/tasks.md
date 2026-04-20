@@ -72,23 +72,23 @@ Within a cluster, order is dependency-first.
 
 ## Cluster D — Schema hardening + rename cleanup (H5, M11)
 
-- [ ] `datamodel/source.py`: change `source_ref: str | None` → `source_ref: str`; change
+- [x] `datamodel/source.py`: change `source_ref: str | None` → `source_ref: str`; change
   `source_ref_hash: str | None` → `source_ref_hash: str`; remove `nullable=True` from both
   `sa_column` definitions; retain the existing `model_validator` as defense-in-depth.
-- [ ] New Alembic migration `<hash>_enforce_source_ref_not_null.py`:
+- [x] New Alembic migration `<hash>_enforce_source_ref_not_null.py`:
   - `upgrade()`: count rows where `source_ref IS NULL OR source_ref_hash IS NULL`; raise
     `IrreversibleMigrationError` if count > 0; use `op.batch_alter_table("sources")` to
     rebuild both columns as NOT NULL.
   - `downgrade()`: use `op.batch_alter_table("sources")` to rebuild both columns back to
     nullable.
-- [ ] `tests/conversion/unit/test_migrations.py`: add scenario verifying the pre-flight abort
+- [x] `tests/conversion/unit/test_migrations.py`: add scenario verifying the pre-flight abort
   (insert a row with NULL `source_ref`, assert `IrreversibleMigrationError` on upgrade);
   add round-trip test on a fully-populated database; verify ORM-baseline equivalence holds
   after the new migration (nullability of both columns matches `SQLModel.metadata.create_all()`).
-- [ ] Rename cleanup — `api/routes/jobs.py`: remove `from ... import Source as Bookmark`;
+- [x] Rename cleanup — `api/routes/jobs.py`: remove `from ... import Source as Bookmark`;
   import `Source` directly; rename all `bookmark` local variables to `source`.
-- [ ] Rename cleanup — `api/routes/ui.py`: remove `from ... import Source as Bookmark`;
+- [x] Rename cleanup — `api/routes/ui.py`: remove `from ... import Source as Bookmark`;
   import `Source` directly; rename `Bookmark` usages to `Source`.
-- [ ] Rename cleanup — `workers/uploader.py`: remove `from ... import Source as BookmarkRecord`;
+- [x] Rename cleanup — `workers/uploader.py`: remove `from ... import Source as BookmarkRecord`;
   import `Source` directly; rename `bookmark_record` / `BookmarkRecord` usages to `source` /
   `Source`.

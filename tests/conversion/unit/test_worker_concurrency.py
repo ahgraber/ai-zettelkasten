@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 from sqlmodel import Session
 
+from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.utilities.config import ConversionConfig
@@ -25,8 +26,11 @@ def _reset_shutdown():
 
 
 def _create_bookmark(db_session: Session) -> Bookmark:
+    _ref = KarakeepBookmarkRef(bookmark_id="bm_concurrency_test")
     bookmark = Bookmark(
         karakeep_id="bm_concurrency_test",
+        source_ref=_ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref),
         url="https://example.com",
         normalized_url="https://example.com",
         title="Concurrency Test",

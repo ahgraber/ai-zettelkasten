@@ -22,8 +22,8 @@ class Source(SQLModel, table=True):
         unique=True,
         index=True,
     )
-    source_ref: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
-    source_ref_hash: str | None = Field(default=None, sa_column=Column(Text, nullable=True, unique=True, index=True))
+    source_ref: str = Field(sa_column=Column(Text, nullable=False))
+    source_ref_hash: str = Field(sa_column=Column(Text, nullable=False, unique=True, index=True))
     url: str | None = Field(default=None, nullable=True)
     normalized_url: str | None = Field(default=None, nullable=True, index=True)
     title: str | None = Field(default=None, max_length=500, nullable=True)
