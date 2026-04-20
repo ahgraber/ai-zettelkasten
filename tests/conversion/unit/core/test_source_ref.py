@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 
+from hypothesis import given, settings as hyp_settings, strategies as st
 from pydantic import TypeAdapter, ValidationError
 import pytest
 
@@ -230,6 +231,11 @@ _PINNED_FIXTURES = [
         InlineHtmlRef(body=b""),
         "86d95fb5c7761f60e8e142dd9cbaaa6918b7305925471b15c00aa1fb7b6fcbaf",
     ),
+    # github — mixed-case owner/repo normalizes to same hash as lowercase (casefolding)
+    (
+        GithubReadmeRef(owner="AhGraber", repo="AI-Zettelkasten"),
+        "e5d35ddc1928378e94ad6b3166cae35bebf8f9b38871c2b38c5a2b7660891bdf",
+    ),
 ]
 
 
@@ -237,3 +243,52 @@ _PINNED_FIXTURES = [
 def test_dedup_payload_fixture_lock(ref, expected_hash):
     """Fail loudly on any change to `to_dedup_payload()` — either revert the change or ship a data migration."""
     assert compute_source_ref_hash(ref) == expected_hash
+
+
+# --- KarakeepBookmarkRef validation -----------------------------------------
+
+
+def test_karakeep_bookmark_id_with_whitespace_raises_validation_error():
+    with pytest.raises(ValidationError):
+        KarakeepBookmarkRef(bookmark_id=" bad id")
+
+
+def test_karakeep_bookmark_id_oversized_raises_validation_error():
+    with pytest.raises(ValidationError):
+        KarakeepBookmarkRef(bookmark_id="a" * 65)
+
+
+def test_karakeep_bookmark_id_at_max_length_accepted():
+    ref = KarakeepBookmarkRef(bookmark_id="a" * 64)
+    assert len(ref.bookmark_id) == 64
+
+
+# --- Property-based tests (hypothesis) --------------------------------------
+
+_BOOKMARK_ID_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+_OWNER_REPO_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
+
+
+@given(st.text(alphabet=_BOOKMARK_ID_ALPHABET, min_size=1, max_size=64))
+@hyp_settings(max_examples=200)
+def test_karakeep_hash_stable_for_valid_ids(bookmark_id):
+    # Pattern forbids whitespace; .strip() in to_dedup_payload() is a no-op for
+    # any valid ID.  The hash must be deterministic across calls.
+    ref = KarakeepBookmarkRef(bookmark_id=bookmark_id)
+    assert compute_source_ref_hash(ref) == compute_source_ref_hash(ref)
+    assert ref.to_dedup_payload()["bookmark_id"] == bookmark_id.strip()
+
+
+@given(
+    owner=st.text(alphabet=_OWNER_REPO_ALPHABET, min_size=1, max_size=20),
+    repo=st.text(alphabet=_OWNER_REPO_ALPHABET, min_size=1, max_size=20),
+)
+@hyp_settings(max_examples=200)
+def test_github_hash_stable_under_case_variation(owner, repo):
+    # GitHub org/repo names are case-insensitive; any casing must hash identically.
+    ref_original = GithubReadmeRef(owner=owner, repo=repo)
+    ref_lower = GithubReadmeRef(owner=owner.lower(), repo=repo.lower())
+    ref_upper = GithubReadmeRef(owner=owner.upper(), repo=repo.upper())
+    h = compute_source_ref_hash(ref_original)
+    assert compute_source_ref_hash(ref_lower) == h
+    assert compute_source_ref_hash(ref_upper) == h
