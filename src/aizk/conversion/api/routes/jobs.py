@@ -32,7 +32,6 @@ from aizk.conversion.core.source_ref import KarakeepBookmarkRef, SourceRef, comp
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source as Bookmark
-from aizk.conversion.utilities.config import DoclingConverterConfig
 from aizk.conversion.utilities.hashing import build_output_config_snapshot, compute_idempotency_key
 
 logger = logging.getLogger(__name__)
@@ -218,7 +217,7 @@ def submit_job(
     session.exec(text("BEGIN IMMEDIATE"))
 
     # Compute new-formula idempotency key
-    docling_cfg = DoclingConverterConfig()
+    docling_cfg = request.app.state.docling_config
     config_snap = build_output_config_snapshot(
         docling_cfg, picture_description_enabled=docling_cfg.is_picture_description_enabled()
     )

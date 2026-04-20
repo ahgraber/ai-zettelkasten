@@ -303,6 +303,38 @@ def test_process_with_provenance_carries_converter_name_and_config_snapshot():
     assert resolve_calls == [(ContentType.PDF, "fake_conv")]
 
 
+def test_worker_data_access_pattern_reads_only_from_process_result():
+    """Worker contract: after process_with_provenance, converter metadata is
+    available on the result; no additional resolver calls are needed or made."""
+    fetcher = _FakePdfFetcher(payload=b"pdf-bytes")
+    converter = _FakeConverter(markdown="# out")
+
+    resolve_calls: list[tuple[ContentType, str]] = []
+    base_resolve = _make_converter_resolver({(ContentType.PDF, "fake_conv"): converter})
+
+    def _tracked_resolve(content_type: ContentType, name: str) -> Converter:
+        resolve_calls.append((content_type, name))
+        return base_resolve(content_type, name)
+
+    orch = Orchestrator(
+        resolve_fetcher=_make_fetcher_resolver({"arxiv": fetcher}),
+        resolve_converter=_tracked_resolve,
+    )
+
+    result = orch.process_with_provenance(ArxivRef(arxiv_id="2301.12345"), "fake_conv")
+    resolve_count_after = len(resolve_calls)
+
+    # Simulate the worker pattern: read directly from result, no re-resolve.
+    converter_name = result.converter_name
+    config_snapshot = result.config_snapshot
+
+    assert converter_name == "fake_conv"
+    assert config_snapshot == {"converter_name": "fake"}
+    # Exactly one resolve call (made by the orchestrator); the worker pattern
+    # makes zero additional calls.
+    assert len(resolve_calls) == resolve_count_after == 1
+
+
 def test_fetch_raises_with_correctly_ordered_kinds_trail_from_top():
     # Three-kind chain exceeding cap=1 — the trail must list kinds in the
     # order dispatched, from the top of the chain to the offending hop.

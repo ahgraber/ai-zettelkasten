@@ -4,6 +4,7 @@ from pydantic import ValidationError
 import pytest
 
 from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
+from aizk.conversion.wiring.ingress_policy import IngressPolicy
 
 
 def test_config_reads_env_vars(monkeypatch):
@@ -97,3 +98,36 @@ def test_karakeep_config_reads_new_env_vars(monkeypatch):
 
     assert config.base_url == "http://kk:3000"
     assert config.api_key == "mytoken"
+
+
+# --- Settings hermeticity (H7) -----------------------------------------------
+
+
+def test_all_settings_classes_declare_env_file_none():
+    """Every BaseSettings subclass in the conversion package must declare env_file=None.
+
+    The composition root (wiring builders and CLI commands) is the only permitted
+    site that loads .env via python-dotenv before constructing settings.
+    """
+    assert ConversionConfig.model_config.get("env_file") is None
+    assert DoclingConverterConfig.model_config.get("env_file") is None
+    assert KarakeepFetcherConfig.model_config.get("env_file") is None
+    assert IngressPolicy.model_config.get("env_file") is None
+
+
+@pytest.mark.isolate
+def test_docling_converter_config_ignores_env_file_without_session_fixtures(tmp_path):
+    """In a fresh process (no session fixtures), DoclingConverterConfig() must ignore .env.
+
+    This is the authoritative check: it runs without the session-level fixture that
+    patches model_config["env_file"] = None, so it validates the class default directly.
+    """
+    import os
+
+    from aizk.conversion.utilities.config import DoclingConverterConfig
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("AIZK_CONVERTER__DOCLING__OCR_ENABLED=false\n")
+    os.chdir(tmp_path)
+    config = DoclingConverterConfig()
+    assert config.ocr_enabled is True  # .env must be ignored when env_file=None

@@ -170,6 +170,55 @@ def test_compute_hash_matches_manual_json_encoding():
 
 # --- Fixture-lock: pinned (ref, expected sha256) pairs -----------------------
 
+# --- UrlRef normalizer failure paths ----------------------------------------
+
+
+def test_url_ref_normalizer_exception_falls_back_deterministically(monkeypatch):
+    """When normalize_url raises ValueError the fallback is strip+casefold+rstrip('/')."""
+    from aizk.conversion.core import source_ref as _sr_mod
+
+    def _raise(_url: str) -> str:
+        raise ValueError("normalizer unavailable")
+
+    monkeypatch.setattr(_sr_mod, "normalize_url", _raise)
+
+    raw = "  HTTPS://Example.COM/foo/  "
+    ref = UrlRef(url=raw)
+    assert ref.url == raw.strip().casefold().rstrip("/")
+
+
+def test_url_ref_normalizer_validation_error_falls_back(monkeypatch):
+    """ValidationError from normalize_url is also caught and falls back deterministically."""
+    import validators as _validators
+
+    from aizk.conversion.core import source_ref as _sr_mod
+
+    def _raise(_url: str) -> str:
+        raise _validators.ValidationError(function=_raise, arg_dict={"value": _url})
+
+    monkeypatch.setattr(_sr_mod, "normalize_url", _raise)
+
+    raw = "  HTTP://Example.COM/path  "
+    ref = UrlRef(url=raw)
+    assert ref.url == raw.strip().casefold().rstrip("/")
+
+
+def test_normalize_url_import_failure_surfaces_at_module_load(monkeypatch):
+    """If aizk.utilities.url_utils cannot be imported, source_ref module import fails immediately."""
+    import importlib
+    import sys
+
+    # Evict source_ref from the module cache so importlib re-executes it.
+    monkeypatch.delitem(sys.modules, "aizk.conversion.core.source_ref", raising=False)
+    # Signal that url_utils is unimportable (None sentinel = import halted).
+    monkeypatch.setitem(sys.modules, "aizk.utilities.url_utils", None)
+
+    with pytest.raises(ImportError):
+        importlib.import_module("aizk.conversion.core.source_ref")
+
+
+# ---------------------------------------------------------------------------
+
 _PINNED_FIXTURES = [
     # karakeep
     (

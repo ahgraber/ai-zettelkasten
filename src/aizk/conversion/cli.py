@@ -76,6 +76,9 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     """Run the conversion service CLI."""
+    from dotenv import load_dotenv
+
+    load_dotenv()
     parser = argparse.ArgumentParser(prog="aizk-conversion")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
