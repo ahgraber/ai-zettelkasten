@@ -1024,6 +1024,7 @@ def _make_workspace_metadata(tmp_path: Path, *, markdown_hash: str) -> Path:
         "docling_version": "1.0.0",
         "pipeline_name": "html",
         "fetched_at": "2026-01-01T00:00:00+00:00",
+        "terminal_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_workspace_default"},
         "config_snapshot": {
             "docling_pdf_max_pages": 250,
             "docling_enable_ocr": True,

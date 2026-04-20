@@ -27,7 +27,7 @@ import psutil
 import pytest
 from sqlmodel import Session
 
-from aizk.conversion.core.source_ref import KarakeepBookmarkRef
+from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.utilities.config import ConversionConfig
@@ -199,8 +199,11 @@ def _make_fake_runtime():
 
 def _create_test_bookmark(db_session: Session) -> Bookmark:
     """Helper to create a test bookmark."""
+    _ref = KarakeepBookmarkRef(kind="karakeep_bookmark", bookmark_id="bm_lifecycle_test")
     bookmark = Bookmark(
         karakeep_id="bm_lifecycle_test",
+        source_ref=_ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref),
         url="https://example.com/test",
         normalized_url="https://example.com/test",
         title="Lifecycle Test",

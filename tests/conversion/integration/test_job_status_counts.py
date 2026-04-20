@@ -7,14 +7,18 @@ from uuid import UUID
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
+from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as Bookmark
 
 
 def _create_bookmark(db_session, karakeep_id: str) -> Bookmark:
+    _ref = KarakeepBookmarkRef(bookmark_id=karakeep_id)
     bookmark = Bookmark(
         karakeep_id=karakeep_id,
         aizk_uuid=UUID("550e8400-e29b-41d4-a716-446655440000"),
+        source_ref=_ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref),
         url="https://example.com",
         normalized_url="https://example.com",
         title="Status Count Example",
