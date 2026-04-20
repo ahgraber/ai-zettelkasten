@@ -15,12 +15,14 @@ from aizk.conversion.core.source_ref import (
     UrlRef,
 )
 from aizk.conversion.storage.manifest import (
-    ConversionManifest,
+    ManifestArtifactMarkdown,
+    ManifestArtifacts,
     ManifestConfigSnapshot,
     ManifestConfigSnapshotV2,
+    ManifestConversionMetadata,
+    ManifestSource,
     ManifestV1,
     ManifestV2,
-    generate_manifest,
     generate_manifest_v2,
     load_manifest,
 )
@@ -81,16 +83,34 @@ def _config_snapshot(
     )
 
 
-def _base_manifest(*, picture_description_enabled: bool = False) -> ConversionManifest:
-    return generate_manifest(
-        bookmark=_make_bookmark(),
-        job=_make_job(),
-        fetched_at=_FETCHED_AT,
-        markdown_s3_uri="s3://bucket/output.md",
-        markdown_hash="abcd1234",
-        figure_s3_uris=[],
-        docling_version="2.0.0",
-        pipeline_name="html",
+def _base_manifest(*, picture_description_enabled: bool = False) -> ManifestV1:
+    return ManifestV1(
+        aizk_uuid=_DEFAULT_AIZK_UUID,
+        karakeep_id="kk-001",
+        source=ManifestSource(
+            url="https://example.com/page",
+            normalized_url="https://example.com/page",
+            title="Example",
+            source_type="other",
+            fetched_at=_FETCHED_AT,
+        ),
+        conversion=ManifestConversionMetadata(
+            job_id=1,
+            payload_version=1,
+            docling_version="2.0.0",
+            pipeline_name="html",
+            started_at=_FETCHED_AT,
+            finished_at=_FETCHED_AT,
+            duration_seconds=0,
+        ),
+        artifacts=ManifestArtifacts(
+            markdown=ManifestArtifactMarkdown(
+                key="s3://bucket/output.md",
+                hash_xx64="abcd1234",
+                created_at=_FETCHED_AT,
+            ),
+            figures=[],
+        ),
         config_snapshot=_config_snapshot(picture_description_enabled=picture_description_enabled),
     )
 
@@ -123,16 +143,11 @@ def test_manifest_config_snapshot_contains_docling_fields():
 def test_manifest_config_snapshot_contains_docling_enable_picture_classification():
     manifest = _base_manifest()
     assert manifest.config_snapshot.docling_enable_picture_classification is True
-    manifest_off = generate_manifest(
-        bookmark=_make_bookmark(),
-        job=_make_job(),
-        fetched_at=_FETCHED_AT,
-        markdown_s3_uri="s3://bucket/output.md",
-        markdown_hash="abcd1234",
-        figure_s3_uris=[],
-        docling_version="2.0.0",
-        pipeline_name="html",
-        config_snapshot=_config_snapshot(docling_enable_picture_classification=False),
+    manifest_off = ManifestV1.model_validate(
+        {
+            **manifest.model_dump(),
+            "config_snapshot": _config_snapshot(docling_enable_picture_classification=False).model_dump(),
+        }
     )
     assert manifest_off.config_snapshot.docling_enable_picture_classification is False
 
@@ -209,36 +224,7 @@ def test_manifest_config_snapshot_v2_extra_forbid():
 
 def test_load_manifest_returns_v1_for_version_1_0():
     """load_manifest on a v1.0 dict returns ManifestV1."""
-    v1_manifest = ConversionManifest(
-        aizk_uuid=_DEFAULT_AIZK_UUID,
-        karakeep_id="kk-001",
-        source={
-            "url": "https://example.com/page",
-            "normalized_url": "https://example.com/page",
-            "title": "Example",
-            "source_type": "other",
-            "fetched_at": _FETCHED_AT,
-        },
-        conversion={
-            "job_id": 1,
-            "payload_version": 1,
-            "docling_version": "2.0.0",
-            "pipeline_name": "html",
-            "started_at": _FETCHED_AT,
-            "finished_at": _FETCHED_AT,
-            "duration_seconds": 0,
-        },
-        artifacts={
-            "markdown": {
-                "key": "s3://bucket/output.md",
-                "hash_xx64": "abcd1234",
-                "created_at": _FETCHED_AT,
-            },
-            "figures": [],
-        },
-        config_snapshot=_config_snapshot(),
-    )
-    data = v1_manifest.model_dump()
+    data = _base_manifest().model_dump()
     result = load_manifest(data)
     assert isinstance(result, ManifestV1)
     assert result.version == "1.0"

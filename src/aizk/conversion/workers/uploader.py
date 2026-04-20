@@ -14,8 +14,6 @@ from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source as BookmarkRecord
 from aizk.conversion.db import get_engine
 from aizk.conversion.storage.manifest import (
-    ManifestConfigSnapshot,
-    generate_manifest,
     generate_manifest_v2,
     save_manifest,
 )
@@ -114,55 +112,38 @@ def _upload_converted(job_id: int, workspace: Path, config: ConversionConfig) ->
 
         job.finished_at = _utcnow()
 
-        # Choose manifest format based on whether terminal_ref is present (v2) or not (v1).
-        terminal_ref_data = metadata.get("terminal_ref")
         manifest_local_path = workspace / "manifest.json"
 
-        if terminal_ref_data:
-            from pydantic import TypeAdapter
+        from pydantic import TypeAdapter
 
-            from aizk.conversion.core.source_ref import SourceRef as _SourceRef
+        from aizk.conversion.core.source_ref import SourceRef as _SourceRef
 
-            terminal_ref = TypeAdapter(_SourceRef).validate_python(terminal_ref_data)
-            # submitted_ref from the job's source_ref column
-            submitted_ref_raw = json.loads(job.source_ref) if job.source_ref else None
-            submitted_ref = (
-                TypeAdapter(_SourceRef).validate_python(submitted_ref_raw) if submitted_ref_raw else terminal_ref
-            )
+        terminal_ref = TypeAdapter(_SourceRef).validate_python(metadata["terminal_ref"])
+        submitted_ref_raw = json.loads(job.source_ref) if job.source_ref else None
+        submitted_ref = (
+            TypeAdapter(_SourceRef).validate_python(submitted_ref_raw) if submitted_ref_raw else terminal_ref
+        )
 
-            converter_name = metadata.get("config_snapshot", {}).get("converter_name", "docling")
-            adapter_snapshot = {k: v for k, v in metadata.get("config_snapshot", {}).items() if k != "converter_name"}
+        converter_name = metadata.get("config_snapshot", {}).get("converter_name", "docling")
+        adapter_snapshot = {k: v for k, v in metadata.get("config_snapshot", {}).items() if k != "converter_name"}
 
-            manifest = generate_manifest_v2(
-                submitted_ref=submitted_ref,
-                terminal_ref=terminal_ref,
-                job=job,
-                fetched_at=dt.datetime.fromisoformat(metadata["fetched_at"]),
-                markdown_s3_uri=markdown_uri,
-                markdown_hash=metadata["markdown_hash_xx64"],
-                figure_s3_uris=figure_uris,
-                docling_version=metadata.get("docling_version", "unknown"),
-                pipeline_name=metadata["pipeline_name"],
-                converter_name=converter_name,
-                adapter_snapshot=adapter_snapshot,
-                source_url=bookmark.url,
-                source_normalized_url=bookmark.normalized_url,
-                source_title=bookmark.title or job.title,
-                source_type=bookmark.source_type,
-            )
-        else:
-            # Legacy v1 path — config_snapshot uses old ManifestConfigSnapshot shape
-            manifest = generate_manifest(
-                bookmark=bookmark,
-                job=job,
-                fetched_at=dt.datetime.fromisoformat(metadata["fetched_at"]),
-                markdown_s3_uri=markdown_uri,
-                markdown_hash=metadata["markdown_hash_xx64"],
-                figure_s3_uris=figure_uris,
-                docling_version=metadata["docling_version"],
-                pipeline_name=metadata["pipeline_name"],
-                config_snapshot=ManifestConfigSnapshot(**metadata["config_snapshot"]),
-            )
+        manifest = generate_manifest_v2(
+            submitted_ref=submitted_ref,
+            terminal_ref=terminal_ref,
+            job=job,
+            fetched_at=dt.datetime.fromisoformat(metadata["fetched_at"]),
+            markdown_s3_uri=markdown_uri,
+            markdown_hash=metadata["markdown_hash_xx64"],
+            figure_s3_uris=figure_uris,
+            docling_version=metadata.get("docling_version", "unknown"),
+            pipeline_name=metadata["pipeline_name"],
+            converter_name=converter_name,
+            adapter_snapshot=adapter_snapshot,
+            source_url=bookmark.url,
+            source_normalized_url=bookmark.normalized_url,
+            source_title=bookmark.title or job.title,
+            source_type=bookmark.source_type,
+        )
 
         save_manifest(manifest, manifest_local_path)
         manifest_uri = s3_client.upload_file(manifest_local_path, f"{prefix}/manifest.json")

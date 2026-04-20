@@ -27,6 +27,8 @@ from alembic import op
 import sqlalchemy as sa
 import sqlmodel.sql.sqltypes  # noqa: F401 — AutoString referenced in DDL
 
+from aizk.conversion.core.errors import IrreversibleMigrationError
+
 # revision identifiers, used by Alembic.
 revision: str = "c1d2e3f4a5b6"
 down_revision: str | None = "b7f8e9a0c1d2"
@@ -321,7 +323,7 @@ def downgrade() -> None:
     # Guard: cannot downgrade if any source row lacks a karakeep_id
     null_count = conn.execute(sa.text("SELECT COUNT(*) FROM sources WHERE karakeep_id IS NULL")).scalar()
     if null_count:
-        raise RuntimeError(
+        raise IrreversibleMigrationError(
             f"Cannot downgrade: {null_count} row(s) in sources have karakeep_id IS NULL. Downgrade would lose data."
         )
 
