@@ -1077,8 +1077,8 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
         title="Hash Reuse",
         payload_version=1,
         s3_prefix=f"s3://bucket/{bookmark.aizk_uuid}/",
-        markdown_key=f"s3://bucket/{bookmark.aizk_uuid}/output.md",
-        manifest_key=f"s3://bucket/{bookmark.aizk_uuid}/manifest.json",
+        markdown_key=f"{bookmark.aizk_uuid}/output.md",
+        manifest_key=f"{bookmark.aizk_uuid}/manifest.json",
         markdown_hash_xx64=known_hash,
         figure_count=0,
         docling_version="1.0.0",
@@ -1176,6 +1176,13 @@ def test_upload_converted_uploads_when_hash_differs(monkeypatch, db_session: Ses
 
     db_session.refresh(new_job)
     assert new_job.status == ConversionJobStatus.SUCCEEDED
+
+    from sqlmodel import select as _select
+
+    outputs = db_session.exec(_select(ConversionOutput).where(ConversionOutput.job_id == new_job.id)).all()
+    assert len(outputs) == 1
+    assert outputs[0].markdown_key == f"{bookmark.aizk_uuid}/output.md", "markdown_key must be a bare S3 key"
+    assert outputs[0].manifest_key == f"{bookmark.aizk_uuid}/manifest.json", "manifest_key must be a bare S3 key"
 
 
 def test_initialize_running_job_returns_false_for_cancelled_after_running_set(
