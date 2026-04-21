@@ -282,11 +282,18 @@ def upgrade() -> None:
     )
 
     # ------------------------------------------------------------------
-    # 9. Recompute idempotency_key: sha256(source_ref_hash:docling:config_json).
+    # 9. Recompute idempotency_key: sha256(source_ref_hash:docling:config_json:job_<id>).
     #
     # Frozen at the defaults shipped with this migration. Using live config
     # would make the hash differ between migration-time and a fresh job
     # submitted post-migration with non-default settings.
+    #
+    # The job ID is appended as a disambiguator so that two historical jobs
+    # referencing the same source always produce distinct keys, avoiding a
+    # unique-constraint violation when the UPDATE loop reaches the second row.
+    # Replay-idempotency is guaranteed for post-migration submissions only;
+    # historical rows receive stable, unique keys but are not guaranteed to
+    # deduplicate on re-submission.
     # ------------------------------------------------------------------
     _snapshot = {
         "pdf_max_pages": 250,
@@ -309,7 +316,7 @@ def upgrade() -> None:
     ).fetchall()
 
     for job_id, source_ref_hash in job_rows:
-        new_key = _sha256_hex(f"{source_ref_hash}:docling:{_config_json}")
+        new_key = _sha256_hex(f"{source_ref_hash}:docling:{_config_json}:job_{job_id}")
         conn.execute(
             sa.text("UPDATE conversion_jobs SET idempotency_key = :key WHERE id = :id"),
             {"key": new_key, "id": job_id},

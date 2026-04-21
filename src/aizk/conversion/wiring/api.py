@@ -42,9 +42,6 @@ def build_api_runtime(
     Raises:
         ConfigurationError: If the ingress policy references an unregistered kind.
     """
-    from dotenv import load_dotenv
-
-    load_dotenv()
     if ingress_policy is None:
         ingress_policy = IngressPolicy()
 

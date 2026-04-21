@@ -9,6 +9,7 @@ from fastapi.responses import RedirectResponse
 
 from aizk.conversion.api.routes import bookmarks_router, health_router, jobs_router, outputs_router, ui_router
 from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.dotenv import load_process_dotenv_once
 from aizk.conversion.utilities.logging import configure_logging
 from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
 
@@ -16,12 +17,10 @@ from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Initialize resources needed for the API lifespan."""
-    from dotenv import load_dotenv
-
     from aizk.conversion.migrations import run_migrations
     from aizk.conversion.wiring.api import build_api_runtime
 
-    load_dotenv()
+    load_process_dotenv_once()
     config = ConversionConfig()
     _app.state.config = config
     configure_logging(config)

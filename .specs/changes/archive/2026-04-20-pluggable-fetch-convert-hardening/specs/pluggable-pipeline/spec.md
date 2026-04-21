@@ -93,8 +93,11 @@ hashing.
 ### Requirement: Wire adapters via role-specific builders
 
 Role-specific builder functions SHALL construct all `BaseSettings` instances exactly once and SHALL NOT allow settings to be re-read from disk or environment on subsequent calls.
-Every `BaseSettings` subclass in the conversion package SHALL default `env_file=None` in its `model_config`; the composition root (builder functions) is the only permitted site that loads `.env` via `python-dotenv` before constructing settings.
-Settings instances that are needed at request time (e.g., `DoclingConverterConfig`) SHALL be attached to `app.state` by the builder function and read via `request.app.state` by request handlers; they SHALL NOT be re-instantiated per request or per health probe. (Previously: `DoclingConverterConfig()` was instantiated inside request handlers and health probes, re-reading `.env` on every call; `IngressPolicy` had `env_file=".env"` as its default, allowing drift when `.env` mutated at runtime.)
+Every `BaseSettings` subclass in the conversion package SHALL default `env_file=None` in its `model_config`, so that instantiation outside a controlled startup path never silently reads a `.env` file from disk.
+`.env` loading SHALL be routed through a shared guarded helper that calls `load_dotenv()` at most once per process.
+Permitted composition-root sites for that helper are: the `lifespan` context in `api/main.py`, the `main()` function in `cli.py`, and the `_do_convert()` function in the conversion subprocess (a fresh interpreter spawned per job).
+Builder functions (`build_api_runtime`, `build_worker_runtime`) MAY instantiate the `BaseSettings` objects they own, but they SHALL NOT themselves call `load_dotenv()` or the shared guarded helper.
+No `BaseSettings` subclass SHALL be instantiated per-request or per-health-probe; settings needed at request time SHALL be attached to `app.state` by the builder function at startup and read via `request.app.state` by request handlers. (Previously: `DoclingConverterConfig()` was instantiated inside request handlers and health probes, re-reading `.env` on every call; `IngressPolicy` had `env_file=".env"` as its default, allowing drift when `.env` mutated at runtime.)
 
 #### Scenario: DoclingConverterConfig is constructed once per process
 

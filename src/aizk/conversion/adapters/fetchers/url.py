@@ -60,7 +60,11 @@ class UrlFetcher:
             except Exception as exc:
                 raise FetchError(f"Failed to fetch KaraKeep asset for URL {url!r}: {exc}") from exc
             # Detect content type from URL path
-            content_type = ContentType.PDF if parsed.path.lower().endswith(".pdf") else ContentType.HTML
+            # Use content_type hint from resolver when available; fall back to path-suffix inference.
+            if ref.content_type_hint is not None:
+                content_type = ref.content_type_hint
+            else:
+                content_type = ContentType.PDF if parsed.path.lower().endswith(".pdf") else ContentType.HTML
             return ConversionInput(content=content, content_type=content_type)
 
         # Generic HTTP URL

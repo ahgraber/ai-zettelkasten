@@ -109,3 +109,10 @@ class GitHubReadmeNotFoundError(FetchError):  # noqa: N818 — canonical spec na
 
     error_code = "github_readme_not_found"
     retryable: ClassVar[bool] = False
+
+
+class MissingContentError(FetchError):  # noqa: N818 — canonical spec name
+    """Raised when a fetcher returns zero-length content. Permanent (not retryable)."""
+
+    error_code = "missing-content"
+    retryable: ClassVar[bool] = False

@@ -15,7 +15,9 @@ Source reuse under concurrent submission SHALL use `INSERT ... ON CONFLICT (sour
 For `KarakeepBookmarkRef` submissions, the API SHALL populate `Source.karakeep_id` from `bookmark_id`; for all other variants (once admitted by `IngressPolicy`), `karakeep_id` SHALL be null.
 The API SHALL compute the idempotency key at submit time, including `source_ref_hash`, `converter_name`, and the converter's output-affecting config snapshot in the hash, so that jobs for different source refs, different converters, or different converter configurations produce distinct keys.
 This idempotency formula replaces the pre-refactor formula (which hashed `aizk_uuid` and Docling-specific fields).
-Replay-idempotency across the cutover is preserved by the `bookmarks → sources` migration recomputing historical `idempotency_key` values in place under the new formula (see the `schema-migrations` delta and the PR 6a migration task); accordingly, post-migration a replay of a pre-refactor submission SHALL hit the same idempotency key the migration produced for its row, not produce a new job.
+Replay-idempotency is guaranteed for post-migration submissions only.
+The `bookmarks → sources` migration rewrites historical `idempotency_key` values using a frozen default config snapshot (see the `schema-migrations` delta); historical rows for which the original per-job config is unrecoverable receive a disambiguated key that preserves uniqueness but does not guarantee deduplication on re-submission.
+A re-submission after migration will always produce a fresh key computed from the live deployment config, and it will not match a migrated historical key because migrated rows are intentionally disambiguated.
 Source identity columns (`aizk_uuid`, `source_ref`, `source_ref_hash`, `karakeep_id`) SHALL be immutable after creation; worker writes are confined to mutable metadata columns.
 
 **Schema reference:** `POST /v1/jobs` · request: `JobSubmission` (updated) · response: `JobResponse` (updated)
@@ -87,6 +89,9 @@ The subset invariant `accepted_submission_kinds ⊆ DeploymentCapabilities.regis
 
 #### Scenario: Registered-but-not-admitted kind rejected at policy layer
 
-- **GIVEN** `DeploymentCapabilities.registered_kinds` includes `"url"` (worker can dispatch it) but `IngressPolicy` does not admit `"url"`, so `SubmissionCapabilities.accepted_submission_kinds` excludes it
+_Note: this scenario is not reachable at cutover because `IngressSourceRef` is still a narrow union that only admits `KarakeepBookmarkRef`; pydantic rejects any other kind at the schema layer before the policy gate runs._
+_This scenario becomes exercisable once `IngressSourceRef` is widened to include a second kind that is registered for worker dispatch but excluded from `IngressPolicy`._
+
+- **GIVEN** `DeploymentCapabilities.registered_kinds` includes `"url"` (worker can dispatch it) but `IngressPolicy` does not admit `"url"`, so `SubmissionCapabilities.accepted_submission_kinds` excludes it, AND `IngressSourceRef` has been widened to include `UrlRef`
 - **WHEN** a client submits a job with `source_ref.kind = "url"`
 - **THEN** HTTP 422 is returned with an error indicating the kind is not admitted for submission in this deployment

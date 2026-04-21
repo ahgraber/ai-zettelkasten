@@ -16,6 +16,7 @@ from aizk.conversion.core.source_ref import (
     KarakeepBookmarkRef,
     UrlRef,
 )
+from aizk.conversion.core.types import ContentType
 from aizk.conversion.utilities.config import KarakeepFetcherConfig
 from karakeep_client.models import Bookmark
 
@@ -228,6 +229,7 @@ def test_karakeep_resolver_pdf_asset_bookmark_returns_url_ref(monkeypatch):
 
     assert isinstance(result, UrlRef)
     assert result.url == "https://karakeep.example.com/api/v1/assets/pdf-asset-1"
+    assert result.content_type_hint is ContentType.PDF
 
 
 # ---------------------------------------------------------------------------
