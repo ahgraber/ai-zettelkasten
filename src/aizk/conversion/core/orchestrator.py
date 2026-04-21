@@ -20,7 +20,7 @@ from dataclasses import dataclass as _dataclass
 import logging
 from typing import Any
 
-from aizk.conversion.core.errors import FetcherDepthExceeded
+from aizk.conversion.core.errors import FetcherDepthExceeded, MissingContentError
 from aizk.conversion.core.protocols import ContentFetcher, Converter, RefResolver
 from aizk.conversion.core.source_ref import SourceRef
 from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput
@@ -127,12 +127,16 @@ class Orchestrator:
     def process(self, ref: SourceRef, converter_name: str) -> ConversionArtifacts:
         """Run the full fetch -> convert cycle for ``ref`` using ``converter_name``."""
         conversion_input = self._fetch(ref)
+        if not conversion_input.content:
+            raise MissingContentError(f"Fetcher returned zero-length content for {ref!r}")
         converter = self._resolve_converter(conversion_input.content_type, converter_name)
         return converter.convert(conversion_input)
 
     def process_with_provenance(self, ref: SourceRef, converter_name: str) -> ProcessResult:
         """Like ``process`` but also returns fetch provenance (terminal ref and conversion input)."""
         conversion_input, terminal_ref = self._fetch_with_terminal_ref(ref)
+        if not conversion_input.content:
+            raise MissingContentError(f"Fetcher returned zero-length content for {ref!r}")
         converter = self._resolve_converter(conversion_input.content_type, converter_name)
         artifacts = converter.convert(conversion_input)
         if hasattr(converter, "config_snapshot"):

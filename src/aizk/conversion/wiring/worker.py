@@ -49,9 +49,6 @@ def build_worker_runtime(cfg: ConversionConfig) -> WorkerRuntime:
     Returns:
         A ``WorkerRuntime`` ready for use in a worker process.
     """
-    from dotenv import load_dotenv
-
-    load_dotenv()
     fetcher_registry = FetcherRegistry()
     converter_registry = ConverterRegistry()
     docling_cfg = DoclingConverterConfig()

@@ -963,6 +963,39 @@ def test_handle_job_error_missing_artifacts_is_permanent(monkeypatch, db_session
     assert job.finished_at is not None
 
 
+def test_handle_job_error_missing_content_from_child_is_permanent(monkeypatch, db_session: Session) -> None:
+    """A child-reported missing-content failure must be recorded as permanent."""
+    monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
+
+    bookmark = _create_bookmark(db_session)
+    job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title,
+        idempotency_key="m" * 64,
+        status=ConversionJobStatus.QUEUED,
+        attempts=0,
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+
+    config = ConversionConfig(_env_file=None)
+    orchestrator.handle_job_error(
+        job.id,
+        errors_mod.ReportedChildError(
+            "Fetcher returned zero-length content",
+            "missing-content",
+            retryable=False,
+        ),
+        config,
+    )
+
+    db_session.refresh(job)
+    assert job.status == ConversionJobStatus.FAILED_PERM
+    assert job.error_code == "missing-content"
+    assert job.finished_at is not None
+
+
 def test_error_code_and_retryable_mapping() -> None:
     """Every exception class carries an explicit retryable class attribute."""
     jde = errors_mod.JobDataIntegrityError("bad job")

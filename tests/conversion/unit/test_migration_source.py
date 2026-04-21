@@ -18,6 +18,7 @@ import pytest
 from sqlalchemy import create_engine, inspect, text
 
 from aizk.conversion.core.errors import IrreversibleMigrationError
+from aizk.conversion.utilities.hashing import compute_idempotency_key
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -301,8 +302,33 @@ def test_downgrade_aborts_when_karakeep_id_is_null(tmp_path):
         command.downgrade(cfg, _PREV_REVISION)
 
 
+# Frozen snapshot used by the migration — must stay in sync with the migration.
+_MIGRATION_FROZEN_SNAPSHOT = {
+    "pdf_max_pages": 250,
+    "ocr_enabled": True,
+    "table_structure_enabled": True,
+    "picture_description_model": "openai/gpt-5.4-nano",
+    "picture_timeout": 180.0,
+    "picture_classification_enabled": True,
+    "picture_description_enabled": False,
+}
+
+
+def _expected_migrated_key(karakeep_id: str, job_id: int) -> str:
+    import json as _json
+
+    source_ref = _json.dumps(
+        {"kind": "karakeep_bookmark", "bookmark_id": karakeep_id},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    source_ref_hash = _sha256_hex(source_ref)
+    config_json = _json.dumps(_MIGRATION_FROZEN_SNAPSHOT, sort_keys=True, separators=(",", ":"))
+    return _sha256_hex(f"{source_ref_hash}:docling:{config_json}:job_{job_id}")
+
+
 def test_idempotency_key_recomputed_with_new_formula(tmp_path):
-    """After upgrade, idempotency_key = sha256(source_ref_hash + ':docling:' + config_json)."""
+    """After upgrade, idempotency_key uses frozen defaults + job ID disambiguator."""
     url = _db_url(tmp_path)
     cfg = _alembic_cfg(url)
     _apply_up_to_prev(cfg)
@@ -312,25 +338,9 @@ def test_idempotency_key_recomputed_with_new_formula(tmp_path):
     old_key = "a" * 64
     with engine.begin() as conn:
         aizk_uuid = _insert_bookmark(conn, karakeep_id=karakeep_id)
-        _insert_job(conn, aizk_uuid=aizk_uuid, idempotency_key=old_key)
+        job_id = _insert_job(conn, aizk_uuid=aizk_uuid, idempotency_key=old_key)
 
     command.upgrade(cfg, _THIS_REVISION)
-
-    import json as _json
-
-    from aizk.conversion.utilities.config import DoclingConverterConfig
-    from aizk.conversion.utilities.hashing import build_output_config_snapshot
-
-    expected_source_ref = _json.dumps(
-        {"kind": "karakeep_bookmark", "bookmark_id": karakeep_id},
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    expected_source_ref_hash = _sha256_hex(expected_source_ref)
-    _cfg = DoclingConverterConfig(_env_file=None)
-    _snapshot = build_output_config_snapshot(_cfg, picture_description_enabled=_cfg.is_picture_description_enabled())
-    _config_json = _json.dumps(_snapshot, sort_keys=True, separators=(",", ":"))
-    expected_new_key = _sha256_hex(f"{expected_source_ref_hash}:docling:{_config_json}")
 
     with engine.connect() as conn:
         row = conn.execute(
@@ -343,6 +353,85 @@ def test_idempotency_key_recomputed_with_new_formula(tmp_path):
         ).fetchone()
 
     assert row is not None
+    expected_new_key = _expected_migrated_key(karakeep_id, job_id)
     assert row[0] == expected_new_key, (
         f"idempotency_key mismatch:\n  got:      {row[0]}\n  expected: {expected_new_key}"
     )
+
+
+def test_idempotency_key_no_collision_for_multiple_jobs_same_source(tmp_path):
+    """Two historical jobs referencing the same source get distinct migrated keys.
+
+    This guards against the unique-constraint violation that would occur if both
+    jobs were rewritten to the same sha256(source_ref_hash:docling:config_json) key.
+    """
+    url = _db_url(tmp_path)
+    cfg = _alembic_cfg(url)
+    _apply_up_to_prev(cfg)
+
+    engine = create_engine(url)
+    karakeep_id = "idem_bm_multi"
+    with engine.begin() as conn:
+        aizk_uuid = _insert_bookmark(conn, karakeep_id=karakeep_id)
+        job_id_1 = _insert_job(conn, aizk_uuid=aizk_uuid, idempotency_key="b" * 64)
+        job_id_2 = _insert_job(conn, aizk_uuid=aizk_uuid, idempotency_key="c" * 64)
+
+    # Must not raise a unique constraint error.
+    command.upgrade(cfg, _THIS_REVISION)
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT cj.id, cj.idempotency_key FROM conversion_jobs cj "
+                "JOIN sources s ON s.aizk_uuid = cj.aizk_uuid "
+                "WHERE s.karakeep_id = :kid "
+                "ORDER BY cj.id"
+            ),
+            {"kid": karakeep_id},
+        ).fetchall()
+
+    assert len(rows) == 2
+    rows_by_id = {row[0]: row[1] for row in rows}
+    key_1 = rows_by_id[job_id_1]
+    key_2 = rows_by_id[job_id_2]
+    assert key_1 != key_2, "Two jobs for the same source must receive distinct migrated keys"
+    assert key_1 == _expected_migrated_key(karakeep_id, job_id_1)
+    assert key_2 == _expected_migrated_key(karakeep_id, job_id_2)
+
+
+def test_migrated_historical_key_does_not_match_fresh_submission_formula(tmp_path):
+    """Historical migrated rows are intentionally disambiguated from fresh submissions."""
+    url = _db_url(tmp_path)
+    cfg = _alembic_cfg(url)
+    _apply_up_to_prev(cfg)
+
+    engine = create_engine(url)
+    karakeep_id = "idem_bm_replay_gap"
+    with engine.begin() as conn:
+        aizk_uuid = _insert_bookmark(conn, karakeep_id=karakeep_id)
+        job_id = _insert_job(conn, aizk_uuid=aizk_uuid, idempotency_key="d" * 64)
+
+    command.upgrade(cfg, _THIS_REVISION)
+
+    with engine.connect() as conn:
+        migrated_key = conn.execute(
+            text(
+                "SELECT cj.idempotency_key FROM conversion_jobs cj "
+                "JOIN sources s ON s.aizk_uuid = cj.aizk_uuid "
+                "WHERE s.karakeep_id = :kid AND cj.id = :job_id"
+            ),
+            {"kid": karakeep_id, "job_id": job_id},
+        ).scalar_one()
+
+    import json as _json
+
+    source_ref = _json.dumps(
+        {"kind": "karakeep_bookmark", "bookmark_id": karakeep_id},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    source_ref_hash = _sha256_hex(source_ref)
+    fresh_submission_key = compute_idempotency_key(source_ref_hash, "docling", _MIGRATION_FROZEN_SNAPSHOT)
+
+    assert migrated_key == _expected_migrated_key(karakeep_id, job_id)
+    assert migrated_key != fresh_submission_key

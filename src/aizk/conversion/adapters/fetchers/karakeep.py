@@ -18,6 +18,7 @@ from aizk.conversion.core.source_ref import (
     SourceRef,
     UrlRef,
 )
+from aizk.conversion.core.types import ContentType
 from aizk.conversion.utilities.arxiv_utils import get_arxiv_id
 from aizk.conversion.utilities.bookmark_utils import (
     detect_source_type,
@@ -93,7 +94,7 @@ class KarakeepBookmarkResolver:
         if is_pdf_asset(bookmark):
             asset_id = get_bookmark_asset_id(bookmark)
             asset_url = f"{karakeep_base_url}/api/v1/assets/{asset_id}"
-            return UrlRef(url=asset_url)
+            return UrlRef(url=asset_url, content_type_hint=ContentType.PDF)
 
         # Step 4 — precrawled archive asset (HTML pipeline)
         if is_precrawled_archive_asset(bookmark):

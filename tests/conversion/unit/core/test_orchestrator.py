@@ -19,7 +19,7 @@ from typing import Any, ClassVar
 
 import pytest
 
-from aizk.conversion.core.errors import FetcherDepthExceeded
+from aizk.conversion.core.errors import FetcherDepthExceeded, MissingContentError
 from aizk.conversion.core.orchestrator import Orchestrator, ProcessResult
 from aizk.conversion.core.protocols import ContentFetcher, Converter, RefResolver
 from aizk.conversion.core.source_ref import (
@@ -257,6 +257,36 @@ def test_process_dispatches_converter_by_fetched_content_type():
 
     assert artifacts.markdown == "# html-out"
     assert resolve_calls == [(ContentType.HTML, "docling")]
+
+
+def test_process_rejects_zero_length_content_before_conversion():
+    fetcher = _FakePdfFetcher(payload=b"")
+    converter = _FakeConverter(markdown="# should-not-run")
+
+    orch = Orchestrator(
+        resolve_fetcher=_make_fetcher_resolver({"arxiv": fetcher}),
+        resolve_converter=_make_converter_resolver({(ContentType.PDF, "docling"): converter}),
+    )
+
+    with pytest.raises(MissingContentError, match="zero-length content"):
+        orch.process(ArxivRef(arxiv_id="2301.12345"), "docling")
+
+    assert converter.received == []
+
+
+def test_process_with_provenance_rejects_zero_length_content_before_conversion():
+    fetcher = _FakePdfFetcher(payload=b"")
+    converter = _FakeConverter(markdown="# should-not-run")
+
+    orch = Orchestrator(
+        resolve_fetcher=_make_fetcher_resolver({"arxiv": fetcher}),
+        resolve_converter=_make_converter_resolver({(ContentType.PDF, "docling"): converter}),
+    )
+
+    with pytest.raises(MissingContentError, match="zero-length content"):
+        orch.process_with_provenance(ArxivRef(arxiv_id="2301.12345"), "docling")
+
+    assert converter.received == []
 
 
 def test_default_depth_cap_of_2_allows_one_hop_chain():

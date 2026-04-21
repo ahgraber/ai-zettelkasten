@@ -22,6 +22,7 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as SourceRecord
 from aizk.conversion.db import get_engine
 from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.dotenv import load_process_dotenv_once
 from aizk.conversion.utilities.hashing import compute_markdown_hash
 from aizk.conversion.utilities.paths import (
     OUTPUT_MARKDOWN_FILENAME,
@@ -182,9 +183,7 @@ def _process_job_subprocess(
     os.setpgrp()  # Create new process group for cleanup of all descendants
 
     def _do_convert():
-        from dotenv import load_dotenv
-
-        load_dotenv()
+        load_process_dotenv_once()
         config = ConversionConfig()
         engine = get_engine(config.database_url)
 

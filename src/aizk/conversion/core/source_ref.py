@@ -16,6 +16,7 @@ from typing import Annotated, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 import validators
 
+from aizk.conversion.core.types import ContentType
 from aizk.utilities.url_utils import normalize_url
 
 # 64 KiB enforced on RAW body bytes (not serialized JSON length).
@@ -83,6 +84,7 @@ class UrlRef(BaseModel):
 
     kind: Literal["url"] = "url"
     url: str
+    content_type_hint: ContentType | None = None
 
     @field_validator("url", mode="before")
     @classmethod

@@ -10,6 +10,7 @@ from setproctitle import setproctitle
 import uvicorn
 
 from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
+from aizk.conversion.utilities.dotenv import load_process_dotenv_once
 from aizk.conversion.utilities.litestream import LitestreamManager
 from aizk.conversion.utilities.startup import StartupValidationError, log_feature_summary, validate_startup
 from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
@@ -76,9 +77,7 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     """Run the conversion service CLI."""
-    from dotenv import load_dotenv
-
-    load_dotenv()
+    load_process_dotenv_once()
     parser = argparse.ArgumentParser(prog="aizk-conversion")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
