@@ -314,7 +314,7 @@ _MIGRATION_FROZEN_SNAPSHOT = {
 }
 
 
-def _expected_migrated_key(karakeep_id: str, job_id: int) -> str:
+def _source_ref_hash_for(karakeep_id: str) -> str:
     import json as _json
 
     source_ref = _json.dumps(
@@ -322,13 +322,29 @@ def _expected_migrated_key(karakeep_id: str, job_id: int) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
-    source_ref_hash = _sha256_hex(source_ref)
+    return _sha256_hex(source_ref)
+
+
+def _expected_canonical_key(karakeep_id: str) -> str:
+    """Clean formula matching compute_idempotency_key() — used for the canonical job."""
+    import json as _json
+
+    source_ref_hash = _source_ref_hash_for(karakeep_id)
+    config_json = _json.dumps(_MIGRATION_FROZEN_SNAPSHOT, sort_keys=True, separators=(",", ":"))
+    return _sha256_hex(f"{source_ref_hash}:docling:{config_json}")
+
+
+def _expected_suffixed_key(karakeep_id: str, job_id: int) -> str:
+    """Suffixed formula — used for non-canonical (extra) historical jobs per source."""
+    import json as _json
+
+    source_ref_hash = _source_ref_hash_for(karakeep_id)
     config_json = _json.dumps(_MIGRATION_FROZEN_SNAPSHOT, sort_keys=True, separators=(",", ":"))
     return _sha256_hex(f"{source_ref_hash}:docling:{config_json}:job_{job_id}")
 
 
 def test_idempotency_key_recomputed_with_new_formula(tmp_path):
-    """After upgrade, idempotency_key uses frozen defaults + job ID disambiguator."""
+    """After upgrade, a single job per source gets the clean formula key."""
     url = _db_url(tmp_path)
     cfg = _alembic_cfg(url)
     _apply_up_to_prev(cfg)
@@ -338,7 +354,7 @@ def test_idempotency_key_recomputed_with_new_formula(tmp_path):
     old_key = "a" * 64
     with engine.begin() as conn:
         aizk_uuid = _insert_bookmark(conn, karakeep_id=karakeep_id)
-        job_id = _insert_job(conn, aizk_uuid=aizk_uuid, idempotency_key=old_key)
+        _insert_job(conn, aizk_uuid=aizk_uuid, idempotency_key=old_key)
 
     command.upgrade(cfg, _THIS_REVISION)
 
@@ -353,17 +369,18 @@ def test_idempotency_key_recomputed_with_new_formula(tmp_path):
         ).fetchone()
 
     assert row is not None
-    expected_new_key = _expected_migrated_key(karakeep_id, job_id)
+    expected_new_key = _expected_canonical_key(karakeep_id)
     assert row[0] == expected_new_key, (
         f"idempotency_key mismatch:\n  got:      {row[0]}\n  expected: {expected_new_key}"
     )
 
 
 def test_idempotency_key_no_collision_for_multiple_jobs_same_source(tmp_path):
-    """Two historical jobs referencing the same source get distinct migrated keys.
+    """Two historical jobs for the same source: canonical gets the clean key, extra gets suffixed.
 
-    This guards against the unique-constraint violation that would occur if both
-    jobs were rewritten to the same sha256(source_ref_hash:docling:config_json) key.
+    The canonical job (highest id, no SUCCEEDED bias here since both are QUEUED) must
+    get the clean formula matching compute_idempotency_key(), while the non-canonical
+    job gets the suffixed formula.  The unique index must not be violated.
     """
     url = _db_url(tmp_path)
     cfg = _alembic_cfg(url)
@@ -395,21 +412,29 @@ def test_idempotency_key_no_collision_for_multiple_jobs_same_source(tmp_path):
     key_1 = rows_by_id[job_id_1]
     key_2 = rows_by_id[job_id_2]
     assert key_1 != key_2, "Two jobs for the same source must receive distinct migrated keys"
-    assert key_1 == _expected_migrated_key(karakeep_id, job_id_1)
-    assert key_2 == _expected_migrated_key(karakeep_id, job_id_2)
+    # job_id_2 has the higher id → canonical (sorted first within the source group).
+    assert key_2 == _expected_canonical_key(karakeep_id), "Higher-id job should be canonical"
+    assert key_1 == _expected_suffixed_key(karakeep_id, job_id_1), "Lower-id job should be suffixed"
+    # Canonical key matches what compute_idempotency_key() produces.
+    source_ref_hash = _source_ref_hash_for(karakeep_id)
+    assert key_2 == compute_idempotency_key(source_ref_hash, "docling", _MIGRATION_FROZEN_SNAPSHOT)
 
 
-def test_migrated_historical_key_does_not_match_fresh_submission_formula(tmp_path):
-    """Historical migrated rows are intentionally disambiguated from fresh submissions."""
+def test_canonical_migrated_key_matches_fresh_submission_formula(tmp_path):
+    """The canonical historical job's key equals what compute_idempotency_key() produces.
+
+    A post-migration re-submission of the same bookmark with default config must
+    hit this job rather than creating a new one.
+    """
     url = _db_url(tmp_path)
     cfg = _alembic_cfg(url)
     _apply_up_to_prev(cfg)
 
     engine = create_engine(url)
-    karakeep_id = "idem_bm_replay_gap"
+    karakeep_id = "idem_bm_replay_continuity"
     with engine.begin() as conn:
         aizk_uuid = _insert_bookmark(conn, karakeep_id=karakeep_id)
-        job_id = _insert_job(conn, aizk_uuid=aizk_uuid, idempotency_key="d" * 64)
+        _insert_job(conn, aizk_uuid=aizk_uuid, idempotency_key="d" * 64)
 
     command.upgrade(cfg, _THIS_REVISION)
 
@@ -418,20 +443,76 @@ def test_migrated_historical_key_does_not_match_fresh_submission_formula(tmp_pat
             text(
                 "SELECT cj.idempotency_key FROM conversion_jobs cj "
                 "JOIN sources s ON s.aizk_uuid = cj.aizk_uuid "
-                "WHERE s.karakeep_id = :kid AND cj.id = :job_id"
+                "WHERE s.karakeep_id = :kid"
             ),
-            {"kid": karakeep_id, "job_id": job_id},
+            {"kid": karakeep_id},
         ).scalar_one()
 
-    import json as _json
-
-    source_ref = _json.dumps(
-        {"kind": "karakeep_bookmark", "bookmark_id": karakeep_id},
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    source_ref_hash = _sha256_hex(source_ref)
+    source_ref_hash = _source_ref_hash_for(karakeep_id)
     fresh_submission_key = compute_idempotency_key(source_ref_hash, "docling", _MIGRATION_FROZEN_SNAPSHOT)
 
-    assert migrated_key == _expected_migrated_key(karakeep_id, job_id)
-    assert migrated_key != fresh_submission_key
+    assert migrated_key == _expected_canonical_key(karakeep_id)
+    assert migrated_key == fresh_submission_key
+
+
+def test_succeeded_job_is_canonical_over_higher_id_failed_job(tmp_path):
+    """When one job SUCCEEDED and a later job FAILED, the SUCCEEDED job is canonical.
+
+    The SUCCEEDED job should receive the clean formula key even though the FAILED
+    job has a higher id.
+    """
+    url = _db_url(tmp_path)
+    cfg = _alembic_cfg(url)
+    _apply_up_to_prev(cfg)
+
+    engine = create_engine(url)
+    karakeep_id = "idem_bm_succeeded_canonical"
+    with engine.begin() as conn:
+        aizk_uuid = _insert_bookmark(conn, karakeep_id=karakeep_id)
+        # Insert SUCCEEDED job first (lower id)
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        result = conn.execute(
+            text(
+                "INSERT INTO conversion_jobs "
+                "(aizk_uuid, title, payload_version, status, attempts, "
+                "idempotency_key, created_at, updated_at) "
+                "VALUES (:uuid, 'test', 1, 'SUCCEEDED', 1, :key, :ca, :ua)"
+            ),
+            {"uuid": aizk_uuid, "key": "e" * 64, "ca": now, "ua": now},
+        )
+        succeeded_job_id = result.lastrowid
+        # Insert FAILED job second (higher id)
+        result = conn.execute(
+            text(
+                "INSERT INTO conversion_jobs "
+                "(aizk_uuid, title, payload_version, status, attempts, "
+                "idempotency_key, created_at, updated_at) "
+                "VALUES (:uuid, 'test', 1, 'PERMANENTLY_FAILED', 1, :key, :ca, :ua)"
+            ),
+            {"uuid": aizk_uuid, "key": "f" * 64, "ca": now, "ua": now},
+        )
+        failed_job_id = result.lastrowid
+
+    command.upgrade(cfg, _THIS_REVISION)
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT cj.id, cj.idempotency_key FROM conversion_jobs cj "
+                "JOIN sources s ON s.aizk_uuid = cj.aizk_uuid "
+                "WHERE s.karakeep_id = :kid ORDER BY cj.id"
+            ),
+            {"kid": karakeep_id},
+        ).fetchall()
+
+    rows_by_id = {row[0]: row[1] for row in rows}
+    succeeded_key = rows_by_id[succeeded_job_id]
+    failed_key = rows_by_id[failed_job_id]
+
+    assert succeeded_key != failed_key
+    # SUCCEEDED job is canonical regardless of id ordering.
+    assert succeeded_key == _expected_canonical_key(karakeep_id)
+    assert failed_key == _expected_suffixed_key(karakeep_id, failed_job_id)
+    # Canonical key matches fresh submission formula.
+    source_ref_hash = _source_ref_hash_for(karakeep_id)
+    assert succeeded_key == compute_idempotency_key(source_ref_hash, "docling", _MIGRATION_FROZEN_SNAPSHOT)
