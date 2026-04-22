@@ -116,3 +116,10 @@ class MissingContentError(FetchError):  # noqa: N818 — canonical spec name
 
     error_code = "missing-content"
     retryable: ClassVar[bool] = False
+
+
+class FetchTooLargeError(FetchError):  # noqa: N818 — canonical spec name
+    """Raised when fetched content exceeds the configured byte limit. Permanent."""
+
+    error_code = "fetch_too_large"
+    retryable: ClassVar[bool] = False

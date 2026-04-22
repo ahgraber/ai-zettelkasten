@@ -46,3 +46,13 @@ def test_submit_singlefile_kind_rejected_by_schema(db_session) -> None:
             json={"source_ref": {"kind": "singlefile", "url": "file:///tmp/foo.pdf"}},
         )
     assert resp.status_code == 422
+
+
+def test_submit_karakeep_bookmark_with_whitespace_rejected_by_schema(db_session) -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        resp = client.post(
+            "/v1/jobs",
+            json={"source_ref": {"kind": "karakeep_bookmark", "bookmark_id": " bad id"}},
+        )
+    assert resp.status_code == 422

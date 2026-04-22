@@ -15,6 +15,14 @@ from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source as Bookmark
+from aizk.conversion.storage.manifest import (
+    ManifestArtifactMarkdown,
+    ManifestArtifacts,
+    ManifestConfigSnapshot,
+    ManifestConversionMetadata,
+    ManifestSource,
+    ManifestV1,
+)
 from aizk.conversion.storage.s3_client import S3Client, S3Error, S3NotFoundError
 
 
@@ -68,6 +76,47 @@ def _create_output(session, *, job_id: int, aizk_uuid: UUID, s3_prefix: str = "p
     return output
 
 
+def _manifest_v1_bytes(aizk_uuid: UUID, karakeep_id: str) -> bytes:
+    manifest = ManifestV1(
+        aizk_uuid=aizk_uuid,
+        karakeep_id=karakeep_id,
+        source=ManifestSource(
+            url="https://example.com/page",
+            normalized_url="https://example.com/page",
+            title="Example",
+            source_type="other",
+            fetched_at=dt.datetime(2024, 1, 1, tzinfo=dt.timezone.utc),
+        ),
+        conversion=ManifestConversionMetadata(
+            job_id=1,
+            payload_version=1,
+            docling_version="2.0.0",
+            pipeline_name="html",
+            started_at=dt.datetime(2024, 1, 1, tzinfo=dt.timezone.utc),
+            finished_at=dt.datetime(2024, 1, 1, tzinfo=dt.timezone.utc),
+            duration_seconds=0,
+        ),
+        artifacts=ManifestArtifacts(
+            markdown=ManifestArtifactMarkdown(
+                key="s3://bucket/output.md",
+                hash_xx64="abcd1234",
+                created_at=dt.datetime(2024, 1, 1, tzinfo=dt.timezone.utc),
+            ),
+            figures=[],
+        ),
+        config_snapshot=ManifestConfigSnapshot(
+            docling_pdf_max_pages=250,
+            docling_enable_ocr=True,
+            docling_enable_table_structure=True,
+            docling_picture_description_model="openai/gpt-5-nano",
+            docling_picture_timeout=180.0,
+            docling_enable_picture_classification=True,
+            picture_description_enabled=False,
+        ),
+    )
+    return manifest.model_dump_json().encode("utf-8")
+
+
 @pytest.fixture()
 def mock_s3() -> MagicMock:
     """Return a mock S3Client."""
@@ -91,12 +140,13 @@ def test_get_manifest_returns_json_bytes(db_session, client, mock_s3) -> None:
     bookmark = _create_bookmark(db_session, "bm_manifest")
     job = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="a" * 64)
     output = _create_output(db_session, job_id=job.id, aizk_uuid=bookmark.aizk_uuid)
-    mock_s3.get_object_bytes.return_value = b'{"version": "1.0"}'
+    manifest_bytes = _manifest_v1_bytes(bookmark.aizk_uuid, bookmark.karakeep_id)
+    mock_s3.get_object_bytes.return_value = manifest_bytes
 
     response = client.get(f"/v1/outputs/{output.id}/manifest")
 
     assert response.status_code == 200
-    assert response.content == b'{"version": "1.0"}'
+    assert response.content == manifest_bytes
     assert "application/json" in response.headers["content-type"]
     mock_s3.get_object_bytes.assert_called_once_with(output.manifest_key)
 

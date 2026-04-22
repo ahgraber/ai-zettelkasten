@@ -90,6 +90,11 @@ def test_converter_supported_formats_is_class_level_frozenset_without_instantiat
     assert ContentType.HTML in _FakeGpuConverter.supported_formats
 
 
+def test_converter_isinstance_structural():
+    assert isinstance(_FakeGpuConverter(), Converter)
+    assert isinstance(_FakeCpuConverter(), Converter)
+
+
 def test_ref_resolver_resolves_to_is_class_level_frozenset_without_instantiation():
     assert isinstance(_FakeResolver.resolves_to, frozenset)
     assert _FakeResolver.resolves_to == frozenset({"arxiv", "url"})

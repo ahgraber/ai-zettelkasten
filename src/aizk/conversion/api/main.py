@@ -32,6 +32,8 @@ async def lifespan(_app: FastAPI):
     run_migrations()
     _api_runtime = build_api_runtime(config)
     _app.state.submission_capabilities = _api_runtime.capabilities
+    _app.state.converter_name = _api_runtime.converter_name
+    _app.state.converter_config_snapshot = _api_runtime.converter_config_snapshot
     _app.state.docling_config = _api_runtime.docling_config
     yield
 

@@ -41,6 +41,21 @@ def test_api_reload_defaults_to_false(monkeypatch):
     assert config.api_reload is False
 
 
+def test_fetch_max_response_bytes_reads_env_var(monkeypatch):
+    monkeypatch.setenv("FETCH_MAX_RESPONSE_BYTES", "12345")
+
+    config = ConversionConfig(_env_file=None)
+
+    assert config.fetch_max_response_bytes == 12345
+
+
+def test_conversion_config_accepts_explicit_field_name_overrides():
+    config = ConversionConfig(_env_file=None, fetch_max_response_bytes=12345, fetch_timeout_seconds=7)
+
+    assert config.fetch_max_response_bytes == 12345
+    assert config.fetch_timeout_seconds == 7
+
+
 def test_docling_config_reads_new_env_vars(monkeypatch):
     monkeypatch.setenv("AIZK_CONVERTER__DOCLING__OCR_ENABLED", "false")
     monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PDF_MAX_PAGES", "100")

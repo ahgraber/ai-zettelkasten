@@ -40,6 +40,7 @@ class RefResolver(Protocol):
         ...
 
 
+@runtime_checkable
 class Converter(Protocol):
     """Capability-indexed converter: declares supported formats and GPU requirement."""
 

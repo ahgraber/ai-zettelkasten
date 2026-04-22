@@ -17,15 +17,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass as _dataclass
-import logging
 from typing import Any
 
 from aizk.conversion.core.errors import FetcherDepthExceeded, MissingContentError
 from aizk.conversion.core.protocols import ContentFetcher, Converter, RefResolver
 from aizk.conversion.core.source_ref import SourceRef
 from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput
-
-logger = logging.getLogger(__name__)
 
 
 @_dataclass(frozen=True)
@@ -139,11 +136,7 @@ class Orchestrator:
             raise MissingContentError(f"Fetcher returned zero-length content for {ref!r}")
         converter = self._resolve_converter(conversion_input.content_type, converter_name)
         artifacts = converter.convert(conversion_input)
-        if hasattr(converter, "config_snapshot"):
-            config_snapshot = converter.config_snapshot()
-        else:
-            logger.debug("converter %r has no config_snapshot(); recording empty snapshot", converter_name)
-            config_snapshot = {}
+        config_snapshot = converter.config_snapshot()
         return ProcessResult(
             artifacts=artifacts,
             terminal_ref=terminal_ref,
