@@ -89,6 +89,10 @@ class ConverterRegistry:
 
     def register(self, converter: Converter, name: str) -> None:
         """Register ``converter`` under ``(content_type, name)`` for each supported type."""
+        if not isinstance(converter, Converter):
+            raise RegistrationRoleMismatch(
+                f"register({name!r}, ...) received an impl that does not satisfy the Converter protocol"
+            )
         for content_type in converter.supported_formats:
             key = (content_type, name)
             if key in self._converters:

@@ -127,6 +127,20 @@ def test_build_api_runtime_default_ingress_policy_has_karakeep_bookmark():
     assert "karakeep_bookmark" in rt.capabilities.accepted_submission_kinds
 
 
+def test_build_api_runtime_exposes_configured_converter_name():
+    policy = IngressPolicy(_env_file=None, accepted_submission_kinds=frozenset({"karakeep_bookmark"}))
+    rt = build_api_runtime(_CFG, ingress_policy=policy)
+
+    assert rt.converter_name == _CFG.worker_converter_name
+
+
+def test_build_api_runtime_exposes_submission_config_snapshot():
+    policy = IngressPolicy(_env_file=None, accepted_submission_kinds=frozenset({"karakeep_bookmark"}))
+    rt = build_api_runtime(_CFG, ingress_policy=policy)
+
+    assert rt.converter_config_snapshot == rt.docling_config_snapshot
+
+
 # ---------------------------------------------------------------------------
 # Worker vs API capability divergence
 # ---------------------------------------------------------------------------

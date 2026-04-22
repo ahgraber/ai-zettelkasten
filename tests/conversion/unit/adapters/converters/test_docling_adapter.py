@@ -53,12 +53,7 @@ def test_docling_satisfies_converter_protocol_structurally() -> None:
     config = _make_disabled_config()
     adapter = DoclingConverter(config)
 
-    # ``Converter`` is NOT @runtime_checkable — probe required attributes
-    # structurally on both the instance and the class.
-    assert hasattr(adapter, "convert")
-    assert callable(adapter.convert)
-    assert hasattr(adapter, "config_snapshot")
-    assert callable(adapter.config_snapshot)
+    assert isinstance(adapter, Converter)
     assert hasattr(DoclingConverter, "supported_formats")
     assert hasattr(DoclingConverter, "requires_gpu")
 

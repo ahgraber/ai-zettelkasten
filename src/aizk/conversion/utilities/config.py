@@ -65,7 +65,7 @@ class KarakeepFetcherConfig(BaseSettings):
 class ConversionConfig(BaseSettings):
     """Environment-driven configuration for the conversion service."""
 
-    model_config = SettingsConfigDict(env_prefix="", env_file=None, extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="", env_file=None, extra="ignore", populate_by_name=True)
 
     database_url: str = Field(
         default="sqlite:///./data/conversion_service.db",
@@ -89,6 +89,7 @@ class ConversionConfig(BaseSettings):
         default=60.0,
         validation_alias="WORKER_STALE_JOB_CHECK_SECONDS",
     )
+    fetch_max_response_bytes: int = Field(default=25 * 1024 * 1024, validation_alias="FETCH_MAX_RESPONSE_BYTES")
     worker_job_timeout_seconds: float = Field(
         default=7200,
         validation_alias="WORKER_JOB_TIMEOUT_SECONDS",

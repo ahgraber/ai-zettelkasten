@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from aizk.conversion.adapters.converters.docling import DoclingConverter
 from aizk.conversion.core.errors import ConfigurationError
 from aizk.conversion.core.registry import FetcherRegistry
 from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
@@ -17,7 +18,10 @@ class ApiRuntime:
     """Assembled API-side runtime: submission capability descriptor."""
 
     capabilities: SubmissionCapabilities
+    converter_name: str
+    converter_config_snapshot: dict[str, object]
     docling_config: DoclingConverterConfig
+    docling_config_snapshot: dict[str, object]
 
 
 def build_api_runtime(
@@ -47,6 +51,7 @@ def build_api_runtime(
 
     fetcher_registry = FetcherRegistry()
     docling_config = DoclingConverterConfig()
+    docling_snapshot = DoclingConverter(docling_config).config_snapshot()
     karakeep_cfg = KarakeepFetcherConfig()
     register_fetchers(fetcher_registry, cfg, karakeep_cfg=karakeep_cfg)
 
@@ -55,8 +60,20 @@ def build_api_runtime(
     if unknown:
         raise ConfigurationError(f"IngressPolicy references kinds not registered: {sorted(unknown)}")
 
+    converter_name = cfg.worker_converter_name
+    if converter_name != "docling":
+        raise ConfigurationError(
+            f"API runtime cannot build submission config snapshot for converter {converter_name!r}"
+        )
+
     capabilities = SubmissionCapabilities(ingress_policy.accepted_submission_kinds)
-    return ApiRuntime(capabilities=capabilities, docling_config=docling_config)
+    return ApiRuntime(
+        capabilities=capabilities,
+        converter_name=converter_name,
+        converter_config_snapshot=docling_snapshot,
+        docling_config=docling_config,
+        docling_config_snapshot=docling_snapshot,
+    )
 
 
 __all__ = ["ApiRuntime", "build_api_runtime"]

@@ -49,6 +49,14 @@ class _MultiFormatConverter:
         return {"converter_name": "multi"}
 
 
+class _MissingSnapshotConverter:
+    supported_formats: ClassVar[frozenset[ContentType]] = frozenset({ContentType.PDF})
+    requires_gpu: ClassVar[bool] = False
+
+    def convert(self, input: ConversionInput) -> ConversionArtifacts:  # noqa: A002 — protocol arg name
+        return ConversionArtifacts(markdown="# out")
+
+
 # --- FetcherRegistry: happy path --------------------------------------------
 
 
@@ -174,3 +182,13 @@ def test_converter_registry_missing_combo_raises_no_converter_for_format():
         reg.resolve(ContentType.CSV, "multi")
     with pytest.raises(NoConverterForFormat):
         reg.resolve(ContentType.PDF, "other-name")
+
+
+def test_converter_registry_rejects_non_conforming_converter_with_state_unchanged():
+    reg = ConverterRegistry()
+
+    with pytest.raises(RegistrationRoleMismatch):
+        reg.register(_MissingSnapshotConverter(), name="broken")
+
+    with pytest.raises(NoConverterForFormat):
+        reg.resolve(ContentType.PDF, "broken")
