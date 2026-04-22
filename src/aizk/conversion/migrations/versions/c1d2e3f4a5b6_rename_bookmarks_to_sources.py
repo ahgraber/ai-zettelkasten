@@ -217,7 +217,10 @@ def upgrade() -> None:
     )
     conn.execute(sa.text("DROP TABLE _conversion_jobs_old"))
 
-    # Recreate indexes on conversion_jobs
+    # Recreate non-unique indexes on conversion_jobs.
+    # ix_conversion_jobs_idempotency_key (UNIQUE) is deferred to after step 9
+    # because the UPDATE loop in step 9 must complete before the uniqueness
+    # constraint can be safely applied.
     with op.batch_alter_table("conversion_jobs", schema=None) as batch_op:
         batch_op.create_index(batch_op.f("ix_conversion_jobs_aizk_uuid"), ["aizk_uuid"], unique=False)
         batch_op.create_index(batch_op.f("ix_conversion_jobs_created_at"), ["created_at"], unique=False)
@@ -226,7 +229,6 @@ def upgrade() -> None:
             ["earliest_next_attempt_at"],
             unique=False,
         )
-        batch_op.create_index(batch_op.f("ix_conversion_jobs_idempotency_key"), ["idempotency_key"], unique=True)
         batch_op.create_index(batch_op.f("ix_conversion_jobs_status"), ["status"], unique=False)
         batch_op.create_index(
             "ix_conversion_jobs_status_next_attempt_queued",
@@ -282,18 +284,30 @@ def upgrade() -> None:
     )
 
     # ------------------------------------------------------------------
-    # 9. Recompute idempotency_key: sha256(source_ref_hash:docling:config_json:job_<id>).
+    # 9. Recompute idempotency_key under the new formula.
     #
-    # Frozen at the defaults shipped with this migration. Using live config
-    # would make the hash differ between migration-time and a fresh job
-    # submitted post-migration with non-default settings.
+    # Config is frozen at the defaults shipped with this migration so that
+    # the key is stable regardless of the environment at migration time.
     #
-    # The job ID is appended as a disambiguator so that two historical jobs
-    # referencing the same source always produce distinct keys, avoiding a
-    # unique-constraint violation when the UPDATE loop reaches the second row.
-    # Replay-idempotency is guaranteed for post-migration submissions only;
-    # historical rows receive stable, unique keys but are not guaranteed to
-    # deduplicate on re-submission.
+    # Option-C canonical-job strategy:
+    #   Within each source group (same source_ref_hash), the best historical
+    #   job — most-recent SUCCEEDED, falling back to most-recent by id — is
+    #   the "canonical" job.  It receives the clean formula:
+    #       sha256("{source_ref_hash}:docling:{config_json}")
+    #   which matches compute_idempotency_key(), so a post-migration
+    #   re-submission with default config hits this job and is deduped.
+    #
+    #   Every other job for the same source receives the suffixed formula:
+    #       sha256("{source_ref_hash}:docling:{config_json}:job_{job_id}")
+    #   which is stable and unique but not reachable by a re-submission.
+    #
+    # Residual limitation: historical jobs originally submitted with
+    # *non-default* config cannot be restored to continuity — the original
+    # config is lost.  A re-submission with a non-default config will still
+    # compute a different key from any migrated row and create a new job.
+    #
+    # The unique index on idempotency_key is created AFTER this loop so that
+    # all values are distinct before the constraint is enforced.
     # ------------------------------------------------------------------
     _snapshot = {
         "pdf_max_pages": 250,
@@ -306,21 +320,37 @@ def upgrade() -> None:
     }
     _config_json = json.dumps(_snapshot, sort_keys=True, separators=(",", ":"))
 
+    # Fetch all jobs ordered so the canonical job for each source sorts first:
+    # SUCCEEDED status first, then newest id wins within a status tier.
     job_rows = conn.execute(
         sa.text(
-            "SELECT cj.id, s.source_ref_hash "
+            "SELECT cj.id, s.source_ref_hash, cj.status "
             "FROM conversion_jobs cj "
             "JOIN sources s ON s.aizk_uuid = cj.aizk_uuid "
-            "WHERE s.source_ref_hash IS NOT NULL"
+            "WHERE s.source_ref_hash IS NOT NULL "
+            "ORDER BY s.source_ref_hash, "
+            "(CASE WHEN cj.status = 'SUCCEEDED' THEN 0 ELSE 1 END), "
+            "cj.id DESC"
         )
     ).fetchall()
 
-    for job_id, source_ref_hash in job_rows:
-        new_key = _sha256_hex(f"{source_ref_hash}:docling:{_config_json}:job_{job_id}")
+    seen_hashes: set[str] = set()
+    for job_id, source_ref_hash, _status in job_rows:
+        if source_ref_hash not in seen_hashes:
+            # Canonical job: clean formula — matches compute_idempotency_key().
+            seen_hashes.add(source_ref_hash)
+            new_key = _sha256_hex(f"{source_ref_hash}:docling:{_config_json}")
+        else:
+            # Non-canonical: suffixed formula — stable, unique, not re-submittable.
+            new_key = _sha256_hex(f"{source_ref_hash}:docling:{_config_json}:job_{job_id}")
         conn.execute(
             sa.text("UPDATE conversion_jobs SET idempotency_key = :key WHERE id = :id"),
             {"key": new_key, "id": job_id},
         )
+
+    # All idempotency keys are now distinct — safe to create the unique index.
+    with op.batch_alter_table("conversion_jobs", schema=None) as batch_op:
+        batch_op.create_index(batch_op.f("ix_conversion_jobs_idempotency_key"), ["idempotency_key"], unique=True)
 
 
 def downgrade() -> None:
