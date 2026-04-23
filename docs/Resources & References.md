@@ -15,8 +15,14 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [Karpathy Just Described the Product I've Been Building — LLM Knowledge Bases and YARNNN | yarnnn](https://www.yarnnn.com/blog/karpathy-just-described-the-product-ive-been-building)
 - [Your File System Is Already a Graph Database](https://rumproarious.com/2026/04/04/your-file-system-is-already-a-graph-database/)
 - [safishamsi/graphify: AI coding assistant skill (Claude Code, Codex, OpenCode, Cursor, Gemini CLI, OpenClaw, Factory Droid, Trae). Turn any folder of code, docs, papers, images, videos, or YouTube links into a queryable knowledge graph](https://github.com/safishamsi/graphify)
+- [codemix/graph: A type-safe, realtime, collaborative Graph Database which runs inside a CRDT](https://github.com/codemix/graph)
+- [Zotero | Your personal research assistant](https://www.zotero.org/)
+  - [urschrei/pyzotero: Pyzotero: a Python client for the Zotero API](https://github.com/urschrei/pyzotero)
+  - [DIY: Ground LLaMa on your papers from Zotero | by Emmett McFarlane | Medium](https://medium.com/@emcf1/diy-ground-a-language-model-on-your-papers-from-zotero-with-finesse-a5c4ca7c187a)
 
 ## Ingest / Archiving
+
+### Web crawling
 
 - [ArchiveBox | 🗃 Open source self-hosted web archiving. Takes URLs/browser history/bookmarks/Pocket/Pinboard/etc., saves HTML, JS, PDFs, media, and more…](https://archivebox.io/)
 - [dgtlmoon/changedetection.io: The best and simplest free open source web page change detection, website watcher, restock monitor and notification service.](https://github.com/dgtlmoon/changedetection.io/tree/master)
@@ -26,36 +32,29 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [Y2Z/monolith: ⬛️ CLI tool for saving complete web pages as a single HTML file](https://github.com/Y2Z/monolith)
 - [postlight/parser: 📜 Extract meaningful content from the chaos of a web page](https://github.com/postlight/parser)
 - [cyclotruc/gitingest: Replace 'hub' with 'ingest' in any github url to get a prompt-friendly extract of a codebase](https://github.com/cyclotruc/gitingest/tree/main)
-- [databridge-org/databridge-core: Multi-modal modular data ingestion and retrieval](https://github.com/databridge-org/databridge-core)
 - [List of Chromium Command Line Switches](https://peter.sh/experiments/chromium-command-line-switches/)
-- [chonkie-inc/chonkie - RAG chunking library](https://github.com/chonkie-inc/chonkie)
-- [Dense X Retrieval: What Retrieval Granularity Should We Use?](https://arxiv.org/abs/2312.06648)
-- [Claimify: Extracting Claims from LM Outputs (Microsoft Research)](https://www.microsoft.com/en-us/research/blog/claimify-extracting-high-quality-claims-from-language-model-outputs/)
-- [Claim Extraction from LLM Outputs](https://arxiv.org/abs/2502.10855)
-- [Contextual Retrieval (Anthropic)](https://www.anthropic.com/news/contextual-retrieval)
-- [Late Chunking in Long-Context Embedding Models (Jina)](https://jina.ai/news/late-chunking-in-long-context-embedding-models/)
-- [Decoupling Retrieval vs. Synthesis Chunks (LlamaIndex)](https://docs.llamaindex.ai/en/stable/optimizing/production_rag/#decoupling-chunks-used-for-retrieval-vs-chunks-used-for-synthesis)
-- [Optimize parsing costs with LlamaParse auto mode — LlamaIndex](https://www.llamaindex.ai/blog/optimize-parsing-costs-with-llamaparse-auto-mode)
-- [DS4SD/docling: Get your documents ready for gen AI](https://github.com/DS4SD/docling) and [DS4SD/docling-serve: Running Docling as an API service](https://github.com/DS4SD/docling-serve)
-- [getomni-ai/zerox: PDF to Markdown with vision models](https://github.com/getomni-ai/zerox)
-- [VikParuchuri/marker: Convert PDF to markdown + JSON quickly with high accuracy](https://github.com/VikParuchuri/marker)
-- [mindee/doctr: docTR (Document Text Recognition) - a seamless, high-performing & accessible library for OCR-related tasks powered by Deep Learning.](https://github.com/mindee/doctr)
-- [Zotero | Your personal research assistant](https://www.zotero.org/)
-  - [urschrei/pyzotero: Pyzotero: a Python client for the Zotero API](https://github.com/urschrei/pyzotero)
-  - [DIY: Ground LLaMa on your papers from Zotero | by Emmett McFarlane | Medium](https://medium.com/@emcf1/diy-ground-a-language-model-on-your-papers-from-zotero-with-finesse-a5c4ca7c187a)
-- [emcf/thepipe: Extract clean data from anywhere, powered by vision-language models ⚡](https://github.com/emcf/thepipe)
-- [microsoft/markitdown: Python tool for converting files and office documents to Markdown.](https://github.com/microsoft/markitdown)
 - [cyclotruc/gitdigest: Web interface to turn codebases into prompt-friendly text](https://github.com/cyclotruc/gitdigest?tab=readme-ov-file)
 - [[2408.15836] Knowledge Navigator: LLM-guided Browsing Framework for Exploratory Search in Scientific Literature](https://arxiv.org/abs/2408.15836)
+- [Index - Documentation | Lightpanda](https://lightpanda.io/docs/)
+- [justrach/kuri: Browser automation and web crawling for AI agents. Zig-native, token-efficient CDP snapshots, HAR recording, and a standalone fetcher.](https://github.com/justrach/kuri)
+
+### Doc Extraction
+
+- [DS4SD/docling: Get your documents ready for gen AI](https://github.com/DS4SD/docling) and [DS4SD/docling-serve: Running Docling as an API service](https://github.com/DS4SD/docling-serve)
+- [VikParuchuri/marker: Convert PDF to markdown + JSON quickly with high accuracy](https://github.com/VikParuchuri/marker)
+- [microsoft/markitdown: Python tool for converting files and office documents to Markdown.](https://github.com/microsoft/markitdown)
+- [getomni-ai/zerox: PDF to Markdown with vision models](https://github.com/getomni-ai/zerox)
+- [mindee/doctr: docTR (Document Text Recognition) - a seamless, high-performing & accessible library for OCR-related tasks powered by Deep Learning.](https://github.com/mindee/doctr)
+- [Optimize parsing costs with LlamaParse auto mode — LlamaIndex](https://www.llamaindex.ai/blog/optimize-parsing-costs-with-llamaparse-auto-mode)
 - [bytedance/Dolphin: Document Image Parsing via Heterogeneous Anchor Prompting](https://github.com/bytedance/Dolphin)
+- [Supercharge your OCR Pipelines with Open Models](https://huggingface.co/blog/ocr-open-models)
 - [opendatalab/MinerU: A high-quality tool to convert PDF to Markdown and JSON](https://github.com/opendatalab/MinerU/tree/master)
 - [nanonets/Nanonets-OCR-s · Hugging Face](https://huggingface.co/nanonets/Nanonets-OCR-s)
 - [Unstructured - Open Source](https://docs.unstructured.io/open-source/introduction/overview)
 - [LLMWhisperer: Make Complex Document Data Ready for LLMs](https://unstract.com/llmwhisperer/)
-- [morphik-org/morphik-core: Open source multi-modal RAG for building AI apps over private knowledge.](https://github.com/morphik-org/morphik-core)
-- [Supercharge your OCR Pipelines with Open Models](https://huggingface.co/blog/ocr-open-models)
+- [emcf/thepipe: Extract clean data from anywhere, powered by vision-language models ⚡](https://github.com/emcf/thepipe)
 
-### parse benchmarks
+#### PDF/OCR benchmarks
 
 - [[2410.09871] A Comparative Study of PDF Parsing Tools Across Diverse Document Categories](https://arxiv.org/abs/2410.09871)
 - [[2412.02592] OCR Hinders RAG: Evaluating the Cascading Impact of OCR on Retrieval-Augmented Generation](https://arxiv.org/abs/2412.02592)
@@ -67,20 +66,30 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 
 ## Retrieval
 
+### Chunking
+
+- [chonkie-ai/chonkie: 🦛 CHONK your texts with Chonkie ✨ - The no-nonsense RAG chunking library](https://github.com/chonkie-ai/chonkie)
+- [Contextual Retrieval — Anthropic](https://www.anthropic.com/news/contextual-retrieval)
+- [Decoupled chunk representations — LlamaIndex](https://docs.llamaindex.ai/en/stable/optimizing/production_rag/#decoupling-chunks-used-for-retrieval-vs-chunks-used-for-synthesis) — separate retrieval chunks from synthesis chunks
+- [Decoupling Retrieval vs. Synthesis Chunks (LlamaIndex)](https://docs.llamaindex.ai/en/stable/optimizing/production_rag/#decoupling-chunks-used-for-retrieval-vs-chunks-used-for-synthesis)
+- [Late Chunking in Long-Context Embedding Models](https://jina.ai/news/late-chunking-in-long-context-embedding-models/)
+- [Claimify: Extracting Claims from LM Outputs (Microsoft Research)](https://www.microsoft.com/en-us/research/blog/claimify-extracting-high-quality-claims-from-language-model-outputs/)
+- [Claim Extraction from LLM Outputs](https://arxiv.org/abs/2502.10855)
+- [Dense X Retrieval: What Retrieval Granularity Should We Use?](https://arxiv.org/abs/2312.06648)
+
+### Embedding
+
 - [OpenAI text-embedding-3-small](https://platform.openai.com/docs/models/text-embedding-3-small)
 - [OpenAI text-embedding-3-large](https://platform.openai.com/docs/models/text-embedding-3-large)
 - [Cohere Embed](https://cohere.com/embed)
 - [Cohere Rerank](https://cohere.com/rerank)
 - [Voyage AI Embeddings](https://docs.voyageai.com/docs/embeddings)
 - [Jina Embeddings](https://jina.ai/embeddings/)
-- [chonkie-ai/chonkie: 🦛 CHONK your texts with Chonkie ✨ - The no-nonsense RAG chunking library](https://github.com/chonkie-ai/chonkie)
 - [[2312.06648] Dense X Retrieval: What Retrieval Granularity Should We Use?](https://arxiv.org/abs/2312.06648) — deconstruct text blobs into propositions (complete factoids)
-- [Contextual Retrieval — Anthropic](https://www.anthropic.com/news/contextual-retrieval)
-- [Late Chunking in Long-Context Embedding Models](https://jina.ai/news/late-chunking-in-long-context-embedding-models/)
-- [Decoupled chunk representations — LlamaIndex](https://docs.llamaindex.ai/en/stable/optimizing/production_rag/#decoupling-chunks-used-for-retrieval-vs-chunks-used-for-synthesis) — separate retrieval chunks from synthesis chunks
 - [PyLate - Late Interaction Models](https://lightonai.github.io/pylate/)
   - [lightonai/pylate (GitHub)](https://github.com/lightonai/pylate)
   - [lightonai/fast-plaid](https://github.com/lightonai/fast-plaid)
+  - [DenseOn with the LateOn: Open State-of-the-Art Single and Multi-Vector Models](https://huggingface.co/blog/lightonai/denseon-lateon)
 - [LlamaIndex](https://docs.llamaindex.ai/en/stable/)
 - [Late Interaction: Efficient Multi-Modal Retrievers (LanceDB)](https://lancedb.com/blog/late-interaction-efficient-multi-modal-retrievers-need-more-than-just-a-vector-index/)
 - [Late Interaction Overview (Weaviate)](https://weaviate.io/blog/late-interaction-overview)
@@ -93,6 +102,8 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [SPLADE for Sparse Vector Search Explained (Pinecone)](https://www.pinecone.io/learn/splade/)
 - [TILDE: Fast Passage Re-ranking with Contextualized Exact Term Matching](https://arxiv.org/abs/2108.08513)
 - [Context-Aware Document Term Weighting for Ad-Hoc Search](https://dl.acm.org/doi/pdf/10.1145/3366423.3380258)
+
+### DBs
 
 If building a concept graph, it would be useful to be able to use it as a human in addition to have it be searchable for RAG.
 
@@ -107,18 +118,6 @@ If building a concept graph, it would be useful to be able to use it as a human 
 - [slaily/aiosqlitepool - async SQLite connection pool](https://github.com/slaily/aiosqlitepool)
 - [mr-fatalyst/oxyde: Oxyde ORM — Pydantic-centric async ORM with Rust core](https://github.com/mr-fatalyst/oxyde) — type-safe, async-first ORM with Django-style query API and native Pydantic v2 models; supports PostgreSQL, SQLite, MySQL; young project (beta, v0.6.x as of 2026-03) — potential SQLModel alternative worth watching but lacks SQLAlchemy/Alembic ecosystem compatibility
 
-## Model Providers / Frameworks
-
-- bm25
-- Learned Sparse Retrieval
-  - SPLADE
-    - [naver/splade: SPLADE: sparse neural search (SIGIR21, SIGIR22)](https://github.com/naver/splade?tab=readme-ov-file)
-    - [From grep to SPLADE: a journey through semantic search](https://blog.elicit.com/semantic-search/)
-    - [SPLADE for Sparse Vector Search Explained | Pinecone](https://www.pinecone.io/learn/splade/)
-  - TILDE - [[2108.08513] Fast Passage Re-ranking with Contextualized Exact Term Matching and Efficient Passage Expansion](https://arxiv.org/abs/2108.08513)
-  - [Context-Aware Document Term Weighting for Ad-Hoc Search](https://dl.acm.org/doi/pdf/10.1145/3366423.3380258)
-- vector
-
 ## Orchestration
 
 - [Cinnamon/kotaemon: An open-source RAG-based tool for chatting with your documents.](https://github.com/Cinnamon/kotaemon)
@@ -128,6 +127,7 @@ If building a concept graph, it would be useful to be able to use it as a human 
   - [MonsterUI: Bringing Beautiful UI to FastHTML – Answer.AI](https://www.answer.ai/posts/2025-01-15-monsterui.html)
 - [reflex-dev/reflex: 🕸️ Web apps in pure Python 🐍](https://github.com/reflex-dev/reflex)
 - [tobi/qmd: mini cli search engine for your docs, knowledge bases, meeting notes, whatever. Tracking current sota approaches while being all local](https://github.com/tobi/qmd)
+- [memweave: Zero-Infra AI Agent Memory with Markdown and SQLite — No Vector Database Required | Towards Data Science](https://towardsdatascience.com/memweave-zero-infra-ai-agent-memory-with-markdown-and-sqlite-no-vector-database-required/) and [sachinsharma9780/memweave: memweave is a zero-infrastructure, async-first Python library that gives AI agents persistent, searchable memory — stored as plain Markdown files](https://github.com/sachinsharma9780/memweave)
 - [Building AI Products—Part I: Back-end Architecture](https://philcalcado.com/2024/12/14/building-ai-products-part-i.html)
 - [Introduction — Build, scale, and manage user-facing Retrieval-Augmented Generation applications.](https://r2r-docs.sciphi.ai/introduction)
 - [Future-House/paper-qa: High accuracy RAG for answering questions from scientific documents with citations](https://github.com/Future-House/paper-qa)
@@ -143,8 +143,6 @@ If building a concept graph, it would be useful to be able to use it as a human 
 - [lightonai/pylate: Late Interaction Models Training & Retrieval](https://github.com/lightonai/pylate)
 - [theJayTea/WritingTools - system-wide grammar assistant](https://github.com/theJayTea/WritingTools)
 
-## Papers
-
 ## annotation tools
 
 - [HumanSignal/label-studio: Label Studio is a multi-type data labeling and annotation tool with standardized output format](https://github.com/HumanSignal/label-studio)
@@ -159,3 +157,4 @@ If building a concept graph, it would be useful to be able to use it as a human 
 - [stair-lab/kg-gen: [NeurIPS '25] Knowledge Graph Generation from Any Text](https://github.com/stair-lab/kg-gen)
 - [microsoft/graphrag: A modular graph-based Retrieval-Augmented Generation (RAG) system](https://github.com/microsoft/graphrag)
 - [1st1/lat.md: Agent Lattice: a knowledge graph for your codebase, written in markdown.](https://github.com/1st1/lat.md)
+- [neo4j-labs/create-context-graph: AI agents with graph based reasoning memory, scaffolded in seconds](https://github.com/neo4j-labs/create-context-graph)
