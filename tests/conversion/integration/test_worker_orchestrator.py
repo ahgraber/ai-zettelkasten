@@ -660,6 +660,51 @@ def test_timeout_logs_elapsed_with_phase(monkeypatch, db_session: Session, caplo
     assert "after" in messages
 
 
+def test_retried_job_receives_fresh_timeout_window(monkeypatch, db_session: Session) -> None:
+    """Spec (wpm §75-79): each attempt receives a full fresh timeout window from config.
+
+    Verifies process_job_supervised reads worker_job_timeout_seconds from config on
+    every call and passes it to _spawn_and_supervise — no inheritance from the prior
+    attempt's deadline.
+    """
+    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "42")
+    config = ConversionConfig(_env_file=None)
+    monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
+    monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
+
+    bookmark = _create_bookmark(db_session)
+    job = _create_running_job(db_session, bookmark)
+
+    captured: list[float] = []
+
+    def _spy_spawn(**kwargs):
+        captured.append(kwargs["timeout_seconds"])
+        # cancelled=True short-circuits process_job_supervised cleanly without uploads.
+        return _CompletedProcess(), SupervisionResult("starting", None, True, False), None
+
+    monkeypatch.setattr(orchestrator, "_spawn_and_supervise", _spy_spawn)
+
+    runtime = _make_fake_runtime()
+    assert job.id is not None
+
+    # First attempt.
+    orchestrator.process_job_supervised(job.id, config, runtime)
+
+    # Simulate retry: re-mark RUNNING for the second invocation.
+    db_session.refresh(job)
+    job.status = ConversionJobStatus.RUNNING
+    job.attempts = 1
+    db_session.add(job)
+    db_session.commit()
+
+    # Second attempt.
+    orchestrator.process_job_supervised(job.id, config, runtime)
+
+    assert captured == [42.0, 42.0], (
+        "Each attempt must receive the full configured timeout window; no inheritance from the prior attempt."
+    )
+
+
 def test_process_job_skips_spawn_for_cancelled_job(monkeypatch, db_session: Session) -> None:
     """Mark job CANCELLED before start; ensure no subprocess is spawned."""
     bookmark = _create_bookmark(db_session)
