@@ -550,7 +550,9 @@ def test_timeout_before_upload_reports_uploading_phase(monkeypatch, db_session: 
     job = _create_running_job(db_session, bookmark)
 
     def _fake_supervise(**_kwargs):
-        time.sleep(0.02)  # Exceed the 5ms deadline
+        # 20× the 5ms deadline — gives the deadline-check loop ample headroom on
+        # busy CI runners; the previous 20ms (4×) was tight.
+        time.sleep(0.1)
         return SupervisionResult("converting", None, False, False)
 
     monkeypatch.setattr(orchestrator, "_supervise_conversion_process", _fake_supervise)
