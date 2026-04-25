@@ -188,6 +188,50 @@ class _TestContext:
         )
 
 
+class _DeterministicTestProcess(_TestProcess):
+    """_TestProcess that does not sleep in join — for tests using a patched clock."""
+
+    def join(self, timeout: float | None = None) -> None:
+        if self._alive_cycles > 0:
+            self._alive_cycles -= 1
+        if self._alive_cycles == 0:
+            self._is_alive = False
+
+
+class _DeterministicTestContext(_TestContext):
+    """_TestContext producing _DeterministicTestProcess."""
+
+    def Process(self, target, args, daemon: bool) -> _DeterministicTestProcess:  # noqa: N802
+        return _DeterministicTestProcess(
+            target,
+            args,
+            daemon,
+            alive_cycles=self._alive_cycles,
+            exitcode=self._exitcode,
+            on_start=self._on_start,
+        )
+
+
+def _patch_monotonic(monkeypatch, values: list[float]) -> None:
+    """Patch time.monotonic in orchestrator + supervision to walk the given values.
+
+    The last value repeats indefinitely so callers don't need to count exactly how
+    many monotonic() calls the production code makes.
+    """
+    from aizk.conversion.workers import orchestrator as orchestrator_mod, supervision as supervision_mod
+
+    state = {"i": 0}
+
+    def _next() -> float:
+        i = state["i"]
+        if i < len(values) - 1:
+            state["i"] = i + 1
+        return values[i]
+
+    monkeypatch.setattr(orchestrator_mod.time, "monotonic", _next)
+    monkeypatch.setattr(supervision_mod.time, "monotonic", _next)
+
+
 def _create_running_job(db_session: Session, bookmark: Bookmark, source_ref_json: str | None = None) -> ConversionJob:
     if source_ref_json is None:
         source_ref_json = json.dumps({"kind": "karakeep_bookmark", "bookmark_id": bookmark.karakeep_id or "bm_test"})
@@ -505,7 +549,7 @@ def test_timeout_during_subprocess_terminates_and_reports_phase(monkeypatch, db_
     """Deadline during polling terminates child and reports last phase."""
     import os
 
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "0.01")
+    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "1.0")
     monkeypatch.setenv("RETRY_MAX_ATTEMPTS", "2")
     config = ConversionConfig(_env_file=None)
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
@@ -516,8 +560,14 @@ def test_timeout_during_subprocess_terminates_and_reports_phase(monkeypatch, db_
         status_queue = process_stub._args[3]
         status_queue.put_nowait({"event": "phase", "message": "converting"})
 
+    # Deterministic clock: deadline computed at t=0 (=> deadline=1.0); first
+    # supervisor deadline check sees t=10 ≥ 1.0 and fires immediately.
+    _patch_monotonic(monkeypatch, [0.0, 10.0])
+
     monkeypatch.setattr(
-        orchestrator.mp, "get_context", lambda _ctx: _TestContext(alive_cycles=5, exitcode=0, on_start=_on_start)
+        orchestrator.mp,
+        "get_context",
+        lambda _ctx: _DeterministicTestContext(alive_cycles=5, exitcode=0, on_start=_on_start),
     )
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
 
@@ -541,20 +591,22 @@ def test_timeout_during_subprocess_terminates_and_reports_phase(monkeypatch, db_
 
 def test_timeout_before_upload_reports_uploading_phase(monkeypatch, db_session: Session) -> None:
     """Deadline exceeded before upload raises ConversionTimeoutError with uploading phase."""
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "0.005")
+    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "1.0")
     monkeypatch.setenv("RETRY_MAX_ATTEMPTS", "2")
     config = ConversionConfig(_env_file=None)
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
     bookmark = _create_bookmark(db_session)
     job = _create_running_job(db_session, bookmark)
 
-    def _fake_supervise(**_kwargs):
-        # 20× the 5ms deadline — gives the deadline-check loop ample headroom on
-        # busy CI runners; the previous 20ms (4×) was tight.
-        time.sleep(0.1)
-        return SupervisionResult("converting", None, False, False)
+    # Deterministic clock: deadline computed at t=0 (=> deadline=1.0); next read
+    # at the post-supervise deadline check sees t=10 ≥ 1.0 and fires.
+    _patch_monotonic(monkeypatch, [0.0, 10.0])
 
-    monkeypatch.setattr(orchestrator, "_supervise_conversion_process", _fake_supervise)
+    monkeypatch.setattr(
+        orchestrator,
+        "_supervise_conversion_process",
+        lambda **_kwargs: SupervisionResult("converting", None, False, False),
+    )
 
     upload_calls = {"count": 0}
     monkeypatch.setattr(
@@ -584,6 +636,19 @@ def test_timeout_before_upload_reports_uploading_phase(monkeypatch, db_session: 
 
 def test_timeout_during_upload_retry_stops_retrying(monkeypatch, db_session: Session) -> None:
     """Deadline during upload retries raises timeout and prevents further attempts."""
+    # NOTE/FIXME: this test still relies on real wall-clock timing (5ms deadline +
+    # `_real_sleep(0.01)` between attempts). Unlike the other timeout tests in this
+    # module, the deadline must fire on the *second* retry-loop iteration after
+    # multiple intervening `time.monotonic()` reads on the upload path — a positional
+    # clock script (see `_patch_monotonic`) is brittle here because it would silently
+    # mistime if a future refactor adds or removes a `time.monotonic()` call on the
+    # path between deadline-creation and the second retry iteration.
+    #
+    # If this test starts flaking, the recommended migration is:
+    # wrap `_upload_converted` with a side-effecting stub that advances a virtual
+    # clock past the deadline on its first call (i.e. couple the clock advance to the
+    # failure event itself). That makes the deadline-vs-attempt relationship
+    # explicit and refactor-tolerant.
     monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "0.005")
     monkeypatch.setenv("RETRY_MAX_ATTEMPTS", "2")
     config = ConversionConfig(_env_file=None)
@@ -631,7 +696,7 @@ def test_timeout_logs_elapsed_with_phase(monkeypatch, db_session: Session, caplo
     import os
 
     caplog.set_level("INFO")
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "0.01")
+    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "1.0")
     monkeypatch.setenv("RETRY_MAX_ATTEMPTS", "2")
     config = ConversionConfig(_env_file=None)
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
@@ -640,7 +705,15 @@ def test_timeout_logs_elapsed_with_phase(monkeypatch, db_session: Session, caplo
 
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
 
-    monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _TestContext(alive_cycles=5, exitcode=0))
+    # Deterministic clock: deadline computed at t=0 (=> deadline=1.0); first
+    # supervisor deadline check sees t=10 ≥ 1.0 and fires immediately.
+    _patch_monotonic(monkeypatch, [0.0, 10.0])
+
+    monkeypatch.setattr(
+        orchestrator.mp,
+        "get_context",
+        lambda _ctx: _DeterministicTestContext(alive_cycles=5, exitcode=0),
+    )
     monkeypatch.setattr(orchestrator, "handle_job_error", lambda _job_id, error, _config: None)
 
     killpg_calls = []
