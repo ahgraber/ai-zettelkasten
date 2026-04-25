@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import MutableMapping
+import functools
 import os
 from pathlib import Path
 import subprocess
@@ -87,6 +88,7 @@ def _hermetic_conversion_config() -> Iterator[None]:
             os.environ[alias] = value
 
 
+@functools.lru_cache(maxsize=1)
 def _resolve_repo_root() -> Path:
     repo_root = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],

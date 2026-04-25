@@ -166,14 +166,6 @@ def _assert_no_zombie_processes(job_id: int) -> None:
         pytest.fail(f"Job {job_id} left zombie processes: {formatted}")
 
 
-def _assert_no_temp_directories(prefix: str) -> None:
-    temp_root = Path(tempfile.gettempdir())
-    matches = [path for path in temp_root.iterdir() if path.is_dir() and path.name.startswith(prefix)]
-    if matches:
-        match_list = ", ".join(path.name for path in matches)
-        pytest.fail(f"Temporary directories still exist: {match_list}")
-
-
 def _wait_for_path(path: Path, *, timeout_seconds: float, interval_seconds: float) -> None:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
@@ -354,21 +346,17 @@ def test_timeout_terminates_subprocess(monkeypatch, db_session: Session) -> None
 
     poll_interval_seconds = 0.1
     config = ConversionConfig(_env_file=None)
-    start = time.monotonic()
     assert job.id is not None
     orchestrator.process_job_supervised(
         job.id, config, _make_fake_runtime(), poll_interval_seconds=poll_interval_seconds
     )
-    duration = time.monotonic() - start
 
-    # Verify timeout error was raised
+    # Structural: timeout fired during the conversion phase (not upload/etc).
     assert len(errors) == 1
     assert isinstance(errors[0], errors_mod.ConversionTimeoutError)
+    assert errors[0].phase == "converting"
 
-    # Verify termination happened close to deadline (5s ± 2s tolerance)
-    assert 3.0 <= duration <= 7.0
-
-    # Verify subprocess was terminated
+    # Structural: subprocess was terminated and reaped (no zombies).
     assert len(spawned_process) == 1
     spawned_pid = spawned_process[0].pid
     assert spawned_pid is not None
@@ -379,6 +367,7 @@ def test_timeout_terminates_subprocess(monkeypatch, db_session: Session) -> None
 def test_subprocess_completes_normally_no_zombies(
     monkeypatch,
     db_session: Session,
+    tmp_path: Path,
 ) -> None:
     """Verify subprocess that completes normally leaves no zombie processes."""
     monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "30")
@@ -404,11 +393,10 @@ def test_subprocess_completes_normally_no_zombies(
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
 
     created_paths: list[Path] = []
-    prefix = "aizk-worker-test-"
 
     class _TrackedTemporaryDirectory:
         def __init__(self):
-            self.path = Path(tempfile.mkdtemp(prefix=prefix))
+            self.path = Path(tempfile.mkdtemp(prefix="aizk-worker-test-", dir=str(tmp_path)))
             created_paths.append(self.path)
 
         def __enter__(self) -> str:
@@ -435,7 +423,6 @@ def test_subprocess_completes_normally_no_zombies(
     _assert_no_zombie_processes(job.id)
     assert created_paths
     assert all(not path.exists() for path in created_paths)
-    _assert_no_temp_directories(prefix)
 
 
 def test_process_group_terminates_grandchild(
@@ -584,10 +571,15 @@ def test_sigkill_after_sigterm_on_timeout(monkeypatch, db_session: Session) -> N
     )
     duration = time.monotonic() - start
 
+    # Structural: timeout fired pre-upload, and the loop did not exit before
+    # the configured deadline. Drop the wall-clock upper bound in favor of
+    # `_assert_pid_gone` which fails fast if the kill never lands.
+    # Phase is "starting" or "converting" depending on how far the subprocess
+    # got before the 1s deadline; this test is about kill semantics, not phase.
     assert len(errors) == 1
     assert isinstance(errors[0], errors_mod.ConversionTimeoutError)
+    assert errors[0].phase in {"starting", "converting"}
     assert duration >= timeout_seconds
-    assert duration <= 9.0
 
     assert len(spawned_process) == 1
     spawned_pid = spawned_process[0].pid

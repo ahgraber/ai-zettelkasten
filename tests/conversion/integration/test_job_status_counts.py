@@ -2,61 +2,19 @@
 
 from __future__ import annotations
 
-from uuid import UUID
-
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
-from aizk.conversion.datamodel.source import Source as Bookmark
-
-
-def _create_bookmark(db_session, karakeep_id: str) -> Bookmark:
-    _ref = KarakeepBookmarkRef(bookmark_id=karakeep_id)
-    bookmark = Bookmark(
-        karakeep_id=karakeep_id,
-        aizk_uuid=UUID("550e8400-e29b-41d4-a716-446655440000"),
-        source_ref=_ref.model_dump_json(),
-        source_ref_hash=compute_source_ref_hash(_ref),
-        url="https://example.com",
-        normalized_url="https://example.com",
-        title="Status Count Example",
-        content_type="html",
-        source_type="other",
-    )
-    db_session.add(bookmark)
-    db_session.commit()
-    db_session.refresh(bookmark)
-    return bookmark
-
-
-def _create_job(db_session, *, aizk_uuid: UUID, status: ConversionJobStatus, idempotency_key: str) -> ConversionJob:
-    job = ConversionJob(
-        aizk_uuid=aizk_uuid,
-        title="Status Count Job",
-        payload_version=1,
-        status=status,
-        attempts=0,
-        idempotency_key=idempotency_key,
-    )
-    db_session.add(job)
-    db_session.commit()
-    db_session.refresh(job)
-    return job
+from aizk.conversion.datamodel.job import ConversionJobStatus
+from tests.conversion._helpers import make_job, make_source
 
 
 def test_status_counts_returns_totals(db_session) -> None:
     app = create_app()
-    bookmark = _create_bookmark(db_session, "bm_status_counts")
-    _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, status=ConversionJobStatus.QUEUED, idempotency_key="a" * 64)
-    _create_job(
-        db_session,
-        aizk_uuid=bookmark.aizk_uuid,
-        status=ConversionJobStatus.QUEUED,
-        idempotency_key="b" * 64,
-    )
-    _create_job(
+    bookmark = make_source(db_session, "bm_status_counts")
+    make_job(db_session, aizk_uuid=bookmark.aizk_uuid, status=ConversionJobStatus.QUEUED, idempotency_key="a" * 64)
+    make_job(db_session, aizk_uuid=bookmark.aizk_uuid, status=ConversionJobStatus.QUEUED, idempotency_key="b" * 64)
+    make_job(
         db_session,
         aizk_uuid=bookmark.aizk_uuid,
         status=ConversionJobStatus.FAILED_RETRYABLE,

@@ -1,4 +1,9 @@
-"""Unit tests for graceful shutdown integration in supervision and worker loop."""
+"""Integration tests for graceful shutdown in worker supervision and the run-worker loop.
+
+Crosses subprocess + thread + DB boundaries (real ThreadPoolExecutor in one
+case, with pyleak verification). Not a true unit test despite mocks at the
+loop boundary.
+"""
 
 from __future__ import annotations
 
@@ -12,13 +17,14 @@ from pyleak import no_thread_leaks
 import pytest
 from sqlmodel import Session
 
-from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
+from aizk.conversion.core.source_ref import KarakeepBookmarkRef
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers import errors as errors_mod, loop, orchestrator, shutdown
 from aizk.conversion.workers.supervision import _supervise_conversion_process
 from aizk.conversion.workers.types import SupervisionResult
+from tests.conversion._helpers import make_source
 
 
 @pytest.fixture(autouse=True)
@@ -29,21 +35,14 @@ def _reset_shutdown():
 
 
 def _create_bookmark(db_session: Session) -> Bookmark:
-    _ref = KarakeepBookmarkRef(bookmark_id="bm_shutdown_test")
-    bookmark = Bookmark(
-        karakeep_id="bm_shutdown_test",
-        source_ref=_ref.model_dump_json(),
-        source_ref_hash=compute_source_ref_hash(_ref),
+    return make_source(
+        db_session,
+        "bm_shutdown_test",
         url="https://example.com",
-        normalized_url="https://example.com",
         title="Shutdown Test",
         content_type="html",
         source_type="web",
     )
-    db_session.add(bookmark)
-    db_session.commit()
-    db_session.refresh(bookmark)
-    return bookmark
 
 
 def _create_running_job(db_session: Session, bookmark: Bookmark) -> ConversionJob:

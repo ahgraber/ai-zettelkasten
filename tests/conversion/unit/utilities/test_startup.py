@@ -100,11 +100,12 @@ def test_probe_karakeep_succeeds_when_reachable() -> None:
     with patch("aizk.conversion.utilities.startup.httpx.get", return_value=mock_response) as mock_get:
         probe_karakeep(KarakeepFetcherConfig(_env_file=None, base_url="http://karakeep.local", api_key="test-key"))
 
-    mock_get.assert_called_once()
-    call_kwargs = mock_get.call_args
-    assert "bookmarks" in call_kwargs.args[0]
-    assert call_kwargs.kwargs["params"] == {"limit": 1}
-    assert "Bearer test-key" in call_kwargs.kwargs["headers"]["Authorization"]
+    mock_get.assert_called_once_with(
+        "http://karakeep.local/api/v1/bookmarks",
+        headers={"Authorization": "Bearer test-key", "Accept": "application/json"},
+        params={"limit": 1},
+        timeout=10.0,
+    )
 
 
 def test_probe_karakeep_raises_on_missing_env_vars() -> None:
@@ -242,7 +243,7 @@ def test_validate_startup_succeeds_when_all_probes_pass(
         validate_startup(config, docling_cfg, karakeep_cfg, role="worker")
 
     mock_s3.assert_called_once_with(config)
-    mock_kk.assert_called_once()
+    mock_kk.assert_called_once_with(karakeep_cfg)
     mock_log.assert_called_once_with(config, docling_cfg, "worker")
 
 

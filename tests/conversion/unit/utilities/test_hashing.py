@@ -72,3 +72,36 @@ def test_build_output_config_snapshot_omits_provider_identity_and_credentials():
     snapshot = build_output_config_snapshot(config, picture_description_enabled=True)
     assert "picture_description_base_url" not in snapshot
     assert "picture_description_api_key" not in snapshot
+
+
+def test_idempotency_key_stable_under_picture_description_url_and_api_key_rotation():
+    """Spec: rotating PICTURE_DESCRIPTION_BASE_URL or _API_KEY must not change the key."""
+    config_a = DoclingConverterConfig(
+        _env_file=None,
+        picture_description_base_url="https://provider-a.example.com/v1",
+        picture_description_api_key="sk-aaaa",
+    )
+    config_b = DoclingConverterConfig(
+        _env_file=None,
+        picture_description_base_url="https://provider-b.example.com/v1",
+        picture_description_api_key="sk-bbbb",
+    )
+    snapshot_a = build_output_config_snapshot(config_a, picture_description_enabled=True)
+    snapshot_b = build_output_config_snapshot(config_b, picture_description_enabled=True)
+
+    key_a = compute_idempotency_key("source_hash", "docling", snapshot_a)
+    key_b = compute_idempotency_key("source_hash", "docling", snapshot_b)
+    assert key_a == key_b
+
+
+def test_idempotency_key_differs_when_picture_classification_toggled():
+    """Spec: toggling PICTURE_CLASSIFICATION_ENABLED must produce a different key."""
+    config_on = DoclingConverterConfig(_env_file=None, picture_classification_enabled=True)
+    config_off = DoclingConverterConfig(_env_file=None, picture_classification_enabled=False)
+
+    snapshot_on = build_output_config_snapshot(config_on, picture_description_enabled=True)
+    snapshot_off = build_output_config_snapshot(config_off, picture_description_enabled=True)
+
+    key_on = compute_idempotency_key("source_hash", "docling", snapshot_on)
+    key_off = compute_idempotency_key("source_hash", "docling", snapshot_off)
+    assert key_on != key_off

@@ -3,56 +3,12 @@
 from __future__ import annotations
 
 import datetime as dt
-from uuid import UUID
 
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
-from aizk.conversion.datamodel.source import Source as Bookmark
-
-
-def _create_bookmark(session, karakeep_id: str) -> Bookmark:
-    _ref = KarakeepBookmarkRef(bookmark_id=karakeep_id)
-    bookmark = Bookmark(
-        karakeep_id=karakeep_id,
-        source_ref=_ref.model_dump_json(),
-        source_ref_hash=compute_source_ref_hash(_ref),
-        url=f"https://example.com/{karakeep_id}",
-        normalized_url=f"https://example.com/{karakeep_id}",
-        title=karakeep_id,
-        content_type="html",
-        source_type="other",
-    )
-    session.add(bookmark)
-    session.commit()
-    session.refresh(bookmark)
-    return bookmark
-
-
-def _create_job(
-    session,
-    *,
-    aizk_uuid: UUID,
-    idempotency_key: str,
-    status: ConversionJobStatus = ConversionJobStatus.QUEUED,
-    created_at: dt.datetime | None = None,
-) -> ConversionJob:
-    job = ConversionJob(
-        aizk_uuid=aizk_uuid,
-        title="T",
-        payload_version=1,
-        status=status,
-        attempts=0,
-        idempotency_key=idempotency_key,
-    )
-    if created_at is not None:
-        job.created_at = created_at
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    return job
+from aizk.conversion.datamodel.job import ConversionJobStatus
+from tests.conversion._helpers import make_job, make_source
 
 
 def test_list_empty_returns_zero_total(db_session) -> None:
@@ -66,11 +22,11 @@ def test_list_empty_returns_zero_total(db_session) -> None:
 
 
 def test_list_returns_jobs_ordered_descending_by_created_at(db_session) -> None:
-    bookmark = _create_bookmark(db_session, "bm_list")
+    bookmark = make_source(db_session, "bm_list")
     older = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
     newer = dt.datetime(2026, 2, 1, tzinfo=dt.timezone.utc)
-    j_old = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="o" * 64, created_at=older)
-    j_new = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="n" * 64, created_at=newer)
+    j_old = make_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="o" * 64, created_at=older)
+    j_new = make_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="n" * 64, created_at=newer)
 
     app = create_app()
     with TestClient(app) as client:
@@ -84,9 +40,9 @@ def test_list_returns_jobs_ordered_descending_by_created_at(db_session) -> None:
 
 
 def test_list_filters_by_status(db_session) -> None:
-    bookmark = _create_bookmark(db_session, "bm_status")
-    _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="q" * 64, status=ConversionJobStatus.QUEUED)
-    j_succ = _create_job(
+    bookmark = make_source(db_session, "bm_status")
+    make_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="q" * 64, status=ConversionJobStatus.QUEUED)
+    j_succ = make_job(
         db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="s" * 64, status=ConversionJobStatus.SUCCEEDED
     )
 
@@ -101,10 +57,10 @@ def test_list_filters_by_status(db_session) -> None:
 
 
 def test_list_filters_by_aizk_uuid(db_session) -> None:
-    bookmark_a = _create_bookmark(db_session, "bm_uuid_a")
-    bookmark_b = _create_bookmark(db_session, "bm_uuid_b")
-    j_a = _create_job(db_session, aizk_uuid=bookmark_a.aizk_uuid, idempotency_key="u" * 64)
-    _create_job(db_session, aizk_uuid=bookmark_b.aizk_uuid, idempotency_key="v" * 64)
+    bookmark_a = make_source(db_session, "bm_uuid_a")
+    bookmark_b = make_source(db_session, "bm_uuid_b")
+    j_a = make_job(db_session, aizk_uuid=bookmark_a.aizk_uuid, idempotency_key="u" * 64)
+    make_job(db_session, aizk_uuid=bookmark_b.aizk_uuid, idempotency_key="v" * 64)
 
     app = create_app()
     with TestClient(app) as client:
@@ -117,12 +73,12 @@ def test_list_filters_by_aizk_uuid(db_session) -> None:
 
 
 def test_list_paginates_with_limit_and_offset(db_session) -> None:
-    bookmark = _create_bookmark(db_session, "bm_page")
+    bookmark = make_source(db_session, "bm_page")
     # Seed 5 jobs with distinct created_at so ordering is deterministic.
     base = dt.datetime(2026, 3, 1, tzinfo=dt.timezone.utc)
     ids_newest_first = []
     for i in range(5):
-        j = _create_job(
+        j = make_job(
             db_session,
             aizk_uuid=bookmark.aizk_uuid,
             idempotency_key=f"p{i}".ljust(64, "0"),

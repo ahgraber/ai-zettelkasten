@@ -10,38 +10,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
-from aizk.conversion.datamodel.source import Source as Bookmark
-
-
-def _create_bookmark(session, karakeep_id: str) -> Bookmark:
-    _ref = KarakeepBookmarkRef(bookmark_id=karakeep_id)
-    bookmark = Bookmark(
-        karakeep_id=karakeep_id,
-        source_ref=_ref.model_dump_json(),
-        source_ref_hash=compute_source_ref_hash(_ref),
-    )
-    session.add(bookmark)
-    session.commit()
-    session.refresh(bookmark)
-    return bookmark
-
-
-def _create_job(session, *, aizk_uuid: UUID, idempotency_key: str) -> ConversionJob:
-    job = ConversionJob(
-        aizk_uuid=aizk_uuid,
-        title="Test",
-        payload_version=1,
-        status=ConversionJobStatus.SUCCEEDED,
-        attempts=1,
-        idempotency_key=idempotency_key,
-    )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    return job
+from tests.conversion._helpers import make_job, make_source
 
 
 def _create_output(
@@ -78,9 +49,21 @@ def app():
 
 
 def test_get_bookmark_outputs_returns_all_ordered_descending(db_session, app) -> None:
-    bookmark = _create_bookmark(db_session, "bm_outputs_all")
-    job1 = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="a" * 64)
-    job2 = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="b" * 64)
+    bookmark = make_source(db_session, "bm_outputs_all")
+    job1 = make_job(
+        db_session,
+        aizk_uuid=bookmark.aizk_uuid,
+        idempotency_key="a" * 64,
+        status=ConversionJobStatus.SUCCEEDED,
+        attempts=1,
+    )
+    job2 = make_job(
+        db_session,
+        aizk_uuid=bookmark.aizk_uuid,
+        idempotency_key="b" * 64,
+        status=ConversionJobStatus.SUCCEEDED,
+        attempts=1,
+    )
 
     now = dt.datetime.now(dt.timezone.utc)
     older = now - dt.timedelta(hours=1)
@@ -103,9 +86,21 @@ def test_get_bookmark_outputs_returns_all_ordered_descending(db_session, app) ->
 
 
 def test_get_bookmark_outputs_latest_returns_one(db_session, app) -> None:
-    bookmark = _create_bookmark(db_session, "bm_outputs_latest")
-    job1 = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="c" * 64)
-    job2 = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="d" * 64)
+    bookmark = make_source(db_session, "bm_outputs_latest")
+    job1 = make_job(
+        db_session,
+        aizk_uuid=bookmark.aizk_uuid,
+        idempotency_key="c" * 64,
+        status=ConversionJobStatus.SUCCEEDED,
+        attempts=1,
+    )
+    job2 = make_job(
+        db_session,
+        aizk_uuid=bookmark.aizk_uuid,
+        idempotency_key="d" * 64,
+        status=ConversionJobStatus.SUCCEEDED,
+        attempts=1,
+    )
 
     now = dt.datetime.now(dt.timezone.utc)
     older = now - dt.timedelta(hours=1)

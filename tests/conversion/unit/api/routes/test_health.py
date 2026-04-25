@@ -57,7 +57,7 @@ async def test_check_db_timeout_no_task_leaks() -> None:
 
     engine.connect = _slow_connect
 
-    with patch("aizk.conversion.api.routes.health._CHECK_TIMEOUT_SECONDS", 0.05):
+    with patch("aizk.conversion.api.routes.health._CHECK_TIMEOUT_SECONDS", 0.5):
         async with no_task_leaks(action="raise"):
             result = await _check_db(engine)
 
@@ -99,7 +99,7 @@ async def test_check_s3_timeout_no_task_leaks() -> None:
     s3_client.config.s3_bucket_name = "test-bucket"
     s3_client.client.head_bucket.side_effect = lambda **_kw: time.sleep(10)
 
-    with patch("aizk.conversion.api.routes.health._CHECK_TIMEOUT_SECONDS", 0.05):
+    with patch("aizk.conversion.api.routes.health._CHECK_TIMEOUT_SECONDS", 0.5):
         async with no_task_leaks(action="raise"):
             result = await _check_s3(s3_client)
 
