@@ -216,6 +216,128 @@ class TestGpuSemaphoreGuard:
 
         assert acquire_calls == [], "Guard must not be acquired when requires_gpu is False"
 
+    def test_guard_released_after_subprocess_crash(self, monkeypatch):
+        """Spec: guard SHALL be released when the subprocess crashes (non-zero exitcode)."""
+        from pathlib import Path
+        import queue as queue_module
+
+        from aizk.conversion.wiring.worker import _SemaphoreGuard
+        from aizk.conversion.workers import orchestrator as orchestrator_mod
+
+        class _CrashedProcess:
+            pid = None
+            exitcode = 1
+
+            def start(self):
+                pass
+
+            def is_alive(self):
+                return False
+
+            def join(self, timeout=None):
+                pass
+
+            def terminate(self):
+                pass
+
+            def kill(self):
+                pass
+
+        class _InlineCtx:
+            def Queue(self):  # noqa: N802
+                return queue_module.Queue()
+
+            def Process(self, target, args, daemon):  # noqa: N802
+                return _CrashedProcess()
+
+        monkeypatch.setattr(orchestrator_mod.mp, "get_context", lambda _: _InlineCtx())
+
+        sem = threading.BoundedSemaphore(1)
+        guard = _SemaphoreGuard(sem)
+
+        orchestrator_mod._spawn_and_supervise(
+            job_id=1,
+            workspace=Path("/tmp"),
+            source_ref_json='{"kind":"karakeep_bookmark","bookmark_id":"bm_x"}',
+            poll_interval_seconds=0.001,
+            timeout_seconds=0,
+            is_cancelled_fn=lambda: False,
+            config=ConversionConfig(_env_file=None),
+            resource_guard=guard,
+            requires_gpu=True,
+        )
+
+        assert sem.acquire(blocking=False), "Guard must be released after subprocess crash"
+        sem.release()
+
+    def test_guard_released_after_timeout(self, monkeypatch):
+        """Spec: guard SHALL be released when the supervisor terminates the subprocess on timeout."""
+        from pathlib import Path
+        import queue as queue_module
+
+        from aizk.conversion.wiring.worker import _SemaphoreGuard
+        from aizk.conversion.workers import orchestrator as orchestrator_mod, supervision as supervision_mod
+
+        class _LingeringProcess:
+            """Alive on first poll so the deadline check fires; dead afterward."""
+
+            pid = None
+            exitcode = -15
+
+            def __init__(self):
+                self._alive = True
+
+            def start(self):
+                pass
+
+            def is_alive(self):
+                # Flip to dead after the supervisor calls terminate_and_wait.
+                alive = self._alive
+                self._alive = False
+                return alive
+
+            def join(self, timeout=None):
+                pass
+
+            def terminate(self):
+                pass
+
+            def kill(self):
+                pass
+
+        class _InlineCtx:
+            def Queue(self):  # noqa: N802
+                return queue_module.Queue()
+
+            def Process(self, target, args, daemon):  # noqa: N802
+                return _LingeringProcess()
+
+        monkeypatch.setattr(orchestrator_mod.mp, "get_context", lambda _: _InlineCtx())
+
+        # Deterministic clock: deadline = 0 + 1 = 1; supervisor's first check sees t=2 ≥ 1.
+        clock = iter([0.0, 2.0, 2.0, 2.0, 2.0])
+        monkeypatch.setattr(orchestrator_mod.time, "monotonic", lambda: next(clock))
+        monkeypatch.setattr(supervision_mod.time, "monotonic", lambda: next(clock))
+
+        sem = threading.BoundedSemaphore(1)
+        guard = _SemaphoreGuard(sem)
+
+        _, result, _ = orchestrator_mod._spawn_and_supervise(
+            job_id=2,
+            workspace=Path("/tmp"),
+            source_ref_json='{"kind":"karakeep_bookmark","bookmark_id":"bm_x"}',
+            poll_interval_seconds=0.001,
+            timeout_seconds=1.0,
+            is_cancelled_fn=lambda: False,
+            config=ConversionConfig(_env_file=None),
+            resource_guard=guard,
+            requires_gpu=True,
+        )
+
+        assert result.timed_out is True
+        assert sem.acquire(blocking=False), "Guard must be released after timeout termination"
+        sem.release()
+
 
 # ---------------------------------------------------------------------------
 # run_worker concurrency
