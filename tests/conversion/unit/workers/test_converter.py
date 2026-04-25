@@ -1,8 +1,14 @@
-"""Unit tests for picture classification helpers and enrichment loop."""
+"""Unit tests for the Docling converter worker.
+
+Covers picture classification helpers, enrichment loop, the AnnotationPictureSerializer embedded in _docling_to_markdown,
+and the trace-span wiring in convert_html.
+"""
 
 from __future__ import annotations
 
 from contextlib import contextmanager
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -316,6 +322,116 @@ class TestAnnotationPictureSerializer:
         result = self._serialize_picture([description])
 
         assert "Figure Type" not in result
+
+
+# ---------------------------------------------------------------------------
+# convert_html trace-span wiring
+# ---------------------------------------------------------------------------
+
+
+class _FakeDocumentConverter:
+    def convert(self, _source):
+        return SimpleNamespace(document=SimpleNamespace(pictures=[]))
+
+
+def _patch_convert_html_stubs(monkeypatch, trace_impl) -> None:
+    """Wire the common fakes: no real Docling, no real markdown, no real figures."""
+    monkeypatch.setattr(converter_module, "_create_document_converter", lambda *_a, **_kw: _FakeDocumentConverter())
+    monkeypatch.setattr(converter_module, "_docling_to_markdown", lambda _doc: "markdown")
+    monkeypatch.setattr(converter_module, "_extract_figures", lambda _doc, _out: [])
+    monkeypatch.setattr(converter_module, "trace_model_call", trace_impl)
+
+
+class TestConvertHtmlTracing:
+    """Verify convert_html wires the `trace_model_call` span based on config."""
+
+    def test_uses_llm_trace_when_picture_description_enabled(self, monkeypatch, tmp_path: Path) -> None:
+        """When classification is enabled (default), trace comes from _enrich_picture_descriptions."""
+        captured_calls: list[tuple[str, str, dict[str, object]]] = []
+
+        @contextmanager
+        def _capture_trace_model_call(*, name, span_type, attributes=None):
+            captured_calls.append((name, span_type, attributes or {}))
+            yield None
+
+        _patch_convert_html_stubs(monkeypatch, _capture_trace_model_call)
+
+        config = DoclingConverterConfig(
+            _env_file=None,
+            picture_description_base_url="https://openrouter.ai/api/v1",
+            picture_description_api_key="test-key",
+            picture_description_model="openai/gpt-5-nano",
+        )
+        markdown, figures = converter_module.convert_html(b"<html></html>", temp_dir=tmp_path, config=config)
+
+        assert markdown == "markdown"
+        assert figures == []
+        assert captured_calls == [
+            (
+                "llm.chat.completions.docling_picture_description",
+                "CHAT_MODEL",
+                {
+                    "model": "openai/gpt-5-nano",
+                    "pipeline": "enrichment",
+                    "provider_endpoint": "/chat/completions",
+                },
+            )
+        ]
+
+    def test_uses_builtin_trace_when_classification_disabled(self, monkeypatch, tmp_path: Path) -> None:
+        """When classification is disabled, the trace wraps the Docling convert call with pipeline=html."""
+        captured_calls: list[tuple[str, str, dict[str, object]]] = []
+
+        @contextmanager
+        def _capture_trace_model_call(*, name, span_type, attributes=None):
+            captured_calls.append((name, span_type, attributes or {}))
+            yield None
+
+        _patch_convert_html_stubs(monkeypatch, _capture_trace_model_call)
+
+        config = DoclingConverterConfig(
+            _env_file=None,
+            picture_description_base_url="https://openrouter.ai/api/v1",
+            picture_description_api_key="test-key",
+            picture_description_model="openai/gpt-5-nano",
+            picture_classification_enabled=False,
+        )
+        markdown, figures = converter_module.convert_html(b"<html></html>", temp_dir=tmp_path, config=config)
+
+        assert markdown == "markdown"
+        assert figures == []
+        assert captured_calls == [
+            (
+                "llm.chat.completions.docling_picture_description",
+                "CHAT_MODEL",
+                {
+                    "model": "openai/gpt-5-nano",
+                    "pipeline": "html",
+                    "provider_endpoint": "/chat/completions",
+                },
+            )
+        ]
+
+    def test_skips_llm_trace_when_picture_description_disabled(self, monkeypatch, tmp_path: Path) -> None:
+        trace_calls = {"count": 0}
+
+        @contextmanager
+        def _capture_trace_model_call(**_kwargs):
+            trace_calls["count"] += 1
+            yield None
+
+        _patch_convert_html_stubs(monkeypatch, _capture_trace_model_call)
+
+        config = DoclingConverterConfig(
+            _env_file=None,
+            picture_description_base_url="",
+            picture_description_api_key="",
+        )
+        markdown, figures = converter_module.convert_html(b"<html></html>", temp_dir=tmp_path, config=config)
+
+        assert markdown == "markdown"
+        assert figures == []
+        assert trace_calls["count"] == 0
 
 
 # ---------------------------------------------------------------------------

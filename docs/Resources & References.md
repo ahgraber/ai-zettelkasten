@@ -19,6 +19,8 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [Zotero | Your personal research assistant](https://www.zotero.org/)
   - [urschrei/pyzotero: Pyzotero: a Python client for the Zotero API](https://github.com/urschrei/pyzotero)
   - [DIY: Ground LLaMa on your papers from Zotero | by Emmett McFarlane | Medium](https://medium.com/@emcf1/diy-ground-a-language-model-on-your-papers-from-zotero-with-finesse-a5c4ca7c187a)
+- [alash3al/stash: Stash — persistent memory layer for AI agents. Episodes, facts, and working context stored in Postgres. MCP server included. Self-hosted, single binary, no cloud required.](https://github.com/alash3al/stash)
+- [nex-crm/wuphf: Slack for AI employees with a shared brain. Get Claudes, Codexes and OpenClaws to collaborate and do your work autonomously while never losing context.](https://github.com/nex-crm/wuphf)
 
 ## Ingest / Archiving
 
@@ -142,6 +144,14 @@ If building a concept graph, it would be useful to be able to use it as a human 
 - [foambubble/foam: A personal knowledge management and sharing system for VSCode](https://github.com/foambubble/foam)
 - [lightonai/pylate: Late Interaction Models Training & Retrieval](https://github.com/lightonai/pylate)
 - [theJayTea/WritingTools - system-wide grammar assistant](https://github.com/theJayTea/WritingTools)
+
+## UX
+
+- [Obsidian - Sharpen your thinking](https://obsidian.md/)
+- [Logseq: A privacy-first, open-source knowledge base](https://logseq.com/)
+- [Octarine - Take back control of your writing](https://octarine.app/)
+- [refactoringhq/tolaria](https://github.com/refactoringhq/tolaria)
+- [Atomic — Everything You Know, Connected](https://atomicapp.ai/)
 
 ## annotation tools
 

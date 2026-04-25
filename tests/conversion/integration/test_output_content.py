@@ -11,10 +11,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
-from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.storage.manifest import (
     ManifestArtifactMarkdown,
     ManifestArtifacts,
@@ -24,35 +22,23 @@ from aizk.conversion.storage.manifest import (
     ManifestV1,
 )
 from aizk.conversion.storage.s3_client import S3Client, S3Error, S3NotFoundError
+from tests.conversion._helpers import make_job, make_source
 
 
-def _create_bookmark(session, karakeep_id: str) -> Bookmark:
+def _create_bookmark(session, karakeep_id: str):
+    # KarakeepBookmarkRef.bookmark_id rejects dots and paths; sanitize for the ref only.
     safe_bookmark_id = karakeep_id.replace(".", "_")[:64]
-    _ref = KarakeepBookmarkRef(bookmark_id=safe_bookmark_id)
-    bookmark = Bookmark(
-        karakeep_id=karakeep_id,
-        source_ref=_ref.model_dump_json(),
-        source_ref_hash=compute_source_ref_hash(_ref),
-    )
-    session.add(bookmark)
-    session.commit()
-    session.refresh(bookmark)
-    return bookmark
+    return make_source(session, karakeep_id, source_ref_bookmark_id=safe_bookmark_id)
 
 
-def _create_job(session, *, aizk_uuid: UUID, idempotency_key: str) -> ConversionJob:
-    job = ConversionJob(
+def _create_job(session, *, aizk_uuid, idempotency_key: str):
+    return make_job(
+        session,
         aizk_uuid=aizk_uuid,
-        title="Test",
-        payload_version=1,
+        idempotency_key=idempotency_key,
         status=ConversionJobStatus.SUCCEEDED,
         attempts=1,
-        idempotency_key=idempotency_key,
     )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    return job
 
 
 def _create_output(session, *, job_id: int, aizk_uuid: UUID, s3_prefix: str = "prefix/abc") -> ConversionOutput:
