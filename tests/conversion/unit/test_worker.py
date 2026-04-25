@@ -996,57 +996,6 @@ def test_handle_job_error_missing_content_from_child_is_permanent(monkeypatch, d
     assert job.finished_at is not None
 
 
-def test_error_code_and_retryable_mapping() -> None:
-    """Every exception class carries an explicit retryable class attribute."""
-    jde = errors_mod.JobDataIntegrityError("bad job")
-    assert jde.error_code == "job_data_integrity"
-    assert jde.retryable is False
-
-    ame = errors_mod.ConversionArtifactsMissingError("no output")
-    assert ame.error_code == "conversion_artifacts_missing"
-    assert ame.retryable is False
-
-    cce = errors_mod.ConversionCancelledError("job cancelled")
-    assert cce.error_code == "conversion_cancelled"
-    assert cce.retryable is False
-
-    cto = errors_mod.ConversionTimeoutError("timeout", phase="converting")
-    assert cto.error_code == "conversion_timeout"
-    assert cto.retryable is True
-
-    cse = errors_mod.ConversionSubprocessError("subprocess failed")
-    assert cse.error_code == "conversion_subprocess_failed"
-    assert cse.retryable is True
-
-    pfe = errors_mod.PreflightError("preflight failed")
-    assert pfe.error_code == "conversion_preflight_failed"
-    assert pfe.retryable is True
-
-    rce_default = errors_mod.ReportedChildError("child failed", "transient")
-    assert rce_default.retryable is True
-    rce_perm = errors_mod.ReportedChildError("child failed", "docling_empty_output", retryable=False)
-    assert rce_perm.retryable is False
-    rce_retry = errors_mod.ReportedChildError("child failed", "transient", retryable=True)
-    assert rce_retry.retryable is True
-
-    bce = BookmarkContentError("missing")
-    assert bce.error_code == "karakeep_bookmark_missing_contents"
-    assert bce.retryable is False
-
-    deo = converter.DoclingEmptyOutputError()
-    assert deo.error_code == "docling_empty_output"
-    assert deo.retryable is False
-
-    fe = fetcher.FetchError("network")
-    assert fe.error_code == "fetch_error"
-    assert fe.retryable is True
-
-    s3e = S3Error("bucket not configured", "s3_upload_failed")
-    assert s3e.retryable is True
-    s3_upload_err = S3UploadError("key/obj", "ETag mismatch")
-    assert s3_upload_err.retryable is True
-
-
 def _make_workspace_metadata(tmp_path: Path, *, markdown_hash: str) -> Path:
     """Write a minimal workspace with metadata.json and output.md."""
     (tmp_path / "output.md").write_text("# Content")

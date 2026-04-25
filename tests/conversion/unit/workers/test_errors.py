@@ -1,4 +1,10 @@
-"""Unit tests for error traceback capture and persistence."""
+"""Unit tests for the worker error taxonomy and traceback persistence.
+
+Covers:
+  - Error class taxonomy (error_code, retryable) for every exception type the
+    orchestrator maps onto job status.
+  - Traceback capture and persistence in `_report_status` / `handle_job_error`.
+"""
 
 from __future__ import annotations
 
@@ -10,12 +16,74 @@ from sqlmodel import Session
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source
+from aizk.conversion.storage.s3_client import S3Error, S3UploadError
+from aizk.conversion.utilities.bookmark_utils import BookmarkContentError
 from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.workers import converter, errors as errors_mod, fetcher
 from aizk.conversion.workers.errors import ReportedChildError
 from aizk.conversion.workers.orchestrator import (
     _report_status,
     handle_job_error,
 )
+
+# ---------------------------------------------------------------------------
+# Error taxonomy: error_code + retryable
+# ---------------------------------------------------------------------------
+
+
+class TestErrorTaxonomy:
+    """Every exception class carries an explicit error_code + retryable."""
+
+    @pytest.mark.parametrize(
+        "exc_cls, expected_code, expected_retryable",
+        [
+            (errors_mod.JobDataIntegrityError, "job_data_integrity", False),
+            (errors_mod.ConversionArtifactsMissingError, "conversion_artifacts_missing", False),
+            (errors_mod.ConversionCancelledError, "conversion_cancelled", False),
+            (errors_mod.ConversionSubprocessError, "conversion_subprocess_failed", True),
+            (errors_mod.PreflightError, "conversion_preflight_failed", True),
+            (BookmarkContentError, "karakeep_bookmark_missing_contents", False),
+            (fetcher.FetchError, "fetch_error", True),
+        ],
+        ids=lambda v: v.__name__ if isinstance(v, type) else None,
+    )
+    def test_simple_constructor(self, exc_cls, expected_code, expected_retryable) -> None:
+        err = exc_cls("test message")
+        assert err.error_code == expected_code
+        assert err.retryable is expected_retryable
+
+    def test_conversion_timeout_carries_phase(self) -> None:
+        err = errors_mod.ConversionTimeoutError("timeout", phase="converting")
+        assert err.error_code == "conversion_timeout"
+        assert err.retryable is True
+
+    def test_reported_child_defaults_to_retryable(self) -> None:
+        err = errors_mod.ReportedChildError("child failed", "transient")
+        assert err.error_code == "transient"
+        assert err.retryable is True
+
+    def test_reported_child_can_be_marked_permanent(self) -> None:
+        err = errors_mod.ReportedChildError("child failed", "docling_empty_output", retryable=False)
+        assert err.error_code == "docling_empty_output"
+        assert err.retryable is False
+
+    def test_reported_child_retryable_kwarg_round_trips(self) -> None:
+        err = errors_mod.ReportedChildError("child failed", "transient", retryable=True)
+        assert err.retryable is True
+
+    def test_docling_empty_output_is_permanent(self) -> None:
+        err = converter.DoclingEmptyOutputError()
+        assert err.error_code == "docling_empty_output"
+        assert err.retryable is False
+
+    def test_s3_error_is_retryable(self) -> None:
+        err = S3Error("bucket not configured", "s3_upload_failed")
+        assert err.retryable is True
+
+    def test_s3_upload_error_is_retryable(self) -> None:
+        err = S3UploadError("key/obj", "ETag mismatch")
+        assert err.retryable is True
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
