@@ -269,6 +269,144 @@ def test_handle_job_error_logs_error_with_detail(
 
 
 # ---------------------------------------------------------------------------
+# handle_job_error — error.retryable → status mapping
+#
+# Pins the contract that drives retry behavior: a regression that flips
+# FAILED_RETRYABLE ↔ FAILED_PERM for any error class would silently break
+# the worker's retry loop or eat permanent failures into infinite retries.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("error_factory", "expected_status", "expects_finished_at"),
+    [
+        # Retryable errors → FAILED_RETRYABLE, finished_at stays None.
+        pytest.param(
+            lambda: errors_mod.ConversionSubprocessError("subprocess died"),
+            ConversionJobStatus.FAILED_RETRYABLE,
+            False,
+            id="ConversionSubprocessError-retryable",
+        ),
+        pytest.param(
+            lambda: errors_mod.PreflightError("preflight failed"),
+            ConversionJobStatus.FAILED_RETRYABLE,
+            False,
+            id="PreflightError-retryable",
+        ),
+        pytest.param(
+            lambda: errors_mod.ConversionTimeoutError("timed out", phase="converting"),
+            ConversionJobStatus.FAILED_RETRYABLE,
+            False,
+            id="ConversionTimeoutError-retryable",
+        ),
+        pytest.param(
+            lambda: fetcher.FetchError("fetch failed"),
+            ConversionJobStatus.FAILED_RETRYABLE,
+            False,
+            id="FetchError-retryable",
+        ),
+        pytest.param(
+            lambda: S3Error("bucket unreachable", "s3_error"),
+            ConversionJobStatus.FAILED_RETRYABLE,
+            False,
+            id="S3Error-retryable",
+        ),
+        pytest.param(
+            lambda: ReportedChildError("transient", "transient_code"),
+            ConversionJobStatus.FAILED_RETRYABLE,
+            False,
+            id="ReportedChildError-default-retryable",
+        ),
+        # Permanent errors → FAILED_PERM, finished_at set.
+        pytest.param(
+            lambda: errors_mod.JobDataIntegrityError("bad job"),
+            ConversionJobStatus.FAILED_PERM,
+            True,
+            id="JobDataIntegrityError-permanent",
+        ),
+        pytest.param(
+            lambda: errors_mod.ConversionArtifactsMissingError("no artifacts"),
+            ConversionJobStatus.FAILED_PERM,
+            True,
+            id="ConversionArtifactsMissingError-permanent",
+        ),
+        pytest.param(
+            lambda: errors_mod.ConversionCancelledError("cancelled"),
+            ConversionJobStatus.FAILED_PERM,
+            True,
+            id="ConversionCancelledError-permanent",
+        ),
+        pytest.param(
+            lambda: BookmarkContentError("missing content"),
+            ConversionJobStatus.FAILED_PERM,
+            True,
+            id="BookmarkContentError-permanent",
+        ),
+        pytest.param(
+            lambda: converter.DoclingEmptyOutputError(),
+            ConversionJobStatus.FAILED_PERM,
+            True,
+            id="DoclingEmptyOutputError-permanent",
+        ),
+        pytest.param(
+            lambda: ReportedChildError("permanent child", "docling_empty_output", retryable=False),
+            ConversionJobStatus.FAILED_PERM,
+            True,
+            id="ReportedChildError-marked-permanent",
+        ),
+    ],
+)
+def test_handle_job_error_maps_retryable_to_status(
+    db_session: Session,
+    job: ConversionJob,
+    config: ConversionConfig,
+    error_factory,
+    expected_status: ConversionJobStatus,
+    expects_finished_at: bool,
+) -> None:
+    error = error_factory()
+    with patch("aizk.conversion.workers.orchestrator.get_engine", return_value=db_session.get_bind()):
+        handle_job_error(job.id, error, config)
+
+    db_session.expire_all()
+    updated = db_session.get(ConversionJob, job.id)
+    assert updated is not None
+    assert updated.status == expected_status
+    if expects_finished_at:
+        assert updated.finished_at is not None
+        assert updated.earliest_next_attempt_at is None
+    else:
+        assert updated.finished_at is None
+        assert updated.earliest_next_attempt_at is not None
+
+
+def test_handle_job_error_skips_cancelled_job(
+    db_session: Session,
+    bookmark: Source,
+    config: ConversionConfig,
+) -> None:
+    """A CANCELLED job must not be re-mapped to FAILED_* by handle_job_error."""
+    j = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        title=bookmark.title,
+        status=ConversionJobStatus.CANCELLED,
+        idempotency_key="cancelled-key",
+        attempts=1,
+    )
+    db_session.add(j)
+    db_session.commit()
+    db_session.refresh(j)
+
+    with patch("aizk.conversion.workers.orchestrator.get_engine", return_value=db_session.get_bind()):
+        handle_job_error(j.id, errors_mod.ConversionSubprocessError("late failure"), config)
+
+    db_session.expire_all()
+    updated = db_session.get(ConversionJob, j.id)
+    assert updated is not None
+    assert updated.status == ConversionJobStatus.CANCELLED
+
+
+# ---------------------------------------------------------------------------
 # Migration — error_detail column exists
 # ---------------------------------------------------------------------------
 

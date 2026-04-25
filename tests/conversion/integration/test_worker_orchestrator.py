@@ -31,7 +31,6 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.storage.s3_client import S3Error, S3UploadError
-from aizk.conversion.utilities.bookmark_utils import BookmarkContentError
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers import converter, errors as errors_mod, fetcher, loop, orchestrator, uploader
 from aizk.conversion.workers.types import SupervisionResult
@@ -895,123 +894,6 @@ def test_process_group_handles_esrch_gracefully(monkeypatch, db_session: Session
     assert job.id is not None
     orchestrator.process_job_supervised(job.id, config, runtime, poll_interval_seconds=0.1)
     # Test passes if no exception is raised
-
-
-# ---------------------------------------------------------------------------
-# handle_job_error tests — unchanged
-# ---------------------------------------------------------------------------
-
-
-def test_handle_job_error_retryable_sets_failed_retryable(monkeypatch, db_session: Session) -> None:
-    """Retryable exceptions should mark job FAILED_RETRYABLE with next attempt set."""
-    monkeypatch.setenv("RETRY_BASE_DELAY_SECONDS", "1")
-    monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
-
-    bookmark = _create_bookmark(db_session)
-    job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
-        title=bookmark.title,
-        idempotency_key="r" * 64,
-        status=ConversionJobStatus.QUEUED,
-        attempts=0,
-    )
-    db_session.add(job)
-    db_session.commit()
-    db_session.refresh(job)
-
-    class CustomRetryableError(Exception):
-        error_code = "custom_retryable"
-        retryable = True
-
-    config = ConversionConfig(_env_file=None)
-    orchestrator.handle_job_error(job.id, CustomRetryableError("boom"), config)
-
-    db_session.refresh(job)
-    assert job.status == ConversionJobStatus.FAILED_RETRYABLE
-    assert job.earliest_next_attempt_at is not None
-    assert job.finished_at is None
-
-
-def test_handle_job_error_permanent_sets_failed_perm(monkeypatch, db_session: Session) -> None:
-    """Permanent exceptions should mark job FAILED_PERM with finished_at set."""
-    monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
-
-    bookmark = _create_bookmark(db_session)
-    job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
-        title=bookmark.title,
-        idempotency_key="p" * 64,
-        status=ConversionJobStatus.QUEUED,
-        attempts=0,
-    )
-    db_session.add(job)
-    db_session.commit()
-    db_session.refresh(job)
-
-    config = ConversionConfig(_env_file=None)
-    orchestrator.handle_job_error(job.id, BookmarkContentError("missing content"), config)
-
-    db_session.refresh(job)
-    assert job.status == ConversionJobStatus.FAILED_PERM
-    assert job.earliest_next_attempt_at is None
-    assert job.finished_at is not None
-
-
-def test_handle_job_error_missing_artifacts_is_permanent(monkeypatch, db_session: Session) -> None:
-    """ConversionArtifactsMissingError is a permanent failure (retryable=False)."""
-    monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
-
-    bookmark = _create_bookmark(db_session)
-    job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
-        title=bookmark.title,
-        idempotency_key="q" * 64,
-        status=ConversionJobStatus.QUEUED,
-        attempts=0,
-    )
-    db_session.add(job)
-    db_session.commit()
-    db_session.refresh(job)
-
-    config = ConversionConfig(_env_file=None)
-    orchestrator.handle_job_error(job.id, errors_mod.ConversionArtifactsMissingError("no artifacts"), config)
-
-    db_session.refresh(job)
-    assert job.status == ConversionJobStatus.FAILED_PERM
-    assert job.finished_at is not None
-
-
-def test_handle_job_error_missing_content_from_child_is_permanent(monkeypatch, db_session: Session) -> None:
-    """A child-reported missing-content failure must be recorded as permanent."""
-    monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
-
-    bookmark = _create_bookmark(db_session)
-    job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
-        title=bookmark.title,
-        idempotency_key="m" * 64,
-        status=ConversionJobStatus.QUEUED,
-        attempts=0,
-    )
-    db_session.add(job)
-    db_session.commit()
-    db_session.refresh(job)
-
-    config = ConversionConfig(_env_file=None)
-    orchestrator.handle_job_error(
-        job.id,
-        errors_mod.ReportedChildError(
-            "Fetcher returned zero-length content",
-            "missing-content",
-            retryable=False,
-        ),
-        config,
-    )
-
-    db_session.refresh(job)
-    assert job.status == ConversionJobStatus.FAILED_PERM
-    assert job.error_code == "missing-content"
-    assert job.finished_at is not None
 
 
 def _make_workspace_metadata(tmp_path: Path, *, markdown_hash: str) -> Path:
