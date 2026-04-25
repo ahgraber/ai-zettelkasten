@@ -1,4 +1,9 @@
-"""Unit tests for polling retryable conversion jobs."""
+"""Integration tests for the conversion orchestrator (process_job_supervised + polling).
+
+Crosses subprocess + DB boundaries; not a true unit test despite the use of
+mocks at the orchestrator boundary. The pure-unit error-mapping carve-out
+lives in unit/workers/test_errors.py.
+"""
 
 from __future__ import annotations
 
@@ -30,24 +35,32 @@ from aizk.conversion.utilities.bookmark_utils import BookmarkContentError
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers import converter, errors as errors_mod, fetcher, loop, orchestrator, uploader
 from aizk.conversion.workers.types import SupervisionResult
+from tests.conversion._helpers import make_source
+
+
+class _CompletedProcess:
+    """Process stub representing an already-finished subprocess.
+
+    Returned from `_spawn_and_supervise` / `_spawn_conversion_subprocess` patches
+    when the test only cares about the post-completion path.
+    """
+
+    pid = 123
+    exitcode = 0
+
+    def is_alive(self) -> bool:
+        return False
 
 
 def _create_bookmark(db_session: Session) -> Bookmark:
-    _ref = KarakeepBookmarkRef(bookmark_id="bm_poll_retryable")
-    bookmark = Bookmark(
-        karakeep_id="bm_poll_retryable",
-        source_ref=_ref.model_dump_json(),
-        source_ref_hash=compute_source_ref_hash(_ref),
+    return make_source(
+        db_session,
+        "bm_poll_retryable",
         url="https://example.com",
-        normalized_url="https://example.com",
         title="Poll Retryable",
         content_type="html",
         source_type="web",
     )
-    db_session.add(bookmark)
-    db_session.commit()
-    db_session.refresh(bookmark)
-    return bookmark
 
 
 def _make_fake_runtime(requires_gpu: bool = False) -> MagicMock:
@@ -248,14 +261,7 @@ def test_process_job_retries_upload(monkeypatch, db_session: Session) -> None:
 
     # Fake out the subprocess so it writes metadata that passes the enrichment path
     def _fake_spawn_and_supervise(**kwargs):
-        class _StubProcess:
-            pid = 123
-            exitcode = 0
-
-            def is_alive(self):
-                return False
-
-        return _StubProcess(), SupervisionResult("converting", None, False, False), None
+        return _CompletedProcess(), SupervisionResult("converting", None, False, False), None
 
     monkeypatch.setattr(orchestrator, "_spawn_and_supervise", _fake_spawn_and_supervise)
     monkeypatch.setattr(orchestrator, "get_engine", lambda _url=None: db_session.get_bind())
@@ -313,14 +319,7 @@ def test_process_job_stops_on_cancellation(monkeypatch, db_session: Session) -> 
 
     # Subprocess completes with cancelled result
     def _fake_spawn_and_supervise(**kwargs):
-        class _StubProcess:
-            pid = 123
-            exitcode = 0
-
-            def is_alive(self):
-                return False
-
-        return _StubProcess(), SupervisionResult("converting", None, True, False), None
+        return _CompletedProcess(), SupervisionResult("converting", None, True, False), None
 
     monkeypatch.setattr(orchestrator, "_spawn_and_supervise", _fake_spawn_and_supervise)
 
@@ -435,14 +434,7 @@ def test_process_job_supervised_uses_injected_runtime(monkeypatch, db_session: S
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: True)
 
     def _fake_spawn_and_supervise(**kwargs):
-        class _StubProcess:
-            pid = 123
-            exitcode = 0
-
-            def is_alive(self):
-                return False
-
-        return _StubProcess(), SupervisionResult("converting", None, True, False), None
+        return _CompletedProcess(), SupervisionResult("converting", None, True, False), None
 
     monkeypatch.setattr(orchestrator, "_spawn_and_supervise", _fake_spawn_and_supervise)
 
@@ -575,15 +567,8 @@ def test_timeout_before_upload_reports_uploading_phase(monkeypatch, db_session: 
 
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
 
-    class _StubProcess:
-        pid = 123
-        exitcode = 0
-
-        def is_alive(self) -> bool:
-            return False
-
     monkeypatch.setattr(
-        orchestrator, "_spawn_conversion_subprocess", lambda **_kwargs: (_StubProcess(), queue_module.Queue())
+        orchestrator, "_spawn_conversion_subprocess", lambda **_kwargs: (_CompletedProcess(), queue_module.Queue())
     )
 
     runtime = _make_fake_runtime()
@@ -626,15 +611,8 @@ def test_timeout_during_upload_retry_stops_retrying(monkeypatch, db_session: Ses
     _real_sleep = time.sleep
     monkeypatch.setattr(orchestrator.time, "sleep", lambda _delay: _real_sleep(0.01))
 
-    class _StubProcess:
-        pid = 123
-        exitcode = 0
-
-        def is_alive(self) -> bool:
-            return False
-
     monkeypatch.setattr(
-        orchestrator, "_spawn_conversion_subprocess", lambda **_kwargs: (_StubProcess(), queue_module.Queue())
+        orchestrator, "_spawn_conversion_subprocess", lambda **_kwargs: (_CompletedProcess(), queue_module.Queue())
     )
 
     runtime = _make_fake_runtime()
@@ -753,15 +731,8 @@ def test_cancelled_before_upload_skips_upload(monkeypatch, db_session: Session, 
 
     monkeypatch.setattr(orchestrator, "_upload_converted", _upload_converted)
 
-    class _StubProcess:
-        pid = 123
-        exitcode = 0
-
-        def is_alive(self) -> bool:
-            return False
-
     monkeypatch.setattr(
-        orchestrator, "_spawn_conversion_subprocess", lambda **_kwargs: (_StubProcess(), queue_module.Queue())
+        orchestrator, "_spawn_conversion_subprocess", lambda **_kwargs: (_CompletedProcess(), queue_module.Queue())
     )
 
     runtime = _make_fake_runtime()
