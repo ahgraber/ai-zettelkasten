@@ -6,12 +6,28 @@ from collections.abc import MutableMapping
 import functools
 import os
 from pathlib import Path
+import socket
 import subprocess
 import sys
-from typing import AbstractSet, Iterator
+from typing import AbstractSet, Any, Iterator
 
 import pytest
 from sqlmodel import Session
+
+# Install a DNS stub at conftest import time so test-module-level fixtures that
+# construct `UrlRef` (which now runs egress validation in `field_validator`) can
+# resolve any host without leaving the test sandbox. Per-test overrides via
+# `monkeypatch.setattr(socket, "getaddrinfo", ...)` still work because
+# `socket.getaddrinfo` is the mutated symbol the egress helper reads at call
+# time. See `aizk.conversion.utilities.egress._resolve_with_deadline`.
+_REAL_GETADDRINFO = socket.getaddrinfo
+
+
+def _public_addr_stub(host: str, port: int, *_args: Any, **_kwargs: Any) -> list[tuple[Any, ...]]:
+    return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("8.8.8.8", port))]
+
+
+socket.getaddrinfo = _public_addr_stub  # type: ignore[assignment]
 
 from aizk.conversion.db import get_engine
 from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig

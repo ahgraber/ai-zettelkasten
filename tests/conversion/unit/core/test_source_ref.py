@@ -341,3 +341,54 @@ def test_github_hash_stable_under_case_variation(owner, repo):
     h = compute_source_ref_hash(ref_original)
     assert compute_source_ref_hash(ref_lower) == h
     assert compute_source_ref_hash(ref_upper) == h
+
+
+# --- UrlRef construction-time egress validation -----------------------------
+
+
+def _stub_dns(monkeypatch, *ips):
+    import socket as _socket
+
+    def fake(host, port, *_args, **_kwargs):
+        results = []
+        for ip in ips:
+            family = _socket.AF_INET6 if ":" in ip else _socket.AF_INET
+            sockaddr = (ip, port, 0, 0) if family == _socket.AF_INET6 else (ip, port)
+            results.append((family, _socket.SOCK_STREAM, 0, "", sockaddr))
+        return results
+
+    monkeypatch.setattr(_socket, "getaddrinfo", fake)
+
+
+def test_url_ref_construction_rejects_cloud_metadata_ipv4(monkeypatch):
+    _stub_dns(monkeypatch, "169.254.169.254")
+    with pytest.raises(ValidationError):
+        UrlRef(url="http://169.254.169.254/latest/meta-data/")
+
+
+def test_url_ref_model_validate_rejects_rfc1918(monkeypatch):
+    _stub_dns(monkeypatch, "10.0.0.5")
+    with pytest.raises(ValidationError):
+        UrlRef.model_validate({"kind": "url", "url": "http://10.0.0.5/admin"})
+
+
+def test_url_ref_construction_accepts_public_destination(monkeypatch):
+    _stub_dns(monkeypatch, "8.8.8.8")
+    ref = UrlRef(url="https://example.com/path")
+    assert ref.url == "https://example.com/path"
+    # JSON round-trip works for accepted refs.
+    encoded = ref.model_dump_json()
+    decoded = UrlRef.model_validate_json(encoded)
+    assert decoded == ref
+
+
+def test_url_ref_construction_rejects_disallowed_scheme():
+    # No DNS needed — scheme rejection short-circuits before resolution.
+    with pytest.raises(ValidationError):
+        UrlRef(url="file:///etc/passwd")
+
+
+def test_url_ref_construction_rejects_loopback(monkeypatch):
+    _stub_dns(monkeypatch, "127.0.0.1")
+    with pytest.raises(ValidationError):
+        UrlRef(url="http://localhost/")
