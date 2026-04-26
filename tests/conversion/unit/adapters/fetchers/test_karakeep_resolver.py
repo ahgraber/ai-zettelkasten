@@ -260,6 +260,38 @@ def test_karakeep_resolver_html_content_returns_url_ref(monkeypatch):
     assert "example.com" in result.url
 
 
+def test_karakeep_resolver_step5_deny_set_url_surfaces_typed_error(monkeypatch):
+    """Step 5 with a deny-set source_url must surface a typed error, not construct a UrlRef."""
+    import socket as _socket
+
+    from pydantic import ValidationError
+
+    # Override the autouse `_hermetic_dns` so this hostname resolves into the deny set.
+    def fake(host, port, *_args, **_kwargs):
+        return [(_socket.AF_INET, _socket.SOCK_STREAM, 0, "", ("169.254.169.254", port))]
+
+    monkeypatch.setattr(_socket, "getaddrinfo", fake)
+
+    bookmark = _link_bookmark(
+        "http://169.254.169.254/latest/meta-data/iam/",
+        htmlContent="<html><body>x</body></html>",
+    )
+    ref = KarakeepBookmarkRef(bookmark_id="bm-deny")
+
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.karakeep.fetch_karakeep_bookmark",
+        lambda _: bookmark,
+    )
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.karakeep.detect_source_type",
+        lambda url: "other",
+    )
+
+    resolver = KarakeepBookmarkResolver(_DEFAULT_CFG)
+    with pytest.raises(ValidationError):
+        resolver.resolve(ref)
+
+
 # ---------------------------------------------------------------------------
 # Step 6 — text-only content → InlineHtmlRef
 # ---------------------------------------------------------------------------

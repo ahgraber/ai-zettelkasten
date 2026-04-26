@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import ClassVar, Sequence
+from typing import ClassVar, Literal, Sequence
 
 
 class FetcherNotRegistered(LookupError):  # noqa: N818 — canonical spec name
@@ -122,4 +122,64 @@ class FetchTooLargeError(FetchError):  # noqa: N818 — canonical spec name
     """Raised when fetched content exceeds the configured byte limit. Permanent."""
 
     error_code = "fetch_too_large"
+    retryable: ClassVar[bool] = False
+
+
+class EgressPolicyError(Exception):  # noqa: N818 — canonical spec name
+    """Base for any rejection from the network/local-filesystem egress policy.
+
+    All subclasses are classified as non-retryable: a deny-listed destination,
+    disallowed scheme, redirect violation, DNS timeout, or workspace escape is
+    a property of the input, not a transient failure.
+    """
+
+    error_code = "egress_policy_violation"
+    retryable: ClassVar[bool] = False
+
+
+class DenyListDestination(EgressPolicyError):  # noqa: N818 — canonical spec name
+    """Raised when a resolved destination IP is in the deny set."""
+
+    error_code = "deny_list"
+    retryable: ClassVar[bool] = False
+
+
+class DisallowedScheme(EgressPolicyError):  # noqa: N818 — canonical spec name
+    """Raised when a URL scheme is not in {http, https}."""
+
+    error_code = "disallowed_scheme"
+    retryable: ClassVar[bool] = False
+
+
+class RedirectEgressViolation(EgressPolicyError):  # noqa: N818 — canonical spec name
+    """Raised when a redirect hop fails egress validation.
+
+    `reason` discriminates which branch of the policy the hop violated; the
+    error message format intentionally omits the rejected destination so that
+    persisted job error messages cannot echo internal targets back to clients.
+    """
+
+    error_code = "redirect_egress_violation"
+    retryable: ClassVar[bool] = False
+
+    def __init__(
+        self,
+        *,
+        reason: Literal["deny_list", "disallowed_scheme", "scheme_downgrade"],
+    ) -> None:
+        self.reason = reason
+        super().__init__(f"Redirect rejected by egress policy: {reason}")
+
+
+class DnsTimeout(EgressPolicyError):  # noqa: N818 — canonical spec name
+    """Raised when DNS resolution exceeds the egress-helper deadline."""
+
+    error_code = "dns_timeout"
+    retryable: ClassVar[bool] = False
+
+
+class WorkspaceEscape(EgressPolicyError):  # noqa: N818 — canonical spec name
+    """Raised when a path-containment check rejects a name that escapes the workspace."""
+
+    error_code = "workspace_escape"
     retryable: ClassVar[bool] = False
