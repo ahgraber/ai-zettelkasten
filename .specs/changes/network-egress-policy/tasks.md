@@ -48,18 +48,18 @@
 
 ## Fetcher integration: manual redirect loop
 
-- [ ] Refactor `UrlFetcher` in the conversion pipeline to: (1) call `async_assert_egress_allowed(url)` before any I/O; (2) build an `EgressPinnedTransport` from the result; (3) instantiate `httpx.AsyncClient(transport=..., follow_redirects=False, timeout=httpx.Timeout(connect=5.0, read=30.0, pool=5.0, write=30.0))`; (4) implement a redirect loop with hard cap 5 hops and total wall-clock budget 120 s.
-- [ ] Inside the redirect loop in `UrlFetcher`: on 3xx, parse `Location`, resolve relative against the previous URL via `urljoin`, re-run `async_assert_egress_allowed`, raise `RedirectEgressViolation(reason="deny_list" | "disallowed_scheme")` on failure, raise `RedirectEgressViolation(reason="scheme_downgrade")` if previous scheme was `https` and new scheme is `http`.
-- [ ] Header hygiene in the redirect loop: when target hostname differs from the preceding hop, strip `Authorization`, `Cookie`, and any header matching `X-*-Auth*` (case-insensitive).
-- [ ] Apply the same refactor to `ArxivFetcher` (it currently shares the `httpx.AsyncClient(follow_redirects=True)` pattern).
-- [ ] Apply the same refactor to any other fetcher in the registry that issues outbound HTTP.
+- [x] Refactor `UrlFetcher` in the conversion pipeline to: (1) call `async_assert_egress_allowed(url)` before any I/O; (2) build an `EgressPinnedTransport` from the result; (3) instantiate `httpx.AsyncClient(transport=..., follow_redirects=False, timeout=httpx.Timeout(connect=5.0, read=30.0, pool=5.0, write=30.0))`; (4) implement a redirect loop with hard cap 5 hops and total wall-clock budget 120 s.
+- [x] Inside the redirect loop in `UrlFetcher`: on 3xx, parse `Location`, resolve relative against the previous URL via `urljoin`, re-run `async_assert_egress_allowed`, raise `RedirectEgressViolation(reason="deny_list" | "disallowed_scheme")` on failure, raise `RedirectEgressViolation(reason="scheme_downgrade")` if previous scheme was `https` and new scheme is `http`.
+- [x] Header hygiene in the redirect loop: when target hostname differs from the preceding hop, strip `Authorization`, `Cookie`, and any header matching `X-*-Auth*` (case-insensitive).
+- [x] Apply the same refactor to `ArxivFetcher` (it currently shares the `httpx.AsyncClient(follow_redirects=True)` pattern).
+- [x] Apply the same refactor to any other fetcher in the registry that issues outbound HTTP.
   Confirm coverage by enumerating fetcher implementations.
-- [ ] Unit test: redirect from public host to `169.254.169.254` raises `RedirectEgressViolation(reason="deny_list")`; the redirect target is never fetched.
-- [ ] Unit test: redirect from `https://a.example` to `http://a.example` raises `RedirectEgressViolation(reason="scheme_downgrade")`.
-- [ ] Unit test: 6th redirect hop raises (cap is 5 hops).
-- [ ] Unit test: relative `Location: /next` resolves correctly against the previous absolute URL.
-- [ ] Unit test: cross-host redirect strips `Authorization` header; same-host redirect preserves it.
-- [ ] Unit test: DNS-rebinding scenario — initial DNS resolves to public IP, second resolution would return private IP, but the connection-pinned transport still uses the captured public IP.
+- [x] Unit test: redirect from public host to `169.254.169.254` raises `RedirectEgressViolation(reason="deny_list")`; the redirect target is never fetched.
+- [x] Unit test: redirect from `https://a.example` to `http://a.example` raises `RedirectEgressViolation(reason="scheme_downgrade")`.
+- [x] Unit test: 6th redirect hop raises (cap is 5 hops).
+- [x] Unit test: relative `Location: /next` resolves correctly against the previous absolute URL.
+- [x] Unit test: cross-host redirect strips `Authorization` header; same-host redirect preserves it.
+- [x] Unit test: DNS-rebinding scenario — initial DNS resolves to public IP, second resolution would return private IP, but the connection-pinned transport still uses the captured public IP.
   Assert no private-IP connection ever attempted.
 
 ## Image pre-fetch and HTML rewrite

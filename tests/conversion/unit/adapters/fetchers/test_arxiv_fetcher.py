@@ -86,30 +86,16 @@ def test_arxiv_fetcher_uses_karakeep_asset_when_arxiv_pdf_url_is_karakeep_url(mo
 
 def test_arxiv_fetcher_uses_arxiv_pdf_url_when_non_karakeep(monkeypatch):
     pdf_bytes = b"%PDF-1.4 arxiv-pdf-url"
+    seen_urls: list[str] = []
 
-    import httpx
+    async def _fake_egress_fetch(url, **kwargs):
+        seen_urls.append(url)
+        return pdf_bytes, {"content-type": "application/pdf"}
 
-    class _FakeResponse:
-        content = pdf_bytes
-        status_code = 200
-
-        def raise_for_status(self):
-            pass
-
-    class _FakeAsyncClient:
-        def __init__(self, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            pass
-
-        async def get(self, url):
-            return _FakeResponse()
-
-    monkeypatch.setattr("aizk.conversion.adapters.fetchers.arxiv.httpx.AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.arxiv.egress_fetch_bytes",
+        _fake_egress_fetch,
+    )
 
     fetcher = ArxivFetcher(_config(), _karakeep_cfg())
     ref = ArxivRef(
@@ -120,6 +106,7 @@ def test_arxiv_fetcher_uses_arxiv_pdf_url_when_non_karakeep(monkeypatch):
 
     assert result.content == pdf_bytes
     assert result.content_type == ContentType.PDF
+    assert seen_urls == ["https://arxiv.org/pdf/2301.12345"]
 
 
 # ---------------------------------------------------------------------------
