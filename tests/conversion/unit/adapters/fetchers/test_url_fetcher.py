@@ -69,38 +69,57 @@ def test_karakeep_asset_url_prefers_hint_over_path_suffix(monkeypatch, hint, exp
     assert result.content_type is expected_content_type
 
 
-def test_fetch_http_rejects_declared_content_length_over_cap(monkeypatch):
-    class _Response:
-        headers = {"content-type": "application/pdf", "content-length": "6"}
+def test_fetch_http_returns_pdf_content_type_for_pdf_response(monkeypatch):
+    """Generic HTTP path delegates to ``egress_fetch_bytes`` and detects PDF from content-type."""
 
-        async def aiter_bytes(self):
-            yield b"123456"
+    async def _fake(url, **kwargs):
+        return b"%PDF-1.4 ok", {"content-type": "application/pdf"}
 
-        def raise_for_status(self) -> None:
-            return
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.url.egress_fetch_bytes",
+        _fake,
+    )
 
-    class _StreamContext:
-        async def __aenter__(self):
-            return _Response()
+    fetcher = UrlFetcher(
+        ConversionConfig(_env_file=None),
+        KarakeepFetcherConfig(_env_file=None),
+    )
+    body, ct = asyncio.run(fetcher._fetch_http("https://example.com/x.pdf"))
+    assert body == b"%PDF-1.4 ok"
+    assert ct is ContentType.PDF
 
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
 
-    class _AsyncClient:
-        def __init__(self, **kwargs):
-            return
+def test_fetch_http_returns_html_content_type_when_not_pdf(monkeypatch):
+    """Non-pdf content-type defaults to HTML."""
 
-        async def __aenter__(self):
-            return self
+    async def _fake(url, **kwargs):
+        return b"<html/>", {"content-type": "text/html; charset=utf-8"}
 
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.url.egress_fetch_bytes",
+        _fake,
+    )
 
-        def stream(self, method: str, url: str):
-            assert method == "GET"
-            return _StreamContext()
+    fetcher = UrlFetcher(
+        ConversionConfig(_env_file=None),
+        KarakeepFetcherConfig(_env_file=None),
+    )
+    body, ct = asyncio.run(fetcher._fetch_http("https://example.com/x.html"))
+    assert body == b"<html/>"
+    assert ct is ContentType.HTML
 
-    monkeypatch.setattr("aizk.conversion.adapters.fetchers.url.httpx.AsyncClient", _AsyncClient)
+
+def test_fetch_http_propagates_fetch_too_large_error(monkeypatch):
+    """``FetchTooLargeError`` from the helper bubbles up unchanged (non-retryable)."""
+    from aizk.conversion.core.errors import FetchTooLargeError
+
+    async def _fake(url, **kwargs):
+        raise FetchTooLargeError("exceeds configured limit of 5 bytes")
+
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.url.egress_fetch_bytes",
+        _fake,
+    )
 
     fetcher = UrlFetcher(
         ConversionConfig(_env_file=None, fetch_max_response_bytes=5),
@@ -108,47 +127,24 @@ def test_fetch_http_rejects_declared_content_length_over_cap(monkeypatch):
     )
 
     with pytest.raises(FetchError, match="exceeds configured limit"):
-        asyncio.run(fetcher._fetch_http("https://example.com/oversized.pdf"))
+        asyncio.run(fetcher._fetch_http("https://example.com/oversized"))
 
 
-def test_fetch_http_rejects_streamed_body_over_cap(monkeypatch):
-    class _Response:
-        headers = {"content-type": "text/html"}
+def test_fetch_propagates_egress_policy_error(monkeypatch):
+    """Egress rejection of the URL surfaces as an ``EgressPolicyError`` (non-retryable)."""
+    from aizk.conversion.core.errors import DenyListDestination, EgressPolicyError
 
-        async def aiter_bytes(self):
-            yield b"1234"
-            yield b"56"
+    async def _fake(url, **kwargs):
+        raise DenyListDestination("denied")
 
-        def raise_for_status(self) -> None:
-            return
-
-    class _StreamContext:
-        async def __aenter__(self):
-            return _Response()
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    class _AsyncClient:
-        def __init__(self, **kwargs):
-            return
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        def stream(self, method: str, url: str):
-            assert method == "GET"
-            return _StreamContext()
-
-    monkeypatch.setattr("aizk.conversion.adapters.fetchers.url.httpx.AsyncClient", _AsyncClient)
-
-    fetcher = UrlFetcher(
-        ConversionConfig(_env_file=None, fetch_max_response_bytes=5),
-        KarakeepFetcherConfig(_env_file=None),
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.url.egress_fetch_bytes",
+        _fake,
     )
 
-    with pytest.raises(FetchError, match="exceeds configured limit"):
-        asyncio.run(fetcher._fetch_http("https://example.com/oversized-stream"))
+    fetcher = UrlFetcher(
+        ConversionConfig(_env_file=None),
+        KarakeepFetcherConfig(_env_file=None),
+    )
+    with pytest.raises(EgressPolicyError):
+        fetcher.fetch(UrlRef(url="https://example.com/anything"))

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from aizk.conversion.core.errors import ArxivPdfFetchError, FetchError
-from aizk.conversion.utilities.arxiv_utils import ArxivClient
+from aizk.conversion.core.errors import ArxivPdfFetchError, EgressPolicyError, FetchError
+from aizk.conversion.utilities.arxiv_utils import _arxiv_rate_limiter, arxiv_pdf_url
 from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.egress_fetch import egress_fetch_bytes
 from karakeep_client.karakeep import KarakeepClient
 
 logger = logging.getLogger(__name__)
@@ -26,15 +27,28 @@ async def fetch_karakeep_asset(asset_id: str) -> bytes:
 
 
 async def fetch_arxiv_pdf(arxiv_id: str, config: ConversionConfig) -> bytes:
-    """Fetch PDF from arXiv by paper ID.
+    """Fetch PDF from arXiv by paper ID through the egress-validated helper.
+
+    Applies the arXiv rate limiter (one request per 5-second window per the
+    arXiv API ToS) before issuing the HTTP fetch. The egress helper enforces
+    deny-list classification, connection pinning, and redirect-loop hygiene.
 
     Raises:
-        ArxivPdfFetchError: If the PDF fetch fails.
+        ArxivPdfFetchError: If the PDF fetch fails for non-egress reasons.
+        EgressPolicyError: If the destination is denied by the egress policy
+            (non-retryable; propagated unchanged).
     """
     logger.info("Fetching arXiv PDF by id: %s", arxiv_id)
+    url = arxiv_pdf_url(arxiv_id, use_export_url=True)
+    await _arxiv_rate_limiter.acquire()
     try:
-        async with ArxivClient(timeout=float(config.fetch_timeout_seconds)) as client:
-            return await client.download_paper_pdf(arxiv_id, use_export_url=True)
+        body, _headers = await egress_fetch_bytes(
+            url,
+            max_response_bytes=config.fetch_max_response_bytes,
+        )
+        return body
+    except EgressPolicyError:
+        raise
     except Exception as exc:
         raise ArxivPdfFetchError(f"Failed to fetch arXiv PDF for {arxiv_id}: {exc}") from exc
 

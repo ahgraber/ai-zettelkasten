@@ -2,7 +2,7 @@
 
 Fetches PDF bytes for an ArxivRef using a 3-step source-precedence chain:
 1. KaraKeep asset URL (pre-fetched PDF stored in KaraKeep)
-2. Arbitrary arxiv_pdf_url (direct HTTP download)
+2. Arbitrary arxiv_pdf_url (direct HTTP download via the egress-validated helper)
 3. Abstract-page resolution via the ArXiv export API
 """
 
@@ -12,11 +12,10 @@ import asyncio
 from typing import ClassVar
 from urllib.parse import urlparse
 
-import httpx
-
 from aizk.conversion.core.source_ref import ArxivRef, SourceRef
 from aizk.conversion.core.types import ContentType, ConversionInput
 from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
+from aizk.conversion.utilities.egress_fetch import egress_fetch_bytes
 from aizk.conversion.utilities.fetch_helpers import fetch_arxiv_pdf, fetch_karakeep_asset
 
 
@@ -60,7 +59,7 @@ class ArxivFetcher:
 
         # Step 2 — direct HTTP download of arxiv_pdf_url (non-KaraKeep)
         if ref.arxiv_pdf_url:
-            response = asyncio.run(_fetch_url(ref.arxiv_pdf_url, self._config.fetch_timeout_seconds))
+            response = asyncio.run(_fetch_url(ref.arxiv_pdf_url, self._config))
             return ConversionInput(content=response, content_type=ContentType.PDF)
 
         # Step 3 — abstract-page resolution via ArXiv API
@@ -68,12 +67,18 @@ class ArxivFetcher:
         return ConversionInput(content=pdf_bytes, content_type=ContentType.PDF)
 
 
-async def _fetch_url(url: str, timeout: int) -> bytes:
-    """Async helper: GET a URL and return response bytes."""
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        response = await client.get(url)
-        response.raise_for_status()
-        return response.content
+async def _fetch_url(url: str, config: ConversionConfig) -> bytes:
+    """Fetch ``url`` bytes through the egress-validated helper.
+
+    Delegates to ``egress_fetch_bytes`` so the per-hop deny-list policy,
+    connection-pinned transport, and redirect-loop hygiene apply uniformly
+    to direct ``arxiv_pdf_url`` downloads.
+    """
+    body, _headers = await egress_fetch_bytes(
+        url,
+        max_response_bytes=config.fetch_max_response_bytes,
+    )
+    return body
 
 
 __all__ = ["ArxivFetcher"]

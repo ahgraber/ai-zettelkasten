@@ -1,22 +1,22 @@
 """URL fetcher adapter implementing the ContentFetcher protocol.
 
 Fetches content bytes for a UrlRef, supporting both KaraKeep asset URLs
-(fetched via the KaraKeep client) and arbitrary HTTP URLs (fetched via httpx).
+(fetched via the KaraKeep client) and arbitrary HTTP URLs (fetched via the
+egress-validated httpx helper that enforces deny-list policy, connection
+pinning, and per-hop redirect validation).
 """
 
 from __future__ import annotations
 
 import asyncio
-import io
 from typing import ClassVar
 from urllib.parse import urlparse
 
-import httpx
-
-from aizk.conversion.core.errors import FetchError, FetchTooLargeError
+from aizk.conversion.core.errors import EgressPolicyError, FetchError
 from aizk.conversion.core.source_ref import SourceRef, UrlRef
 from aizk.conversion.core.types import ContentType, ConversionInput
 from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
+from aizk.conversion.utilities.egress_fetch import egress_fetch_bytes
 from aizk.conversion.utilities.fetch_helpers import fetch_karakeep_asset
 
 
@@ -68,55 +68,32 @@ class UrlFetcher:
                 content_type = ContentType.PDF if parsed.path.lower().endswith(".pdf") else ContentType.HTML
             return ConversionInput(content=content, content_type=content_type)
 
-        # Generic HTTP URL
+        # Generic HTTP URL — EgressPolicyError must propagate unwrapped so
+        # job retry classification sees the non-retryable signal.
         try:
             content, content_type = asyncio.run(self._fetch_http(url))
-        except FetchError:
+        except (EgressPolicyError, FetchError):
             raise
         except Exception as exc:
             raise FetchError(f"Failed to fetch URL {url!r}: {exc}") from exc
         return ConversionInput(content=content, content_type=content_type)
 
     async def _fetch_http(self, url: str) -> tuple[bytes, ContentType]:
-        """Async helper: GET a URL and detect content type from response headers."""
-        try:
-            async with (
-                httpx.AsyncClient(
-                    timeout=self._config.fetch_timeout_seconds,
-                    follow_redirects=True,
-                ) as client,
-                client.stream("GET", url) as response,
-            ):
-                response.raise_for_status()
-                max_bytes = self._config.fetch_max_response_bytes
-                content_length = response.headers.get("content-length")
-                if content_length is not None:
-                    try:
-                        declared_length = int(content_length)
-                    except ValueError:
-                        declared_length = None
-                    else:
-                        if declared_length > max_bytes:
-                            raise FetchTooLargeError(
-                                f"Response from {url!r} exceeds configured limit of {max_bytes} bytes"
-                            )
+        """Fetch ``url`` via the egress-validated helper and detect content type.
 
-                buffer = io.BytesIO()
-                total_bytes = 0
-                async for chunk in response.aiter_bytes():
-                    total_bytes += len(chunk)
-                    if total_bytes > max_bytes:
-                        raise FetchTooLargeError(
-                            f"Response from {url!r} exceeds configured limit of {max_bytes} bytes"
-                        )
-                    buffer.write(chunk)
-
-                ct_header = response.headers.get("content-type", "")
-        except httpx.HTTPError as exc:
-            raise FetchError(f"HTTP error fetching {url!r}: {exc}") from exc
-
+        Delegates to ``egress_fetch_bytes`` which enforces deny-list egress
+        policy, connection pinning to a pre-resolved IP (defeats DNS-rebinding
+        TOCTOU), a manual redirect loop with per-hop validation, and
+        cross-host header hygiene. Content type is inferred from the
+        terminal response's ``content-type`` header.
+        """
+        body, response_headers = await egress_fetch_bytes(
+            url,
+            max_response_bytes=self._config.fetch_max_response_bytes,
+        )
+        ct_header = response_headers.get("content-type", "")
         content_type = ContentType.PDF if "application/pdf" in ct_header else ContentType.HTML
-        return buffer.getvalue(), content_type
+        return body, content_type
 
 
 __all__ = ["UrlFetcher"]
