@@ -114,8 +114,16 @@ class UrlRef(BaseModel):
     @field_validator("url", mode="after")
     @classmethod
     def _assert_egress(cls, value: str) -> str:
-        # Fail-fast egress check at JSON ingress so an unsafe destination cannot
-        # exist anywhere in the system as a `UrlRef` instance.
+        """Fail JSON ingress when the URL targets a deny-set destination.
+
+        Pydantic field validator that runs `assert_egress_allowed` on the
+        normalized URL and re-raises any `EgressPolicyError` as a pydantic
+        `ValueError` so model construction surfaces a `ValidationError`.
+
+        This is a fail-fast convenience; the load-bearing security check is
+        the fetch-time call to `async_assert_egress_allowed` in the fetcher
+        path. `model_construct` bypasses this validator by design.
+        """
         try:
             assert_egress_allowed(value)
         except EgressPolicyError as exc:

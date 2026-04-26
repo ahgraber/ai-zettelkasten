@@ -36,15 +36,15 @@
 
 ## Connection-pinned httpx transport
 
-- [ ] Create `src/aizk/conversion/utilities/egress_transport.py` implementing `EgressPinnedTransport(httpx.AsyncHTTPTransport)`.
+- [x] Create `src/aizk/conversion/utilities/egress_transport.py` implementing `EgressPinnedTransport(httpx.AsyncHTTPTransport)`.
   Constructor takes a `ValidatedDestination`; `handle_async_request` swaps `request.url.host` for the validated IP just before delegating to `super().handle_async_request`, then restores the original host on the returned response's request object.
-- [ ] Configure default TLS context in `egress_transport.py`: `ssl.create_default_context()`, `OP_NO_SSLv3 | OP_NO_TLSv1 | OP_NO_TLSv1_1` set explicitly.
+- [x] Configure default TLS context in `egress_transport.py`: `ssl.create_default_context()`, `OP_NO_SSLv3 | OP_NO_TLSv1 | OP_NO_TLSv1_1` set explicitly.
   Certificate verification ON.
   SNI uses the original hostname.
-- [ ] Unit test: a request to `https://example.com` with `ValidatedDestination(ip="93.184.216.34", ...)` actually dials `93.184.216.34` (mock socket layer, assert connect target).
-- [ ] Unit test: SNI in the TLS handshake equals the original hostname, not the IP.
-- [ ] Unit test: certificate verification cannot be disabled — passing `verify=False` to the transport constructor either raises or is ignored (whichever is implemented; assert behavior).
-- [ ] Unit test: no DNS resolution occurs inside `httpx` after the transport is constructed (mock `socket.getaddrinfo` to raise; assert request still completes against the pinned IP).
+- [x] Unit test: a request to `https://example.com` with `ValidatedDestination(ip="93.184.216.34", ...)` actually dials `93.184.216.34` (mock socket layer, assert connect target).
+- [x] Unit test: SNI in the TLS handshake equals the original hostname, not the IP.
+- [x] Unit test: certificate verification cannot be disabled — passing `verify=False` to the transport constructor either raises or is ignored (whichever is implemented; assert behavior).
+- [x] Unit test: no DNS resolution occurs inside `httpx` after the transport is constructed (mock `socket.getaddrinfo` to raise; assert request still completes against the pinned IP).
 
 ## Fetcher integration: manual redirect loop
 
