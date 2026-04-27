@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import datetime as dt
+import errno
 import json
 import logging
+import os
 from pathlib import Path
 
 from sqlmodel import Session, select
 
+from aizk.conversion.core.errors import WorkspaceEscape
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
@@ -28,6 +31,38 @@ from aizk.conversion.workers.errors import ConversionArtifactsMissingError
 from aizk.conversion.workers.types import _utcnow
 
 logger = logging.getLogger(__name__)
+
+
+def _upload_nofollow(path: Path, s3_key: str, s3_client: S3Client) -> str:
+    """Open ``path`` with ``O_NOFOLLOW`` and upload its contents to S3.
+
+    Eliminates the TOCTOU race between the :func:`_assert_within` containment
+    check and the actual file read: if a malicious subprocess replaces the file
+    with a symlink after validation, ``O_NOFOLLOW`` causes ``os.open`` to fail
+    with ``ELOOP`` rather than following the link.
+
+    Args:
+        path: Validated workspace-local path (must already pass
+            :func:`~aizk.conversion.utilities.paths._assert_within`).
+        s3_key: Destination S3 object key.
+        s3_client: Configured :class:`~aizk.conversion.storage.s3_client.S3Client`.
+
+    Returns:
+        S3 URI of the uploaded object.
+
+    Raises:
+        WorkspaceEscape: If ``path`` is a symlink at open time (``ELOOP``).
+        OSError: For other filesystem errors.
+        S3UploadError: If the upload fails.
+    """
+    try:
+        fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise WorkspaceEscape(f"Symlink detected at open time — possible TOCTOU: {path}") from exc
+        raise
+    with os.fdopen(fd, "rb") as f:
+        return s3_client.upload_fileobj(f, s3_key)
 
 
 def _upload_converted(job_id: int, workspace: Path, config: ConversionConfig) -> None:
@@ -101,14 +136,14 @@ def _upload_converted(job_id: int, workspace: Path, config: ConversionConfig) ->
         prefix = str(source.aizk_uuid)
         s3_prefix_uri = f"s3://{s3_client.bucket}/{prefix}/"
         markdown_key = f"{prefix}/{markdown_filename}"
-        markdown_uri = s3_client.upload_file(markdown_file, markdown_key)
+        markdown_uri = _upload_nofollow(markdown_file, markdown_key, s3_client)
 
         figure_uris: list[str] = []
         for fig_path in figure_file_paths:
             if not fig_path.exists():
                 continue
             fig_key = f"{prefix}/figures/{fig_path.name}"
-            figure_uris.append(s3_client.upload_file(fig_path, fig_key))
+            figure_uris.append(_upload_nofollow(fig_path, fig_key, s3_client))
 
         job.finished_at = _utcnow()
 
