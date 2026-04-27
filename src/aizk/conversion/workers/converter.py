@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from io import BytesIO
 import logging
@@ -47,6 +48,7 @@ from docling_core.types.doc.document import (
 from docling_core.types.io import DocumentStream
 
 from aizk.conversion.utilities.config import DoclingConverterConfig
+from aizk.conversion.utilities.html_prefetch import prefetch_images
 from aizk.conversion.utilities.paths import figure_dir
 from aizk.utilities.mlflow_tracing import trace_model_call
 
@@ -453,7 +455,17 @@ def convert_html(
     """
     try:
         converter = _create_document_converter(config, source_url=source_url)
-        source = DocumentStream(name="document.html", stream=BytesIO(html_bytes))
+        # Egress gate for `<img>` URLs: pre-fetch through the validated helper
+        # and rewrite each src to a workspace-local absolute path. After this
+        # rewrite, Docling can run with `enable_remote_fetch=False` because
+        # every image referenced by the HTML is already on disk inside
+        # `temp_dir`. Failures (deny-list, size cap, etc.) leave the original
+        # src in place so Docling's local-fetch confinement gate refuses to
+        # dereference it instead of opening an SSRF / blind-LFI primitive.
+        html_text = html_bytes.decode("utf-8", errors="replace")
+        rewritten_html = asyncio.run(prefetch_images(html_text, temp_dir))
+        prefetched_bytes = rewritten_html.encode("utf-8")
+        source = DocumentStream(name="document.html", stream=BytesIO(prefetched_bytes))
         if config.is_picture_description_enabled() and not config.picture_classification_enabled:
             # Fallback: built-in Docling description (classification disabled)
             with trace_model_call(
