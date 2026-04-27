@@ -64,23 +64,23 @@
 
 ## Image pre-fetch and HTML rewrite
 
-- [ ] Add `lxml` to the project dependencies if not already present (verify via `pyproject.toml`).
-- [ ] Create `src/aizk/conversion/utilities/html_prefetch.py` implementing `prefetch_images(html: str, workspace: Path, fetcher: <egress-pinned httpx client>) -> str`.
+- [x] Add `lxml` to the project dependencies if not already present (verify via `pyproject.toml`).
+- [x] Create `src/aizk/conversion/utilities/html_prefetch.py` implementing `prefetch_images(html: str, workspace: Path, fetcher: <egress-pinned httpx client>) -> str`.
   Parses HTML with `lxml.html`, walks `<img src>` elements, skips `data:` URLs unmodified, calls `async_assert_egress_allowed(src)` for each remaining src, fetches via the pinned transport, writes bytes to `<workspace>/prefetched-images/<sha256>.<ext>`, rewrites the `src` attribute to the absolute path, returns serialized HTML.
-- [ ] Implement Content-Type → extension mapping in `html_prefetch.py`: `image/png` → `.png`, `image/jpeg` → `.jpg`, `image/gif` → `.gif`, `image/webp` → `.webp`, `image/svg+xml` → `.svg`, anything else → `.bin`.
+- [x] Implement Content-Type → extension mapping in `html_prefetch.py`: `image/png` → `.png`, `image/jpeg` → `.jpg`, `image/gif` → `.gif`, `image/webp` → `.webp`, `image/svg+xml` → `.svg`, anything else → `.bin`.
   Do NOT derive extension from URL path.
-- [ ] Implement streaming size cap in `html_prefetch.py`: per-image 10 MiB enforced by counting bytes off `response.aiter_bytes()`; abort fetch and skip image on overrun.
+- [x] Implement streaming size cap in `html_prefetch.py`: per-image 10 MiB enforced by counting bytes off `response.aiter_bytes()`; abort fetch and skip image on overrun.
   Do NOT trust `Content-Length`.
-- [ ] Implement per-document caps in `html_prefetch.py`: max 50 images, max 100 MiB total prefetched bytes, 60 s phase wall-clock deadline.
+- [x] Implement per-document caps in `html_prefetch.py`: max 50 images, max 100 MiB total prefetched bytes, 60 s phase wall-clock deadline.
   Once any cap is hit, remaining images are left as original `src` (which Docling's workspace-confinement gate will then reject).
-- [ ] Wire `prefetch_images` into the converter pipeline before HTML is handed to Docling.
+- [x] Wire `prefetch_images` into the converter pipeline before HTML is handed to Docling.
   Locate the call site by searching for `enable_remote_fetch` references in the existing converter code.
-- [ ] Unit test: HTML with `<img src="http://169.254.169.254/...">` — pre-fetch raises typed egress error for that src, image omitted, conversion of remaining HTML proceeds.
-- [ ] Unit test: HTML with `<img src="data:image/png;base64,...">` — passthrough; no fetch attempted.
-- [ ] Unit test: HTML with a public `<img src>` returning 11 MiB — fetch aborted at 10 MiB, image omitted.
-- [ ] Unit test: HTML with 51 `<img>` tags — first 50 prefetched, 51st left as original src.
-- [ ] Unit test: rewrite produces `<img src="<absolute-workspace-path>">` and the file at that path matches the fetched bytes.
-- [ ] Unit test: `Content-Type: text/html` response (a server lying about type) produces extension `.bin`.
+- [x] Unit test: HTML with `<img src="http://169.254.169.254/...">` — pre-fetch raises typed egress error for that src, image omitted, conversion of remaining HTML proceeds.
+- [x] Unit test: HTML with `<img src="data:image/png;base64,...">` — passthrough; no fetch attempted.
+- [x] Unit test: HTML with a public `<img src>` returning 11 MiB — fetch aborted at 10 MiB, image omitted.
+- [x] Unit test: HTML with 51 `<img>` tags — first 50 prefetched, 51st left as original src.
+- [x] Unit test: rewrite produces `<img src="<absolute-workspace-path>">` and the file at that path matches the fetched bytes.
+- [x] Unit test: `Content-Type: text/html` response (a server lying about type) produces extension `.bin`.
 
 ## Docling integration: remote-fetch coverage and workspace confinement
 
@@ -118,8 +118,17 @@
 - [ ] Add internal logging at `WARNING` level when any `EgressPolicyError` is raised: include the rejected destination (URL, hostname, resolved IP, redirect chain).
   Use the existing structured logger.
 - [ ] Sanitize the `error_message` field persisted to `conversion_jobs` and any API response body: include only the policy-violation class name (e.g., `"deny_list"`, `"disallowed_scheme"`, `"scheme_downgrade"`, `"workspace_escape"`, `"dns_timeout"`), never the rejected destination.
+- [ ] Audit every security-policy enforcement site introduced by the security-audit work — across BOTH the `network-egress-policy` change and the already-shipped `deployment-trust-model` change — and ensure each emits a coherent diagnostic WARNING in addition to the audit log.
+  Enforcement sites in scope:
+  - `network-egress-policy`: `UrlRef` construction-time egress check; `assert_egress_allowed` / `async_assert_egress_allowed`; `egress_fetch_bytes` redirect-loop rejections (deny-list-on-hop, `disallowed_scheme`, `scheme_downgrade`, hop-cap exhaustion, total-budget exhaustion, missing-`Location`); `egress_fetch_bytes` body size cap (`FetchTooLargeError`); `prefetch_images` per-image cap and per-document caps (count / total-bytes / phase-deadline); `_assert_within` workspace-escape rejections at both the subprocess-metadata seam and the converter local-fetch seam.
+  - `deployment-trust-model`: `AIZK_AUTH_MODE` startup validation rejection; trusted-host allowlist rejection (Starlette `TrustedHostMiddleware`, HTTP 400); the migration NOT-NULL pre-alter assertion that raises `IrreversibleMigrationError` on unbackfilled rows.
+    Diagnostic requirements per emit site: distinguish failure mode in the message (don't collapse multiple modes to one generic line); carry the rejected URL / path / host / IP / hostname / auth-mode value as a structured field; for size-cap failures include both the configured cap and the actually-observed size; for `prefetch_images` emit a per-conversion summary line (`"prefetched N, skipped M (X too-large, Y deny-list, Z network-error)"`) at the end of the phase; for `TrustedHostMiddleware` rejections log the offending `Host` header value (since the request is rejected before it reaches a route handler that could log it itself).
+    Goal: an operator reading worker / API logs after a security-policy failure can answer "which policy fired, on what input, with what magnitude" without re-running the request under instrumentation.
+- [ ] Promote the `prefetch_images` per-image byte cap (currently the constant `_PER_IMAGE_MAX_BYTES = 10 MiB` in `html_prefetch.py`) and the per-document caps to operator-configurable settings on the conversion config (default to current values), so deployments that legitimately need larger images can raise the cap without a code change.
 - [ ] Unit test: a job submitted with a deny-set URL fails with non-retryable classification and the persisted `error_message` does not contain the rejected URL or IP.
 - [ ] Unit test: the structured WARNING log entry for the same job DOES contain the rejected destination (verify via log capture).
+- [ ] Unit test: an oversized `<img>` prefetch produces a WARNING that names `FetchTooLargeError`, the URL, the configured cap, and the observed-size bound (verify via log capture).
+- [ ] Unit test: the per-conversion `prefetch_images` summary line is emitted exactly once per `convert_html` call and reflects the per-failure-mode counts.
 
 ## End-to-end / integration
 
