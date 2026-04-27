@@ -84,18 +84,18 @@
 
 ## Docling integration: remote-fetch coverage and workspace confinement
 
-- [ ] Implementation-blocking verification test in `tests/aizk/conversion/test_docling_remote_fetch_coverage.py`: with `enable_remote_fetch=False`, exercise HTML containing each of `<link>`, `<script>`, `<img srcset>`, `<picture><source>`, CSS `url(...)`, inline SVG `<image href>`, `<iframe>`.
+- [x] Implementation-blocking verification test in `tests/aizk/conversion/test_docling_remote_fetch_coverage.py`: with `enable_remote_fetch=False`, exercise HTML containing each of `<link>`, `<script>`, `<img srcset>`, `<picture><source>`, CSS `url(...)`, inline SVG `<image href>`, `<iframe>`.
   Assert no outbound request is attempted (mock the network layer to fail loudly on any connect).
   If any tag type fires, add a scrub step in `html_prefetch.py` to strip those tags before Docling ingestion.
-- [ ] Implementation-time spike: write a one-shot test that invokes Docling's local-fetch path with `local_fetch_root=workspace` and a path of `workspace / "../../etc/passwd"`.
+- [x] Implementation-time spike: write a one-shot test that invokes Docling's local-fetch path with `local_fetch_root=workspace` and a path of `workspace / "../../etc/passwd"`.
   If it raises or returns empty, document this in a code comment and use `local_fetch_root` directly.
   If it does not, fall back to subclassing.
-- [ ] Record the spike outcome as a comment in the converter code at the local-fetch wiring site (one short line: `# spike: local_fetch_root enforces containment` OR `# spike: local_fetch_root does NOT enforce containment; using HTMLDocumentBackend subclass`).
-- [ ] If the spike fallback is needed: subclass `HTMLDocumentBackend` in `src/aizk/conversion/utilities/docling_backend.py`, override the local-path resolution method to call `_assert_within(workspace, path)` before delegating to `super()`.
+- [x] Record the spike outcome as a comment in the converter code at the local-fetch wiring site (one short line: `# spike: local_fetch_root enforces containment` OR `# spike: local_fetch_root does NOT enforce containment; using HTMLDocumentBackend subclass`).
+- [x] If the spike fallback is needed: subclass `HTMLDocumentBackend` in `src/aizk/conversion/utilities/docling_backend.py`, override the local-path resolution method to call `_assert_within(workspace, path)` before delegating to `super()`.
   Pass via `backend_class=...` to the document converter.
-- [ ] Wire Docling invocation with `enable_remote_fetch=False`, `enable_local_fetch=True`, and `local_fetch_root=workspace` (or the subclass equivalent).
-- [ ] Regression test: with the production wiring, an HTML document containing `<img src="/etc/ssh/ssh_host_rsa_key">` triggers `WorkspaceEscape` (or the spike-determined equivalent containment error).
-- [ ] Regression test: with the production wiring, an HTML document referencing a workspace-local pre-fetched image (e.g., `/<workspace>/prefetched-images/<sha>.png`) is converted successfully.
+- [x] Wire Docling invocation with `enable_remote_fetch=False`, `enable_local_fetch=True`, and `local_fetch_root=workspace` (or the subclass equivalent).
+- [x] Regression test: with the production wiring, an HTML document containing `<img src="/etc/ssh/ssh_host_rsa_key">` triggers `WorkspaceEscape` (or the spike-determined equivalent containment error).
+- [x] Regression test: with the production wiring, an HTML document referencing a workspace-local pre-fetched image (e.g., `/<workspace>/prefetched-images/<sha>.png`) is converted successfully.
 
 ## Path-containment helper for subprocess metadata
 

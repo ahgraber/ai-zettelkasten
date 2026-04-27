@@ -168,15 +168,16 @@ HTML rewriting is at the source-of-truth layer — the bytes Docling sees only c
 
 **Chosen:** A wrapper around Docling's local-fetch path that, before any `open()`, resolves the path and asserts `is_relative_to(workspace.resolve())`.
 Monkey-patching `_load_image_data` is rejected.
-The mechanism is determined by a mandatory implementation-time spike:
+The mechanism was determined by an implementation-time spike:
 
-1. **Spike:** before writing converter code, test whether `HTMLBackendOptions.local_fetch_root` enforces path containment by attempting to open `workspace / "../../etc/passwd"` via Docling's local-fetch path with `local_fetch_root=workspace`.
-   If the attempt raises or returns empty, the option enforces containment — use it and add a regression test proving escape is blocked.
+**Spike outcome:** `HTMLBackendOptions` has no `local_fetch_root` field.
+Docling's `_load_image_data` opens local files with a bare `open(src_loc, "rb")` — no containment check, no field to configure one.
+A path like `workspace/../../etc/passwd` is read unconditionally.
+The fallback branch was taken.
 
-2. **Fallback (if `local_fetch_root` does not enforce containment):** subclass `HTMLDocumentBackend` and override the method that resolves local paths (likely `_load_image_data` or its call site).
-   The override calls `_assert_within(workspace, path)` before delegating to `super()`.
-   Pass the subclass to the document converter via `backend_class=<subclass>` — a supported extension point that avoids patching internals.
-   The spike outcome (which branch was taken) MUST be recorded as a comment in the implementation.
+**Implementation:** `make_confined_backend(workspace)` in `src/aizk/conversion/utilities/docling_backend.py` returns a `HTMLDocumentBackend` subclass that overrides `_load_image_data`.
+The override resolves the local path, asserts `is_relative_to(workspace.resolve())`, and raises `WorkspaceEscape` on failure before delegating to `super()`.
+The subclass is passed to the document converter as `HTMLFormatOption(backend=make_confined_backend(workspace), ...)`.
 
 **Rationale:** Reuses the path-containment helper from Vuln 3, so both the subprocess-metadata seam and the converter local-fetch seam share one trust-boundary gate.
 The spike-first approach defers the mechanism choice to implementation but ensures it is made deliberately and recorded, not discovered silently at code review.
@@ -311,12 +312,12 @@ Non-retryable classification matches the `NoConverterForFormat` precedent for no
   An adversarial HTML with many `<img>` URLs could fan out into many outbound requests or fill disk.
   Mitigation: cap at 50 images, 100 MiB total, 10 MiB per image (streaming-enforced), 60 s phase deadline.
   Out-of-scope for this change is broader per-job or global rate-limiting.
-- **`enable_remote_fetch=False` scope unverified.**
-  Docling's `enable_remote_fetch=False` must gate ALL resource types (link, script, srcset, CSS fonts, SVG image), not just `<img src>`.
-  Mitigation: implementation-blocking verification test that exercises each tag type with `enable_remote_fetch=False` and confirms no outbound request fires.
-  If any type is unblocked, scrub it from HTML before Docling ingestion.
-- **Docling local-fetch containment via `local_fetch_root` may not behave as containment.**
-  Mitigation: mandatory implementation-time spike per the Workspace-confinement decision; fallback is subclassing `HTMLDocumentBackend` as specified there.
+- **`enable_remote_fetch=False` scope** — verified: Docling's HTML backend only calls `_load_image_data` for `<img src>` attributes.
+  `<link>`, `<script>`, `<iframe>`, `srcset`, `<picture><source>`, CSS `url()`, and SVG `<image>` are parsed as text or ignored and produce no I/O.
+  Setting `enable_remote_fetch=False` fully prevents all outbound network activity; no pre-scrub step is required.
+  Covered by `tests/conversion/unit/utilities/test_docling_remote_fetch_coverage.py`.
+- **Docling local-fetch containment** — `local_fetch_root` does not exist as a field in `HTMLBackendOptions`; the subclass fallback was taken.
+  See Workspace-confinement decision and `src/aizk/conversion/utilities/docling_backend.py`.
 - **Symlink-escape inside workspace.**
   Mitigation: `_assert_within` calls `resolve()` (which follows symlinks) before the `is_relative_to` check, so a symlink pointing out of the workspace fails containment.
 - **TOCTOU between `_assert_within` check and parent `open()` of subprocess artifact.**

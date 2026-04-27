@@ -14,6 +14,7 @@ import httpx
 from PIL import Image
 from pydantic import AnyUrl, HttpUrl
 
+from docling.backend.html_backend import HTMLDocumentBackend
 from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
 from docling.datamodel.backend_options import HTMLBackendOptions
 from docling.datamodel.base_models import InputFormat
@@ -48,6 +49,7 @@ from docling_core.types.doc.document import (
 from docling_core.types.io import DocumentStream
 
 from aizk.conversion.utilities.config import DoclingConverterConfig
+from aizk.conversion.utilities.docling_backend import make_confined_backend
 from aizk.conversion.utilities.html_prefetch import prefetch_images
 from aizk.conversion.utilities.paths import figure_dir
 from aizk.utilities.mlflow_tracing import trace_model_call
@@ -157,6 +159,7 @@ def _get_picture_description_options(config: DoclingConverterConfig) -> Optional
 def _create_document_converter(
     config: DoclingConverterConfig,
     source_url: Optional[str] = None,
+    workspace: Optional[Path] = None,
 ) -> DocumentConverter:
     """Create a DocumentConverter with HTML and PDF format options."""
     picture_opts = _get_picture_description_options(config)
@@ -175,18 +178,25 @@ def _create_document_converter(
     else:
         html_pipeline_opts.do_picture_description = False
 
+    # Docling's HTML backend only calls _load_image_data for <img src>; every
+    # other resource-referencing tag type produces no I/O, so enable_remote_fetch=False
+    # fully prevents outbound network activity. HTMLBackendOptions has no
+    # local_fetch_root field, so workspace containment requires the subclass
+    # returned by make_confined_backend (see utilities/docling_backend.py).
     html_backend_opts = HTMLBackendOptions(
         kind="html",
         fetch_images=True,
-        enable_remote_fetch=True,
+        enable_remote_fetch=False,
         enable_local_fetch=True,
         source_uri=AnyUrl(source_url) if source_url else None,
         add_title=True,  # default
         infer_furniture=True,  # default
     )
 
+    html_backend = make_confined_backend(workspace) if workspace is not None else HTMLDocumentBackend
     html_format = HTMLFormatOption(
         pipeline_options=html_pipeline_opts,
+        backend=html_backend,
         backend_options=html_backend_opts,
     )
 
@@ -454,7 +464,7 @@ def convert_html(
         DoclingEmptyOutputError: If no Markdown is produced.
     """
     try:
-        converter = _create_document_converter(config, source_url=source_url)
+        converter = _create_document_converter(config, source_url=source_url, workspace=temp_dir)
         # Egress gate for `<img>` URLs: pre-fetch through the validated helper
         # and rewrite each src to a workspace-local absolute path. After this
         # rewrite, Docling can run with `enable_remote_fetch=False` because
