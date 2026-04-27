@@ -99,17 +99,17 @@
 
 ## Path-containment helper for subprocess metadata
 
-- [ ] Add `_assert_within(workspace: Path, name: str) -> Path` to `src/aizk/conversion/utilities/paths.py`: string-level pre-check rejects names containing `/`, `\`, `..`, or absolute paths; composes `workspace / name`; calls `.resolve()`; asserts `is_relative_to(workspace.resolve())`; returns the validated absolute path.
+- [x] Add `_assert_within(workspace: Path, name: str) -> Path` to `src/aizk/conversion/utilities/paths.py`: string-level pre-check rejects names containing `/`, `\`, `..`, or absolute paths; composes `workspace / name`; calls `.resolve()`; asserts `is_relative_to(workspace.resolve())`; returns the validated absolute path.
   Raises `WorkspaceEscape` on any failure.
-- [ ] Refactor `markdown_path` (and any sibling helper) in `paths.py` to delegate to `_assert_within`.
-- [ ] Refactor `figure_paths` (or whatever helper consumes `figure_files` from subprocess metadata) to apply `_assert_within` per filename.
-- [ ] Update parent-uploader call sites that open subprocess-produced files to use `os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)` with a `with os.fdopen(fd, "rb")` context.
+- [x] Refactor `markdown_path` (and any sibling helper) in `paths.py` to delegate to `_assert_within`.
+- [x] Refactor `figure_paths` (or whatever helper consumes `figure_files` from subprocess metadata) to apply `_assert_within` per filename.
+- [x] Update parent-uploader call sites that open subprocess-produced files to use `os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)` with a `with os.fdopen(fd, "rb")` context.
   Catch `OSError` with `errno == ELOOP` and re-raise as `WorkspaceEscape`.
-- [ ] Locate uploader call sites by grepping for callers of `markdown_path` / `figure_paths` and update each to the `O_NOFOLLOW` open pattern.
-- [ ] Unit tests `tests/aizk/conversion/utilities/test_paths_containment.py`: `name="../../etc/hostname"` rejected; `name="/etc/hostname"` rejected; `name="..\\..\\etc\\hostname"` rejected; `name="output.md"` accepted with composed absolute path; `name="figure-001.png"` accepted.
-- [ ] Unit test: workspace contains a symlink `escape -> /etc`; `_assert_within(workspace, "escape/hostname")` raises `WorkspaceEscape` because resolved target falls outside.
-- [ ] Unit test: caller opens a path validated by `_assert_within`, then the file is replaced by a symlink to `/etc/passwd`, then the caller opens with `O_NOFOLLOW` — `OSError` with `ELOOP` is caught and re-raised as `WorkspaceEscape`.
-- [ ] Unit test: standard subprocess metadata `{"markdown_filename": "output.md", "figure_files": ["figure-001.png", "figure-002.png"]}` flows through the parent uploader without containment errors.
+- [x] Locate uploader call sites by grepping for callers of `markdown_path` / `figure_paths` and update each to the `O_NOFOLLOW` open pattern.
+- [x] Unit tests `tests/aizk/conversion/utilities/test_paths_containment.py`: `name="../../etc/hostname"` rejected; `name="/etc/hostname"` rejected; `name="..\\..\\etc\\hostname"` rejected; `name="output.md"` accepted with composed absolute path; `name="figure-001.png"` accepted.
+- [x] Unit test: workspace contains a symlink `escape -> /etc`; `_assert_within(workspace, "escape/hostname")` raises `WorkspaceEscape` because resolved target falls outside.
+- [x] Unit test: caller opens a path validated by `_assert_within`, then the file is replaced by a symlink to `/etc/passwd`, then the caller opens with `O_NOFOLLOW` — `OSError` with `ELOOP` is caught and re-raised as `WorkspaceEscape`.
+- [x] Unit test: standard subprocess metadata `{"markdown_filename": "output.md", "figure_files": ["figure-001.png", "figure-002.png"]}` flows through the parent uploader without containment errors.
 
 ## Error handling, logging, and API hygiene
 

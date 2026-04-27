@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from pathlib import Path
-from typing import ClassVar, NoReturn, Optional
+from typing import IO, ClassVar, NoReturn, Optional
 
 import boto3
 from botocore.exceptions import ClientError
@@ -132,6 +132,51 @@ class S3Client:
             error_message = e.response.get("Error", {}).get("Message", str(e))
             logger.exception("S3 upload failed for %s: %s (%s)", s3_key, error_message, error_code)
             raise S3UploadError(s3_key, f"{error_code}: {error_message}") from e
+
+        except Exception as e:
+            logger.exception("S3 upload failed for %s", s3_key)
+            raise S3UploadError(s3_key, str(e)) from e
+
+        else:
+            return s3_uri
+
+    def upload_fileobj(self, file_obj: IO[bytes], s3_key: str) -> str:
+        """Upload a file-like object to S3 with existence verification.
+
+        Accepts an already-open binary file object instead of a path, allowing
+        callers to open files with ``O_NOFOLLOW`` before uploading (eliminating
+        the TOCTOU race between a containment check and the file open).
+
+        Args:
+            file_obj: Readable binary file-like object positioned at the start.
+            s3_key: S3 object key.
+
+        Returns:
+            S3 URI (``s3://bucket/key``).
+
+        Raises:
+            S3UploadError: If upload fails or the post-upload HEAD check fails.
+        """
+        try:
+            self.client.upload_fileobj(file_obj, self.bucket, s3_key)
+
+            response = self.client.head_object(Bucket=self.bucket, Key=s3_key)
+            if not response:
+                raise S3UploadError(s3_key, "HEAD request failed after upload")  # NOQA: TRY301
+            if not response.get("ContentLength"):
+                raise S3UploadError(s3_key, "ContentLength missing after upload")  # NOQA: TRY301
+
+            s3_uri = f"s3://{self.bucket}/{s3_key}"
+            logger.info("Uploaded fileobj to %s", s3_uri)
+
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            error_message = e.response.get("Error", {}).get("Message", str(e))
+            logger.exception("S3 upload failed for %s: %s (%s)", s3_key, error_message, error_code)
+            raise S3UploadError(s3_key, f"{error_code}: {error_message}") from e
+
+        except S3UploadError:
+            raise
 
         except Exception as e:
             logger.exception("S3 upload failed for %s", s3_key)
