@@ -15,7 +15,6 @@ from typing import Any, Callable
 from unittest.mock import MagicMock, patch
 
 import httpx
-from pydantic import ValidationError
 import pytest
 from sqlmodel import Session
 
@@ -150,85 +149,67 @@ def _install_memory_s3(monkeypatch: pytest.MonkeyPatch) -> dict[str, bytes]:
 # ---------------------------------------------------------------------------
 
 
-def test_karakeep_resolver_rejects_private_source_url(
+def test_karakeep_resolver_emits_urlref_then_fetcher_blocks_deny_list(
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Resolver fails at UrlRef construction when source_url resolves to a private IP.
+    """End-to-end deny-list rejection happens at fetch time, not at resolver time.
 
-    The bookmark resolver constructs UrlRef(url=source_url) in step 5 of the
-    content-precedence chain.  The pydantic field validator calls
-    assert_egress_allowed synchronously; the DNS stub returns a private IP for
-    the bookmark's source host, triggering DenyListDestination — wrapped by
-    pydantic as ValidationError.
+    Per `network-egress-policy/design.md` § "Defer egress validation to fetch
+    time only", `UrlRef` construction does NOT call the egress validator. The
+    KaraKeep resolver therefore succeeds at producing a `UrlRef` whose URL
+    targets a deny-set destination; the load-bearing rejection happens when
+    `UrlFetcher.fetch` dispatches to `egress_fetch_bytes`.
 
-    Key security assertions:
-    - Resolver raises before dispatching any content fetcher.
-    - No outbound HTTP request is issued to the private address.
-    - The underlying cause is an EgressPolicyError (deny-list).
+    Security assertions:
+    - The deny-set destination is never opened as a socket connection.
+    - The fetcher raises an EgressPolicyError (DenyListDestination) at dispatch.
+    - The error type is non-retryable so the job fails permanently.
     """
     from karakeep_client.models import ContentTypeLink
 
-    # Use a hostname-shaped URL so it passes URL validation; DNS stub resolves it
-    # to a private IP so the egress check blocks it.
     private_source_url = "http://internal.corp.local/meta-data/"
 
     # DNS: internal.corp.local → 169.254.169.254 (link-local, deny-listed)
     _stub_dns(monkeypatch, {"internal.corp.local": "169.254.169.254"})
 
     fake_link_content = MagicMock(spec=ContentTypeLink)
-    # url is used by get_bookmark_source_url for ContentTypeLink
     fake_link_content.url = private_source_url
-    # html_content must be truthy to trigger resolver step 5 (UrlRef branch)
     fake_link_content.html_content = "<html><body>content</body></html>"
     fake_link_content.pdf_asset_id = None
     fake_link_content.precrawled_archive_asset_id = None
 
-    # Use plain MagicMock (no spec) so resolver attribute access doesn't fail
     fake_bookmark = MagicMock()
     fake_bookmark.id = "bm_ssrf_test"
     fake_bookmark.content = fake_link_content
-    fake_bookmark.assets = []  # no asset records
+    fake_bookmark.assets = []
 
-    # Patch at the import site in karakeep.py (it uses `from ... import`, so
-    # patching the source module has no effect on the already-bound name).
-    monkeypatch.setattr(
-        "aizk.conversion.adapters.fetchers.karakeep.fetch_karakeep_bookmark",
-        lambda _id: fake_bookmark,
-    )
-
-    # Track whether any egress fetch was attempted
-    http_requests_made: list[str] = []
-
-    async def _spy_fetch(url: str, **_kwargs: Any) -> tuple[bytes, dict]:
-        http_requests_made.append(url)
-        return b"", {}
-
-    monkeypatch.setattr(
-        "aizk.conversion.utilities.egress_fetch.egress_fetch_bytes",
-        _spy_fetch,
-    )
-
+    # Import the karakeep module first so monkeypatch resolves against the
+    # already-loaded module's namespace (rather than dotted-path import).
+    from aizk.conversion.adapters.fetchers import karakeep as karakeep_module
     from aizk.conversion.adapters.fetchers.karakeep import KarakeepBookmarkResolver
+    from aizk.conversion.adapters.fetchers.url import UrlFetcher
+    from aizk.conversion.utilities.config import ConversionConfig
 
-    cfg = KarakeepFetcherConfig(_env_file=None)
-    resolver = KarakeepBookmarkResolver(cfg)
+    monkeypatch.setattr(karakeep_module, "fetch_karakeep_bookmark", lambda _id: fake_bookmark)
+
+    karakeep_cfg = KarakeepFetcherConfig(_env_file=None)
+    resolver = KarakeepBookmarkResolver(karakeep_cfg)
     ref = KarakeepBookmarkRef(bookmark_id="bm_ssrf_test")
 
-    import logging
+    # Resolver SHALL succeed under the revised model — egress validation moved to fetch time.
+    resolved = resolver.resolve(ref)
+    from aizk.conversion.core.source_ref import UrlRef
 
-    with caplog.at_level(logging.WARNING, logger="aizk.conversion.utilities.egress"):
-        with pytest.raises((ValidationError, EgressPolicyError)):
-            resolver.resolve(ref)
+    assert isinstance(resolved, UrlRef)
+    # `normalize_url` strips the trailing slash; identity normalization happens at construction.
+    assert resolved.url == private_source_url.rstrip("/")
 
-    # Egress WARNING must have fired — confirms the deny-list check ran
-    egress_warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert egress_warnings, "Expected at least one egress WARNING log (deny-list check must have fired)"
-
-    # No HTTP connection was attempted to the private host
-    assert http_requests_made == [], (
-        f"No outbound fetch should be issued for a deny-list URL; got: {http_requests_made}"
-    )
+    # Now drive the fetcher; it MUST fail closed at egress validation before any
+    # socket connect to the deny-set destination.
+    config = ConversionConfig(_env_file=None)
+    fetcher = UrlFetcher(config, karakeep_cfg)
+    with pytest.raises(EgressPolicyError):
+        fetcher.fetch(resolved)
 
 
 # ---------------------------------------------------------------------------

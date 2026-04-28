@@ -34,6 +34,7 @@ for the rationale.
 
 from __future__ import annotations
 
+import atexit
 import concurrent.futures
 from dataclasses import dataclass
 import ipaddress
@@ -48,12 +49,18 @@ from aizk.conversion.core.errors import (
     DisallowedScheme,
     DnsTimeout,
 )
+from aizk.utilities.url_utils import sanitize_url_for_log
 
 logger = logging.getLogger(__name__)
 
 _DNS_TIMEOUT_SECONDS: Final[float] = 2.0
-_DNS_EXECUTOR_WORKERS: Final[int] = 4
-_VALIDATION_EXECUTOR_WORKERS: Final[int] = 4
+# Default executor sizes; overridable per-process via `ConversionConfig`'s
+# `egress_dns_workers` and `egress_validation_workers` (env aliases
+# ``EGRESS_DNS_WORKERS`` / ``EGRESS_VALIDATION_WORKERS``). The lookup is lazy:
+# the first call to ``_get_*_executor`` reads ``ConversionConfig()`` once and
+# pins the size for the lifetime of the process.
+_DEFAULT_DNS_EXECUTOR_WORKERS: Final[int] = 4
+_DEFAULT_VALIDATION_EXECUTOR_WORKERS: Final[int] = 4
 
 _ALLOWED_SCHEMES: Final[frozenset[str]] = frozenset({"http", "https"})
 
@@ -106,14 +113,37 @@ _validation_executor: concurrent.futures.ThreadPoolExecutor | None = None
 _executor_lock = threading.Lock()
 
 
+def _resolve_executor_sizes() -> tuple[int, int]:
+    """Return ``(dns_workers, validation_workers)`` from ``ConversionConfig``.
+
+    Reads the conversion settings once on first executor init. Falls back to
+    the module defaults if config construction fails, so a misconfigured
+    deployment cannot make the egress validator unimportable.
+    """
+    try:
+        # Local import: avoids paying config-construction cost at module
+        # import time and keeps the dependency edge one-directional.
+        from aizk.conversion.utilities.config import ConversionConfig
+
+        cfg = ConversionConfig()
+        return int(cfg.egress_dns_workers), int(cfg.egress_validation_workers)
+    except Exception:  # noqa: BLE001 — defensive; init must not crash
+        logger.warning(
+            "Egress executor sizing fell back to defaults; ConversionConfig load failed.",
+            exc_info=True,
+        )
+        return _DEFAULT_DNS_EXECUTOR_WORKERS, _DEFAULT_VALIDATION_EXECUTOR_WORKERS
+
+
 def _get_dns_executor() -> concurrent.futures.ThreadPoolExecutor:
     """Return the module-level DNS executor, creating it on first use."""
     global _dns_executor
     if _dns_executor is None:
         with _executor_lock:
             if _dns_executor is None:
+                dns_workers, _ = _resolve_executor_sizes()
                 _dns_executor = concurrent.futures.ThreadPoolExecutor(
-                    max_workers=_DNS_EXECUTOR_WORKERS,
+                    max_workers=dns_workers,
                     thread_name_prefix="aizk-egress-dns",
                 )
     return _dns_executor
@@ -125,11 +155,35 @@ def _get_validation_executor() -> concurrent.futures.ThreadPoolExecutor:
     if _validation_executor is None:
         with _executor_lock:
             if _validation_executor is None:
+                _, validation_workers = _resolve_executor_sizes()
                 _validation_executor = concurrent.futures.ThreadPoolExecutor(
-                    max_workers=_VALIDATION_EXECUTOR_WORKERS,
+                    max_workers=validation_workers,
                     thread_name_prefix="aizk-egress-validate",
                 )
     return _validation_executor
+
+
+def _shutdown_executors() -> None:
+    """Tear down both executors at interpreter exit.
+
+    Registered with :mod:`atexit` so a long-running API or worker process
+    does not leak threads on ``SIGTERM``. ``cancel_futures=True`` discards
+    queued work; in-flight DNS lookups complete before the worker thread
+    exits because ``getaddrinfo`` does not honor cancellation.
+    """
+    global _dns_executor, _validation_executor
+    with _executor_lock:
+        for ex_name, ex in (("_dns_executor", _dns_executor), ("_validation_executor", _validation_executor)):
+            if ex is not None:
+                try:
+                    ex.shutdown(wait=False, cancel_futures=True)
+                except Exception:  # noqa: BLE001 — atexit must not raise
+                    logger.debug("Egress executor %s shutdown raised", ex_name, exc_info=True)
+        _dns_executor = None
+        _validation_executor = None
+
+
+atexit.register(_shutdown_executors)
 
 
 @dataclass(frozen=True)
@@ -236,16 +290,17 @@ def assert_egress_allowed(url: str) -> ValidatedDestination:
     """
     parsed = urlparse(url)
     scheme = parsed.scheme.lower()
+    safe_url = sanitize_url_for_log(url)
     if scheme not in _ALLOWED_SCHEMES:
         logger.warning(
             "Egress denied: disallowed scheme",
-            extra={"scheme": scheme, "url": url},
+            extra={"scheme": scheme, "url": safe_url},
         )
         raise DisallowedScheme(f"Scheme {scheme!r} is not in the egress allowlist")
 
     host = parsed.hostname
     if not host:
-        logger.warning("Egress denied: URL missing hostname", extra={"url": url})
+        logger.warning("Egress denied: URL missing hostname", extra={"url": safe_url})
         raise DisallowedScheme("URL is missing a hostname")
 
     port = parsed.port
@@ -256,7 +311,7 @@ def assert_egress_allowed(url: str) -> ValidatedDestination:
     if not addresses:
         logger.warning(
             "Egress denied: no addresses resolved",
-            extra={"host": host, "url": url},
+            extra={"host": host, "url": safe_url},
         )
         raise DenyListDestination(f"No addresses resolved for host {host!r}")
 
@@ -265,7 +320,7 @@ def assert_egress_allowed(url: str) -> ValidatedDestination:
         if _classify_address(ip):
             logger.warning(
                 "Egress denied: resolved address in deny set",
-                extra={"host": host, "ip": ip_str, "url": url},
+                extra={"host": host, "ip": ip_str, "url": safe_url},
             )
             raise DenyListDestination(f"Resolved address for host {host!r} is in the egress deny set")
 

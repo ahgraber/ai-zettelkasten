@@ -156,11 +156,13 @@ def test_docling_convert_dispatches_html_to_convert_html(monkeypatch: pytest.Mon
         temp_dir: Path,
         config: DoclingConverterConfig,
         source_url: str | None = None,
+        prefetch_policy: Any = None,
     ) -> tuple[str, list[Path]]:
         captured["html_bytes"] = html_bytes
         captured["temp_dir"] = temp_dir
         captured["config"] = config
         captured["source_url"] = source_url
+        captured["prefetch_policy"] = prefetch_policy
         return "# HTML markdown", []
 
     monkeypatch.setattr(docling_module, "convert_html", _fake_convert_html)
@@ -199,6 +201,7 @@ def test_docling_convert_html_without_source_url_passes_none(
         temp_dir: Path,
         config: DoclingConverterConfig,
         source_url: str | None = None,
+        prefetch_policy: Any = None,
     ) -> tuple[str, list[Path]]:
         captured["source_url"] = source_url
         return "", []

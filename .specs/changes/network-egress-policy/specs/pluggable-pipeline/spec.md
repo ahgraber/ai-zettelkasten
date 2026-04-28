@@ -83,25 +83,35 @@ Rejections SHALL surface as a typed error and SHALL be classified as non-retryab
 - **WHEN** the converter dereferences the local path
 - **THEN** the read is permitted because the resolved path is contained within the workspace directory
 
-## MODIFIED Requirements
+## Notes — `UrlRef` construction does NOT validate egress (post-implementation revision)
 
-### Requirement: Represent content sources as a discriminated union
+`UrlRef` construction performs URL normalization for dedup identity but does **not** call the egress validator and does **not** resolve DNS.
+The trust boundary is fetch time: every fetcher (`UrlFetcher`, `ArxivFetcher`, `GithubReadmeFetcher`) and the image-prefetch path route through `egress_fetch_bytes`, which calls `async_assert_egress_allowed` for the initial hop and again for every redirect target.
+A `UrlRef` instance therefore _can_ exist in the system carrying a deny-set URL — the security property is that no outbound socket connection ever opens to a deny-set destination, not that the model rejects the URL at construction.
 
-The existing requirement is extended with one additional construction-time validation clause for `UrlRef`:
+This revision was made because:
 
-`UrlRef` construction SHALL additionally reject any URL whose resolved host falls into the egress deny set defined in "Apply network egress policy to all external-content dereferences"; the rejection SHALL surface as a pydantic validation error at model construction time, not deferred to fetcher dispatch.
-This guarantees that a `UrlRef` instance cannot exist in the system carrying an unsafe destination, including refs constructed inside the resolver chain (e.g., a `KarakeepBookmarkResolver` that derives a `UrlRef` from bookmark `source_url` JSON).
+- KaraKeep's operator-configured `base_url` is typically on a private network (the canonical self-hosted shape).
+  Construction-time validation would fail closed for every `UrlRef(url=f"{karakeep_base_url}/api/v1/assets/{asset_id}")` built by `KarakeepBookmarkResolver` Steps 3 and 4, breaking PDF and precrawled-archive bookmarks end-to-end.
+  KaraKeep asset fetches use `KarakeepClient` directly (operator-trusted infrastructure), not `egress_fetch_bytes`, so the egress policy is correctly inert for that path.
+- Construction-time DNS would otherwise run synchronously in API request handling, in worker rehydration paths (orchestrator parent, spawned subprocess, uploader's `terminal_ref` and `submitted_ref` reconstruction), and inside every resolver-built `UrlRef` — duplicating DNS load and creating a queryable resolution-latency oracle on the unauthenticated `POST /v1/jobs` endpoint.
 
-(Previously: `UrlRef` construction validated URL shape only — regex, `pydantic.HttpUrl`, and the syntactic normalizer; egress-class destinations were not rejected at the model layer, so a resolver could construct a `UrlRef` carrying `http://169.254.169.254/...` and the unsafe destination would only be caught — or not — at fetcher dispatch.)
+See `network-egress-policy/design.md` § "Defer egress validation to fetch time only" for the full rationale and alternatives considered.
 
-#### Scenario: UrlRef construction rejects a deny-set destination
+### Scenario: UrlRef construction does not perform egress validation
 
 - **GIVEN** a JSON value `{"kind": "url", "url": "http://169.254.169.254/latest/meta-data/"}`
 - **WHEN** `UrlRef` is constructed via pydantic deserialization
-- **THEN** a `ValidationError` is raised at construction time, before any fetcher or resolver receives the ref
+- **THEN** construction succeeds (no DNS lookup, no destination classification); the URL is normalized for dedup identity; the deny-set rejection happens at fetch time when the fetcher dispatches
 
-#### Scenario: Resolver cannot emit an unsafe UrlRef
+#### Scenario: KaraKeep resolver emits a UrlRef whose URL targets a private host (operator-trusted base URL)
 
-- **GIVEN** `KarakeepBookmarkResolver` processes a bookmark whose `source_url` is `http://10.0.0.5/admin`
-- **WHEN** the resolver attempts to construct `UrlRef(url=source_url)` per its Step 5 handling
-- **THEN** the `UrlRef` construction raises `ValidationError`, the resolver propagates a typed error, and no downstream fetcher receives a deny-set destination
+- **GIVEN** `KarakeepBookmarkResolver` processes a bookmark whose Step 3 or Step 4 path constructs `UrlRef(url=f"{karakeep_base_url}/api/v1/assets/...")` and `karakeep_base_url` is on a private network
+- **WHEN** the resolver returns the `UrlRef`
+- **THEN** construction succeeds; the downstream `UrlFetcher` routes the request through `KarakeepClient` (the configured trusted infrastructure) and does **not** invoke `egress_fetch_bytes`; the egress deny-list is correctly inert for this path
+
+#### Scenario: Deny-set URL rejected at fetch time
+
+- **GIVEN** a `UrlRef(url="http://169.254.169.254/latest/meta-data/")` reaches `UrlFetcher.fetch` (e.g., constructed by a future widening of `_API_SUBMITTABLE_KINDS`)
+- **WHEN** the fetcher dispatches via `egress_fetch_bytes`
+- **THEN** `async_assert_egress_allowed` raises `DenyListDestination`, the fetcher propagates the typed error unwrapped, the job is classified non-retryable, and no socket connection to the metadata service is opened

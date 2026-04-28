@@ -62,20 +62,15 @@ class DoclingConverter:
         if input.content_type is ContentType.HTML:
             source_url = input.metadata.get("source_url") if input.metadata else None
             temp_dir = Path(tempfile.mkdtemp(prefix="docling-html-"))
-            prefetch_kwargs: dict[str, Any] = {}
-            if self._conversion_config is not None:
-                prefetch_kwargs = {
-                    "prefetch_per_image_max_bytes": self._conversion_config.prefetch_per_image_max_bytes,
-                    "prefetch_max_images": self._conversion_config.prefetch_max_images_per_doc,
-                    "prefetch_max_total_bytes": self._conversion_config.prefetch_max_total_bytes_per_doc,
-                    "prefetch_phase_deadline_seconds": self._conversion_config.prefetch_phase_deadline_seconds,
-                }
+            prefetch_policy = (
+                self._conversion_config.prefetch_policy() if self._conversion_config is not None else None
+            )
             markdown, figures = convert_html(
                 input.content,
                 temp_dir=temp_dir,
                 config=self._config,
                 source_url=source_url,
-                **prefetch_kwargs,
+                prefetch_policy=prefetch_policy,
             )
             return ConversionArtifacts(markdown=markdown, figures=list(figures), metadata=metadata)
 

@@ -238,7 +238,17 @@ def load_manifest(data: dict) -> ManifestV1 | ManifestV2:
 
 
 def save_manifest(manifest: ManifestV1 | ManifestV2, output_path: Path) -> None:
-    """Save manifest to JSON file."""
+    """Save manifest to JSON file using ``O_NOFOLLOW | O_EXCL``.
+
+    Refuses to follow a leaf symlink at ``output_path`` (raised as
+    :class:`~aizk.conversion.core.errors.WorkspaceEscape`) and refuses to
+    overwrite an existing file (``FileExistsError``).  This closes the
+    H2-class TOCTOU where the conversion subprocess plants a symlink at
+    ``<workspace>/manifest.json`` before exiting; without ``O_NOFOLLOW``
+    the parent's write would clobber the symlink target.
+    """
+    from aizk.conversion.utilities.paths import write_text_nofollow
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(manifest.model_dump_json(indent=2, exclude_none=True))
+    write_text_nofollow(output_path, manifest.model_dump_json(indent=2, exclude_none=True))
     logger.info("Saved manifest to %s", output_path)

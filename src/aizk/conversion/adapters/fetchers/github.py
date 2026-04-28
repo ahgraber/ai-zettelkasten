@@ -45,7 +45,8 @@ class GithubReadmeFetcher:
             EgressPolicyError: If the egress policy rejects the destination
                 (non-retryable; propagated unchanged).
         """
-        assert isinstance(ref, GithubReadmeRef), f"Expected GithubReadmeRef, got {type(ref)}"
+        if not isinstance(ref, GithubReadmeRef):
+            raise TypeError(f"Expected GithubReadmeRef, got {type(ref).__name__}")
         content = asyncio.run(self._fetch_readme(ref))
         return ConversionInput(content=content, content_type=ContentType.HTML)
 

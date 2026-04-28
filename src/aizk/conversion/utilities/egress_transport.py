@@ -96,19 +96,23 @@ class EgressPinnedTransport(httpx.AsyncHTTPTransport):
         """
         original_url = request.url
         original_host = original_url.host
+        original_extensions = request.extensions
         # Swap URL host to the pinned IP for the TCP connect. The Host header
         # was already set on the request by httpx at construction time and is
         # preserved as the original hostname; httpcore reads `sni_hostname`
         # from extensions for the TLS handshake.
         request.url = original_url.copy_with(host=self._destination.ip)
-        request.extensions = {**request.extensions, "sni_hostname": original_host}
+        request.extensions = {**original_extensions, "sni_hostname": original_host}
         try:
             response = await super().handle_async_request(request)
         finally:
-            # Restore the original URL on the request so callers (and the
-            # manual redirect loop in the fetcher) see the original target,
-            # not the pinned IP.
+            # Restore the original URL and extensions on the request so callers
+            # (and the manual redirect loop in the fetcher) see the unmodified
+            # target. Restoring extensions matters if the request is ever reused
+            # (e.g., wrapped in `httpx.AsyncHTTPTransport(retries=N)`); the
+            # leftover `sni_hostname` would otherwise attach to a wrong dest.
             request.url = original_url
+            request.extensions = original_extensions
         return response
 
 

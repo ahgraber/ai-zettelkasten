@@ -71,6 +71,27 @@ def test_strip_auth_headers_is_case_insensitive() -> None:
     assert stripped == {}
 
 
+@pytest.mark.parametrize(
+    "header_name",
+    [
+        "X-Auth-Token",  # OpenStack / Akamai
+        "X-Auth-Key",  # Cloudflare
+        "X-Auth-User",
+        "X-Auth-Email",
+        "X-Auth",  # bare
+        "x-auth-token",  # case sanity
+    ],
+)
+def test_strip_auth_headers_removes_canonical_x_auth_variants(header_name: str) -> None:
+    # Regression for the `^x-.*-auth.*$` miss: the original pattern required
+    # `-auth` to appear after a hyphen-separated middle component, so canonical
+    # X-Auth-* credential headers leaked across cross-host redirects.
+    headers = {header_name: "secret", "User-Agent": "aizk-test"}
+    stripped = _strip_auth_headers(headers)
+    assert header_name not in stripped
+    assert stripped["User-Agent"] == "aizk-test"
+
+
 # --- Happy path --------------------------------------------------------------
 
 
@@ -181,7 +202,7 @@ async def test_sixth_redirect_hop_raises(monkeypatch: pytest.MonkeyPatch) -> Non
         # Return 302 forever — the helper should reject before issuing a 7th request.
         return httpx.Response(302, headers={"location": f"https://a.example/hop{counter['n']}"})
 
-    with pytest.raises(RedirectEgressViolation):
+    with pytest.raises(RedirectEgressViolation) as excinfo:
         await egress_fetch_bytes(
             "https://a.example/start",
             max_response_bytes=10_000,
@@ -190,6 +211,52 @@ async def test_sixth_redirect_hop_raises(monkeypatch: pytest.MonkeyPatch) -> Non
     # max_redirects=5 → 6 GETs total (initial + 5 redirects), then the helper
     # rejects the 7th before issuing it.
     assert counter["n"] == 6
+    # Hop-cap exhaustion has its own discriminating `reason` distinct from
+    # `deny_list` so dashboards do not conflate the two failure modes.
+    assert excinfo.value.reason == "hop_cap"
+
+
+# --- Redirect handling: multi-hop scheme downgrade ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_https_https_http_three_hop_downgrade_rejected_at_third_hop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 3-hop chain `https://A → https://B → http://C` rejects at the third hop.
+
+    The 2-hop downgrade case is covered by
+    `test_https_to_http_redirect_rejected_as_scheme_downgrade`. This test
+    pins the per-hop guarantee explicitly: each redirect's scheme is
+    re-validated against the *previous* hop's scheme, not against the
+    initial URL. So an `https → https → http` chain still trips the
+    downgrade rule even though the initial URL was https.
+    """
+    _stub_dns_returning(
+        monkeypatch,
+        {"a.example": "93.184.216.34", "b.example": "93.184.216.35", "c.example": "93.184.216.36"},
+    )
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        seen.append(url)
+        if "a.example" in url:
+            return httpx.Response(302, headers={"location": "https://b.example/two"})
+        if "b.example" in url:
+            return httpx.Response(302, headers={"location": "http://c.example/three"})
+        return httpx.Response(200, content=b"unexpected")
+
+    with pytest.raises(RedirectEgressViolation) as excinfo:
+        await egress_fetch_bytes(
+            "https://a.example/start",
+            max_response_bytes=10_000,
+            transport_factory=_mock_factory(handler),
+        )
+    assert excinfo.value.reason == "scheme_downgrade"
+    # Hops issued: A (https) and B (https). C (http) was never connected to.
+    assert len(seen) == 2
+    assert all("c.example" not in u for u in seen)
 
 
 # --- Redirect handling: relative Location ------------------------------------

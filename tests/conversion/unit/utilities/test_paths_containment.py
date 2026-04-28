@@ -11,9 +11,12 @@ import pytest
 
 from aizk.conversion.core.errors import WorkspaceEscape
 from aizk.conversion.utilities.paths import (
+    METADATA_FILENAME,
     _assert_within,
     figure_paths,
     markdown_path,
+    metadata_path,
+    read_text_nofollow,
 )
 from aizk.conversion.workers.uploader import _upload_nofollow
 
@@ -58,6 +61,48 @@ def test_assert_within_rejects_backslash_traversal(tmp_path: Path) -> None:
 def test_assert_within_rejects_bare_dotdot(tmp_path: Path) -> None:
     with pytest.raises(WorkspaceEscape):
         _assert_within(tmp_path, "..")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "innocent\x00.png",
+        "\x00leading-null.md",
+        "trailing-null.md\x00",
+    ],
+)
+def test_assert_within_rejects_null_byte_names(tmp_path: Path, name: str) -> None:
+    # Null bytes in names previously passed string-level checks and reached
+    # `composed.resolve()`, where they failed with a generic `path resolution
+    # failed` log line. Reject them explicitly so the audit-log signal is clean.
+    with pytest.raises(WorkspaceEscape):
+        _assert_within(tmp_path, name)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        # FULLWIDTH FULL STOP × 2 → ".." after NFKC normalization
+        "．．",
+        # FULLWIDTH SOLIDUS introducing a path separator after normalization
+        "innocent／path.md",
+    ],
+)
+def test_assert_within_rejects_unicode_traversal_lookalikes(tmp_path: Path, name: str) -> None:
+    # NFKC normalization defeats homoglyph traversal attempts that would
+    # otherwise pass the string-level pre-check on bytes-level inspection but
+    # produce ".." or "/" once normalized.
+    with pytest.raises(WorkspaceEscape):
+        _assert_within(tmp_path, name)
+
+
+def test_assert_within_accepts_unicode_filename_that_normalizes_to_safe(tmp_path: Path) -> None:
+    # Plain Unicode characters that NFKC-normalize to other plain characters
+    # (e.g., a non-Latin filename) must not be rejected — only normalizations
+    # that introduce traversal components are blocked.
+    name = "étoile.md"  # "étoile.md"
+    result = _assert_within(tmp_path, name)
+    assert result == (tmp_path / name).resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -202,3 +247,104 @@ def test_standard_subprocess_metadata_accepted(tmp_path: Path) -> None:
         (workspace / "figures" / "figure-001.png").resolve(),
         (workspace / "figures" / "figure-002.png").resolve(),
     ]
+
+
+# ---------------------------------------------------------------------------
+# read_text_nofollow — defeats post-validation symlink swap on metadata.json
+# ---------------------------------------------------------------------------
+
+
+def test_read_text_nofollow_returns_contents_for_regular_file(tmp_path: Path) -> None:
+    target = tmp_path / "metadata.json"
+    target.write_text('{"ok": true}', encoding="utf-8")
+    assert read_text_nofollow(target) == '{"ok": true}'
+
+
+def test_read_text_nofollow_rejects_symlink_with_workspace_escape(tmp_path: Path) -> None:
+    # Regression for H4: a compromised converter subprocess that swaps
+    # workspace/metadata.json for a symlink must fail at parent-side read,
+    # not silently feed attacker-chosen JSON into the manifest / DB / S3.
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"poisoned": true}', encoding="utf-8")
+    (workspace / METADATA_FILENAME).symlink_to(outside)
+
+    with pytest.raises(WorkspaceEscape):
+        read_text_nofollow(metadata_path(workspace))
+
+
+def test_read_text_nofollow_propagates_filesystem_errors(tmp_path: Path) -> None:
+    # Non-ELOOP errors (e.g. ENOENT) propagate as plain OSError, not WorkspaceEscape.
+    missing = tmp_path / "does-not-exist.json"
+    with pytest.raises(FileNotFoundError):
+        read_text_nofollow(missing)
+
+
+# ---------------------------------------------------------------------------
+# write_text_nofollow — refuses to follow symlinks on parent-side writes
+# ---------------------------------------------------------------------------
+
+
+def test_write_text_nofollow_writes_new_file(tmp_path: Path) -> None:
+    """A regular new-file write succeeds and returns the validated bytes."""
+    from aizk.conversion.utilities.paths import write_text_nofollow
+
+    target = tmp_path / "manifest.json"
+    write_text_nofollow(target, '{"version": "2.0"}')
+    assert target.read_text(encoding="utf-8") == '{"version": "2.0"}'
+
+
+def test_write_text_nofollow_rejects_existing_symlink_with_workspace_escape(tmp_path: Path) -> None:
+    """Regression for H2: a subprocess that pre-creates ``manifest.json`` as a symlink
+    must NOT cause the parent's ``save_manifest`` to write through it.
+
+    Threat model: the conversion subprocess (compromised in the design's threat
+    model) plants ``<workspace>/manifest.json`` as a symlink to any host-writable
+    file before exiting. Without ``O_NOFOLLOW``, the parent's ``write_text`` would
+    overwrite the symlink target with manifest JSON — an arbitrary-file overwrite
+    primitive identical-shape to the H4 fix already shipped for markdown/figures
+    /``metadata.json``.
+    """
+    from aizk.conversion.utilities.paths import write_text_nofollow
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"untouched": true}', encoding="utf-8")
+    (workspace / "manifest.json").symlink_to(outside)
+
+    with pytest.raises(WorkspaceEscape, match="Symlink detected"):
+        write_text_nofollow(workspace / "manifest.json", '{"poisoned": "yes"}')
+
+    # The symlink target must NOT have been written.
+    assert outside.read_text(encoding="utf-8") == '{"untouched": true}'
+
+
+def test_write_text_nofollow_rejects_existing_regular_file_by_default(tmp_path: Path) -> None:
+    """Defense-in-depth: by default, refuse to overwrite a pre-existing file.
+
+    The workspace is freshly created per job; a pre-existing ``manifest.json``
+    indicates the subprocess wrote one (it shouldn't — manifest is parent-only).
+    Refusing the write closes one variant of subprocess-supplied content
+    flowing into the manifest path.
+    """
+    from aizk.conversion.utilities.paths import write_text_nofollow
+
+    target = tmp_path / "manifest.json"
+    target.write_text("preexisting", encoding="utf-8")
+
+    with pytest.raises(FileExistsError):
+        write_text_nofollow(target, '{"new": true}')
+
+    # Pre-existing content untouched.
+    assert target.read_text(encoding="utf-8") == "preexisting"
+
+
+def test_write_text_nofollow_propagates_filesystem_errors(tmp_path: Path) -> None:
+    """Non-ELOOP errors (e.g. ENOENT for parent dir) propagate as plain OSError."""
+    from aizk.conversion.utilities.paths import write_text_nofollow
+
+    bad = tmp_path / "no-such-dir" / "manifest.json"
+    with pytest.raises(FileNotFoundError):
+        write_text_nofollow(bad, "x")

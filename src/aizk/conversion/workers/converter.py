@@ -48,9 +48,10 @@ from docling_core.types.doc.document import (
 )
 from docling_core.types.io import DocumentStream
 
+from aizk.conversion.core.errors import EgressPolicyError
 from aizk.conversion.utilities.config import DoclingConverterConfig
 from aizk.conversion.utilities.docling_backend import make_confined_backend
-from aizk.conversion.utilities.html_prefetch import prefetch_images
+from aizk.conversion.utilities.html_prefetch import PrefetchPolicy, prefetch_images
 from aizk.conversion.utilities.paths import figure_dir
 from aizk.utilities.mlflow_tracing import trace_model_call
 
@@ -130,6 +131,14 @@ def _get_picture_description_options(config: DoclingConverterConfig) -> Optional
     """Build picture description options from environment.
 
     Uses any OpenAI-compatible endpoint (OpenRouter, vLLM, Ollama, etc.) if configured.
+
+    Egress-policy note: the URL handed to Docling here is operator-configured
+    via ``AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL``. It is NOT
+    routed through ``egress_fetch_bytes`` and is intentionally exempt from the
+    deny-list classification (the carved-out endpoint may legitimately live
+    on a private network, e.g. an internal vLLM cluster). See
+    ``.specs/changes/network-egress-policy/design.md`` § "Operator-trusted
+    endpoints are carved out of the egress gate".
     """
     base_url = config.picture_description_base_url.rstrip("/")
     api_key = config.picture_description_api_key
@@ -250,6 +259,14 @@ def _get_classification_label(pic: PictureItem) -> str | None:
 
 def _call_vlm_api(image: Image.Image, prompt: str, config: DoclingConverterConfig) -> str:
     """Call the VLM chat completions API with an image and prompt.
+
+    Egress-policy note: this call uses ``httpx.post`` directly against the
+    operator-configured ``AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL``
+    and is NOT routed through ``egress_fetch_bytes``. The carve-out is
+    intentional — see ``.specs/changes/network-egress-policy/design.md``
+    § "Operator-trusted endpoints are carved out of the egress gate".
+    Default ``httpx`` TLS posture (hostname check on, cert verify on)
+    applies; the timeout is bounded by ``config.picture_timeout``.
 
     Args:
         image: PIL image to describe.
@@ -448,10 +465,7 @@ def convert_html(
     config: DoclingConverterConfig,
     source_url: Optional[str] = None,
     *,
-    prefetch_per_image_max_bytes: int = 10 * 1024 * 1024,
-    prefetch_max_images: int = 50,
-    prefetch_max_total_bytes: int = 100 * 1024 * 1024,
-    prefetch_phase_deadline_seconds: float = 60.0,
+    prefetch_policy: Optional[PrefetchPolicy] = None,
 ) -> tuple[str, list[Path]]:
     """Convert HTML to Markdown using Docling.
 
@@ -460,6 +474,8 @@ def convert_html(
         temp_dir: Temporary directory for extracted figures.
         config: Conversion configuration.
         source_url: Optional source URL for resolving relative links/images.
+        prefetch_policy: Per-document caps for the ``<img src>`` prefetch
+            phase. ``None`` uses :class:`PrefetchPolicy` defaults.
 
     Returns:
         Tuple of (markdown_text, list_of_figure_paths).
@@ -478,16 +494,7 @@ def convert_html(
         # src in place so Docling's local-fetch confinement gate refuses to
         # dereference it instead of opening an SSRF / blind-LFI primitive.
         html_text = html_bytes.decode("utf-8", errors="replace")
-        rewritten_html = asyncio.run(
-            prefetch_images(
-                html_text,
-                temp_dir,
-                per_image_max_bytes=prefetch_per_image_max_bytes,
-                max_images=prefetch_max_images,
-                max_total_bytes=prefetch_max_total_bytes,
-                phase_deadline_seconds=prefetch_phase_deadline_seconds,
-            )
-        )
+        rewritten_html = asyncio.run(prefetch_images(html_text, temp_dir, policy=prefetch_policy))
         prefetched_bytes = rewritten_html.encode("utf-8")
         source = DocumentStream(name="document.html", stream=BytesIO(prefetched_bytes))
         if config.is_picture_description_enabled() and not config.picture_classification_enabled:
@@ -509,7 +516,14 @@ def convert_html(
         _enrich_picture_descriptions(doc, config)
         markdown = _docling_to_markdown(doc)
 
-    except DoclingEmptyOutputError:
+    except (DoclingEmptyOutputError, EgressPolicyError):
+        # EgressPolicyError subclasses (DenyListDestination, DisallowedScheme,
+        # RedirectEgressViolation, DnsTimeout, WorkspaceEscape) are typed
+        # security-policy errors with retryable=False and a sanitized error_code
+        # contract. Wrapping them as DoclingError would (a) flip them to
+        # retryable=True (forever-retry against an attacker probe) and
+        # (b) leak the rejected destination into the persisted error_message
+        # via str(error), bypassing the orchestrator's sanitization filter.
         raise
     except Exception as e:
         logger.exception("HTML conversion failed")
@@ -560,7 +574,8 @@ def convert_pdf(
         _enrich_picture_descriptions(doc, config)
         markdown = _docling_to_markdown(doc)
 
-    except DoclingEmptyOutputError:
+    except (DoclingEmptyOutputError, EgressPolicyError):
+        # See note in convert_html: EgressPolicyError must propagate untouched.
         raise
     except Exception as e:
         logger.exception("PDF conversion failed")

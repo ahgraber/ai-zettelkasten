@@ -385,7 +385,7 @@ def test_subprocess_completes_normally_no_zombies(
         return proc
 
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
-    monkeypatch.setattr(orchestrator, "_upload_converted", lambda _job_id, _workspace, _config: None)  # Skip upload
+    monkeypatch.setattr(orchestrator, "_prepare_upload", lambda *_a, **_k: None)  # Skip upload
 
     ctx = orchestrator.mp.get_context("spawn")
     monkeypatch.setattr(ctx, "Process", _track_process)

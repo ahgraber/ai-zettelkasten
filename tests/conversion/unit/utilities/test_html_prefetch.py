@@ -11,6 +11,7 @@ import pytest
 from aizk.conversion.core.errors import DenyListDestination, FetchTooLargeError
 from aizk.conversion.utilities import html_prefetch
 from aizk.conversion.utilities.html_prefetch import (
+    PrefetchPolicy,
     _extension_for_content_type,
     prefetch_images,
 )
@@ -150,7 +151,9 @@ async def test_per_document_image_count_cap(monkeypatch: pytest.MonkeyPatch, tmp
 
     imgs_html = "".join(f'<img src="https://cdn.example/{i}.png">' for i in range(51))
     html = f"<html><body>{imgs_html}</body></html>"
-    rewritten = await prefetch_images(html, tmp_path)
+    # Relax the per-host cap so this test isolates the document-level total
+    # cap (the per-host cap is exercised by `test_per_host_image_cap_*`).
+    rewritten = await prefetch_images(html, tmp_path, policy=PrefetchPolicy(max_images_per_host=100))
 
     # Helper called exactly 50 times — 51st never fetched.
     assert len(fetched_urls) == 50
@@ -161,6 +164,67 @@ async def test_per_document_image_count_cap(monkeypatch: pytest.MonkeyPatch, tmp
     untouched_count = sum(1 for img in imgs if img.get("src", "").startswith("https://cdn.example/"))
     assert rewritten_count == 50
     assert untouched_count == 1
+
+
+# --- Per-host cap ------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_per_host_image_cap_drops_images_beyond_cap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Many <img> tags pointing at one host are capped at PrefetchPolicy.max_images_per_host.
+
+    Defends against an HTML doc fanning out 50 <img> tags at one victim host
+    (outbound-amplification primitive). The first ``max_images_per_host``
+    images for that host get prefetched; the rest are left as-is so
+    ``enable_remote_fetch=False`` blocks them at the converter.
+    """
+    payload = b"\x89PNGdata"
+    fetched_urls: list[str] = []
+
+    async def fake(url: str, **_kwargs: object) -> tuple[bytes, dict[str, str]]:
+        fetched_urls.append(url)
+        return payload, {"content-type": "image/png"}
+
+    monkeypatch.setattr(html_prefetch, "egress_fetch_bytes", fake)
+
+    # 15 images, all at the same host. Cap of 5 → only first 5 fetched.
+    imgs_html = "".join(f'<img src="https://victim.example/{i}.png">' for i in range(15))
+    html = f"<html><body>{imgs_html}</body></html>"
+    rewritten = await prefetch_images(html, tmp_path, policy=PrefetchPolicy(max_images_per_host=5))
+
+    assert len(fetched_urls) == 5
+
+    doc = lxml.html.fromstring(rewritten)
+    imgs = doc.findall(".//img")
+    rewritten_count = sum(1 for img in imgs if img.get("src", "").startswith(str(tmp_path.resolve())))
+    untouched_count = sum(1 for img in imgs if img.get("src", "").startswith("https://victim.example/"))
+    assert rewritten_count == 5
+    assert untouched_count == 10
+
+
+@pytest.mark.asyncio
+async def test_per_host_cap_independent_across_hosts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The per-host cap counts each hostname separately."""
+    payload = b"\x89PNGdata"
+    fetched_urls: list[str] = []
+
+    async def fake(url: str, **_kwargs: object) -> tuple[bytes, dict[str, str]]:
+        fetched_urls.append(url)
+        return payload, {"content-type": "image/png"}
+
+    monkeypatch.setattr(html_prefetch, "egress_fetch_bytes", fake)
+
+    # 6 images split across 2 hosts; cap of 3 per host → all 6 fetched.
+    imgs_html = "".join(f'<img src="https://a.example/{i}.png">' for i in range(3)) + "".join(
+        f'<img src="https://b.example/{i}.png">' for i in range(3)
+    )
+    html = f"<html><body>{imgs_html}</body></html>"
+    rewritten = await prefetch_images(html, tmp_path, policy=PrefetchPolicy(max_images_per_host=3))
+
+    assert len(fetched_urls) == 6
+    doc = lxml.html.fromstring(rewritten)
+    rewritten_count = sum(1 for img in doc.findall(".//img") if img.get("src", "").startswith(str(tmp_path.resolve())))
+    assert rewritten_count == 6
 
 
 # --- Content-Type-derived extension ------------------------------------------

@@ -7,6 +7,7 @@ import socket
 import time
 from typing import Any
 
+from hypothesis import HealthCheck, given, settings as hyp_settings, strategies as st
 import pytest
 
 from aizk.conversion.core.errors import (
@@ -193,6 +194,37 @@ class TestAssertEgressAllowed:
         with pytest.raises(EgressPolicyError):
             assert_egress_allowed("http://internal.example/")
 
+    def test_empty_getaddrinfo_result_raises_deny_list(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # `getaddrinfo` returning zero records is an unusual but legal outcome
+        # (e.g., A-only AAAA query against a broken resolver). The egress
+        # validator must treat it as a deny rather than approving an empty
+        # destination set.
+        def empty(*_args: Any, **_kwargs: Any) -> list[tuple[Any, ...]]:
+            return []
+
+        monkeypatch.setattr(socket, "getaddrinfo", empty)
+        with pytest.raises(DenyListDestination):
+            assert_egress_allowed("http://example.com/")
+
+    def test_ipv6_only_resolution_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Host resolves to a single IPv6 address with no IPv4 record.
+        _stub_getaddrinfo(monkeypatch, "2606:4700:4700::1111")
+        result = assert_egress_allowed("https://example.com/")
+        assert result.ip == "2606:4700:4700::1111"
+
+    def test_ipv6_only_resolution_to_link_local_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # An IPv6-only host resolving to fe80::1 (link-local) must reject
+        # at the same layer the IPv4 link-local case rejects.
+        _stub_getaddrinfo(monkeypatch, "fe80::1")
+        with pytest.raises(DenyListDestination):
+            assert_egress_allowed("http://internal.example/")
+
+    def test_ipv6_only_cloud_metadata_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # AWS IPv6 metadata address must reject in IPv6-only resolution.
+        _stub_getaddrinfo(monkeypatch, "fd00:ec2::254")
+        with pytest.raises(DenyListDestination):
+            assert_egress_allowed("http://metadata.example/")
+
 
 class TestAsyncAssertEgressAllowed:
     @pytest.mark.asyncio
@@ -206,3 +238,108 @@ class TestAsyncAssertEgressAllowed:
         _stub_getaddrinfo(monkeypatch, "169.254.169.254")
         with pytest.raises(DenyListDestination):
             await async_assert_egress_allowed("http://metadata.local/")
+
+
+# ---------------------------------------------------------------------------
+# Property-based tests for `_classify_address`
+#
+# `_classify_address` is the central security primitive: a returns-False bug
+# anywhere in the cross-product of `is_global` × the augmentation networks ×
+# IPv4-mapped IPv6 normalization × NAT64 / 6to4 embedding becomes a silent
+# SSRF primitive across every fetcher and the prefetch path. Example-based
+# tests cover the canonical attack shapes; the property-based tests below
+# probe the rest of the address space.
+# ---------------------------------------------------------------------------
+
+
+# `_classify_address` consults `ip.is_global` as the primary gate and
+# augments it with the explicit-deny networks/addresses listed in the
+# module's `_IPV4_DENY_*` / `_IPV6_DENY_*` constants. The contract this test
+# pins: any address whose `is_global=True` AND that does not fall into any
+# augmentation deny range is APPROVED (returns False); any address whose
+# `is_global=True` but that DOES fall into an augmentation range is REJECTED
+# (returns True). Multicast is rejected explicitly even though Python 3.12
+# returns is_global=True for it.
+
+
+def _is_in_ipv4_augmentation_deny(ip: ipaddress.IPv4Address) -> bool:
+    """Replicate the augmentation-deny set from the egress module for IPv4."""
+    if ip in egress._IPV4_DENY_ADDRESSES:
+        return True
+    return any(ip in net for net in egress._IPV4_DENY_NETWORKS)
+
+
+def _is_in_ipv6_augmentation_deny(ip: ipaddress.IPv6Address) -> bool:
+    """Replicate the augmentation-deny set from the egress module for IPv6."""
+    if ip in egress._IPV6_DENY_ADDRESSES:
+        return True
+    return any(ip in net for net in egress._IPV6_DENY_NETWORKS)
+
+
+@given(addr_int=st.integers(min_value=0, max_value=2**32 - 1))
+@hyp_settings(max_examples=400, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_classify_address_property_ipv4(addr_int: int) -> None:
+    """For every IPv4 address, classification matches the deny-set contract."""
+    ip = ipaddress.IPv4Address(addr_int)
+    expected_deny = (not ip.is_global) or ip.is_multicast or _is_in_ipv4_augmentation_deny(ip)
+    assert _classify_address(ip) is expected_deny, (
+        f"IPv4 {ip} (is_global={ip.is_global}, is_multicast={ip.is_multicast}) — expected deny={expected_deny}"
+    )
+
+
+@given(addr_int=st.integers(min_value=0, max_value=2**128 - 1))
+@hyp_settings(max_examples=400, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_classify_address_property_ipv6(addr_int: int) -> None:
+    """For every IPv6 address, classification respects mapping/embedding semantics.
+
+    Three cases the function handles before consulting `is_global`:
+
+    1. IPv4-mapped IPv6 (`::ffff:0:0/96`) is normalized via `ipv4_mapped` and
+       classified as the embedded IPv4. The IPv6 envelope itself does not
+       influence the verdict.
+    2. NAT64 (`64:ff9b::/96`) and 6to4 (`2002::/16`) embed an IPv4 address;
+       the function recurses on the embedded address.
+    3. Multicast IPv6 (`ff00::/8`) is rejected explicitly even though Python
+       returns `is_global=True` for several multicast scopes.
+    """
+    ip = ipaddress.IPv6Address(addr_int)
+
+    # IPv4-mapped IPv6: behavior is determined by the embedded IPv4.
+    mapped = ip.ipv4_mapped
+    if mapped is not None:
+        expected_deny = (not mapped.is_global) or mapped.is_multicast or _is_in_ipv4_augmentation_deny(mapped)
+        assert _classify_address(ip) is expected_deny, f"IPv4-mapped IPv6 {ip} (embedded {mapped}) misclassified"
+        return
+
+    # NAT64 and 6to4: behavior is determined by the embedded IPv4.
+    if ip in egress._IPV6_DENY_NETWORKS[0]:  # NAT64 64:ff9b::/96
+        embedded = ipaddress.IPv4Address(ip.packed[12:16])
+        embedded_deny = (not embedded.is_global) or embedded.is_multicast or _is_in_ipv4_augmentation_deny(embedded)
+        assert _classify_address(ip) is embedded_deny, f"NAT64 IPv6 {ip} (embedded IPv4 {embedded}) misclassified"
+        return
+    if ip in egress._IPV6_DENY_NETWORKS[1]:  # 6to4 2002::/16
+        embedded = ipaddress.IPv4Address(ip.packed[2:6])
+        embedded_deny = (not embedded.is_global) or embedded.is_multicast or _is_in_ipv4_augmentation_deny(embedded)
+        assert _classify_address(ip) is embedded_deny, f"6to4 IPv6 {ip} (embedded IPv4 {embedded}) misclassified"
+        return
+
+    # Plain IPv6: deny iff not is_global, multicast, or in IPv6 augmentation deny set.
+    expected_deny = (not ip.is_global) or ip.is_multicast or _is_in_ipv6_augmentation_deny(ip)
+    assert _classify_address(ip) is expected_deny, (
+        f"IPv6 {ip} (is_global={ip.is_global}, is_multicast={ip.is_multicast}) — expected deny={expected_deny}"
+    )
+
+
+@given(addr_int=st.integers(min_value=0, max_value=2**32 - 1))
+@hyp_settings(max_examples=200, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_classify_address_ipv4_mapped_recursion_property(addr_int: int) -> None:
+    """`::ffff:<v4>` always classifies the same as the embedded IPv4.
+
+    Pins the smuggling-defeat invariant: an attacker cannot tunnel a
+    private IPv4 inside an IPv6 envelope past classification.
+    """
+    v4 = ipaddress.IPv4Address(addr_int)
+    mapped = ipaddress.IPv6Address(int(ipaddress.IPv6Address("::ffff:0:0")) | int(v4))
+    assert _classify_address(mapped) is _classify_address(v4), (
+        f"IPv4-mapped IPv6 {mapped} disagrees with embedded IPv4 {v4} classification"
+    )

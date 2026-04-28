@@ -260,18 +260,17 @@ def test_karakeep_resolver_html_content_returns_url_ref(monkeypatch):
     assert "example.com" in result.url
 
 
-def test_karakeep_resolver_step5_deny_set_url_surfaces_typed_error(monkeypatch):
-    """Step 5 with a deny-set source_url must surface a typed error, not construct a UrlRef."""
-    import socket as _socket
+def test_karakeep_resolver_step5_emits_urlref_for_deny_set_source_url(monkeypatch):
+    """Step 5 with a deny-set source_url succeeds and emits a UrlRef.
 
-    from pydantic import ValidationError
-
-    # Override the autouse `_hermetic_dns` so this hostname resolves into the deny set.
-    def fake(host, port, *_args, **_kwargs):
-        return [(_socket.AF_INET, _socket.SOCK_STREAM, 0, "", ("169.254.169.254", port))]
-
-    monkeypatch.setattr(_socket, "getaddrinfo", fake)
-
+    Per `network-egress-policy/design.md` § "Defer egress validation to fetch
+    time only", the resolver no longer rejects deny-set destinations at
+    construction.  The load-bearing rejection happens when the downstream
+    fetcher dispatches via ``egress_fetch_bytes`` (covered by
+    ``tests/conversion/unit/utilities/test_egress.py`` and the integration
+    suite).  This test pins that the resolver itself does not classify the
+    destination — it only constructs the typed ref.
+    """
     bookmark = _link_bookmark(
         "http://169.254.169.254/latest/meta-data/iam/",
         htmlContent="<html><body>x</body></html>",
@@ -288,8 +287,11 @@ def test_karakeep_resolver_step5_deny_set_url_surfaces_typed_error(monkeypatch):
     )
 
     resolver = KarakeepBookmarkResolver(_DEFAULT_CFG)
-    with pytest.raises(ValidationError):
-        resolver.resolve(ref)
+    resolved = resolver.resolve(ref)
+
+    assert isinstance(resolved, UrlRef)
+    # `normalize_url` strips the trailing slash; no DNS, no classification.
+    assert resolved.url == "http://169.254.169.254/latest/meta-data/iam"
 
 
 # ---------------------------------------------------------------------------

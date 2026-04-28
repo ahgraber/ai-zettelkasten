@@ -156,3 +156,33 @@ class ConversionConfig(BaseSettings):
         default=60.0,
         validation_alias="PREFETCH_PHASE_DEADLINE_SECONDS",
     )
+    prefetch_max_images_per_host: int = Field(
+        default=10,
+        validation_alias="PREFETCH_MAX_IMAGES_PER_HOST",
+        description="Per-hostname cap on prefetched images per HTML document (outbound-amplification defence).",
+    )
+
+    egress_dns_workers: int = Field(
+        default=4,
+        validation_alias="EGRESS_DNS_WORKERS",
+        description="Thread-pool size for synchronous DNS resolution in the egress validator.",
+    )
+    egress_validation_workers: int = Field(
+        default=4,
+        validation_alias="EGRESS_VALIDATION_WORKERS",
+        description="Thread-pool size for the async-egress validation executor.",
+    )
+
+    def prefetch_policy(self) -> "PrefetchPolicy":
+        """Build a :class:`PrefetchPolicy` from the four ``PREFETCH_*`` config fields."""
+        # Local import: keeps the dependency edge config -> html_prefetch one-directional
+        # at module load time and avoids a cycle if html_prefetch ever needs config.
+        from aizk.conversion.utilities.html_prefetch import PrefetchPolicy
+
+        return PrefetchPolicy(
+            per_image_max_bytes=self.prefetch_per_image_max_bytes,
+            max_images=self.prefetch_max_images_per_doc,
+            max_total_bytes=self.prefetch_max_total_bytes_per_doc,
+            phase_deadline_seconds=self.prefetch_phase_deadline_seconds,
+            max_images_per_host=self.prefetch_max_images_per_host,
+        )

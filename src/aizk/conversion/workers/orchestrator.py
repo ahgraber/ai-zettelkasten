@@ -13,7 +13,7 @@ import shutil
 import tempfile
 import threading
 import time
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Final, Literal
 
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
@@ -28,6 +28,7 @@ from aizk.conversion.utilities.hashing import compute_markdown_hash
 from aizk.conversion.utilities.paths import (
     OUTPUT_MARKDOWN_FILENAME,
     metadata_path,
+    read_text_nofollow,
 )
 from aizk.conversion.utilities.whitespace import normalize_whitespace
 from aizk.conversion.workers.errors import (
@@ -40,7 +41,7 @@ from aizk.conversion.workers.errors import (
 from aizk.conversion.workers.shutdown import is_shutdown_requested
 from aizk.conversion.workers.supervision import _supervise_conversion_process
 from aizk.conversion.workers.types import SupervisionResult, _utcnow
-from aizk.conversion.workers.uploader import _upload_converted
+from aizk.conversion.workers.uploader import _execute_upload, _prepare_upload
 
 if TYPE_CHECKING:
     from aizk.conversion.wiring.worker import WorkerRuntime
@@ -443,10 +444,10 @@ def process_job_supervised(
             return
 
         # Best-effort Source enrichment from metadata written by subprocess
-        metadata_file = workspace / "metadata.json"
+        metadata_file = metadata_path(workspace)
         if metadata_file.exists():
             try:
-                metadata = json.loads(metadata_file.read_text())
+                metadata = json.loads(read_text_nofollow(metadata_file))
                 terminal_ref_data = metadata.get("terminal_ref")
                 content_type_str = metadata.get("content_type")
                 if terminal_ref_data:
@@ -472,6 +473,20 @@ def process_job_supervised(
                 session.add(job_record)
                 session.commit()
 
+        # Local prep (read metadata, generate + write manifest) runs exactly
+        # once outside the retry loop. It is not idempotent against itself
+        # — save_manifest uses O_EXCL — and re-running it would deterministically
+        # fail attempt 2 with FileExistsError after a transient S3 failure on
+        # attempt 1. The retry loop only wraps the S3 PUTs, which are
+        # idempotent on their key.
+        try:
+            upload_plan = _prepare_upload(job_id, workspace, config)
+        except Exception as exc:
+            handle_job_error(job_id, exc, config)
+            return
+        if upload_plan is None:
+            return
+
         for attempt in range(1, config.retry_max_attempts + 1):
             if deadline and time.monotonic() >= deadline:
                 elapsed = time.monotonic() - (deadline - timeout_seconds)
@@ -491,7 +506,7 @@ def process_job_supervised(
                 )
                 return
             try:
-                _upload_converted(job_id, workspace, config)
+                _execute_upload(upload_plan, job_id, config)
                 break
             except Exception as exc:
                 if attempt == config.retry_max_attempts:
@@ -508,6 +523,18 @@ def process_job_supervised(
                 time.sleep(delay)
 
 
+_EGRESS_POLICY_ERROR_CODES: Final[frozenset[str]] = frozenset(
+    {
+        "deny_list",
+        "disallowed_scheme",
+        "redirect_egress_violation",
+        "dns_timeout",
+        "workspace_escape",
+        "egress_policy_violation",
+    }
+)
+
+
 def handle_job_error(job_id: int, error: Exception, config: ConversionConfig) -> None:
     """Persist job failure details and compute retryability.
 
@@ -519,14 +546,26 @@ def handle_job_error(job_id: int, error: Exception, config: ConversionConfig) ->
     error_code = getattr(error, "error_code", "conversion_failed")
     error_detail = getattr(error, "traceback", None)
 
-    retryable: bool = error.retryable  # type: ignore[attr-defined]
+    # Default to retryable=True for exceptions that lack the conversion-error
+    # contract (plain OSError, KeyError, etc. that may leak from the upload-retry
+    # arm). The unknown-exception default matches FetchError's policy: when in
+    # doubt, retry rather than mark permanent.
+    retryable: bool = bool(getattr(error, "retryable", True))
 
-    # EgressPolicyError messages carry rejected destinations (URLs, IPs) that must
-    # not be echoed into the persisted error_message or any API response body.
-    # Use only the policy-violation class name (error_code) for the stored message;
-    # the full detail is already captured by the enforcement-site WARNING logs.
-    if isinstance(error, EgressPolicyError):
+    # EgressPolicyError messages carry rejected destinations (URLs, IPs) that
+    # must not be echoed into persisted output. Sanitize on two paths:
+    #   1. Direct `isinstance(error, EgressPolicyError)` — error raised in this
+    #      process (e.g., from `_get_source_ref`).
+    #   2. `ReportedChildError` whose `error_code` is one of the egress-policy
+    #      codes — error raised in the conversion subprocess and reported up.
+    # Both paths set `error_message` to the error_code only AND drop
+    # `error_detail` (which would carry the destination via the traceback
+    # string). The full detail is already captured by the enforcement-site
+    # WARNING logs in egress.py / egress_fetch.py / paths.py.
+    is_egress_policy = isinstance(error, EgressPolicyError) or error_code in _EGRESS_POLICY_ERROR_CODES
+    if is_egress_policy:
         message = error_code
+        error_detail = None
     else:
         message = str(error)
 

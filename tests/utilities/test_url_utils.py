@@ -11,6 +11,7 @@ from aizk.utilities.url_utils import (
     is_social_url,
     normalize_url,
     safelink_to_url,
+    sanitize_url_for_log,
     strip_utm_params,
     validate_url,
 )
@@ -718,3 +719,41 @@ class TestExtractURLsDedup:
         """URL appearing in both markdown and bare form is extracted once."""
         urls = extract_urls("[link](https://example.com) https://example.com")
         assert urls.count("https://example.com") == 1
+
+
+class TestSanitizeUrlForLog:
+    def test_strips_user_and_password(self):
+        assert sanitize_url_for_log("https://user:secret@host.example/path") == "https://host.example/path"
+
+    def test_strips_user_only(self):
+        assert sanitize_url_for_log("https://user@host.example/path") == "https://host.example/path"
+
+    def test_preserves_port(self):
+        sanitized = sanitize_url_for_log("https://user:p@host.example:8443/path")
+        assert sanitized == "https://host.example:8443/path"
+
+    def test_strips_query_and_fragment(self):
+        # Query strings commonly carry signed-URL tokens, OAuth fragments, and
+        # session identifiers; the diagnostic value of seeing them in operator
+        # output is nil while the leak risk into persisted error_message is real.
+        sanitized = sanitize_url_for_log("https://user:p@host.example/path?token=abc&y=2#frag")
+        assert sanitized == "https://host.example/path"
+
+    def test_strips_query_when_no_userinfo(self):
+        sanitized = sanitize_url_for_log("https://host.example/path?token=secret")
+        assert sanitized == "https://host.example/path"
+
+    def test_passthrough_when_no_userinfo_or_query(self):
+        url = "https://host.example/path"
+        assert sanitize_url_for_log(url) == url
+
+    def test_handles_empty_string(self):
+        assert sanitize_url_for_log("") == ""
+
+    def test_handles_non_string_defensively(self):
+        # Logging path must never crash; returns input verbatim on type oddity.
+        assert sanitize_url_for_log(None) is None  # type: ignore[arg-type]
+
+    def test_handles_malformed_url_gracefully(self):
+        # Non-URL strings should not raise; helper must be safe in `extra={...}`.
+        assert sanitize_url_for_log("not://a [valid] url") == "not://a [valid] url"

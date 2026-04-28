@@ -20,7 +20,7 @@ from aizk.utilities.url_utils import validate_url
 logger = logging.getLogger(__name__)
 
 # %%
-ARXIV_API_URL = "http://export.arxiv.org/api/"
+ARXIV_API_URL = "https://export.arxiv.org/api/"
 ARXIV_DOMAINS = frozenset({"arxiv.org", "export.arxiv.org"})
 ARXIV_ID_REGEX = re.compile(r"(?:[0-2][0-9][01][0-9]\.[0-9]{4,5})(?:v[0-9]{1,2})?", re.IGNORECASE)
 
@@ -83,7 +83,7 @@ def get_arxiv_id(url: str) -> str:
 
 def _arxiv_base_url(use_export_url: bool) -> str:
     """Return the base URL for arxiv.org resources."""
-    return "http://export.arxiv.org/" if use_export_url else "https://arxiv.org/"
+    return "https://export.arxiv.org/" if use_export_url else "https://arxiv.org/"
 
 
 def arxiv_abs_url(arxiv_id: str, use_export_url: bool = True) -> str:

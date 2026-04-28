@@ -125,3 +125,84 @@ def test_transport_constructs_with_default_ssl_context() -> None:
     # Smoke test: verify the constructor runs cleanly with default args.
     transport = EgressPinnedTransport(_DEST)
     assert transport._destination is _DEST  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Real transport — exercise the actual `EgressPinnedTransport.handle_async_request`
+# (not a subclass override) by stubbing only the parent class's method. This
+# verifies the real swap-then-restore path including the `finally` block that
+# restores `request.url` and `request.extensions` (M8 from the security review).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_real_transport_dial_url_carries_pinned_ip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The real `EgressPinnedTransport.handle_async_request` rewrites URL host to the pinned IP.
+
+    Stubs `httpx.AsyncHTTPTransport.handle_async_request` (the parent class's
+    method) so the real `EgressPinnedTransport.handle_async_request` runs end
+    to end including the `finally` restoration. Captures what the parent
+    transport would have dialed.
+    """
+    captured: dict[str, Any] = {}
+
+    async def fake_parent(self: httpx.AsyncHTTPTransport, request: httpx.Request) -> httpx.Response:
+        captured["url_host"] = request.url.host
+        captured["url_port"] = request.url.port
+        captured["sni_hostname"] = request.extensions.get("sni_hostname")
+        captured["host_header"] = request.headers.get("host")
+        return httpx.Response(200, request=request)
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", fake_parent)
+
+    transport = EgressPinnedTransport(_DEST)
+    async with httpx.AsyncClient(transport=transport) as client:
+        response = await client.get("https://example.com/path")
+
+    # The parent transport (which would open the real socket) saw the IP, not
+    # the original hostname — defeats DNS-rebinding TOCTOU.
+    assert captured["url_host"] == "93.184.216.34"
+    # SNI extension carries the original hostname so TLS verification works.
+    assert captured["sni_hostname"] == "example.com"
+    # Host header was set at request build time and was NOT swapped.
+    assert captured["host_header"] is not None
+    assert "example.com" in captured["host_header"]
+    assert "93.184.216.34" not in captured["host_header"]
+    # Restoration: the response.request URL the CALLER sees is the original.
+    assert response.request.url.host == "example.com"
+
+
+@pytest.mark.asyncio
+async def test_real_transport_restores_extensions_on_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If the parent transport raises, request URL and extensions are still restored.
+
+    Regression for M8: prior to the Stage A fix, the `finally` restored
+    `request.url` but not `request.extensions`. This test pins both halves
+    of the restoration even on the exception path.
+    """
+    seen: dict[str, Any] = {}
+
+    async def raising_parent(self: httpx.AsyncHTTPTransport, request: httpx.Request) -> httpx.Response:
+        # Snapshot what the parent saw, then raise.
+        seen["mid_url_host"] = request.url.host
+        seen["mid_sni"] = request.extensions.get("sni_hostname")
+        raise httpx.ConnectError("simulated connect failure")
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", raising_parent)
+
+    transport = EgressPinnedTransport(_DEST)
+    request = httpx.Request("GET", "https://example.com/path")
+    pre_url = request.url
+    pre_extensions = request.extensions
+
+    with pytest.raises(httpx.ConnectError):
+        await transport.handle_async_request(request)
+
+    # During the call, the parent saw the swapped URL and added sni_hostname.
+    assert seen["mid_url_host"] == "93.184.216.34"
+    assert seen["mid_sni"] == "example.com"
+    # After the call, the request object is back to its pre-call state on
+    # both URL and extensions — so callers (and any retry layer) cannot see
+    # the leftover swap.
+    assert request.url == pre_url
+    assert request.extensions == pre_extensions

@@ -25,7 +25,8 @@ class InlineContentFetcher:
         Returns:
             ConversionInput with body bytes and ContentType.HTML.
         """
-        assert isinstance(ref, InlineHtmlRef), f"Expected InlineHtmlRef, got {type(ref)}"
+        if not isinstance(ref, InlineHtmlRef):
+            raise TypeError(f"Expected InlineHtmlRef, got {type(ref).__name__}")
         return ConversionInput(content=ref.body, content_type=ContentType.HTML)
 
 
