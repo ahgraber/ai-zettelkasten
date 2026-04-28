@@ -45,7 +45,8 @@ class UrlFetcher:
         Raises:
             FetchError: On network or fetch failure.
         """
-        assert isinstance(ref, UrlRef), f"Expected UrlRef, got {type(ref)}"
+        if not isinstance(ref, UrlRef):
+            raise TypeError(f"Expected UrlRef, got {type(ref).__name__}")
 
         url = ref.url
         karakeep_base_url = self._karakeep_cfg.base_url.rstrip("/")

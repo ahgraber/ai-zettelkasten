@@ -53,11 +53,11 @@ class TestValidateArxivId:
 class TestArxivAbsUrl:
     def test_export_url_default(self):
         """Test arxiv_abs_url with use_export_url=True (default)."""
-        assert arxiv_abs_url("1706.03762") == "http://export.arxiv.org/abs/1706.03762"
+        assert arxiv_abs_url("1706.03762") == "https://export.arxiv.org/abs/1706.03762"
 
     def test_export_url_true(self):
         """Test arxiv_abs_url with use_export_url=True explicitly."""
-        assert arxiv_abs_url("1706.03762", use_export_url=True) == "http://export.arxiv.org/abs/1706.03762"
+        assert arxiv_abs_url("1706.03762", use_export_url=True) == "https://export.arxiv.org/abs/1706.03762"
 
     def test_export_url_false(self):
         """Test arxiv_abs_url with use_export_url=False."""
@@ -65,12 +65,12 @@ class TestArxivAbsUrl:
 
     def test_with_version(self):
         """Test arxiv_abs_url with versioned arXiv ID."""
-        assert arxiv_abs_url("1706.03762v1") == "http://export.arxiv.org/abs/1706.03762v1"
+        assert arxiv_abs_url("1706.03762v1") == "https://export.arxiv.org/abs/1706.03762v1"
         assert arxiv_abs_url("1706.03762v1", use_export_url=False) == "https://arxiv.org/abs/1706.03762v1"
 
     def test_new_format_id(self):
         """Test arxiv_abs_url with new format arXiv ID."""
-        assert arxiv_abs_url("2101.00001") == "http://export.arxiv.org/abs/2101.00001"
+        assert arxiv_abs_url("2101.00001") == "https://export.arxiv.org/abs/2101.00001"
         assert arxiv_abs_url("2101.00001", use_export_url=False) == "https://arxiv.org/abs/2101.00001"
 
     def test_invalid_id(self):
@@ -81,11 +81,11 @@ class TestArxivAbsUrl:
 class TestArxivPdfUrl:
     def test_export_url_default(self):
         """Test arxiv_pdf_url with use_export_url=True (default)."""
-        assert arxiv_pdf_url("1706.03762") == "http://export.arxiv.org/pdf/1706.03762"
+        assert arxiv_pdf_url("1706.03762") == "https://export.arxiv.org/pdf/1706.03762"
 
     def test_export_url_true(self):
         """Test arxiv_pdf_url with use_export_url=True explicitly."""
-        assert arxiv_pdf_url("1706.03762", use_export_url=True) == "http://export.arxiv.org/pdf/1706.03762"
+        assert arxiv_pdf_url("1706.03762", use_export_url=True) == "https://export.arxiv.org/pdf/1706.03762"
 
     def test_export_url_false(self):
         """Test arxiv_pdf_url with use_export_url=False."""
@@ -93,12 +93,12 @@ class TestArxivPdfUrl:
 
     def test_with_version(self):
         """Test arxiv_pdf_url with versioned arXiv ID."""
-        assert arxiv_pdf_url("1706.03762v1") == "http://export.arxiv.org/pdf/1706.03762v1"
+        assert arxiv_pdf_url("1706.03762v1") == "https://export.arxiv.org/pdf/1706.03762v1"
         assert arxiv_pdf_url("1706.03762v1", use_export_url=False) == "https://arxiv.org/pdf/1706.03762v1"
 
     def test_new_format_id(self):
         """Test arxiv_pdf_url with new format arXiv ID."""
-        assert arxiv_pdf_url("2101.00001") == "http://export.arxiv.org/pdf/2101.00001"
+        assert arxiv_pdf_url("2101.00001") == "https://export.arxiv.org/pdf/2101.00001"
         assert arxiv_pdf_url("2101.00001", use_export_url=False) == "https://arxiv.org/pdf/2101.00001"
 
     def test_invalid_id(self):
@@ -109,11 +109,11 @@ class TestArxivPdfUrl:
 class TestArxivHtmlUrl:
     def test_export_url_default(self):
         """Test arxiv_html_url with use_export_url=True (default)."""
-        assert arxiv_html_url("1706.03762") == "http://export.arxiv.org/html/1706.03762"
+        assert arxiv_html_url("1706.03762") == "https://export.arxiv.org/html/1706.03762"
 
     def test_export_url_true(self):
         """Test arxiv_html_url with use_export_url=True explicitly."""
-        assert arxiv_html_url("1706.03762", use_export_url=True) == "http://export.arxiv.org/html/1706.03762"
+        assert arxiv_html_url("1706.03762", use_export_url=True) == "https://export.arxiv.org/html/1706.03762"
 
     def test_export_url_false(self):
         """Test arxiv_html_url with use_export_url=False."""
@@ -121,12 +121,12 @@ class TestArxivHtmlUrl:
 
     def test_with_version(self):
         """Test arxiv_html_url with versioned arXiv ID."""
-        assert arxiv_html_url("1706.03762v1") == "http://export.arxiv.org/html/1706.03762v1"
+        assert arxiv_html_url("1706.03762v1") == "https://export.arxiv.org/html/1706.03762v1"
         assert arxiv_html_url("1706.03762v1", use_export_url=False) == "https://arxiv.org/html/1706.03762v1"
 
     def test_new_format_id(self):
         """Test arxiv_html_url with new format arXiv ID."""
-        assert arxiv_html_url("2101.00001") == "http://export.arxiv.org/html/2101.00001"
+        assert arxiv_html_url("2101.00001") == "https://export.arxiv.org/html/2101.00001"
         assert arxiv_html_url("2101.00001", use_export_url=False) == "https://arxiv.org/html/2101.00001"
 
     def test_invalid_id(self):

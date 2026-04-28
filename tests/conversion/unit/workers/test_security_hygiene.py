@@ -112,6 +112,75 @@ def test_handle_job_error_sanitizes_egress_policy_error_message(
     # error_message must be the error_code only — never the rejected destination.
     assert updated.error_message == exc.error_code
     assert rejected_host not in (updated.error_message or "")
+    # error_detail must be None: the traceback string would otherwise carry
+    # the rejected destination via the original exception message.
+    assert updated.error_detail is None
+
+
+def test_job_response_schema_excludes_error_detail() -> None:
+    """``JobResponse`` must NOT expose ``error_detail`` to API clients.
+
+    Defence-in-depth pin: even if the persisted ``ConversionJob.error_detail``
+    were ever populated with a traceback that contained a rejected destination
+    (e.g., a future regression of the egress sanitization in
+    ``handle_job_error``), the API surface must not surface it.
+
+    Adding ``error_detail`` to ``JobResponse`` is a deliberate change that
+    requires removing this test; failing this test on a routine change is the
+    intended early-warning signal.
+    """
+    from aizk.conversion.api.schemas.jobs import JobResponse
+
+    fields = set(JobResponse.model_fields.keys())
+    assert "error_detail" not in fields, (
+        "JobResponse must not expose error_detail; the field can carry rejected destinations "
+        "from EgressPolicyError tracebacks. See network-egress-policy/design.md § 'Typed errors'."
+    )
+
+
+def test_handle_job_error_strips_traceback_for_subprocess_egress_error(
+    db_session: Session,
+    running_job: ConversionJob,
+    config: ConversionConfig,
+) -> None:
+    """A ReportedChildError carrying an egress-class error_code must drop its traceback.
+
+    The conversion subprocess raises EgressPolicyError, which is caught and
+    repackaged by the supervisor as ``ReportedChildError(message, error_code,
+    traceback=...)``. The traceback string contains the original exception
+    message — including the rejected destination — so persisting it to
+    ``error_detail`` would leak the host/IP that the design says shall not be
+    echoed back to clients.
+    """
+    from aizk.conversion.workers.errors import ReportedChildError
+
+    rejected_host = "internal.corp.example"
+    leaked_traceback = (
+        "Traceback (most recent call last):\n"
+        '  File "egress.py", line 268, in assert_egress_allowed\n'
+        f"    raise DenyListDestination(\"Resolved address for host '{rejected_host}' is in the egress deny set\")\n"
+        f"DenyListDestination: Resolved address for host '{rejected_host}' is in the egress deny set"
+    )
+    exc = ReportedChildError(
+        message=f"Resolved address for host '{rejected_host}' is in the egress deny set",
+        error_code="deny_list",
+        retryable=False,
+        traceback=leaked_traceback,
+    )
+
+    with patch("aizk.conversion.workers.orchestrator.get_engine", return_value=db_session.get_bind()):
+        handle_job_error(running_job.id, exc, config)
+
+    db_session.expire_all()
+    updated = db_session.get(ConversionJob, running_job.id)
+    assert updated is not None
+    assert updated.status == ConversionJobStatus.FAILED_PERM
+    assert updated.error_message == "deny_list"
+    assert rejected_host not in (updated.error_message or "")
+    # The crucial regression: error_detail must be None even though the
+    # subprocess sent up a traceback that contains the destination.
+    assert updated.error_detail is None
+    assert rejected_host not in (updated.error_detail or "")
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +251,9 @@ def test_prefetch_images_logs_warning_for_oversized_image(
         ),
         caplog.at_level(logging.WARNING, logger="aizk.conversion.utilities.html_prefetch"),
     ):
-        asyncio.run(prefetch_images(html, tmp_path, per_image_max_bytes=cap))
+        from aizk.conversion.utilities.html_prefetch import PrefetchPolicy
+
+        asyncio.run(prefetch_images(html, tmp_path, policy=PrefetchPolicy(per_image_max_bytes=cap)))
 
     warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert warning_records, "Expected at least one WARNING for the oversized image"

@@ -435,6 +435,107 @@ class TestConvertHtmlTracing:
 
 
 # ---------------------------------------------------------------------------
+# EgressPolicyError must propagate through convert_html / convert_pdf unchanged
+# ---------------------------------------------------------------------------
+
+
+class TestEgressErrorPropagation:
+    """Verify ``EgressPolicyError`` subclasses propagate through ``convert_html`` and
+    ``convert_pdf`` without being repackaged as :class:`DoclingError`.
+
+    The broad ``except Exception`` arms in those functions exist to map arbitrary
+    Docling failures to a typed ``DoclingError`` for the orchestrator. ``DoclingError``
+    is classified as ``retryable=True`` and its ``error_code='docling_error'`` is NOT
+    in the orchestrator's ``_EGRESS_POLICY_ERROR_CODES`` sanitization filter — so
+    swallowing a ``WorkspaceEscape`` (or any sibling) here would (a) cause the job
+    to be retried forever against an attacker probe, and (b) leak the rejected path
+    into the persisted ``error_message`` via ``str(error)``.
+    """
+
+    def test_convert_html_does_not_wrap_workspace_escape_as_docling_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """A ``WorkspaceEscape`` raised by the confined Docling backend during
+        ``converter.convert(...)`` must propagate untouched."""
+        from aizk.conversion.core.errors import WorkspaceEscape
+
+        rejected_path = "/etc/ssh/ssh_host_rsa_key"
+
+        class _EscapingConverter:
+            def convert(self, _source):
+                raise WorkspaceEscape(f"Path {rejected_path} escapes workspace")
+
+        monkeypatch.setattr(converter_module, "_create_document_converter", lambda *_a, **_kw: _EscapingConverter())
+        monkeypatch.setattr(converter_module, "_docling_to_markdown", lambda _doc: "")
+        monkeypatch.setattr(converter_module, "_extract_figures", lambda _doc, _out: [])
+
+        config = DoclingConverterConfig(_env_file=None)
+
+        with pytest.raises(WorkspaceEscape) as excinfo:
+            converter_module.convert_html(b"<html></html>", temp_dir=tmp_path, config=config)
+
+        # Must be the original exception, not a DoclingError wrapping it.
+        assert not isinstance(excinfo.value, converter_module.DoclingError)
+        assert rejected_path in str(excinfo.value)
+
+    def test_convert_html_does_not_wrap_egress_error_from_prefetch(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """An ``EgressPolicyError`` raised by ``prefetch_images`` must propagate."""
+        from aizk.conversion.core.errors import DenyListDestination
+
+        rejected_host = "169.254.169.254"
+
+        async def _raising_prefetch(_html, _ws, **_kwargs):
+            raise DenyListDestination(f"Resolved address for host {rejected_host!r} is in deny set")
+
+        monkeypatch.setattr(converter_module, "prefetch_images", _raising_prefetch)
+        monkeypatch.setattr(
+            converter_module, "_create_document_converter", lambda *_a, **_kw: _FakeDocumentConverter()
+        )
+        monkeypatch.setattr(converter_module, "_docling_to_markdown", lambda _doc: "")
+        monkeypatch.setattr(converter_module, "_extract_figures", lambda _doc, _out: [])
+
+        config = DoclingConverterConfig(_env_file=None)
+
+        with pytest.raises(DenyListDestination) as excinfo:
+            converter_module.convert_html(b"<html></html>", temp_dir=tmp_path, config=config)
+
+        assert not isinstance(excinfo.value, converter_module.DoclingError)
+        assert rejected_host in str(excinfo.value)
+
+    def test_convert_pdf_does_not_wrap_workspace_escape_as_docling_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Symmetry: ``convert_pdf`` must also re-raise ``EgressPolicyError`` subclasses."""
+        from aizk.conversion.core.errors import WorkspaceEscape
+
+        rejected_path = "/etc/passwd"
+
+        class _EscapingConverter:
+            def convert(self, _source):
+                raise WorkspaceEscape(f"Path {rejected_path} escapes workspace")
+
+        monkeypatch.setattr(converter_module, "_create_document_converter", lambda *_a, **_kw: _EscapingConverter())
+        monkeypatch.setattr(converter_module, "_docling_to_markdown", lambda _doc: "")
+        monkeypatch.setattr(converter_module, "_extract_figures", lambda _doc, _out: [])
+
+        config = DoclingConverterConfig(_env_file=None)
+
+        with pytest.raises(WorkspaceEscape) as excinfo:
+            converter_module.convert_pdf(b"%PDF-1.4 fake", temp_dir=tmp_path, config=config)
+
+        assert not isinstance(excinfo.value, converter_module.DoclingError)
+        assert rejected_path in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

@@ -59,7 +59,8 @@ class KarakeepBookmarkResolver:
             BookmarkContentUnavailableError: If the bookmark cannot be fetched or has no
                 usable content.
         """
-        assert isinstance(ref, KarakeepBookmarkRef), f"Expected KarakeepBookmarkRef, got {type(ref)}"
+        if not isinstance(ref, KarakeepBookmarkRef):
+            raise TypeError(f"Expected KarakeepBookmarkRef, got {type(ref).__name__}")
 
         bookmark = fetch_karakeep_bookmark(ref.bookmark_id)
         if bookmark is None:

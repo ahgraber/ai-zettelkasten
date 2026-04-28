@@ -299,3 +299,27 @@ def safelink_to_url(url: str) -> str:
         return matches[0]
     else:
         raise ValueError(f"Could not extract URL from SafeLink: {decoded}")
+
+
+def sanitize_url_for_log(url: str) -> str:
+    """Strip ``user:pass@`` userinfo, query, and fragment from ``url``.
+
+    Used at egress WARNING sites and embedded into ``FetchError`` messages,
+    which flow into persisted ``error_message`` columns and out via the
+    jobs API — the query is dropped because signed-URL tokens, OAuth
+    fragments, and session identifiers are commonly carried there.
+
+    Returns the input verbatim if parsing fails so a logging path can
+    never crash the caller.
+    """
+    if not isinstance(url, str) or not url:
+        return url
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        if parsed.port is not None:
+            host = f"{host}:{parsed.port}"
+        sanitized = parsed._replace(netloc=host, query="", fragment="")
+        return urlunparse(sanitized)
+    except Exception:  # noqa: BLE001 — logging path; never propagate
+        return url

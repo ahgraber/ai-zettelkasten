@@ -343,52 +343,41 @@ def test_github_hash_stable_under_case_variation(owner, repo):
     assert compute_source_ref_hash(ref_upper) == h
 
 
-# --- UrlRef construction-time egress validation -----------------------------
+# --- UrlRef construction does NOT perform egress validation -----------------
+#
+# Per `network-egress-policy/design.md` § "Defer egress validation to fetch
+# time only", UrlRef construction normalizes the URL string for dedup identity
+# but does not classify the destination. The load-bearing trust boundary lives
+# in `egress_fetch_bytes` (covered by tests in test_egress_fetch.py and
+# test_egress_policy.py).
 
 
-def _stub_dns(monkeypatch, *ips):
+def test_url_ref_construction_accepts_deny_set_url_without_dns(monkeypatch):
+    # Construction must NOT call socket.getaddrinfo — pin a stub that raises
+    # if anyone reaches DNS resolution during model_validate.
     import socket as _socket
 
-    def fake(host, port, *_args, **_kwargs):
-        results = []
-        for ip in ips:
-            family = _socket.AF_INET6 if ":" in ip else _socket.AF_INET
-            sockaddr = (ip, port, 0, 0) if family == _socket.AF_INET6 else (ip, port)
-            results.append((family, _socket.SOCK_STREAM, 0, "", sockaddr))
-        return results
+    def _explode(*_args, **_kwargs):
+        raise AssertionError("UrlRef construction must not resolve DNS")
 
-    monkeypatch.setattr(_socket, "getaddrinfo", fake)
+    monkeypatch.setattr(_socket, "getaddrinfo", _explode)
 
-
-def test_url_ref_construction_rejects_cloud_metadata_ipv4(monkeypatch):
-    _stub_dns(monkeypatch, "169.254.169.254")
-    with pytest.raises(ValidationError):
-        UrlRef(url="http://169.254.169.254/latest/meta-data/")
+    # Construction succeeds; the URL string is normalized (trailing slash stripped)
+    # but no destination classification or DNS lookup runs.
+    ref = UrlRef(url="http://169.254.169.254/latest/meta-data")
+    assert ref.url == "http://169.254.169.254/latest/meta-data"
 
 
-def test_url_ref_model_validate_rejects_rfc1918(monkeypatch):
-    _stub_dns(monkeypatch, "10.0.0.5")
-    with pytest.raises(ValidationError):
-        UrlRef.model_validate({"kind": "url", "url": "http://10.0.0.5/admin"})
-
-
-def test_url_ref_construction_accepts_public_destination(monkeypatch):
-    _stub_dns(monkeypatch, "8.8.8.8")
+def test_url_ref_construction_accepts_public_url():
     ref = UrlRef(url="https://example.com/path")
     assert ref.url == "https://example.com/path"
-    # JSON round-trip works for accepted refs.
     encoded = ref.model_dump_json()
     decoded = UrlRef.model_validate_json(encoded)
     assert decoded == ref
 
 
-def test_url_ref_construction_rejects_disallowed_scheme():
-    # No DNS needed — scheme rejection short-circuits before resolution.
-    with pytest.raises(ValidationError):
-        UrlRef(url="file:///etc/passwd")
-
-
-def test_url_ref_construction_rejects_loopback(monkeypatch):
-    _stub_dns(monkeypatch, "127.0.0.1")
-    with pytest.raises(ValidationError):
-        UrlRef(url="http://localhost/")
+def test_url_ref_construction_accepts_non_http_scheme():
+    # Lexical scheme rejection is intentionally NOT performed at construction;
+    # the fetcher / egress gate rejects disallowed schemes via DisallowedScheme.
+    ref = UrlRef(url="file:///etc/passwd")
+    assert "etc/passwd" in ref.url

@@ -16,6 +16,14 @@ logger = logging.getLogger(__name__)
 async def fetch_karakeep_asset(asset_id: str) -> bytes:
     """Fetch asset bytes from KaraKeep by asset ID.
 
+    Egress-policy note: this call uses ``KarakeepClient`` directly against the
+    operator-configured ``KARAKEEP_BASE_URL`` and is NOT routed through
+    ``egress_fetch_bytes``. The carve-out is intentional — see
+    ``.specs/changes/network-egress-policy/design.md`` § "Operator-trusted
+    endpoints are carved out of the egress gate". Self-hosted KaraKeep
+    deployments routinely run on a private network, which the deny-list
+    would otherwise refuse.
+
     Raises:
         FetchError: If the asset fetch fails.
     """

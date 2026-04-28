@@ -12,6 +12,7 @@ import uvicorn
 from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
 from aizk.conversion.utilities.dotenv import load_process_dotenv_once
 from aizk.conversion.utilities.litestream import LitestreamManager
+from aizk.conversion.utilities.logging import configure_logging
 from aizk.conversion.utilities.startup import StartupValidationError, log_feature_summary, validate_startup
 from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
 
@@ -52,6 +53,13 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
     """Run the background worker."""
     setproctitle("docling-worker")
     config = ConversionConfig()
+    # Configure logging FIRST so every subsequent emission — including the
+    # egress enforcement WARNING records that carry forensic ``extra`` keys
+    # (url, host, ip, error_class, hop_index) — uses the structured
+    # formatter. Without this the worker process emits via Python's
+    # lastResort handler (stderr-only, default format), silently dropping
+    # the audit trail the network-egress-policy design depends on.
+    configure_logging(config)
     docling_cfg = DoclingConverterConfig()
     karakeep_cfg = KarakeepFetcherConfig()
     try:

@@ -380,6 +380,39 @@ def test_handle_job_error_maps_retryable_to_status(
         assert updated.earliest_next_attempt_at is not None
 
 
+@pytest.mark.parametrize(
+    "error_factory",
+    [
+        pytest.param(lambda: FileNotFoundError("missing artifact"), id="FileNotFoundError"),
+        pytest.param(lambda: KeyError("markdown_filename"), id="KeyError"),
+        pytest.param(lambda: OSError("disk full"), id="OSError"),
+        pytest.param(lambda: RuntimeError("unexpected"), id="RuntimeError"),
+    ],
+)
+def test_handle_job_error_handles_plain_exception_without_retryable_attr(
+    db_session: Session,
+    job: ConversionJob,
+    config: ConversionConfig,
+    error_factory,
+) -> None:
+    # Regression for H6: plain Python exceptions lack the conversion-error
+    # contract (no `retryable` attribute). handle_job_error must default to
+    # retryable=True rather than raise AttributeError, otherwise an unexpected
+    # exception leaking from the upload-retry arm would silently leave the job
+    # stuck in RUNNING state.
+    error = error_factory()
+    with patch("aizk.conversion.workers.orchestrator.get_engine", return_value=db_session.get_bind()):
+        handle_job_error(job.id, error, config)
+
+    db_session.expire_all()
+    updated = db_session.get(ConversionJob, job.id)
+    assert updated is not None
+    # Default policy: when in doubt, retry.
+    assert updated.status == ConversionJobStatus.FAILED_RETRYABLE
+    # error_code falls back to the existing default in handle_job_error.
+    assert updated.error_code == "conversion_failed"
+
+
 def test_handle_job_error_skips_cancelled_job(
     db_session: Session,
     bookmark: Source,

@@ -16,9 +16,7 @@ from typing import Annotated, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 import validators
 
-from aizk.conversion.core.errors import EgressPolicyError
 from aizk.conversion.core.types import ContentType
-from aizk.conversion.utilities.egress import assert_egress_allowed
 from aizk.utilities.url_utils import normalize_url
 
 # 64 KiB enforced on RAW body bytes (not serialized JSON length).
@@ -82,12 +80,15 @@ class GithubReadmeRef(BaseModel):
 class UrlRef(BaseModel):
     """Reference to a URL. The URL is stored in normalized form for stable identity.
 
-    Egress validation runs at model construction time via the `_assert_egress` validator.
-    This is a fail-fast convenience — the load-bearing security check is the
-    fetch-time call to `async_assert_egress_allowed` inside the fetcher path.
-    `model_construct` bypasses validators; do NOT use it to build `UrlRef` values
-    inside the conversion code (see `.specs/changes/network-egress-policy/design.md`
-    § Typed errors / "model_construct bypass note").
+    The URL is normalized for dedup-payload stability but NOT validated against
+    the egress policy at construction time. The load-bearing security check is
+    the fetch-time call to ``async_assert_egress_allowed`` inside the fetcher
+    path (``UrlFetcher``, ``ArxivFetcher``, ``GithubReadmeFetcher``, and
+    ``prefetch_images`` via ``egress_fetch_bytes``).
+
+    See ``.specs/changes/network-egress-policy/design.md`` § "Defer egress
+    validation to fetch time only" for the rationale (KaraKeep private
+    base-URL paradox; redundant DNS in API + worker rehydration paths).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -110,25 +111,6 @@ class UrlRef(BaseModel):
             return normalize_url(stripped)
         except (ValueError, validators.ValidationError):
             return stripped.casefold().rstrip("/")
-
-    @field_validator("url", mode="after")
-    @classmethod
-    def _assert_egress(cls, value: str) -> str:
-        """Fail JSON ingress when the URL targets a deny-set destination.
-
-        Pydantic field validator that runs `assert_egress_allowed` on the
-        normalized URL and re-raises any `EgressPolicyError` as a pydantic
-        `ValueError` so model construction surfaces a `ValidationError`.
-
-        This is a fail-fast convenience; the load-bearing security check is
-        the fetch-time call to `async_assert_egress_allowed` in the fetcher
-        path. `model_construct` bypasses this validator by design.
-        """
-        try:
-            assert_egress_allowed(value)
-        except EgressPolicyError as exc:
-            raise ValueError(str(exc)) from exc
-        return value
 
     def to_dedup_payload(self) -> dict:
         """Return the canonical identity payload: ``{"kind", "url"}`` (already normalized)."""

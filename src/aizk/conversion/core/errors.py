@@ -165,7 +165,7 @@ class RedirectEgressViolation(EgressPolicyError):  # noqa: N818 — canonical sp
     def __init__(
         self,
         *,
-        reason: Literal["deny_list", "disallowed_scheme", "scheme_downgrade"],
+        reason: Literal["deny_list", "disallowed_scheme", "scheme_downgrade", "hop_cap"],
     ) -> None:
         """Initialize with the discriminating policy-violation reason.
 
@@ -173,7 +173,8 @@ class RedirectEgressViolation(EgressPolicyError):  # noqa: N818 — canonical sp
             reason: Which branch of the redirect policy the hop violated.
                 ``deny_list`` — target IP in the egress deny set;
                 ``disallowed_scheme`` — target scheme outside {http, https};
-                ``scheme_downgrade`` — https → http downgrade.
+                ``scheme_downgrade`` — https → http downgrade;
+                ``hop_cap`` — redirect-chain hop cap exhausted.
         """
         self.reason = reason
         super().__init__(f"Redirect rejected by egress policy: {reason}")

@@ -295,3 +295,36 @@ def test_manifest_v2_unknown_fields_raise():
     data["unexpected_field"] = "surprise"
     with pytest.raises(ValidationError):
         ManifestV2.model_validate(data)
+
+
+# ---------------------------------------------------------------------------
+# save_manifest — symlink TOCTOU rejection (H2 regression)
+# ---------------------------------------------------------------------------
+
+
+def test_save_manifest_rejects_symlink_at_target(tmp_path):
+    """A pre-existing symlink at the manifest path must NOT be followed.
+
+    Threat model: the conversion subprocess (compromised in the design's
+    threat model) plants ``<workspace>/manifest.json`` as a symlink to any
+    host-writable file before exiting. Without ``O_NOFOLLOW``, the parent's
+    ``write_text`` would clobber the symlink target with manifest JSON —
+    same shape as the H4 fix already shipped for markdown / figures /
+    ``metadata.json``, but missed at the manifest write seam.
+    """
+    from aizk.conversion.core.errors import WorkspaceEscape
+    from aizk.conversion.storage.manifest import save_manifest
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"untouched": true}', encoding="utf-8")
+    (workspace / "manifest.json").symlink_to(outside)
+
+    manifest = _base_manifest_v2()
+
+    with pytest.raises(WorkspaceEscape, match="Symlink detected"):
+        save_manifest(manifest, workspace / "manifest.json")
+
+    # The symlink target must NOT have been written.
+    assert outside.read_text(encoding="utf-8") == '{"untouched": true}'

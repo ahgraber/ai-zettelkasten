@@ -290,7 +290,7 @@ def test_process_job_retries_upload(monkeypatch, db_session: Session) -> None:
     sleep_calls: list[float] = []
     handle_errors = {"count": 0}
 
-    def _upload_converted(_job_id, _workspace, _config):
+    def _execute_upload(_plan, _job_id, _config):
         upload_attempts["count"] += 1
         if upload_attempts["count"] < 3:
             raise RuntimeError("transient upload failure")
@@ -298,7 +298,8 @@ def test_process_job_retries_upload(monkeypatch, db_session: Session) -> None:
     def _handle_job_error(_job_id, _error, _config):
         handle_errors["count"] += 1
 
-    monkeypatch.setattr(orchestrator, "_upload_converted", _upload_converted)
+    monkeypatch.setattr(orchestrator, "_prepare_upload", lambda *_a, **_k: object())
+    monkeypatch.setattr(orchestrator, "_execute_upload", _execute_upload)
     monkeypatch.setattr(orchestrator, "handle_job_error", _handle_job_error)
     monkeypatch.setattr(orchestrator.time, "sleep", lambda delay: sleep_calls.append(delay))
 
@@ -354,10 +355,11 @@ def test_process_job_stops_on_cancellation(monkeypatch, db_session: Session) -> 
 
     upload_calls = {"count": 0}
 
-    def _upload_converted(_job_id, _workspace, _config):
+    def _execute_upload(_plan, _job_id, _config):
         upload_calls["count"] += 1
 
-    monkeypatch.setattr(orchestrator, "_upload_converted", _upload_converted)
+    monkeypatch.setattr(orchestrator, "_prepare_upload", lambda *_a, **_k: None)
+    monkeypatch.setattr(orchestrator, "_execute_upload", _execute_upload)
     monkeypatch.setattr(orchestrator, "get_engine", lambda _url=None: db_session.get_bind())
 
     # Subprocess completes with cancelled result
@@ -609,10 +611,11 @@ def test_timeout_before_upload_reports_uploading_phase(monkeypatch, db_session: 
     )
 
     upload_calls = {"count": 0}
+    monkeypatch.setattr(orchestrator, "_prepare_upload", lambda *_a, **_k: object())
     monkeypatch.setattr(
         orchestrator,
-        "_upload_converted",
-        lambda _job_id, _workspace, _config: upload_calls.__setitem__("count", upload_calls["count"] + 1),
+        "_execute_upload",
+        lambda _plan, _job_id, _config: upload_calls.__setitem__("count", upload_calls["count"] + 1),
     )
 
     errors: list[Exception] = []
@@ -665,11 +668,12 @@ def test_timeout_during_upload_retry_stops_retrying(monkeypatch, db_session: Ses
 
     upload_calls = {"count": 0}
 
-    def _upload_converted_raises(_job_id, _workspace, _config):
+    def _execute_upload_raises(_plan, _job_id, _config):
         upload_calls["count"] += 1
         raise RuntimeError("upload failed")
 
-    monkeypatch.setattr(orchestrator, "_upload_converted", _upload_converted_raises)
+    monkeypatch.setattr(orchestrator, "_prepare_upload", lambda *_a, **_k: object())
+    monkeypatch.setattr(orchestrator, "_execute_upload", _execute_upload_raises)
 
     errors: list[Exception] = []
     monkeypatch.setattr(orchestrator, "handle_job_error", lambda _job_id, error, _config: errors.append(error))
@@ -845,10 +849,11 @@ def test_cancelled_before_upload_skips_upload(monkeypatch, db_session: Session, 
 
     upload_calls = {"count": 0}
 
-    def _upload_converted(_job_id, _workspace, _config):
+    def _execute_upload(_plan, _job_id, _config):
         upload_calls["count"] += 1
 
-    monkeypatch.setattr(orchestrator, "_upload_converted", _upload_converted)
+    monkeypatch.setattr(orchestrator, "_prepare_upload", lambda *_a, **_k: None)
+    monkeypatch.setattr(orchestrator, "_execute_upload", _execute_upload)
 
     monkeypatch.setattr(
         orchestrator, "_spawn_conversion_subprocess", lambda **_kwargs: (_CompletedProcess(), queue_module.Queue())
@@ -1119,6 +1124,12 @@ def test_upload_converted_uploads_when_hash_differs(monkeypatch, db_session: Ses
         bucket = "test-bucket"
 
         def upload_file(self, local_path, s3_key):
+            upload_calls.append(s3_key)
+            return f"s3://test-bucket/{s3_key}"
+
+        def upload_fileobj(self, file_obj, s3_key):
+            # _upload_nofollow opens the path with O_NOFOLLOW and passes the
+            # resulting file object through this entrypoint instead of upload_file.
             upload_calls.append(s3_key)
             return f"s3://test-bucket/{s3_key}"
 

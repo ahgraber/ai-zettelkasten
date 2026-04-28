@@ -47,13 +47,14 @@ from aizk.conversion.utilities.egress import (
     async_assert_egress_allowed,
 )
 from aizk.conversion.utilities.egress_transport import EgressPinnedTransport
+from aizk.utilities.url_utils import sanitize_url_for_log
 
 _DEFAULT_MAX_REDIRECTS: Final[int] = 5
 _DEFAULT_TOTAL_BUDGET_SECONDS: Final[float] = 120.0
 _REDIRECT_STATUS_CODES: Final[frozenset[int]] = frozenset({301, 302, 303, 307, 308})
 
 _AUTH_HEADER_NAMES: Final[frozenset[str]] = frozenset({"authorization", "cookie"})
-_X_AUTH_HEADER_PATTERN: Final[re.Pattern[str]] = re.compile(r"^x-.*-auth.*$", re.IGNORECASE)
+_X_AUTH_HEADER_PATTERN: Final[re.Pattern[str]] = re.compile(r"^x-.*auth.*$", re.IGNORECASE)
 
 TransportFactory = Callable[[ValidatedDestination], httpx.AsyncBaseTransport]
 
@@ -113,7 +114,7 @@ async def _validate_for_hop(url: str, *, hop_index: int) -> ValidatedDestination
             raise
         logger.warning(
             "Egress denied: redirect hop target is in deny set",
-            extra={"url": url, "hop_index": hop_index},
+            extra={"url": sanitize_url_for_log(url), "hop_index": hop_index},
         )
         raise RedirectEgressViolation(reason="deny_list") from None
     except DisallowedScheme:
@@ -121,7 +122,7 @@ async def _validate_for_hop(url: str, *, hop_index: int) -> ValidatedDestination
             raise
         logger.warning(
             "Egress denied: redirect hop target has disallowed scheme",
-            extra={"url": url, "hop_index": hop_index},
+            extra={"url": sanitize_url_for_log(url), "hop_index": hop_index},
         )
         raise RedirectEgressViolation(reason="disallowed_scheme") from None
 
@@ -144,11 +145,20 @@ def _follow_redirect(
     if prev.scheme.lower() == "https" and nxt.scheme.lower() == "http":
         logger.warning(
             "Egress denied: https→http scheme downgrade on redirect",
-            extra={"from_url": current_url, "to_url": next_url},
+            extra={
+                "from_url": sanitize_url_for_log(current_url),
+                "to_url": sanitize_url_for_log(next_url),
+            },
         )
         raise RedirectEgressViolation(reason="scheme_downgrade")
 
-    next_headers = _strip_auth_headers(current_headers) if prev.hostname != nxt.hostname else dict(current_headers)
+    # Same-origin = same (scheme, hostname, port). Comparing only hostname would
+    # forward Authorization/Cookie across same-host but different-port redirects
+    # (e.g. https://host:443 → https://host:8443), which can cross a service
+    # boundary on shared infrastructure.
+    prev_origin = (prev.scheme.lower(), (prev.hostname or "").lower(), prev.port)
+    next_origin = (nxt.scheme.lower(), (nxt.hostname or "").lower(), nxt.port)
+    next_headers = dict(current_headers) if prev_origin == next_origin else _strip_auth_headers(current_headers)
     return next_url, next_headers
 
 
@@ -156,8 +166,14 @@ async def _read_capped_body(response: httpx.Response, url: str, max_bytes: int) 
     """Read response body up to ``max_bytes``, raising ``FetchTooLargeError`` on overrun.
 
     Performs a pre-flight ``Content-Length`` check (declared-too-large is
-    rejected eagerly) and a streaming size cap (Content-Length is never
-    trusted alone — the streaming check is load-bearing).
+    rejected eagerly) and an incrementally-enforced size cap on the chunk
+    iterator. The cap is the load-bearing check: ``Content-Length`` is
+    never trusted alone, and the cap aborts mid-stream as soon as the
+    running total exceeds ``max_bytes``.
+
+    The body is accumulated into an in-memory buffer and returned as a
+    ``bytes`` value bounded by ``max_bytes`` + one chunk; callers needing
+    a true streaming output should iterate ``response.aiter_bytes`` directly.
     """
     declared = response.headers.get("content-length")
     if declared is not None:
@@ -166,22 +182,24 @@ async def _read_capped_body(response: httpx.Response, url: str, max_bytes: int) 
         except ValueError:
             length = None
         if length is not None and length > max_bytes:
+            safe = sanitize_url_for_log(url)
             logger.warning(
                 "Egress fetch aborted: Content-Length exceeds configured cap",
-                extra={"url": url, "configured_cap_bytes": max_bytes, "declared_length_bytes": length},
+                extra={"url": safe, "configured_cap_bytes": max_bytes, "declared_length_bytes": length},
             )
-            raise FetchTooLargeError(f"Response from {url!r} exceeds configured limit of {max_bytes} bytes")
+            raise FetchTooLargeError(f"Response from {safe!r} exceeds configured limit of {max_bytes} bytes")
 
     buffer = io.BytesIO()
     total = 0
     async for chunk in response.aiter_bytes():
         total += len(chunk)
         if total > max_bytes:
+            safe = sanitize_url_for_log(url)
             logger.warning(
                 "Egress fetch aborted: streaming response body exceeds configured cap",
-                extra={"url": url, "configured_cap_bytes": max_bytes, "observed_size_bytes_bound": total},
+                extra={"url": safe, "configured_cap_bytes": max_bytes, "observed_size_bytes_bound": total},
             )
-            raise FetchTooLargeError(f"Response from {url!r} exceeds configured limit of {max_bytes} bytes")
+            raise FetchTooLargeError(f"Response from {safe!r} exceeds configured limit of {max_bytes} bytes")
         buffer.write(chunk)
     return buffer.getvalue()
 
@@ -214,7 +232,7 @@ async def _do_one_hop(
                     if not location:
                         logger.warning(
                             "Egress fetch: 3xx response missing Location header",
-                            extra={"url": url, "status_code": response.status_code},
+                            extra={"url": sanitize_url_for_log(url), "status_code": response.status_code},
                         )
                         raise FetchError("3xx response missing Location header")
                     return _Redirect(location=location)
@@ -223,7 +241,7 @@ async def _do_one_hop(
                 lowered = {k.lower(): v for k, v in response.headers.items()}
                 return _Terminal(body=body, headers=lowered)
         except httpx.HTTPError as exc:
-            raise FetchError(f"HTTP error fetching {url!r}: {exc}") from exc
+            raise FetchError(f"HTTP error fetching {sanitize_url_for_log(url)!r}: {exc}") from exc
 
 
 async def egress_fetch_bytes(
@@ -276,7 +294,7 @@ async def egress_fetch_bytes(
         if time.monotonic() > deadline:
             logger.warning(
                 "Egress fetch aborted: total redirect-chain budget exhausted",
-                extra={"url": url, "budget_seconds": total_budget_seconds, "hop": hop},
+                extra={"url": sanitize_url_for_log(url), "budget_seconds": total_budget_seconds, "hop": hop},
             )
             raise FetchError(f"Egress fetch exceeded total redirect budget of {total_budget_seconds}s")
 
@@ -297,9 +315,9 @@ async def egress_fetch_bytes(
         if hop >= max_redirects:
             logger.warning(
                 "Egress fetch aborted: redirect hop cap exhausted",
-                extra={"url": current_url, "max_redirects": max_redirects},
+                extra={"url": sanitize_url_for_log(current_url), "max_redirects": max_redirects},
             )
-            raise RedirectEgressViolation(reason="deny_list")
+            raise RedirectEgressViolation(reason="hop_cap")
         current_url, current_headers = _follow_redirect(result.location, current_url, current_headers)
 
     # Unreachable: every loop iteration either returns or raises.

@@ -70,13 +70,18 @@ The implementation requires Python ≥ 3.11; `is_private` coverage for RFC 6890 
 - `async_assert_egress_allowed(url: str) -> ValidatedDestination` — async wrapper that submits the sync version to a **dedicated bounded `ThreadPoolExecutor`** (default 4 threads; configurable via the conversion settings object) shared across the event loop lifetime.
   The default `asyncio.to_thread` executor is explicitly rejected here: it is shared with all other blocking calls and can stall the event loop under concurrent DNS fan-out (e.g., 50-image pre-fetch phase).
 
-**Rationale:** Pydantic validators run synchronously, so `UrlRef` construction needs a sync API.
-Async fetchers benefit from the same logic without blocking the event loop on DNS.
-The 2-second DNS deadline prevents slow-resolver DoS at ingress.
+**Rationale:** The async helper is the load-bearing trust boundary, called from every fetcher / prefetch path.
+The sync helper exists for code paths that are themselves synchronous (e.g., `UrlFetcher.fetch` is a sync protocol method that runs `asyncio.run` internally; tests; future utilities).
+Both share one classification implementation so the deny-list semantics cannot drift.
+The 2-second DNS deadline prevents slow-resolver DoS in the worker.
+
+**Note (post-implementation revision):** the original decision also justified the sync API as a way to run egress validation inside `UrlRef`'s pydantic validator at construction time.
+That construction-time call has since been removed — see "Defer egress validation to fetch time only" below.
+The sync API remains for fetcher / utility use, but is no longer reachable from API request handling.
 
 **Alternatives considered:**
 
-- Async-only with sync-from-async wrapper: rejected; `UrlRef` is constructed inside synchronous pydantic validation, where running an event loop is awkward.
+- Async-only with sync-from-async wrapper: rejected; sync callers (e.g., `UrlFetcher.fetch` operating under the sync `ContentFetcher` protocol) would each need an event-loop bridge, duplicating logic.
 
 ### Decision: Connection pinning via custom httpx transport
 
@@ -228,13 +233,110 @@ All `EgressPolicyError` subclasses are classified non-retryable.
 The error message identifies the policy-violation class but **SHALL NOT echo the rejected destination back into structured output served to clients**.
 The rejected destination (URL, hostname, resolved IP) **SHALL be captured in internal logs** at `WARNING` level for SOC/diagnostic use; it must not appear in the `error_message` field persisted to `conversion_jobs` or in any API response body.
 
-**`model_construct` bypass note:** the construction-time egress check in `UrlRef.__init__` / `model_validate` runs only when the model is constructed via the normal pydantic path.
-`UrlRef.model_construct(...)` bypasses validators.
-The fetch-time call to `async_assert_egress_allowed` inside `UrlFetcher` / `ArxivFetcher` is the load-bearing security check; the construction-time check is a fail-fast convenience, not the trust boundary.
-No internal code path should call `model_construct` to produce a `UrlRef`.
+**Trust boundary note:** the load-bearing egress check is the fetch-time call to `async_assert_egress_allowed` inside `UrlFetcher` / `ArxivFetcher` / `GithubReadmeFetcher` / `prefetch_images` / `egress_fetch_bytes`'s manual redirect loop.
+`UrlRef` construction does no DNS or destination classification — it only normalizes the URL string for stable identity.
+See "Defer egress validation to fetch time only" decision below for the rationale and what was removed.
 
 **Rationale:** Aligns with the existing typed-error pattern (`FetcherNotRegistered`, `ChainNotTerminated`, `FetcherDepthExceeded`).
 Non-retryable classification matches the `NoConverterForFormat` precedent for non-recoverable input-shape errors.
+
+### Decision: Defer egress validation to fetch time only (post-implementation revision)
+
+**Chosen:** Egress validation runs only at fetch time, inside the worker.
+`UrlRef` construction performs URL normalization for dedup identity but does **not** call `assert_egress_allowed` and does **not** resolve DNS.
+
+**What was removed:**
+
+- The `_assert_egress` field validator on `UrlRef` (formerly invoked `assert_egress_allowed` synchronously during `UrlRef` construction / `model_validate`).
+- The dependency from `core/source_ref.py` on `utilities/egress.py`.
+- The MODIFIED-Requirements clause in `pluggable-pipeline/spec.md` that required `UrlRef` construction to reject deny-set destinations (now reversed).
+
+**What remains the load-bearing trust boundary:**
+
+- `egress_fetch_bytes` calls `async_assert_egress_allowed` for every initial-hop URL.
+- The manual redirect loop calls it again for every 3xx target.
+- `prefetch_images` routes every `<img src>` through `egress_fetch_bytes` (so per-image egress is gated transitively).
+- `KarakeepClient` does not pass through `egress_fetch_bytes` and is intentionally exempt — KaraKeep's base URL is operator-configured trusted infrastructure (see `KarakeepFetcherConfig.base_url`), which the original construction-time check incorrectly fail-closed against in private deployments.
+
+**Rationale:**
+
+1. **Eliminates the KaraKeep private-base-URL paradox.**
+   The construction-time check could not distinguish "operator-trusted internal asset URL" from "attacker-supplied private destination" — a `UrlRef(url=f"{karakeep_base_url}/api/v1/assets/{asset_id}")` constructed by `KarakeepBookmarkResolver` Steps 3 and 4 fail-closed against the egress policy whenever KaraKeep is on a private network (the canonical self-hosted deployment shape).
+   With validation moved to fetch time, the KaraKeep asset path uses `KarakeepClient` directly and never reaches the deny-list check; non-KaraKeep `UrlRef` instances still get egress validation when their fetcher dispatches.
+
+2. **Removes a synchronous DNS round-trip from API request handling and worker rehydration.**
+   Pydantic validators run synchronously in whatever thread is calling `model_validate`.
+   In the API path that meant `POST /v1/jobs` could block an event-loop worker for up to 2 s on `getaddrinfo`; in the worker path it meant 3–6 redundant DNS lookups per job (orchestrator parent rehydration, subprocess rehydration, uploader's `terminal_ref` and `submitted_ref` reconstruction, plus every resolver-built `UrlRef`).
+   Without rate-limiting on the unauthenticated API endpoint, this was a queryable DNS-resolution oracle and a chokepoint on the 4-thread DNS executor.
+
+3. **Removes the `model_construct` bypass footgun.**
+   The previous design admitted that `UrlRef.model_construct(...)` bypassed the validator, and warned internal code not to use it.
+   With no validator to bypass, the warning becomes moot.
+
+**Operator-visible behavior change:**
+
+- Previously: a JSON submission with a deny-set URL was rejected at the API with a `pydantic.ValidationError` (HTTP 422-shaped).
+- Now: the submission accepts the job; the worker fails the job non-retryably with `EgressPolicyError` when the fetcher dispatches.
+  The persisted `error_message` is the policy-violation `error_code` only; the rejected destination is captured in WARNING logs at the enforcement site, never in API responses.
+- Net UX: ~immediate rejection becomes "job accepted, fails on first worker pickup."
+  For an internal-only deployment this is acceptable; the security property (no outbound request to a deny-set destination) is preserved.
+
+**Alternatives considered:**
+
+- Keep construction-time validation but add an operator allowlist for KaraKeep: rejected.
+  Adding a permanent allowlist knob to the egress policy core to work around a paradox the policy itself created has worse trust-boundary ergonomics than dropping the redundant check.
+- Surgical bypass via `model_construct` for resolver-built KaraKeep asset URLs: rejected.
+  Sets a precedent for internal `model_construct` use that the docstring and design previously discouraged; spreads the bypass across multiple call sites.
+- Keep a lexical-only validator (scheme allowlist + hostname presence) without DNS: deferred.
+  Possible follow-up if fail-fast UX becomes important; not required for the security property.
+
+### Decision: Operator-trusted endpoints are carved out of the egress gate
+
+**Chosen:** Outbound HTTP to **operator-configured** endpoints — not user-supplied destinations — bypasses `egress_fetch_bytes` by design.
+The egress policy's threat model is "untrusted URL from a job submission reaches a deny-set destination."
+For URLs whose target is read from operator configuration (env vars, settings files), the operator is the trust source, not the egress validator.
+
+**Carved-out call sites:**
+
+- **KaraKeep asset / bookmark fetches** — `aizk.conversion.utilities.fetch_helpers.fetch_karakeep_asset` and `aizk.conversion.utilities.bookmark_utils.fetch_karakeep_bookmark` use `KarakeepClient` directly with the operator-configured `KARAKEEP_BASE_URL`.
+  The canonical self-hosted KaraKeep deployment runs on a private network, which the deny-list would reject; this is the paradox that motivated the post-implementation revision (see "Defer egress validation to fetch time only" above).
+- **VLM picture-description endpoint** — `aizk.conversion.workers.converter._call_vlm_api` and the `PictureDescriptionApiOptions` constructed in `_get_picture_description_options` issue HTTP against `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL`.
+  The endpoint is OpenAI-compatible (OpenRouter, vLLM, Ollama, internal model server, etc.) and is whatever the operator configured.
+  Internal vLLM clusters typically run on private addresses; routing through the egress deny-list would refuse the connection.
+
+**Operator responsibility:**
+
+The operator SHALL ensure every value of:
+
+- `KARAKEEP_BASE_URL`
+- `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL`
+
+…points at infrastructure they trust.
+A misconfigured value pointing at attacker-controlled or accidentally-public infrastructure is an operational concern, not an application-layer one.
+This boundary is documented in the operator deployment guide.
+
+**What the carve-outs do and do not bypass:**
+
+- Bypassed: deny-list destination classification, connection pinning, manual redirect loop with per-hop revalidation, body cap.
+- NOT bypassed: TLS verification (default `httpx` posture: hostname check on, cert verify on), request/response timeouts, the operator's network-level egress rules (firewall, ingress controller).
+
+**Enforcement check at code review:**
+
+The invariant "every fetch of _user-supplied_ content goes through `egress_fetch_bytes`" is what reviewers should grep for.
+The invariant "every outbound HTTP from the conversion process goes through `egress_fetch_bytes`" is **incorrect** as stated; reviewers should rely on the carved-out list above when judging new call sites.
+Adding an outbound call against an operator-configured URL is permitted; adding one against a user-supplied URL without `egress_fetch_bytes` is a regression.
+
+**Rationale:**
+
+The egress validator's deny-list is a function of "what does the application's threat model treat as untrusted?"
+Operator-configured infrastructure URLs are not in that set.
+Forcing them through the deny-list would either block legitimate self-hosted deployments (KaraKeep / vLLM on a private network) or require an operator allowlist surface that the egress design has already rejected (see "Defer egress validation" alternatives).
+
+**Alternatives considered:**
+
+- Add an operator allowlist (`AIZK_EGRESS_ALLOWLIST`) and route VLM and KaraKeep through `egress_fetch_bytes`: rejected — see the "Defer egress validation" decision's alternatives section.
+- Add a `bypass_deny_list=True` parameter to `egress_fetch_bytes` so operator-trusted callers get the connection-pin / redirect-loop benefits while skipping the deny-list: deferred.
+  Possible future hardening; the current call sites get adequate TLS posture from default `httpx` behavior.
 
 ## Architecture
 
@@ -243,20 +345,21 @@ Non-retryable classification matches the `NoConverterForFormat` precedent for no
                               │
                               ▼
                  ┌─────────────────────────┐
-                 │ UrlRef construction     │
-                 │ (pydantic validator)    │ ──► assert_egress_allowed (sync, 2s deadline)
+                 │ UrlRef construction     │  normalize URL for dedup identity;
+                 │ (pydantic validator)    │  NO DNS, NO destination classification
                  └─────────────────────────┘
-                              │ (only if validated; otherwise raise ValidationError)
+                              │ UrlRef (egress not yet validated)
                               ▼
                  ┌─────────────────────────┐
-                 │ KarakeepBookmarkResolver│
-                 │  / ArxivResolver / etc. │
-                 └─────────────────────────┘
+                 │ KarakeepBookmarkResolver│  may build UrlRef for KaraKeep asset URLs
+                 │  / ArxivResolver / etc. │  (private base_url is fine — fetcher routes
+                 └─────────────────────────┘   those through KarakeepClient, not egress gate)
                               │ UrlRef
-                              ▼
+                              ▼ ─── trust boundary: fetch time ───
                  ┌─────────────────────────┐         ┌────────────────────────────┐
                  │ UrlFetcher              │ ──────► │ async_assert_egress_allowed│
-                 │ ArxivFetcher            │         │  (DNS + classification)    │
+                 │ ArxivFetcher            │         │  (DNS + classification —   │
+                 │ GithubReadmeFetcher     │         │   load-bearing check)      │
                  └─────────────────────────┘         └────────────────────────────┘
                               │ ValidatedDestination (ip, host, scheme)
                               ▼
@@ -324,10 +427,14 @@ Non-retryable classification matches the `NoConverterForFormat` precedent for no
   A malicious subprocess could swap a validated file path for a symlink between the containment check and the subsequent `open()` call.
   Mitigation: callers open subprocess-produced files with `O_NOFOLLOW`; `ELOOP` is caught and re-raised as `WorkspaceEscape`.
   See the Path containment helper decision for the open pattern.
+- **TOCTOU on parent-side reads of subprocess-produced `metadata.json`.**
+  The parent reads `metadata.json` to obtain `markdown_filename`, `figure_files`, `terminal_ref`, and the config snapshot.
+  A compromised converter subprocess could swap that file for a symlink pointing at any host-readable JSON between workspace creation and parent read, feeding tampered values into the manifest, DB row, and S3.
+  Mitigation: parent-side reads use `read_text_nofollow()` (`O_RDONLY | O_NOFOLLOW`), so a leaf symlink at open time raises `WorkspaceEscape` rather than being followed.
+  Used at both `uploader._upload_converted` and `orchestrator.process_job_supervised`'s post-conversion enrichment read.
 - **Latency-based oracle at JSON ingress.**
-  DNS resolution at `UrlRef` construction time creates a timing side-channel: requests for internal hostnames may resolve (or fail to resolve) at measurably different speeds than public ones, leaking information about internal name space.
-  Mitigation: bounded by the 2-second DNS deadline, which caps the oracle window.
-  Full elimination would require constant-time rejection, which is out of scope.
+  _(Revised — no longer applies; see "Defer egress validation to fetch time only" decision.)_ Egress DNS validation no longer runs at `UrlRef` construction.
+  The fetch-time check inside `UrlFetcher` / `ArxivFetcher` / `GithubReadmeFetcher` / `prefetch_images` is the trust boundary, executed by the worker — not in API request handling.
 - **Future legitimate need to reach a private host (e.g., internal arxiv mirror).**
   Mitigation: out of scope at cutover.
   When that need arises, address by extending the spec — not by adding a runtime allowlist knob today, which would be a security regression for the much more common case of zero-private-host needs.

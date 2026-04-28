@@ -46,7 +46,8 @@ class ArxivFetcher:
             ArxivPdfFetchError: If PDF cannot be fetched from arXiv.
             FetchError: If the KaraKeep asset fetch fails.
         """
-        assert isinstance(ref, ArxivRef), f"Expected ArxivRef, got {type(ref)}"
+        if not isinstance(ref, ArxivRef):
+            raise TypeError(f"Expected ArxivRef, got {type(ref).__name__}")
 
         karakeep_base_url = self._karakeep_cfg.base_url.rstrip("/")
 

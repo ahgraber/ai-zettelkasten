@@ -14,20 +14,27 @@ from typing import AbstractSet, Any, Iterator
 import pytest
 from sqlmodel import Session
 
-# Install a DNS stub at conftest import time so test-module-level fixtures that
-# construct `UrlRef` (which now runs egress validation in `field_validator`) can
-# resolve any host without leaving the test sandbox. Per-test overrides via
-# `monkeypatch.setattr(socket, "getaddrinfo", ...)` still work because
-# `socket.getaddrinfo` is the mutated symbol the egress helper reads at call
-# time. See `aizk.conversion.utilities.egress._resolve_with_deadline`.
+# Install DNS stubs at conftest import time so the egress helper
+# (`socket.getaddrinfo`) and Docling's `_validate_url_safety`
+# (`socket.gethostbyname`) resolve any host to a public IP without leaving
+# the test sandbox. Per-test overrides via `monkeypatch.setattr` still work
+# because both functions are read from the `socket` module at call time.
+# See `aizk.conversion.utilities.egress._resolve_with_deadline` and
+# `docling.backend.html_backend._validate_url_safety`.
 _REAL_GETADDRINFO = socket.getaddrinfo
+_REAL_GETHOSTBYNAME = socket.gethostbyname
 
 
 def _public_addr_stub(host: str, port: int, *_args: Any, **_kwargs: Any) -> list[tuple[Any, ...]]:
     return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("8.8.8.8", port))]
 
 
+def _public_hostbyname_stub(_host: str) -> str:
+    return "8.8.8.8"
+
+
 socket.getaddrinfo = _public_addr_stub  # type: ignore[assignment]
+socket.gethostbyname = _public_hostbyname_stub  # type: ignore[assignment]
 
 from aizk.conversion.db import get_engine
 from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
@@ -102,6 +109,24 @@ def _hermetic_conversion_config() -> Iterator[None]:
         KarakeepFetcherConfig.model_config["env_file"] = original_karakeep_env_file
         for alias, value in stripped.items():
             os.environ[alias] = value
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _restore_socket_stubs() -> Iterator[None]:
+    """Restore ``socket.getaddrinfo`` and ``socket.gethostbyname`` at session end.
+
+    The hermetic stubs are installed at conftest import time (before any test
+    fixture runs) so module-level fixtures resolve without leaving the sandbox.
+    Without this fixture, the stubs persist in the ``socket`` module's globals
+    after pytest exits, which can leak into other Python processes spawned from
+    the same interpreter (e.g., REPLs, jupyter kernels) and into other test
+    suites that share the same session.
+    """
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = _REAL_GETADDRINFO  # type: ignore[assignment]
+        socket.gethostbyname = _REAL_GETHOSTBYNAME  # type: ignore[assignment]
 
 
 @functools.lru_cache(maxsize=1)

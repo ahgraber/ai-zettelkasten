@@ -253,8 +253,12 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch):
 
     upload_called = []
     monkeypatch.setattr(
-        "aizk.conversion.workers.orchestrator._upload_converted",
-        lambda _job_id, _workspace, _config: upload_called.append(True),
+        "aizk.conversion.workers.orchestrator._prepare_upload",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        "aizk.conversion.workers.orchestrator._execute_upload",
+        lambda _plan, _job_id, _config: upload_called.append(True),
     )
 
     app = create_app()
