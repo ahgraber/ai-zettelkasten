@@ -139,3 +139,20 @@ class ConversionConfig(BaseSettings):
     api_host: str = Field(default="0.0.0.0", validation_alias="API_HOST")  # NOQA: S104
     api_port: int = Field(default=8000, validation_alias="API_PORT")
     api_reload: bool = Field(default=False, validation_alias="API_RELOAD")
+
+    prefetch_per_image_max_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        validation_alias="PREFETCH_PER_IMAGE_MAX_BYTES",
+    )
+    prefetch_max_images_per_doc: int = Field(
+        default=50,
+        validation_alias="PREFETCH_MAX_IMAGES_PER_DOC",
+    )
+    prefetch_max_total_bytes_per_doc: int = Field(
+        default=100 * 1024 * 1024,
+        validation_alias="PREFETCH_MAX_TOTAL_BYTES_PER_DOC",
+    )
+    prefetch_phase_deadline_seconds: float = Field(
+        default=60.0,
+        validation_alias="PREFETCH_PHASE_DEADLINE_SECONDS",
+    )

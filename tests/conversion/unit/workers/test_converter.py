@@ -53,7 +53,7 @@ def _make_picture(annotations: list) -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
-# Task 7.3: _get_classification_label
+# _get_classification_label
 # ---------------------------------------------------------------------------
 
 
@@ -92,7 +92,7 @@ class TestGetClassificationLabel:
 
 
 # ---------------------------------------------------------------------------
-# Task 7.4: _enrich_picture_descriptions
+# _enrich_picture_descriptions
 # ---------------------------------------------------------------------------
 
 
@@ -245,7 +245,7 @@ class TestEnrichPictureDescriptions:
 
 
 # ---------------------------------------------------------------------------
-# Task 7.5: AnnotationPictureSerializer with both annotations
+# AnnotationPictureSerializer with both annotations
 # ---------------------------------------------------------------------------
 
 

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
 from aizk.conversion.core.errors import WorkspaceEscape
+
+logger = logging.getLogger(__name__)
 
 OUTPUT_MARKDOWN_FILENAME = "output.md"
 METADATA_FILENAME = "metadata.json"
@@ -39,19 +42,39 @@ def _assert_within(workspace: Path, name: str) -> Path:
             path-level containment check.
     """
     if "/" in name or "\\" in name:
+        logger.warning(
+            "Workspace escape rejected: path separator in name",
+            extra={"workspace": str(workspace), "path_name": name},
+        )
         raise WorkspaceEscape(f"Unsafe path name contains separator: {name!r}")
     if os.path.isabs(name):
+        logger.warning(
+            "Workspace escape rejected: absolute path name",
+            extra={"workspace": str(workspace), "path_name": name},
+        )
         raise WorkspaceEscape(f"Absolute path not allowed: {name!r}")
     if name == "..":
+        logger.warning(
+            "Workspace escape rejected: bare traversal component",
+            extra={"workspace": str(workspace), "path_name": name},
+        )
         raise WorkspaceEscape(f"Path traversal component not allowed: {name!r}")
 
     composed = workspace / name
     try:
         resolved = composed.resolve()
     except Exception as exc:
+        logger.warning(
+            "Workspace escape rejected: path resolution failed",
+            extra={"workspace": str(workspace), "path_name": name},
+        )
         raise WorkspaceEscape(f"Could not resolve path {composed}") from exc
 
     if not resolved.is_relative_to(workspace.resolve()):
+        logger.warning(
+            "Workspace escape rejected: resolved path outside workspace",
+            extra={"workspace": str(workspace.resolve()), "path_name": name, "resolved": str(resolved)},
+        )
         raise WorkspaceEscape(f"Path {resolved} escapes workspace {workspace.resolve()}")
     return resolved
 

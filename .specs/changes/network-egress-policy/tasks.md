@@ -113,22 +113,22 @@
 
 ## Error handling, logging, and API hygiene
 
-- [ ] Wire `EgressPolicyError` (and all subclasses) into the job-failure pipeline so the job is failed with non-retryable classification.
+- [x] Wire `EgressPolicyError` (and all subclasses) into the job-failure pipeline so the job is failed with non-retryable classification.
   Locate the existing classification site by searching for the precedent error (e.g., `NoConverterForFormat`).
-- [ ] Add internal logging at `WARNING` level when any `EgressPolicyError` is raised: include the rejected destination (URL, hostname, resolved IP, redirect chain).
+- [x] Add internal logging at `WARNING` level when any `EgressPolicyError` is raised: include the rejected destination (URL, hostname, resolved IP, redirect chain).
   Use the existing structured logger.
-- [ ] Sanitize the `error_message` field persisted to `conversion_jobs` and any API response body: include only the policy-violation class name (e.g., `"deny_list"`, `"disallowed_scheme"`, `"scheme_downgrade"`, `"workspace_escape"`, `"dns_timeout"`), never the rejected destination.
-- [ ] Audit every security-policy enforcement site introduced by the security-audit work — across BOTH the `network-egress-policy` change and the already-shipped `deployment-trust-model` change — and ensure each emits a coherent diagnostic WARNING in addition to the audit log.
+- [x] Sanitize the `error_message` field persisted to `conversion_jobs` and any API response body: include only the policy-violation class name (e.g., `"deny_list"`, `"disallowed_scheme"`, `"scheme_downgrade"`, `"workspace_escape"`, `"dns_timeout"`), never the rejected destination.
+- [x] Audit every security-policy enforcement site introduced by the security-audit work — across BOTH the `network-egress-policy` change and the already-shipped `deployment-trust-model` change — and ensure each emits a coherent diagnostic WARNING in addition to the audit log.
   Enforcement sites in scope:
   - `network-egress-policy`: `UrlRef` construction-time egress check; `assert_egress_allowed` / `async_assert_egress_allowed`; `egress_fetch_bytes` redirect-loop rejections (deny-list-on-hop, `disallowed_scheme`, `scheme_downgrade`, hop-cap exhaustion, total-budget exhaustion, missing-`Location`); `egress_fetch_bytes` body size cap (`FetchTooLargeError`); `prefetch_images` per-image cap and per-document caps (count / total-bytes / phase-deadline); `_assert_within` workspace-escape rejections at both the subprocess-metadata seam and the converter local-fetch seam.
   - `deployment-trust-model`: `AIZK_AUTH_MODE` startup validation rejection; trusted-host allowlist rejection (Starlette `TrustedHostMiddleware`, HTTP 400); the migration NOT-NULL pre-alter assertion that raises `IrreversibleMigrationError` on unbackfilled rows.
     Diagnostic requirements per emit site: distinguish failure mode in the message (don't collapse multiple modes to one generic line); carry the rejected URL / path / host / IP / hostname / auth-mode value as a structured field; for size-cap failures include both the configured cap and the actually-observed size; for `prefetch_images` emit a per-conversion summary line (`"prefetched N, skipped M (X too-large, Y deny-list, Z network-error)"`) at the end of the phase; for `TrustedHostMiddleware` rejections log the offending `Host` header value (since the request is rejected before it reaches a route handler that could log it itself).
     Goal: an operator reading worker / API logs after a security-policy failure can answer "which policy fired, on what input, with what magnitude" without re-running the request under instrumentation.
-- [ ] Promote the `prefetch_images` per-image byte cap (currently the constant `_PER_IMAGE_MAX_BYTES = 10 MiB` in `html_prefetch.py`) and the per-document caps to operator-configurable settings on the conversion config (default to current values), so deployments that legitimately need larger images can raise the cap without a code change.
-- [ ] Unit test: a job submitted with a deny-set URL fails with non-retryable classification and the persisted `error_message` does not contain the rejected URL or IP.
-- [ ] Unit test: the structured WARNING log entry for the same job DOES contain the rejected destination (verify via log capture).
-- [ ] Unit test: an oversized `<img>` prefetch produces a WARNING that names `FetchTooLargeError`, the URL, the configured cap, and the observed-size bound (verify via log capture).
-- [ ] Unit test: the per-conversion `prefetch_images` summary line is emitted exactly once per `convert_html` call and reflects the per-failure-mode counts.
+- [x] Promote the `prefetch_images` per-image byte cap (currently the constant `_PER_IMAGE_MAX_BYTES = 10 MiB` in `html_prefetch.py`) and the per-document caps to operator-configurable settings on the conversion config (default to current values), so deployments that legitimately need larger images can raise the cap without a code change.
+- [x] Unit test: a job submitted with a deny-set URL fails with non-retryable classification and the persisted `error_message` does not contain the rejected URL or IP.
+- [x] Unit test: the structured WARNING log entry for the same job DOES contain the rejected destination (verify via log capture).
+- [x] Unit test: an oversized `<img>` prefetch produces a WARNING that names `FetchTooLargeError`, the URL, the configured cap, and the observed-size bound (verify via log capture).
+- [x] Unit test: the per-conversion `prefetch_images` summary line is emitted exactly once per `convert_html` call and reflects the per-failure-mode counts.
 
 ## End-to-end / integration
 
