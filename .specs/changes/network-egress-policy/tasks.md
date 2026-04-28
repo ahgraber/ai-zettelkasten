@@ -132,19 +132,19 @@
 
 ## End-to-end / integration
 
-- [ ] E2E test: submit a KaraKeep bookmark whose `source_url` is `http://169.254.169.254/latest/meta-data/`.
+- [x] E2E test: submit a KaraKeep bookmark whose `source_url` is `http://169.254.169.254/latest/meta-data/`.
   Assert resolver fails before fetcher dispatch, no outbound request is issued, job is non-retryable.
-- [ ] E2E test: submit a job whose URL returns a 302 redirect to `http://10.0.0.5/admin`.
+- [x] E2E test: submit a job whose URL returns a 302 redirect to `http://10.0.0.5/admin`.
   Assert hop is rejected, job is non-retryable, redirect target never fetched.
-- [ ] E2E test: submit a job whose URL returns HTML with `<img src="http://169.254.169.254/foo.png">` and one valid public `<img src>`.
+- [x] E2E test: submit a job whose URL returns HTML with `<img src="http://169.254.169.254/foo.png">` and one valid public `<img src>`.
   Assert the cloud-metadata image is omitted, the public image is pre-fetched into workspace, conversion succeeds, output references the workspace-local copy.
-- [ ] E2E test: simulate a malicious subprocess that emits `metadata.json` with `markdown_filename="../../etc/hostname"`.
+- [x] E2E test: simulate a malicious subprocess that emits `metadata.json` with `markdown_filename="../../etc/hostname"`.
   Assert parent uploader rejects with `WorkspaceEscape`, no `open()` is issued against the traversal path, no S3 upload is attempted.
-- [ ] E2E test: happy path — submit a public URL whose content has only public-host images.
+- [x] E2E test: happy path — submit a public URL whose content has only public-host images.
   Assert end-to-end conversion succeeds and S3 upload completes.
 
 ## Documentation
 
-- [ ] Add a short section to `src/aizk/conversion/README.md` (or equivalent docs entry point) describing the egress policy, deny-list categories, and the trust seam between the conversion subprocess and parent uploader.
+- [x] Add a short section to `src/aizk/conversion/README.md` (or equivalent docs entry point) describing the egress policy, deny-list categories, and the trust seam between the conversion subprocess and parent uploader.
   Link to the spec.
-- [ ] Add a comment block at the top of `egress.py` summarizing the deny set categories and pointing readers to the design's "IP classification library" decision.
+- [x] Add a comment block at the top of `egress.py` summarizing the deny set categories and pointing readers to the design's "IP classification library" decision.
