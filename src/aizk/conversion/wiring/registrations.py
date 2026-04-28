@@ -48,11 +48,12 @@ def register_fetchers(
 
 def register_converters(
     converter_registry: ConverterRegistry,
+    cfg: ConversionConfig,
     *,
     docling_cfg: DoclingConverterConfig,
 ) -> None:
     """Populate the converter registry with all production-ready converters."""
-    converter_registry.register(DoclingConverter(docling_cfg), "docling")
+    converter_registry.register(DoclingConverter(docling_cfg, cfg), "docling")
 
 
 def register_ready_adapters(
@@ -69,7 +70,7 @@ def register_ready_adapters(
     Kept for use by the worker runtime which requires both registries.
     """
     register_fetchers(fetcher_registry, cfg, karakeep_cfg=karakeep_cfg)
-    register_converters(converter_registry, docling_cfg=docling_cfg)
+    register_converters(converter_registry, cfg, docling_cfg=docling_cfg)
 
 
 def validate_chain_closure(fetcher_registry: FetcherRegistry, *, depth_cap: int) -> None:

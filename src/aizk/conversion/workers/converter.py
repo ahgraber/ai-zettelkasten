@@ -447,6 +447,11 @@ def convert_html(
     temp_dir: Path,
     config: DoclingConverterConfig,
     source_url: Optional[str] = None,
+    *,
+    prefetch_per_image_max_bytes: int = 10 * 1024 * 1024,
+    prefetch_max_images: int = 50,
+    prefetch_max_total_bytes: int = 100 * 1024 * 1024,
+    prefetch_phase_deadline_seconds: float = 60.0,
 ) -> tuple[str, list[Path]]:
     """Convert HTML to Markdown using Docling.
 
@@ -473,7 +478,16 @@ def convert_html(
         # src in place so Docling's local-fetch confinement gate refuses to
         # dereference it instead of opening an SSRF / blind-LFI primitive.
         html_text = html_bytes.decode("utf-8", errors="replace")
-        rewritten_html = asyncio.run(prefetch_images(html_text, temp_dir))
+        rewritten_html = asyncio.run(
+            prefetch_images(
+                html_text,
+                temp_dir,
+                per_image_max_bytes=prefetch_per_image_max_bytes,
+                max_images=prefetch_max_images,
+                max_total_bytes=prefetch_max_total_bytes,
+                phase_deadline_seconds=prefetch_phase_deadline_seconds,
+            )
+        )
         prefetched_bytes = rewritten_html.encode("utf-8")
         source = DocumentStream(name="document.html", stream=BytesIO(prefetched_bytes))
         if config.is_picture_description_enabled() and not config.picture_classification_enabled:

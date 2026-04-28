@@ -37,6 +37,7 @@ from __future__ import annotations
 import concurrent.futures
 from dataclasses import dataclass
 import ipaddress
+import logging
 import socket
 import threading
 from typing import Final
@@ -47,6 +48,8 @@ from aizk.conversion.core.errors import (
     DisallowedScheme,
     DnsTimeout,
 )
+
+logger = logging.getLogger(__name__)
 
 _DNS_TIMEOUT_SECONDS: Final[float] = 2.0
 _DNS_EXECUTOR_WORKERS: Final[int] = 4
@@ -210,6 +213,10 @@ def _resolve_with_deadline(
     try:
         results = future.result(timeout=deadline)
     except concurrent.futures.TimeoutError as exc:
+        logger.warning(
+            "Egress denied: DNS resolution exceeded deadline",
+            extra={"host": host, "deadline_seconds": deadline},
+        )
         raise DnsTimeout(f"DNS resolution exceeded {deadline}s deadline") from exc
     addresses: list[tuple[str, int]] = []
     for family, _socktype, _proto, _canonname, sockaddr in results:
@@ -230,10 +237,15 @@ def assert_egress_allowed(url: str) -> ValidatedDestination:
     parsed = urlparse(url)
     scheme = parsed.scheme.lower()
     if scheme not in _ALLOWED_SCHEMES:
+        logger.warning(
+            "Egress denied: disallowed scheme",
+            extra={"scheme": scheme, "url": url},
+        )
         raise DisallowedScheme(f"Scheme {scheme!r} is not in the egress allowlist")
 
     host = parsed.hostname
     if not host:
+        logger.warning("Egress denied: URL missing hostname", extra={"url": url})
         raise DisallowedScheme("URL is missing a hostname")
 
     port = parsed.port
@@ -242,11 +254,19 @@ def assert_egress_allowed(url: str) -> ValidatedDestination:
 
     addresses = _resolve_with_deadline(host, port)
     if not addresses:
+        logger.warning(
+            "Egress denied: no addresses resolved",
+            extra={"host": host, "url": url},
+        )
         raise DenyListDestination(f"No addresses resolved for host {host!r}")
 
     for ip_str, _family in addresses:
         ip = ipaddress.ip_address(ip_str)
         if _classify_address(ip):
+            logger.warning(
+                "Egress denied: resolved address in deny set",
+                extra={"host": host, "ip": ip_str, "url": url},
+            )
             raise DenyListDestination(f"Resolved address for host {host!r} is in the egress deny set")
 
     first_ip = addresses[0][0]

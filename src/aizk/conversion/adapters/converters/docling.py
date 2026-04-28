@@ -10,10 +10,10 @@ from __future__ import annotations
 
 from pathlib import Path
 import tempfile
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Optional
 
 from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput
-from aizk.conversion.utilities.config import DoclingConverterConfig
+from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig
 from aizk.conversion.utilities.hashing import build_output_config_snapshot
 from aizk.conversion.workers.converter import convert_html, convert_pdf
 
@@ -34,8 +34,17 @@ class DoclingConverter:
     supported_formats: ClassVar[frozenset[ContentType]] = frozenset({ContentType.PDF, ContentType.HTML})
     requires_gpu: ClassVar[bool] = True
 
-    def __init__(self, config: DoclingConverterConfig) -> None:
+    def __init__(self, config: DoclingConverterConfig, conversion_config: Optional[ConversionConfig] = None) -> None:
+        """Initialize with Docling-specific and conversion-level configs.
+
+        Args:
+            config: Docling-specific adapter configuration.
+            conversion_config: Operator-level conversion configuration used for
+                prefetch caps. When ``None``, the per-call defaults in
+                ``convert_html`` (matching the module constants) are used.
+        """
         self._config = config
+        self._conversion_config = conversion_config
 
     def convert(self, input: ConversionInput) -> ConversionArtifacts:  # noqa: A002 — protocol argument name
         """Dispatch ``input`` to the appropriate Docling conversion function."""
@@ -53,11 +62,20 @@ class DoclingConverter:
         if input.content_type is ContentType.HTML:
             source_url = input.metadata.get("source_url") if input.metadata else None
             temp_dir = Path(tempfile.mkdtemp(prefix="docling-html-"))
+            prefetch_kwargs: dict[str, Any] = {}
+            if self._conversion_config is not None:
+                prefetch_kwargs = {
+                    "prefetch_per_image_max_bytes": self._conversion_config.prefetch_per_image_max_bytes,
+                    "prefetch_max_images": self._conversion_config.prefetch_max_images_per_doc,
+                    "prefetch_max_total_bytes": self._conversion_config.prefetch_max_total_bytes_per_doc,
+                    "prefetch_phase_deadline_seconds": self._conversion_config.prefetch_phase_deadline_seconds,
+                }
             markdown, figures = convert_html(
                 input.content,
                 temp_dir=temp_dir,
                 config=self._config,
                 source_url=source_url,
+                **prefetch_kwargs,
             )
             return ConversionArtifacts(markdown=markdown, figures=list(figures), metadata=metadata)
 

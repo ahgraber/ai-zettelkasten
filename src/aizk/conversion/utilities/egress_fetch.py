@@ -25,10 +25,13 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import io
+import logging
 import re
 import time
 from typing import Final
 from urllib.parse import urljoin, urlparse
+
+logger = logging.getLogger(__name__)
 
 import httpx
 
@@ -108,10 +111,18 @@ async def _validate_for_hop(url: str, *, hop_index: int) -> ValidatedDestination
     except DenyListDestination:
         if hop_index == 0:
             raise
+        logger.warning(
+            "Egress denied: redirect hop target is in deny set",
+            extra={"url": url, "hop_index": hop_index},
+        )
         raise RedirectEgressViolation(reason="deny_list") from None
     except DisallowedScheme:
         if hop_index == 0:
             raise
+        logger.warning(
+            "Egress denied: redirect hop target has disallowed scheme",
+            extra={"url": url, "hop_index": hop_index},
+        )
         raise RedirectEgressViolation(reason="disallowed_scheme") from None
 
 
@@ -131,6 +142,10 @@ def _follow_redirect(
     nxt = urlparse(next_url)
 
     if prev.scheme.lower() == "https" and nxt.scheme.lower() == "http":
+        logger.warning(
+            "Egress denied: https→http scheme downgrade on redirect",
+            extra={"from_url": current_url, "to_url": next_url},
+        )
         raise RedirectEgressViolation(reason="scheme_downgrade")
 
     next_headers = _strip_auth_headers(current_headers) if prev.hostname != nxt.hostname else dict(current_headers)
@@ -151,6 +166,10 @@ async def _read_capped_body(response: httpx.Response, url: str, max_bytes: int) 
         except ValueError:
             length = None
         if length is not None and length > max_bytes:
+            logger.warning(
+                "Egress fetch aborted: Content-Length exceeds configured cap",
+                extra={"url": url, "configured_cap_bytes": max_bytes, "declared_length_bytes": length},
+            )
             raise FetchTooLargeError(f"Response from {url!r} exceeds configured limit of {max_bytes} bytes")
 
     buffer = io.BytesIO()
@@ -158,6 +177,10 @@ async def _read_capped_body(response: httpx.Response, url: str, max_bytes: int) 
     async for chunk in response.aiter_bytes():
         total += len(chunk)
         if total > max_bytes:
+            logger.warning(
+                "Egress fetch aborted: streaming response body exceeds configured cap",
+                extra={"url": url, "configured_cap_bytes": max_bytes, "observed_size_bytes_bound": total},
+            )
             raise FetchTooLargeError(f"Response from {url!r} exceeds configured limit of {max_bytes} bytes")
         buffer.write(chunk)
     return buffer.getvalue()
@@ -189,6 +212,10 @@ async def _do_one_hop(
                 if response.status_code in _REDIRECT_STATUS_CODES:
                     location = response.headers.get("location")
                     if not location:
+                        logger.warning(
+                            "Egress fetch: 3xx response missing Location header",
+                            extra={"url": url, "status_code": response.status_code},
+                        )
                         raise FetchError("3xx response missing Location header")
                     return _Redirect(location=location)
                 response.raise_for_status()
@@ -247,6 +274,10 @@ async def egress_fetch_bytes(
 
     for hop in range(max_redirects + 1):
         if time.monotonic() > deadline:
+            logger.warning(
+                "Egress fetch aborted: total redirect-chain budget exhausted",
+                extra={"url": url, "budget_seconds": total_budget_seconds, "hop": hop},
+            )
             raise FetchError(f"Egress fetch exceeded total redirect budget of {total_budget_seconds}s")
 
         destination = await _validate_for_hop(current_url, hop_index=hop)
@@ -264,6 +295,10 @@ async def egress_fetch_bytes(
 
         # 3xx: enforce hop cap, then follow.
         if hop >= max_redirects:
+            logger.warning(
+                "Egress fetch aborted: redirect hop cap exhausted",
+                extra={"url": current_url, "max_redirects": max_redirects},
+            )
             raise RedirectEgressViolation(reason="deny_list")
         current_url, current_headers = _follow_redirect(result.location, current_url, current_headers)
 

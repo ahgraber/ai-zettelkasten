@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Literal
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
+from aizk.conversion.core.errors import EgressPolicyError
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as SourceRecord
 from aizk.conversion.db import get_engine
@@ -516,10 +517,18 @@ def handle_job_error(job_id: int, error: Exception, config: ConversionConfig) ->
     now = _utcnow()
 
     error_code = getattr(error, "error_code", "conversion_failed")
-    message = str(error)
     error_detail = getattr(error, "traceback", None)
 
     retryable: bool = error.retryable  # type: ignore[attr-defined]
+
+    # EgressPolicyError messages carry rejected destinations (URLs, IPs) that must
+    # not be echoed into the persisted error_message or any API response body.
+    # Use only the policy-violation class name (error_code) for the stored message;
+    # the full detail is already captured by the enforcement-site WARNING logs.
+    if isinstance(error, EgressPolicyError):
+        message = error_code
+    else:
+        message = str(error)
 
     logger.error(
         "Job %s failed: %s (code=%s, retryable=%s)",

@@ -63,31 +63,34 @@ def _extension_for_content_type(ct_header: str | None) -> str:
     return _CONTENT_TYPE_TO_EXT.get(primary, _DEFAULT_EXT)
 
 
-async def _fetch_and_save_one(src: str, images_dir: Path) -> Path | None:
+async def _fetch_and_save_one(
+    src: str,
+    images_dir: Path,
+    *,
+    per_image_max_bytes: int,
+) -> Path:
     """Fetch one ``<img src>`` and save it under ``images_dir``; return the local path.
 
-    Returns ``None`` on any failure (egress rejection, size overrun, network
-    error). The caller leaves the original ``src`` in place when ``None`` is
-    returned so Docling's workspace-confinement gate can reject it later.
-    """
-    try:
-        body, response_headers = await egress_fetch_bytes(
-            src,
-            max_response_bytes=_PER_IMAGE_MAX_BYTES,
-        )
-    except (EgressPolicyError, FetchTooLargeError, FetchError) as exc:
-        logger.warning(
-            "Skipping prefetch for image due to typed failure",
-            extra={"img_src": src, "error_class": exc.__class__.__name__},
-        )
-        return None
-    except Exception as exc:
-        logger.warning(
-            "Skipping prefetch for image due to unexpected error",
-            extra={"img_src": src, "error_class": exc.__class__.__name__},
-        )
-        return None
+    Raises ``EgressPolicyError``, ``FetchTooLargeError``, or ``FetchError`` on
+    failure so the caller can classify each skip by failure mode.
 
+    Args:
+        src: Absolute URL of the image to fetch.
+        images_dir: Directory to write the fetched image into.
+        per_image_max_bytes: Per-image byte cap forwarded to ``egress_fetch_bytes``.
+
+    Returns:
+        Path of the saved image file.
+
+    Raises:
+        EgressPolicyError: When the egress policy rejects the URL.
+        FetchTooLargeError: When the response body exceeds ``per_image_max_bytes``.
+        FetchError: For other network failures.
+    """
+    body, response_headers = await egress_fetch_bytes(
+        src,
+        max_response_bytes=per_image_max_bytes,
+    )
     ext = _extension_for_content_type(response_headers.get("content-type"))
     digest = hashlib.sha256(body).hexdigest()
     local_path = images_dir / f"{digest}{ext}"
@@ -95,7 +98,15 @@ async def _fetch_and_save_one(src: str, images_dir: Path) -> Path | None:
     return local_path
 
 
-async def prefetch_images(html: str, workspace: Path) -> str:
+async def prefetch_images(
+    html: str,
+    workspace: Path,
+    *,
+    per_image_max_bytes: int = _PER_IMAGE_MAX_BYTES,
+    max_images: int = _MAX_IMAGES_PER_DOC,
+    max_total_bytes: int = _MAX_TOTAL_BYTES_PER_DOC,
+    phase_deadline_seconds: float = _PHASE_DEADLINE_SECONDS,
+) -> str:
     """Pre-fetch every ``<img src>`` in ``html`` and rewrite each to a workspace-local path.
 
     ``data:`` URLs are passed through unchanged (no fetch). All other ``src``
@@ -103,10 +114,11 @@ async def prefetch_images(html: str, workspace: Path) -> str:
     by sha256, and are written to ``workspace/prefetched-images/<sha256>.<ext>``.
     The rewritten ``src`` is the absolute path of that local copy.
 
-    Per-document caps:
-        * 50 images max
-        * 100 MiB total prefetched bytes
-        * 60 s wall-clock budget for the entire prefetch phase
+    Per-document caps (configurable via parameters):
+        * ``max_images`` images max (default 50)
+        * ``max_total_bytes`` total prefetched bytes (default 100 MiB)
+        * ``phase_deadline_seconds`` wall-clock budget for the prefetch phase (default 60 s)
+        * ``per_image_max_bytes`` per-image byte cap (default 10 MiB)
 
     Once any cap is hit (or any individual image fails), the remaining
     ``<img src>`` values are left as-is. The downstream Docling configuration
@@ -114,10 +126,17 @@ async def prefetch_images(html: str, workspace: Path) -> str:
     to dereference them, so the offending images drop out of the output
     rather than becoming SSRF / blind-LFI primitives.
 
+    A per-conversion summary is logged at INFO level at the end of the phase
+    with per-failure-mode counts.
+
     Args:
         html: Source HTML string.
         workspace: Per-job workspace directory. ``prefetched-images/`` is
             created underneath if it does not exist.
+        per_image_max_bytes: Per-image byte cap (streaming-enforced).
+        max_images: Maximum number of images to prefetch per document.
+        max_total_bytes: Maximum total bytes prefetched per document.
+        phase_deadline_seconds: Wall-clock budget for the entire prefetch phase.
 
     Returns:
         Serialized HTML with each successfully prefetched ``<img src>``
@@ -127,29 +146,85 @@ async def prefetch_images(html: str, workspace: Path) -> str:
     images_dir = workspace / _IMAGES_SUBDIR
     images_dir.mkdir(parents=True, exist_ok=True)
 
-    deadline = time.monotonic() + _PHASE_DEADLINE_SECONDS
+    deadline = time.monotonic() + phase_deadline_seconds
     fetched_count = 0
     fetched_bytes = 0
+    egress_blocked = 0
+    too_large = 0
+    errors = 0
+    cap_hit_logged = False
 
     for img in doc.iter("img"):
         src = img.get("src")
         if not src or src.startswith("data:"):
             continue
 
-        if fetched_count >= _MAX_IMAGES_PER_DOC:
+        if fetched_count >= max_images:
+            if not cap_hit_logged:
+                logger.warning(
+                    "prefetch_images: image count cap reached; remaining images left as-is",
+                    extra={"max_images": max_images},
+                )
+                cap_hit_logged = True
             continue
-        if fetched_bytes >= _MAX_TOTAL_BYTES_PER_DOC:
+        if fetched_bytes >= max_total_bytes:
+            if not cap_hit_logged:
+                logger.warning(
+                    "prefetch_images: total bytes cap reached; remaining images left as-is",
+                    extra={"max_total_bytes": max_total_bytes, "fetched_bytes": fetched_bytes},
+                )
+                cap_hit_logged = True
             continue
         if time.monotonic() > deadline:
+            if not cap_hit_logged:
+                logger.warning(
+                    "prefetch_images: phase deadline reached; remaining images left as-is",
+                    extra={"phase_deadline_seconds": phase_deadline_seconds},
+                )
+                cap_hit_logged = True
             continue
 
-        local_path = await _fetch_and_save_one(src, images_dir)
-        if local_path is None:
+        try:
+            local_path = await _fetch_and_save_one(src, images_dir, per_image_max_bytes=per_image_max_bytes)
+        except EgressPolicyError as exc:
+            logger.warning(
+                "prefetch_images: egress policy rejected image src",
+                extra={"img_src": src, "error_class": exc.__class__.__name__},
+            )
+            egress_blocked += 1
+            continue
+        except FetchTooLargeError as exc:
+            logger.warning(
+                "prefetch_images: image skipped — response exceeds per-image cap",
+                extra={
+                    "img_src": src,
+                    "error_class": exc.__class__.__name__,
+                    "per_image_cap_bytes": per_image_max_bytes,
+                },
+            )
+            too_large += 1
+            continue
+        except Exception as exc:
+            logger.warning(
+                "prefetch_images: image skipped due to unexpected error",
+                extra={"img_src": src, "error_class": exc.__class__.__name__},
+            )
+            errors += 1
             continue
 
         img.set("src", str(local_path.resolve()))
         fetched_count += 1
         fetched_bytes += local_path.stat().st_size
+
+    skipped = egress_blocked + too_large + errors
+    logger.info(
+        "prefetch_images: prefetched %d, skipped %d (egress_blocked=%d, too_large=%d, errors=%d)",
+        fetched_count,
+        skipped,
+        egress_blocked,
+        too_large,
+        errors,
+    )
 
     return lxml.html.tostring(doc, encoding="unicode")
 

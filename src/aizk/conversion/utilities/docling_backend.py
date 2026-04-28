@@ -110,6 +110,10 @@ def make_confined_backend(workspace: Path) -> type[HTMLDocumentBackend]:
 
             resolved = Path(path_str).resolve()
             if not resolved.is_relative_to(_workspace_resolved):
+                logger.warning(
+                    "Workspace escape rejected: local image path outside workspace",
+                    extra={"src_loc": src_loc, "resolved": str(resolved), "workspace": str(_workspace_resolved)},
+                )
                 raise WorkspaceEscape(
                     f"Image path resolves outside workspace: {resolved!s} is not within {_workspace_resolved!s}"
                 )
