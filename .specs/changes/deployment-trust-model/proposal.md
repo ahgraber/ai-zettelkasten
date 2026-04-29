@@ -13,7 +13,8 @@ This change makes the trust model explicit, formalizes a single supported deploy
 
 - New `Principal` abstraction with `subject` and `provenance`, resolved on every request via a FastAPI dependency.
 - New `AIZK_AUTH_MODE` configuration setting accepting only `trust_network` at cutover.
-- Startup-time refusal: the API process SHALL fail to start if `AIZK_AUTH_MODE` is unset, unrecognized, or set to a mode that exists in the type but is not implemented.
+- Startup-time refusal: the API process SHALL fail to start if `AIZK_AUTH_MODE` is unrecognized or set to a mode that exists in the type but is not implemented.
+  An unset value defaults to `trust_network` (the only implemented mode) so a fresh clone runs without explicit configuration; the safety property holds because every recognized mode is rejected unless its resolver branch is implemented.
 - New `AIZK_DEFAULT_PRINCIPAL` setting supplying the subject in `trust_network` mode.
 - New `AIZK_TRUSTED_HOSTS` allowlist enforced on every request as defense-in-depth for `trust_network` deployments.
 - Three new `owner_id` columns: `sources.owner_id`, `conversion_jobs.owner_id`, `conversion_outputs.owner_id` (NOT NULL after backfill).
