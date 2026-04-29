@@ -13,7 +13,7 @@ from uuid import UUID
 
 from sqlmodel import Session, select
 
-from aizk.conversion.core.errors import WorkspaceEscape
+from aizk.conversion.core.errors import MissingOwnerOnJob, WorkspaceEscape
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
@@ -78,6 +78,7 @@ class _UploadPlan:
     """
 
     aizk_uuid: UUID
+    owner_id: str
     title: str
     payload_version: int
     s3_prefix_uri: str
@@ -140,9 +141,12 @@ def _prepare_upload(job_id: int, workspace: Path, config: ConversionConfig) -> _
                 prior_output.id,
                 prior_output.s3_prefix,
             )
+            if not job.owner_id:
+                raise MissingOwnerOnJob(f"Job {job_id} has no owner_id; refusing to create Output row")
             output = ConversionOutput(
                 job_id=job.id,
                 aizk_uuid=source.aizk_uuid,
+                owner_id=job.owner_id,
                 title=source.title or job.title,
                 payload_version=job.payload_version,
                 s3_prefix=prior_output.s3_prefix,
@@ -213,8 +217,11 @@ def _prepare_upload(job_id: int, workspace: Path, config: ConversionConfig) -> _
         )
         save_manifest(manifest, manifest_local_path)
 
+        if not job.owner_id:
+            raise MissingOwnerOnJob(f"Job {job_id} has no owner_id; refusing to build upload plan")
         return _UploadPlan(
             aizk_uuid=source.aizk_uuid,
+            owner_id=job.owner_id,
             title=source.title or job.title,
             payload_version=job.payload_version,
             s3_prefix_uri=s3_prefix_uri,
@@ -252,6 +259,7 @@ def _execute_upload(plan: _UploadPlan, job_id: int, config: ConversionConfig) ->
         output = ConversionOutput(
             job_id=job_id,
             aizk_uuid=plan.aizk_uuid,
+            owner_id=plan.owner_id,
             title=plan.title,
             payload_version=plan.payload_version,
             s3_prefix=plan.s3_prefix_uri,

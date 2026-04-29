@@ -45,6 +45,7 @@ def _create_output(session, *, job_id: int, aizk_uuid: UUID, s3_prefix: str = "p
     output = ConversionOutput(
         job_id=job_id,
         aizk_uuid=aizk_uuid,
+        owner_id="self",
         title="Test Output",
         payload_version=1,
         s3_prefix=s3_prefix,

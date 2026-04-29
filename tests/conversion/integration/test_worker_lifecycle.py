@@ -196,6 +196,7 @@ def _create_test_bookmark(db_session: Session) -> Bookmark:
         karakeep_id="bm_lifecycle_test",
         source_ref=_ref.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(_ref),
+        owner_id="self",
         url="https://example.com/test",
         normalized_url="https://example.com/test",
         title="Lifecycle Test",
@@ -213,6 +214,7 @@ def _create_test_job(db_session: Session, bookmark: Bookmark, status: Conversion
     source_ref = KarakeepBookmarkRef(kind="karakeep_bookmark", bookmark_id=bookmark.karakeep_id or "bm_lifecycle_test")
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title or "Test Job",
         idempotency_key="lifecycle" * 8,
         status=status,

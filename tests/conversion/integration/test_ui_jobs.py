@@ -14,6 +14,7 @@ def test_ui_jobs_renders_table_and_filters(db_session) -> None:
     app = create_app()
     _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_jobs")
     bookmark = Bookmark(
+        owner_id="self",
         karakeep_id="bm_ui_jobs",
         source_ref=_ref.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(_ref),
@@ -29,6 +30,7 @@ def test_ui_jobs_renders_table_and_filters(db_session) -> None:
 
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.FAILED_PERM,
@@ -72,6 +74,7 @@ def test_ui_jobs_filters_across_all_jobs(db_session) -> None:
 
     _ref_target = KarakeepBookmarkRef(bookmark_id="bm_ui_target")
     target_bookmark = Bookmark(
+        owner_id="self",
         karakeep_id="bm_ui_target",
         source_ref=_ref_target.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(_ref_target),
@@ -87,6 +90,7 @@ def test_ui_jobs_filters_across_all_jobs(db_session) -> None:
 
     target_job = ConversionJob(
         aizk_uuid=target_bookmark.aizk_uuid,
+        owner_id="self",
         title="Special Target",
         payload_version=1,
         status=ConversionJobStatus.FAILED_PERM,
@@ -101,6 +105,7 @@ def test_ui_jobs_filters_across_all_jobs(db_session) -> None:
     for idx in range(60):
         _ref_noise = KarakeepBookmarkRef(bookmark_id=f"bm_ui_jobs_{idx}")
         bookmark = Bookmark(
+            owner_id="self",
             karakeep_id=f"bm_ui_jobs_{idx}",
             source_ref=_ref_noise.model_dump_json(),
             source_ref_hash=compute_source_ref_hash(_ref_noise),
@@ -114,6 +119,7 @@ def test_ui_jobs_filters_across_all_jobs(db_session) -> None:
         queued_at = base_time + dt.timedelta(minutes=idx + 1)
         job = ConversionJob(
             aizk_uuid=bookmark.aizk_uuid,
+            owner_id="self",
             title=bookmark.title,
             payload_version=1,
             status=ConversionJobStatus.SUCCEEDED,
@@ -144,6 +150,7 @@ def test_ui_jobs_delete_action_removes_failed_and_cancelled_jobs(db_session) -> 
     app = create_app()
     _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_delete")
     bookmark = Bookmark(
+        owner_id="self",
         karakeep_id="bm_ui_delete",
         source_ref=_ref.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(_ref),
@@ -159,6 +166,7 @@ def test_ui_jobs_delete_action_removes_failed_and_cancelled_jobs(db_session) -> 
 
     failed_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.FAILED_RETRYABLE,
@@ -167,6 +175,7 @@ def test_ui_jobs_delete_action_removes_failed_and_cancelled_jobs(db_session) -> 
     )
     cancelled_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.CANCELLED,
@@ -200,6 +209,7 @@ def test_ui_jobs_delete_action_rejects_non_deletable_status(db_session) -> None:
     app = create_app()
     _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_delete_reject")
     bookmark = Bookmark(
+        owner_id="self",
         karakeep_id="bm_ui_delete_reject",
         source_ref=_ref.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(_ref),
@@ -215,6 +225,7 @@ def test_ui_jobs_delete_action_rejects_non_deletable_status(db_session) -> None:
 
     queued_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.QUEUED,
@@ -254,6 +265,7 @@ def test_ui_jobs_search_with_no_matches_shows_filtered_empty_message(db_session)
     app = create_app()
     _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_search_empty")
     bookmark = Bookmark(
+        owner_id="self",
         karakeep_id="bm_ui_search_empty",
         source_ref=_ref.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(_ref),
@@ -269,6 +281,7 @@ def test_ui_jobs_search_with_no_matches_shows_filtered_empty_message(db_session)
 
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.SUCCEEDED,
@@ -290,6 +303,7 @@ def test_ui_jobs_status_filter_with_no_matches_shows_filtered_empty_message(db_s
     app = create_app()
     _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_status_empty")
     bookmark = Bookmark(
+        owner_id="self",
         karakeep_id="bm_ui_status_empty",
         source_ref=_ref.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(_ref),
@@ -305,6 +319,7 @@ def test_ui_jobs_status_filter_with_no_matches_shows_filtered_empty_message(db_s
 
     succeeded_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.SUCCEEDED,
@@ -313,6 +328,7 @@ def test_ui_jobs_status_filter_with_no_matches_shows_filtered_empty_message(db_s
     )
     queued_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.QUEUED,
@@ -335,6 +351,7 @@ def test_ui_jobs_bulk_cancel_mixed_eligibility_splits_applied_and_ineligible(db_
     app = create_app()
     _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_mixed_cancel")
     bookmark = Bookmark(
+        owner_id="self",
         karakeep_id="bm_ui_mixed_cancel",
         source_ref=_ref.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(_ref),
@@ -350,6 +367,7 @@ def test_ui_jobs_bulk_cancel_mixed_eligibility_splits_applied_and_ineligible(db_
 
     queued_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.QUEUED,
@@ -358,6 +376,7 @@ def test_ui_jobs_bulk_cancel_mixed_eligibility_splits_applied_and_ineligible(db_
     )
     succeeded_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.SUCCEEDED,
@@ -392,6 +411,7 @@ def test_ui_jobs_bulk_action_missing_job_counted_as_ineligible(db_session) -> No
     app = create_app()
     _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_missing_id")
     bookmark = Bookmark(
+        owner_id="self",
         karakeep_id="bm_ui_missing_id",
         source_ref=_ref.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(_ref),
@@ -407,6 +427,7 @@ def test_ui_jobs_bulk_action_missing_job_counted_as_ineligible(db_session) -> No
 
     queued_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.QUEUED,
@@ -435,6 +456,7 @@ def test_ui_jobs_bulk_action_all_eligible_omits_skipped_phrase(db_session) -> No
     app = create_app()
     _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_all_eligible")
     bookmark = Bookmark(
+        owner_id="self",
         karakeep_id="bm_ui_all_eligible",
         source_ref=_ref.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(_ref),
@@ -450,6 +472,7 @@ def test_ui_jobs_bulk_action_all_eligible_omits_skipped_phrase(db_session) -> No
 
     queued_a = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.QUEUED,
@@ -458,6 +481,7 @@ def test_ui_jobs_bulk_action_all_eligible_omits_skipped_phrase(db_session) -> No
     )
     queued_b = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.QUEUED,

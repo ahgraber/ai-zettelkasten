@@ -6,7 +6,7 @@
   Found at `src/aizk/conversion/utilities/config.py` (`ConversionConfig`); existing fields use `validation_alias` with bare env names, while sub-configs (`DoclingConverterConfig`, `IngressPolicy`) use `AIZK_*__*` nested prefixes.
 - [x] Add `auth_mode: Literal["trust_network", "token", "proxy_headers", "oidc"] = "trust_network"` field to the settings model with env-var binding to `AIZK_AUTH_MODE`.
   Placed on a new `AuthSettings` sub-model (per user direction); literal env-var name preserved via `validation_alias="AIZK_AUTH_MODE"`.
-- [x] Add `default_principal: str = "local"` field to the settings model with env-var binding to `AIZK_DEFAULT_PRINCIPAL`.
+- [x] Add `default_principal: str = "self"` field to the settings model with env-var binding to `AIZK_DEFAULT_PRINCIPAL`.
   On `AuthSettings`; `validation_alias="AIZK_DEFAULT_PRINCIPAL"`.
 - [x] Add `trusted_hosts: list[str] = ["localhost", "127.0.0.1"]` field to the settings model with env-var binding to `AIZK_TRUSTED_HOSTS`.
   Placed on `ConversionConfig` (network host enforcement, not auth identity).
@@ -53,7 +53,7 @@
   Added `get_auth_settings` (paralleling existing `get_config`) reading from `app.state.auth_settings`.
   Lifespan now constructs `AuthSettings()` alongside `ConversionConfig()` so a bad `AIZK_AUTH_MODE` raises `ConfigurationError` before the listener binds.
   `get_principal` depends only on `AuthSettings` (no `Request` needed in trust_network mode) — strongest form of "headers not consulted."
-- [x] Unit test `tests/aizk/conversion/api/test_dependencies.py`: `get_principal` with `auth_mode="trust_network"` and `default_principal="local"` returns `Principal(subject="local", provenance="trust_network")`.
+- [x] Unit test `tests/aizk/conversion/api/test_dependencies.py`: `get_principal` with `auth_mode="trust_network"` and `default_principal="self"` returns `Principal(subject="self", provenance="trust_network")`.
   Placed in `tests/conversion/unit/api/test_dependencies.py`.
 - [x] Unit test: `get_principal` does NOT consult `request.headers["Authorization"]` or `request.headers["X-Forwarded-User"]` — set those headers, assert the returned subject is still `default_principal`.
   Asserted structurally: `get_principal` takes no `Request` argument in `trust_network` mode, so headers are inaccessible.
@@ -62,37 +62,46 @@
 
 ## Datamodel additions
 
-- [ ] Add `owner_id: str = Field(nullable=False, index=True)` to the `Source` SQLModel definition in `src/aizk/conversion/datamodel/source.py`.
-- [ ] Add `owner_id: str = Field(nullable=False, index=True)` to the `Job` SQLModel definition in `src/aizk/conversion/datamodel/job.py`.
-- [ ] Add `owner_id: str = Field(nullable=False, index=True)` to the `Output` SQLModel definition in `src/aizk/conversion/datamodel/output.py`.
-- [ ] Verify the index naming convention against existing indexes on these tables (e.g., `ix_<table>_<column>`); confirm SQLModel auto-generates names matching the project's `op.create_index` calls in existing migrations.
+- [x] Add `owner_id: str = Field(nullable=False, index=True)` to the `Source` SQLModel definition in `src/aizk/conversion/datamodel/source.py`.
+- [x] Add `owner_id: str = Field(nullable=False, index=True)` to the `Job` SQLModel definition in `src/aizk/conversion/datamodel/job.py`.
+- [x] Add `owner_id: str = Field(nullable=False, index=True)` to the `Output` SQLModel definition in `src/aizk/conversion/datamodel/output.py`.
+- [x] Verify the index naming convention against existing indexes on these tables (e.g., `ix_<table>_<column>`); confirm SQLModel auto-generates names matching the project's `op.create_index` calls in existing migrations.
+  Confirmed: SQLModel's `index=True` auto-generates `ix_<table>_<column>` (e.g., `ix_sources_aizk_uuid`); migration uses `batch_op.f(f"ix_{table}_owner_id")` to match.
 
 ## Alembic migration
 
-- [ ] Create a new migration script in `src/aizk/conversion/migrations/versions/` named for the change (e.g., `<rev>_add_owner_id_columns.py`).
-  Use the existing migration script style and `down_revision` pointing at the current head.
-- [ ] In `upgrade()`: import `Settings` from the conversion settings module and read `default_principal_value = Settings().default_principal` once at the top of the function.
-- [ ] In `upgrade()`: call `op.batch_alter_table("sources")` adding `owner_id TEXT` NULLABLE; same for `conversion_jobs` and `conversion_outputs`.
+- [x] Create a new migration script in `src/aizk/conversion/migrations/versions/` named for the change (e.g., `<rev>_add_owner_id_columns.py`).
+  Created `e6f7a8b9c0d1_add_owner_id_columns.py` with `down_revision = "d5e6f7a8b9c0"` (current head).
+- [x] In `upgrade()`: import `Settings` from the conversion settings module and read `default_principal_value = Settings().default_principal` once at the top of the function.
+  Reads `AuthSettings().default_principal` (the principal sub-config the project actually places this field on).
+- [x] In `upgrade()`: call `op.batch_alter_table("sources")` adding `owner_id TEXT` NULLABLE; same for `conversion_jobs` and `conversion_outputs`.
   Use `batch_alter_table` because SQLite requires the table-rebuild dance.
-- [ ] In `upgrade()`: execute three `UPDATE <table> SET owner_id = :default WHERE owner_id IS NULL` statements bound to `default_principal_value`.
-- [ ] In `upgrade()`: for each of the three tables, run `SELECT COUNT(*) FROM <table> WHERE owner_id IS NULL`; if any return > 0, raise `IrreversibleMigrationError` with a message identifying the per-table NULL counts.
-- [ ] In `upgrade()`: `batch_alter_table` to alter `owner_id` to NOT NULL on all three tables.
-- [ ] In `upgrade()`: `op.create_index("ix_sources_owner_id", "sources", ["owner_id"])`; same pattern for `conversion_jobs` and `conversion_outputs`.
-- [ ] In `downgrade()`: `op.drop_index("ix_sources_owner_id")`; same for the other two indexes; then `batch_alter_table` to drop `owner_id` from each table.
-- [ ] Migration test `tests/conversion/unit/test_migrations.py`: upgrade-to-head on a database pre-populated with rows in all three tables → every row has `owner_id = AIZK_DEFAULT_PRINCIPAL`, all three columns are NOT NULL, all three indexes exist.
-- [ ] Migration test: full round-trip (upgrade → downgrade → upgrade) leaves the database in the post-upgrade shape with row data intact.
-- [ ] Migration test: ORM-baseline equivalence test now passes for the three new columns (the existing equivalence-check fixture should pick this up automatically).
-- [ ] Migration test (contrived NULL injection): use a connection-level trigger or direct SQL to insert a NULL `owner_id` after the backfill but before the NOT NULL assertion → migration aborts with `IrreversibleMigrationError` and identifies the offending table.
+- [x] In `upgrade()`: execute three `UPDATE <table> SET owner_id = :default WHERE owner_id IS NULL` statements bound to `default_principal_value`.
+- [x] In `upgrade()`: for each of the three tables, run `SELECT COUNT(*) FROM <table> WHERE owner_id IS NULL`; if any return > 0, raise `IrreversibleMigrationError` with a message identifying the per-table NULL counts.
+- [x] In `upgrade()`: `batch_alter_table` to alter `owner_id` to NOT NULL on all three tables.
+- [x] In `upgrade()`: `op.create_index("ix_sources_owner_id", "sources", ["owner_id"])`; same pattern for `conversion_jobs` and `conversion_outputs`.
+  Indexes created via `batch_op.f(f"ix_{table}_owner_id")` so the auto-generated SQLModel name matches the migration name.
+- [x] In `downgrade()`: `op.drop_index("ix_sources_owner_id")`; same for the other two indexes; then `batch_alter_table` to drop `owner_id` from each table.
+- [x] Migration test `tests/conversion/unit/test_migrations.py`: upgrade-to-head on a database pre-populated with rows in all three tables → every row has `owner_id = AIZK_DEFAULT_PRINCIPAL`, all three columns are NOT NULL, all three indexes exist.
+  Added at `tests/conversion/integration/test_migrations.py` (matches existing migration test location).
+- [x] Migration test: full round-trip (upgrade → downgrade → upgrade) leaves the database in the post-upgrade shape with row data intact.
+- [x] Migration test: ORM-baseline equivalence test now passes for the three new columns (the existing equivalence-check fixture should pick this up automatically).
+  Added an explicit per-table assertion alongside the repo-wide `test_upgrade_produces_schema_matching_create_all` so a regression points at this migration.
+- [x] Migration test (contrived NULL injection): use a connection-level trigger or direct SQL to insert a NULL `owner_id` after the backfill but before the NOT NULL assertion → migration aborts with `IrreversibleMigrationError` and identifies the offending table.
+  Implemented as an `AuthSettings` stub returning `default_principal=None` rather than a SQLite trigger: triggers can't reference the column before the migration's own add_column step, but a None backfill value produces the same observable post-backfill NULL state and exercises the same assertion path.
 
 ## API materialization
 
-- [ ] Locate the Source / Job materialization helper(s) in `src/aizk/conversion/api/routers/jobs.py` (or wherever `_materialize_source` / `_create_job` live).
-- [ ] Update the Source-creation path to accept a `Principal` argument and set `owner_id = principal.subject` on the new `Source` row.
-- [ ] Update the Job-creation path to accept a `Principal` argument and set `owner_id = principal.subject` on the new `Job` row.
-- [ ] On the `INSERT ... ON CONFLICT (source_ref_hash) DO NOTHING` path, confirm by inspection that the existing Source row's `owner_id` is preserved (no `DO UPDATE` clause).
-  Add a code comment if necessary.
-- [ ] Update the `POST /v1/jobs` route handler to declare `principal: Principal = Depends(get_principal)` and pass it into the materialization helpers.
-- [ ] Audit other write-path routes (retry, cancel, bulk-actions) and add `principal: Principal = Depends(get_principal)` parameters so the dependency runs uniformly.
+- [x] Locate the Source / Job materialization helper(s) in `src/aizk/conversion/api/routers/jobs.py` (or wherever `_materialize_source` / `_create_job` live).
+  Found at `src/aizk/conversion/api/routes/jobs.py`: inline `INSERT OR IGNORE INTO sources` SQL plus inline `ConversionJob(...)` construction in `submit_job`.
+- [x] Update the Source-creation path to accept a `Principal` argument and set `owner_id = principal.subject` on the new `Source` row.
+  Inserted `owner_id` into the `INSERT OR IGNORE` column list and bound `principal.subject` to the parameter.
+- [x] Update the Job-creation path to accept a `Principal` argument and set `owner_id = principal.subject` on the new `Job` row.
+- [x] On the `INSERT ... ON CONFLICT (source_ref_hash) DO NOTHING` path, confirm by inspection that the existing Source row's `owner_id` is preserved (no `DO UPDATE` clause).
+  `INSERT OR IGNORE` (sqlite's equivalent) is in use; added an inline comment explaining the first-writer-wins ownership invariant on source-reuse races.
+- [x] Update the `POST /v1/jobs` route handler to declare `principal: Principal = Depends(get_principal)` and pass it into the materialization helpers.
+- [x] Audit other write-path routes (retry, cancel, bulk-actions) and add `principal: Principal = Depends(get_principal)` parameters so the dependency runs uniformly.
+  Added to `retry_job`, `cancel_job`, and `bulk_job_actions` with `# noqa: ARG001 — runs uniformly; not persisted yet`.
   Per the proposal's resolved Open Questions, do NOT persist `last_actor_id` at this cutover.
 - [ ] Integration test: submit a job with `AIZK_DEFAULT_PRINCIPAL=alice` → the new `sources` row has `owner_id="alice"` and the new `conversion_jobs` row has `owner_id="alice"`.
 - [ ] Integration test: submit two jobs whose `source_ref` canonicalizes to the same hash, with two different `default_principal` values across the two requests (mock settings per-request) → exactly one `sources` row exists, its `owner_id` matches the first submitter, both `conversion_jobs` rows have their respective request's `owner_id`.
@@ -100,11 +109,16 @@
 
 ## Worker materialization
 
-- [ ] Locate the Output-creation path in the conversion worker (search for the existing Output insert; likely in `src/aizk/conversion/worker/` or wherever the spec's "Create a conversion output record on success" requirement is implemented).
-- [ ] Modify the Output insert to read `owner_id` from the parent `Job` row in the same database session and copy it onto the new `Output` row.
-- [ ] If `Job.owner_id` is somehow NULL at Output-creation time, raise a typed error (e.g., `MissingOwnerOnJob`) and fail the job non-retryably.
+- [x] Locate the Output-creation path in the conversion worker (search for the existing Output insert; likely in `src/aizk/conversion/worker/` or wherever the spec's "Create a conversion output record on success" requirement is implemented).
+  Two Output-creation sites in `src/aizk/conversion/workers/uploader.py`: the prior-output reuse branch in `_prepare_upload`, and the post-S3-PUT branch in `_execute_upload`.
+- [x] Modify the Output insert to read `owner_id` from the parent `Job` row in the same database session and copy it onto the new `Output` row.
+  Both sites read `job.owner_id` and set it on the new `ConversionOutput`.
+  `_UploadPlan` now carries `owner_id` so `_execute_upload` does not re-read the job row.
+- [x] If `Job.owner_id` is somehow NULL at Output-creation time, raise a typed error (e.g., `MissingOwnerOnJob`) and fail the job non-retryably.
+  Added `MissingOwnerOnJob` (non-retryable) in `aizk.conversion.core.errors`; raised from both Output-creation sites before any insert.
   Note that this should be impossible after the migration; the check is defensive.
-- [ ] Confirm the worker NEVER writes to `Job.owner_id` in any code path; grep for `Job.owner_id =` assignments after the change and assert there are none outside the API materialization path.
+- [x] Confirm the worker NEVER writes to `Job.owner_id` in any code path; grep for `Job.owner_id =` assignments after the change and assert there are none outside the API materialization path.
+  `git grep -n "owner_id\s*=" src/aizk/conversion/workers/` shows only reads, not assignments.
 - [ ] Integration test: a Job with `owner_id="bob"` runs to success → the new `conversion_outputs` row has `owner_id="bob"`.
 - [ ] Integration test: a Job whose `owner_id` is somehow NULL at runtime (force-injected via direct SQL) → the worker fails the job non-retryably with `MissingOwnerOnJob`; the Output row is NOT created.
 

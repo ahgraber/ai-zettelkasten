@@ -51,6 +51,7 @@ def source(db_session: Session) -> Source:
         karakeep_id="bm_hygiene_test",
         source_ref=ref.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(ref),
+        owner_id="self",
         url="https://example.com",
         normalized_url="https://example.com",
         title="Hygiene Test",
@@ -68,6 +69,7 @@ def running_job(db_session: Session, source: Source) -> ConversionJob:
     """Create a RUNNING ConversionJob for the test source."""
     j = ConversionJob(
         aizk_uuid=source.aizk_uuid,
+        owner_id="self",
         title=source.title,
         status=ConversionJobStatus.RUNNING,
         idempotency_key="hygiene-test-key",

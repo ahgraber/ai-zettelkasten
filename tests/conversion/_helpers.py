@@ -28,17 +28,21 @@ def make_source(
     title: str | None = None,
     content_type: str | None = None,
     source_type: str | None = None,
+    owner_id: str = "self",
 ) -> Source:
     """Create, persist, and return a Source row keyed by `karakeep_id`.
 
     `source_ref_bookmark_id` lets callers keep the `karakeep_id` column distinct from the
     ref's `bookmark_id` field (used by dot-containing ID edge cases in test_output_content).
+    `owner_id` defaults to the shipped `AIZK_DEFAULT_PRINCIPAL` so the column's NOT NULL
+    constraint is satisfied without forcing every test to pass it explicitly.
     """
     ref = KarakeepBookmarkRef(bookmark_id=source_ref_bookmark_id or karakeep_id)
     kwargs = dict(
         karakeep_id=karakeep_id,
         source_ref=ref.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(ref),
+        owner_id=owner_id,
         url=url,
         normalized_url=url,
         title=title,
@@ -63,10 +67,16 @@ def make_job(
     title: str = "Test",
     attempts: int = 0,
     created_at: dt.datetime | None = None,
+    owner_id: str = "self",
 ) -> ConversionJob:
-    """Create, persist, and return a ConversionJob row."""
+    """Create, persist, and return a ConversionJob row.
+
+    `owner_id` defaults to the shipped `AIZK_DEFAULT_PRINCIPAL` so the column's
+    NOT NULL constraint is satisfied without forcing every test to pass it.
+    """
     job = ConversionJob(
         aizk_uuid=aizk_uuid,
+        owner_id=owner_id,
         title=title,
         payload_version=1,
         status=status,

@@ -81,6 +81,7 @@ def _create_job_with_source_ref(
         source_ref_json = json.dumps({"kind": "karakeep_bookmark", "bookmark_id": bookmark.karakeep_id or "bm_test"})
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title or "",
         idempotency_key=("j" * 64),
         status=ConversionJobStatus.QUEUED,
@@ -237,6 +238,7 @@ def _create_running_job(db_session: Session, bookmark: Bookmark, source_ref_json
         source_ref_json = json.dumps({"kind": "karakeep_bookmark", "bookmark_id": bookmark.karakeep_id or "bm_test"})
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title or "",
         idempotency_key="e" * 64,
         status=ConversionJobStatus.RUNNING,
@@ -261,6 +263,7 @@ def test_process_job_retries_upload(monkeypatch, db_session: Session) -> None:
 
     _ref_retry = KarakeepBookmarkRef(bookmark_id="bm_retry_test")
     bookmark = Bookmark(
+        owner_id="self",
         karakeep_id="bm_retry_test",
         source_ref=_ref_retry.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(_ref_retry),
@@ -277,6 +280,7 @@ def test_process_job_retries_upload(monkeypatch, db_session: Session) -> None:
     source_ref_json = json.dumps({"kind": "karakeep_bookmark", "bookmark_id": "bm_retry_test"})
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         idempotency_key="a" * 64,
         status=ConversionJobStatus.QUEUED,
@@ -328,6 +332,7 @@ def test_process_job_stops_on_cancellation(monkeypatch, db_session: Session) -> 
     """Stop processing before upload when a job is cancelled mid-run."""
     _ref_cancel = KarakeepBookmarkRef(bookmark_id="bm_cancel_test")
     bookmark = Bookmark(
+        owner_id="self",
         karakeep_id="bm_cancel_test",
         source_ref=_ref_cancel.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(_ref_cancel),
@@ -344,6 +349,7 @@ def test_process_job_stops_on_cancellation(monkeypatch, db_session: Session) -> 
     source_ref_json = json.dumps({"kind": "karakeep_bookmark", "bookmark_id": "bm_cancel_test"})
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         idempotency_key="c" * 64,
         status=ConversionJobStatus.QUEUED,
@@ -388,6 +394,7 @@ def test_poll_picks_retryable_job_after_delay(monkeypatch, db_session: Session) 
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         idempotency_key="a" * 64,
         status=ConversionJobStatus.FAILED_RETRYABLE,
@@ -424,6 +431,7 @@ def test_poll_skips_retryable_job_before_delay(monkeypatch, db_session: Session)
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         idempotency_key="b" * 64,
         status=ConversionJobStatus.FAILED_RETRYABLE,
@@ -451,6 +459,7 @@ def test_raise_if_cancelled_raises(db_session: Session) -> None:
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         idempotency_key="d" * 64,
         status=ConversionJobStatus.CANCELLED,
@@ -786,6 +795,7 @@ def test_process_job_skips_spawn_for_cancelled_job(monkeypatch, db_session: Sess
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title or "",
         idempotency_key="z" * 64,
         status=ConversionJobStatus.CANCELLED,
@@ -1007,6 +1017,7 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
 
     _ref_reuse = KarakeepBookmarkRef(bookmark_id="bm_hash_reuse")
     bookmark = Bookmark(
+        owner_id="self",
         karakeep_id="bm_hash_reuse",
         source_ref=_ref_reuse.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(_ref_reuse),
@@ -1022,6 +1033,7 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
 
     prior_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title="Hash Reuse",
         idempotency_key="p" * 64,
         status=ConversionJobStatus.SUCCEEDED,
@@ -1032,6 +1044,7 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
 
     known_hash = "abc123def456789a"
     prior_output = ConversionOutput(
+        owner_id="self",
         job_id=prior_job.id,
         aizk_uuid=bookmark.aizk_uuid,
         title="Hash Reuse",
@@ -1049,6 +1062,7 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
 
     new_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title="Hash Reuse",
         idempotency_key="n" * 64,
         status=ConversionJobStatus.RUNNING,
@@ -1093,6 +1107,7 @@ def test_upload_converted_uploads_when_hash_differs(monkeypatch, db_session: Ses
 
     _ref_upload = KarakeepBookmarkRef(bookmark_id="bm_hash_upload")
     bookmark = Bookmark(
+        owner_id="self",
         karakeep_id="bm_hash_upload",
         source_ref=_ref_upload.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(_ref_upload),
@@ -1108,6 +1123,7 @@ def test_upload_converted_uploads_when_hash_differs(monkeypatch, db_session: Ses
 
     new_job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title="Hash Upload",
         idempotency_key="u" * 64,
         status=ConversionJobStatus.RUNNING,
@@ -1158,6 +1174,7 @@ def test_initialize_running_job_returns_false_for_cancelled_after_running_set(
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         idempotency_key="r" * 64,
         status=ConversionJobStatus.RUNNING,
@@ -1187,6 +1204,7 @@ def _create_source_for_enrichment(db_session: Session, *, bookmark_id: str) -> B
 
     ref = KarakeepBookmarkRef(kind="karakeep_bookmark", bookmark_id=bookmark_id)
     source = Bookmark(
+        owner_id="self",
         karakeep_id=bookmark_id,
         source_ref=ref.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(ref),

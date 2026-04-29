@@ -413,6 +413,7 @@ def test_happy_path_public_url_succeeds(monkeypatch: pytest.MonkeyPatch, db_sess
     source = Source(
         source_ref=ref.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(ref),
+        owner_id="self",
         url="https://example.com/article",
         normalized_url="https://example.com/article",
         title="Happy Path",
@@ -425,6 +426,7 @@ def test_happy_path_public_url_succeeds(monkeypatch: pytest.MonkeyPatch, db_sess
 
     job = ConversionJob(
         aizk_uuid=source.aizk_uuid,
+        owner_id="self",
         title="Happy Path",
         status=ConversionJobStatus.QUEUED,
         idempotency_key="h" * 64,

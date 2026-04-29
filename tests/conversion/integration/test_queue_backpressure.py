@@ -18,6 +18,7 @@ def _create_source(session, karakeep_id: str) -> Bookmark:
     """Create a Source row with proper source_ref + source_ref_hash so API upserts match."""
     ref = KarakeepBookmarkRef(bookmark_id=karakeep_id)
     bookmark = Bookmark(
+        owner_id="self",
         karakeep_id=karakeep_id,
         source_ref=ref.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(ref),
@@ -36,6 +37,7 @@ def _create_source(session, karakeep_id: str) -> Bookmark:
 def _create_queued_job(session, *, aizk_uuid: UUID, idempotency_key: str) -> ConversionJob:
     job = ConversionJob(
         aizk_uuid=aizk_uuid,
+        owner_id="self",
         title="Test",
         payload_version=1,
         status=ConversionJobStatus.QUEUED,
