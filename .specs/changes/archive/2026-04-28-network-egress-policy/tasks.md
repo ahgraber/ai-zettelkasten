@@ -21,18 +21,22 @@
 - [x] Unit test that public IPv4 (`8.8.8.8`) and public IPv6 (`2606:4700:4700::1111`) are accepted; verify `ValidatedDestination.ip` equals the resolved address.
 - [x] Unit test that RFC 6890 documentation/test ranges (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, `2001:db8::/32`, `198.18.0.0/15`) are classified as deny on the pinned Python version.
 
-## UrlRef construction-time validation
+## UrlRef construction (egress validation deferred to fetch time)
 
-- [x] Add a pydantic field validator (or model validator) on `UrlRef` in the pluggable-pipeline source-ref module that calls `assert_egress_allowed(url)` and raises `ValidationError` on `EgressPolicyError`.
-  Sync-only; no event loop.
-- [x] Update `UrlRef` docstring to note that egress validation runs at construction time and that `model_construct` bypasses it (per design "model_construct bypass note").
-- [x] Unit test: `UrlRef(url="http://169.254.169.254/...")` raises `ValidationError`.
-- [x] Unit test: `UrlRef.model_validate({"kind": "url", "url": "http://10.0.0.5/admin"})` raises `ValidationError`.
-- [x] Unit test: `KarakeepBookmarkResolver` Step 5 with a `source_url` pointing into the deny set surfaces a typed error and never constructs a `UrlRef`.
-  Wire test by feeding bookmark JSON through the resolver entrypoint, not by calling `UrlRef` directly.
+> Post-implementation revision: construction-time egress validation was removed.
+> See `design.md` § "Defer egress validation to fetch time only" and the Notes
+> section in `specs/pluggable-pipeline/spec.md`.
+> The trust boundary is fetch time, not construction time.
+
+- [x] `UrlRef` performs URL normalization for stable dedup identity; it does **not** call `assert_egress_allowed` and does **not** resolve DNS at construction.
+- [x] Update `UrlRef` docstring to record the post-implementation revision: construction normalizes only; the egress deny-list is enforced at fetch time inside `egress_fetch_bytes` / `async_assert_egress_allowed`.
+- [x] Unit test: `UrlRef(url="http://169.254.169.254/...")` constructs successfully (no DNS, no classification); the deny-set rejection is observed at fetch time, not at construction.
 - [x] Unit test: `UrlRef(url="https://example.com/path")` succeeds and round-trips through pydantic JSON serialization.
-- [x] Audit existing call sites that construct `UrlRef` and confirm none use `model_construct` to skip validation.
-  Add a one-line code comment at the `UrlRef` class banning internal `model_construct` use, referencing the design note.
+- [x] Unit test: a `UrlRef` carrying a deny-set URL that reaches `UrlFetcher.fetch` raises `DenyListDestination` at fetch dispatch (validated through `egress_fetch_bytes`); no socket connection to the deny-set destination is opened.
+- [x] Unit test: `KarakeepBookmarkResolver` Step 5 with a `source_url` pointing into the deny set constructs a `UrlRef` successfully, but the downstream `UrlFetcher` dispatch fails with the typed egress error before any network I/O.
+      KaraKeep asset fetches built by Steps 3/4 (which use `KarakeepClient` directly against an operator-configured private base URL) succeed because they bypass `egress_fetch_bytes` by design.
+- [x] Audit existing call sites that construct `UrlRef`: there is no construction-time validator to bypass, so the previous "ban internal `model_construct`" guidance is moot.
+      The load-bearing check lives in fetcher code paths, not in the model.
 
 ## Connection-pinned httpx transport
 
