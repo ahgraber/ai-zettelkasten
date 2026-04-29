@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
@@ -41,6 +43,16 @@ async def lifespan(_app: FastAPI):
 def create_app() -> FastAPI:
     """Create the FastAPI application instance."""
     app = FastAPI(title="Docling Conversion Service", lifespan=lifespan)
+
+    # Trusted-host enforcement runs before route handlers; reads the actual `Host`
+    # header that reaches this process and rejects on allowlist mismatch (HTTP 400,
+    # Starlette default body "Invalid host header"). `Forwarded` / `X-Forwarded-Host`
+    # are intentionally NOT consulted — reverse proxies must rewrite Host themselves.
+    # NOTE: any future CORS middleware MUST be registered BEFORE this one so CORS
+    # preflight succeeds even on Host-mismatch requests.
+    trusted_hosts = ConversionConfig().trusted_hosts
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=trusted_hosts)
+
     app.include_router(health_router)
     app.include_router(jobs_router)
     app.include_router(bookmarks_router)

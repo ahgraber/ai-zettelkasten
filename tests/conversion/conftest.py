@@ -51,6 +51,11 @@ _HARNESS_ENV_ALLOWLIST: frozenset[str] = frozenset(
         "S3_BUCKET_NAME",
         "S3_ENDPOINT_URL",
         "RETRY_BASE_DELAY_SECONDS",
+        # FastAPI TestClient sends `Host: testserver` by default; tests that build
+        # the app without overriding `AIZK_TRUSTED_HOSTS` need testserver allowed
+        # alongside the loopback defaults so TrustedHostMiddleware doesn't 400 every
+        # request. Per-test fixtures may override this with an explicit allowlist.
+        "AIZK_TRUSTED_HOSTS",
     }
 )
 
@@ -176,6 +181,7 @@ def set_test_env(monkeypatch: pytest.MonkeyPatch, test_db_path: Path) -> None:
     monkeypatch.setenv("S3_BUCKET_NAME", "test-bucket")
     monkeypatch.setenv("S3_ENDPOINT_URL", "http://localhost:9000")
     monkeypatch.setenv("RETRY_BASE_DELAY_SECONDS", "0")
+    monkeypatch.setenv("AIZK_TRUSTED_HOSTS", '["testserver", "localhost", "127.0.0.1"]')
 
 
 @pytest.fixture()
