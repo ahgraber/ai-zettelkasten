@@ -48,11 +48,17 @@
 
 ## Principal resolution dependency
 
-- [ ] Create or extend `src/aizk/conversion/api/dependencies.py` with `get_principal(request: Request, settings: Settings = Depends(get_settings)) -> Principal`.
+- [x] Create or extend `src/aizk/conversion/api/dependencies.py` with `get_principal(request: Request, settings: Settings = Depends(get_settings)) -> Principal`.
   Implementation: `match settings.auth_mode: case "trust_network": return Principal(subject=settings.default_principal, provenance="trust_network"); case _: raise NotImplementedError(f"auth mode {settings.auth_mode!r} has no resolver branch")`.
-- [ ] Unit test `tests/aizk/conversion/api/test_dependencies.py`: `get_principal` with `auth_mode="trust_network"` and `default_principal="local"` returns `Principal(subject="local", provenance="trust_network")`.
-- [ ] Unit test: `get_principal` does NOT consult `request.headers["Authorization"]` or `request.headers["X-Forwarded-User"]` — set those headers, assert the returned subject is still `default_principal`.
-- [ ] Unit test: when `settings.auth_mode` is forced to a value the resolver doesn't handle (bypass settings validator for the test), `get_principal` raises `NotImplementedError` (proves the safety net works).
+  Added `get_auth_settings` (paralleling existing `get_config`) reading from `app.state.auth_settings`.
+  Lifespan now constructs `AuthSettings()` alongside `ConversionConfig()` so a bad `AIZK_AUTH_MODE` raises `ConfigurationError` before the listener binds.
+  `get_principal` depends only on `AuthSettings` (no `Request` needed in trust_network mode) — strongest form of "headers not consulted."
+- [x] Unit test `tests/aizk/conversion/api/test_dependencies.py`: `get_principal` with `auth_mode="trust_network"` and `default_principal="local"` returns `Principal(subject="local", provenance="trust_network")`.
+  Placed in `tests/conversion/unit/api/test_dependencies.py`.
+- [x] Unit test: `get_principal` does NOT consult `request.headers["Authorization"]` or `request.headers["X-Forwarded-User"]` — set those headers, assert the returned subject is still `default_principal`.
+  Asserted structurally: `get_principal` takes no `Request` argument in `trust_network` mode, so headers are inaccessible.
+- [x] Unit test: when `settings.auth_mode` is forced to a value the resolver doesn't handle (bypass settings validator for the test), `get_principal` raises `NotImplementedError` (proves the safety net works).
+  Bypass via `AuthSettings.model_construct(auth_mode="token", ...)`.
 
 ## Datamodel additions
 

@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
 from aizk.conversion.api.routes import bookmarks_router, health_router, jobs_router, outputs_router, ui_router
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import AuthSettings, ConversionConfig
 from aizk.conversion.utilities.dotenv import load_process_dotenv_once
 from aizk.conversion.utilities.logging import configure_logging
 from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
@@ -24,7 +24,12 @@ async def lifespan(_app: FastAPI):
 
     load_process_dotenv_once()
     config = ConversionConfig()
+    # AuthSettings construction validates `AIZK_AUTH_MODE`; a reserved-but-unimplemented
+    # value (token / proxy_headers / oidc) raises ConfigurationError here, before the
+    # HTTP listener binds — startup-time refusal per the deployment trust model.
+    auth_settings = AuthSettings()
     _app.state.config = config
+    _app.state.auth_settings = auth_settings
     configure_logging(config)
     configure_mlflow_tracing(
         enabled=config.mlflow_tracing_enabled,

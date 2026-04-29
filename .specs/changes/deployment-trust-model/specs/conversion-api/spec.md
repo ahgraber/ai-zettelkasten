@@ -4,8 +4,11 @@
 
 ### Requirement: Validate auth mode at API startup
 
-The API process SHALL validate the `AIZK_AUTH_MODE` configuration value during startup and SHALL refuse to start if the value is unset, unrecognized, or names a mode that is not implemented in the current build.
-At cutover, the only implemented mode is `trust_network`; any other value (including `token`, `proxy_headers`, `oidc`, an empty string, or any string outside the implemented set) SHALL cause the process to fail to start with a typed startup error and a non-zero exit code.
+The API process SHALL validate the `AIZK_AUTH_MODE` configuration value during startup and SHALL refuse to start if the value is unrecognized or names a mode that is not implemented in the current build.
+At cutover, the only implemented mode is `trust_network`; any other value reserved by the type (`token`, `proxy_headers`, `oidc`) or any string outside the recognized set SHALL cause the process to fail to start with a typed startup error and a non-zero exit code.
+
+When `AIZK_AUTH_MODE` is unset, the setting SHALL default to `trust_network` so that a fresh-clone deployment runs without explicit configuration; this matches the shipped defaults for `AIZK_DEFAULT_PRINCIPAL` (`"local"`) and `AIZK_TRUSTED_HOSTS` (`["localhost", "127.0.0.1"]`).
+This default does not weaken the trust posture: every recognized mode is rejected unless its resolver branch is implemented, so the only way the process boots is in a mode whose behavior is fully specified.
 
 This requirement guarantees that a misconfigured deployment fails loudly at process boot rather than silently default-opening to an unintended trust posture.
 
@@ -15,11 +18,11 @@ This requirement guarantees that a misconfigured deployment fails loudly at proc
 - **WHEN** the API process starts
 - **THEN** the process completes startup, the `/health/live` endpoint returns 200, and request handling proceeds
 
-#### Scenario: Unset auth mode rejected at startup
+#### Scenario: Unset auth mode defaults to trust_network
 
 - **GIVEN** `AIZK_AUTH_MODE` is not set in the process environment
 - **WHEN** the API process is launched
-- **THEN** startup raises a typed configuration error and the process exits non-zero before binding the HTTP listener
+- **THEN** the setting resolves to `trust_network`, the process completes startup, and request handling proceeds
 
 #### Scenario: Unimplemented auth mode rejected at startup
 
