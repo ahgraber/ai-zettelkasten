@@ -163,12 +163,20 @@ SQLite's `ALTER TABLE ... ALTER COLUMN` requires the table-rebuild dance via `op
 
 ### Decision: Settings additions
 
-**Chosen:** Three new fields on the existing `Settings` (or `ApiSettings`) model:
+**Chosen:** Split the three new knobs across two settings models — a new
+`AuthSettings` sub-model for the auth-identity knobs, and the existing
+`ConversionConfig` model for the network-host enforcement knob:
 
 ```python
-auth_mode: Literal["trust_network", "token", "proxy_headers", "oidc"] = "trust_network"
-default_principal: str = "self"
-trusted_hosts: list[str] = ["localhost", "127.0.0.1"]
+# src/aizk/conversion/utilities/config.py
+class AuthSettings(BaseSettings):
+    auth_mode: Literal["trust_network", "token", "proxy_headers", "oidc"] = "trust_network"
+    default_principal: str = "self"
+
+
+class ConversionConfig(BaseSettings):
+    # ... existing fields ...
+    trusted_hosts: list[str] = ["localhost", "127.0.0.1"]
 ```
 
 The `auth_mode` literal includes future modes as reserved values rejected by the validator with a "not implemented at this build" message (per the auth-mode validation decision).
@@ -176,14 +184,21 @@ The `auth_mode` literal includes future modes as reserved values rejected by the
 `trusted_hosts` ships with the localhost defaults documented in the proposal; the operator-deployment docs MUST call out the override requirement for production.
 
 Environment-variable mapping follows the existing `AIZK_*` convention via pydantic-settings: `AIZK_AUTH_MODE`, `AIZK_DEFAULT_PRINCIPAL`, `AIZK_TRUSTED_HOSTS`.
-List-shaped env vars use the existing project parsing convention (likely comma-separated; confirm in implementation against existing list-shaped settings like the Docling host list).
+List-shaped env vars use pydantic-settings' default JSON parsing — `AIZK_TRUSTED_HOSTS='["api.example.internal", "*.internal"]'`.
+The project has no comma-separated list precedent, so the JSON form is chosen over inventing one.
 
-**Rationale:** Consolidates the three new knobs in the same settings layer the rest of the deployment uses, with the same validation and env-var conventions.
-No new settings module or loading path.
+**Rationale:** Auth identity (`auth_mode`, `default_principal`) and network host enforcement (`trusted_hosts`) are conceptually orthogonal — the first answers "who is this request" and the second answers "is this request even reaching the right service."
+Co-locating them in one model would conflate two concerns at the type level and would make the `AuthSettings` constructor in the API lifespan a source of truth for a value (`trusted_hosts`) that has nothing to do with auth.
+The split keeps each model's responsibility narrow and matches the existing `ConversionConfig` precedent (network-layer knobs already live there).
+The future-mode promotion path is simpler too: adding `token_secret_key` / `oidc_issuer` lands as additional fields on `AuthSettings` without disturbing `ConversionConfig`.
 
 **Alternatives considered:**
 
-- A nested `AuthSettings` sub-model: rejected at this scope; three fields don't justify a sub-model, and a future change adding `token_secret_key` / `oidc_issuer` etc. can promote them to a sub-model at that point without breaking existing env-var names (pydantic-settings supports flat → nested via `env_nested_delimiter`).
+- All three on the existing `ConversionConfig`: this was the originally-proposed shape.
+  Rejected after implementation review because it conflated auth identity with network enforcement — the API lifespan would need to read auth-related fields off `ConversionConfig` as if they were just more network knobs, blurring the trust-boundary surface.
+  The cost saved (no new sub-model) is minor; the cost incurred (loose coupling at the trust boundary) is structural.
+- All three on a single new `AuthSettings`: rejected because `trusted_hosts` is consumed by `TrustedHostMiddleware` registered in `create_app()` — middleware registration runs against the deployment's network shape, not its auth shape.
+  Reading `trusted_hosts` off an `AuthSettings` instance from the network-middleware site would invert the dependency.
 
 ## Architecture
 
