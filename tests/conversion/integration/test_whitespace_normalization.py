@@ -144,23 +144,33 @@ def test_whitespace_normalization_produces_stable_output(monkeypatch) -> None:
         self.client = s3_client
         self.bucket = config.s3_bucket_name
 
-    def _upload_file(self, local_path, s3_key: str) -> str:
-        body = local_path.read_bytes()
-        if local_path.name == "output.md":
-            captured_markdown_bodies.append(body)
-        stubber.add_response("put_object", {}, {"Bucket": self.bucket, "Key": s3_key, "Body": ANY})
-        self.client.put_object(Bucket=self.bucket, Key=s3_key, Body=body)
+    def _stub_put_and_head(s3, s3_key: str, body: bytes) -> str:
+        stubber.add_response("put_object", {}, {"Bucket": s3.bucket, "Key": s3_key, "Body": ANY})
+        s3.client.put_object(Bucket=s3.bucket, Key=s3_key, Body=body)
         md5_hash = hashlib.md5(body).hexdigest()  # noqa: S324
         stubber.add_response(
             "head_object",
             {"ETag": f'"{md5_hash}"', "ContentLength": len(body)},
-            {"Bucket": self.bucket, "Key": s3_key},
+            {"Bucket": s3.bucket, "Key": s3_key},
         )
-        self.client.head_object(Bucket=self.bucket, Key=s3_key)
-        return f"s3://{self.bucket}/{s3_key}"
+        s3.client.head_object(Bucket=s3.bucket, Key=s3_key)
+        return f"s3://{s3.bucket}/{s3_key}"
+
+    def _upload_file(self, local_path, s3_key: str) -> str:
+        body = local_path.read_bytes()
+        if local_path.name == "output.md":
+            captured_markdown_bodies.append(body)
+        return _stub_put_and_head(self, s3_key, body)
+
+    def _upload_fileobj(self, file_obj, s3_key: str) -> str:
+        body = file_obj.read()
+        if s3_key.endswith("/output.md"):
+            captured_markdown_bodies.append(body)
+        return _stub_put_and_head(self, s3_key, body)
 
     monkeypatch.setattr("aizk.conversion.workers.uploader.S3Client.__init__", _init_s3_client)
     monkeypatch.setattr("aizk.conversion.workers.uploader.S3Client.upload_file", _upload_file)
+    monkeypatch.setattr("aizk.conversion.workers.uploader.S3Client.upload_fileobj", _upload_fileobj)
 
     runtime = _make_fake_runtime()
 
