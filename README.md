@@ -73,6 +73,21 @@ MLflow tracing (optional):
 - `MLFLOW_TRACKING_URI` (optional; uses MLflow defaults when unset)
 - `MLFLOW_EXPERIMENT_NAME` (optional)
 
+Deployment trust model:
+
+- `AIZK_AUTH_MODE` (default `trust_network`).
+  At this build the only implemented mode is `trust_network`, which treats every inbound request as authenticated and stamps a single deployment-wide principal on every row.
+  Reserved literal values `token`, `proxy_headers`, and `oidc` are rejected at startup with a typed `ConfigurationError` so the process refuses to boot rather than silently defaulting to an unintended trust posture.
+  Each future mode lands as a delta on the `Principal.provenance` literal, the `AuthSettings.auth_mode` validator, and the `get_principal` resolver match — no schema migration required.
+- `AIZK_DEFAULT_PRINCIPAL` (default `self`).
+  In `trust_network` mode this string is the `subject` of every resolved `Principal` and therefore the `owner_id` written to `sources`, `conversion_jobs`, and `conversion_outputs` rows.
+  Override per deployment to attribute rows to a named operator or service account.
+- `AIZK_TRUSTED_HOSTS` (default `["localhost", "127.0.0.1"]`, JSON array).
+  Allowlist for the `Host` header that reaches the API process; mismatches return HTTP 400 (`Invalid host header`) before any route handler runs.
+  **Operators MUST override this for any non-localhost deployment.**
+  The middleware checks the actual `Host` the API process sees — `Forwarded` and `X-Forwarded-Host` are intentionally NOT consulted, so the reverse proxy is responsible for (a) rewriting `Host` to a value in this allowlist on the way in and (b) stripping any client-supplied `X-Forwarded-Host` so it cannot reach the API.
+  Wildcards are supported, e.g. `["*.internal.example.com"]`.
+
 Docs: see `docs/Litestream.md` for full setup and sidecar guidance.
 
 ## Running `aizk`

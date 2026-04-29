@@ -132,14 +132,22 @@
 
 ## Documentation
 
-- [ ] Add a new section to the deployment / operator documentation (likely `docs/deployment.md` or the project README) describing `AIZK_AUTH_MODE`, `AIZK_DEFAULT_PRINCIPAL`, and `AIZK_TRUSTED_HOSTS` settings and their defaults.
-- [ ] In the deployment docs, explicitly call out that `AIZK_TRUSTED_HOSTS` MUST be overridden from the `["localhost", "127.0.0.1"]` default for any non-localhost deployment, and that the reverse proxy MUST rewrite `Host` to a value in the allowlist AND strip any client-supplied `X-Forwarded-Host`.
-- [ ] In the deployment docs, document that `AIZK_AUTH_MODE` only supports `trust_network` at this build; reserved values `token`, `proxy_headers`, `oidc` will be implemented in a future change.
-- [ ] Add a brief note in the developer-facing docs (e.g., a CONTRIBUTING section or the auth module's docstring) that adding a new auth mode is a delta on (1) the `Principal.provenance` literal, (2) the `Settings.auth_mode` literal validator, (3) the `get_principal` resolver match, and (4) test coverage — no migration required.
+- [x] Add a new section to the deployment / operator documentation (likely `docs/deployment.md` or the project README) describing `AIZK_AUTH_MODE`, `AIZK_DEFAULT_PRINCIPAL`, and `AIZK_TRUSTED_HOSTS` settings and their defaults.
+  Added a "Deployment trust model" subsection under `README.md`'s "Configure" section (no `docs/deployment.md` exists; README is the canonical operator doc per existing convention).
+- [x] In the deployment docs, explicitly call out that `AIZK_TRUSTED_HOSTS` MUST be overridden from the `["localhost", "127.0.0.1"]` default for any non-localhost deployment, and that the reverse proxy MUST rewrite `Host` to a value in the allowlist AND strip any client-supplied `X-Forwarded-Host`.
+  Bold in the README; explains both the rewrite and strip requirement.
+- [x] In the deployment docs, document that `AIZK_AUTH_MODE` only supports `trust_network` at this build; reserved values `token`, `proxy_headers`, `oidc` will be implemented in a future change.
+- [x] Add a brief note in the developer-facing docs (e.g., a CONTRIBUTING section or the auth module's docstring) that adding a new auth mode is a delta on (1) the `Principal.provenance` literal, (2) the `Settings.auth_mode` literal validator, (3) the `get_principal` resolver match, and (4) test coverage — no migration required.
+  Added as a numbered checklist in the `aizk.conversion.auth` package docstring (`src/aizk/conversion/auth/__init__.py`) — co-locates the contract with the code an implementer of a new mode would land first.
 
 ## End-to-end validation
 
-- [ ] E2E test: full pipeline — submit a job in `trust_network` mode, worker processes it, output is uploaded → all three rows (`sources`, `conversion_jobs`, `conversion_outputs`) carry `owner_id = AIZK_DEFAULT_PRINCIPAL`.
-- [ ] E2E test: API process refuses to start with `AIZK_AUTH_MODE=token` — the test launches the app with the bad env var and asserts a non-zero exit.
-- [ ] E2E test: a fresh-clone deployment (default settings) accepts `Host: localhost` and `Host: 127.0.0.1` requests on `/health/live`.
-- [ ] E2E test: with `AIZK_TRUSTED_HOSTS=["api.example.internal"]` and a request `Host: localhost`, response is HTTP 400 — confirms operator override removes the localhost default.
+- [x] E2E test: full pipeline — submit a job in `trust_network` mode, worker processes it, output is uploaded → all three rows (`sources`, `conversion_jobs`, `conversion_outputs`) carry `owner_id = AIZK_DEFAULT_PRINCIPAL`.
+  Added at `tests/conversion/integration/test_owner_id_e2e.py::test_full_pipeline_propagates_default_principal_to_all_three_tables`.
+  Composes the API submit path with `uploader._upload_converted` against an in-memory S3 stub; asserts all three rows carry `AIZK_DEFAULT_PRINCIPAL=deployment-owner`.
+- [x] E2E test: API process refuses to start with `AIZK_AUTH_MODE=token` — the test launches the app with the bad env var and asserts a non-zero exit.
+  Implemented as an in-process lifespan failure (`with TestClient(app):` raises `ConfigurationError`) rather than a subprocess launch — the typed startup error is the same control path a supervising process would observe as a non-zero exit, without subprocess fragility.
+- [x] E2E test: a fresh-clone deployment (default settings) accepts `Host: localhost` and `Host: 127.0.0.1` requests on `/health/live`.
+  Parametrised across both hosts at `test_default_trusted_hosts_accept_loopback_on_health_live`.
+- [x] E2E test: with `AIZK_TRUSTED_HOSTS=["api.example.internal"]` and a request `Host: localhost`, response is HTTP 400 — confirms operator override removes the localhost default.
+  Added at `test_operator_override_removes_localhost_default`; asserts both the 400 status and the Starlette default body.
