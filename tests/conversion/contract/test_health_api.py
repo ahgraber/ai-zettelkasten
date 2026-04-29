@@ -13,8 +13,18 @@ from aizk.conversion.api.main import create_app
 
 
 @pytest.fixture()
-def client() -> TestClient:
-    """Create a TestClient with full lifespan (conftest provides test DB env)."""
+def client(monkeypatch) -> TestClient:
+    """Create a TestClient with full lifespan (conftest provides test DB env).
+
+    Pins picture-description env vars to empty so readiness does not attempt a
+    real HTTP probe against an operator-configured VLM endpoint inherited from
+    ``.env`` or the ambient shell. ``setenv`` (not ``delenv``) is required
+    because ``create_app()`` calls ``load_dotenv()`` which would otherwise
+    repopulate any deleted vars from ``.env``. Tests that exercise the
+    picture-description probe use their own dedicated fixtures.
+    """
+    monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL", "")
+    monkeypatch.setenv("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY", "")
     app = create_app()
     with TestClient(app) as tc:
         yield tc

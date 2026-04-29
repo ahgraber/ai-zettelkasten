@@ -142,11 +142,16 @@ def _install_memory_s3(monkeypatch) -> dict[str, bytes]:
         storage[s3_key] = local_path.read_bytes()
         return f"s3://{self.bucket}/{s3_key}"
 
+    def _upload_fileobj(self, file_obj, s3_key: str) -> str:
+        storage[s3_key] = file_obj.read()
+        return f"s3://{self.bucket}/{s3_key}"
+
     def _get_object_bytes(self, s3_key: str) -> bytes:
         return storage[s3_key]
 
     monkeypatch.setattr("aizk.conversion.storage.s3_client.S3Client.__init__", _init_s3_client)
     monkeypatch.setattr("aizk.conversion.storage.s3_client.S3Client.upload_file", _upload_file)
+    monkeypatch.setattr("aizk.conversion.storage.s3_client.S3Client.upload_fileobj", _upload_fileobj)
     monkeypatch.setattr("aizk.conversion.storage.s3_client.S3Client.get_object_bytes", _get_object_bytes)
     return storage
 
@@ -218,19 +223,27 @@ def test_conversion_flow_end_to_end(monkeypatch):
 
     def _upload_file(self, local_path, s3_key: str) -> str:
         body = local_path.read_bytes()
-        stubber.add_response("put_object", {}, {"Bucket": self.bucket, "Key": s3_key, "Body": ANY})
-        self.client.put_object(Bucket=self.bucket, Key=s3_key, Body=body)
+        return _stub_put_and_head(self, s3_key, body)
+
+    def _upload_fileobj(self, file_obj, s3_key: str) -> str:
+        body = file_obj.read()
+        return _stub_put_and_head(self, s3_key, body)
+
+    def _stub_put_and_head(s3, s3_key: str, body: bytes) -> str:
+        stubber.add_response("put_object", {}, {"Bucket": s3.bucket, "Key": s3_key, "Body": ANY})
+        s3.client.put_object(Bucket=s3.bucket, Key=s3_key, Body=body)
         md5_hash = hashlib.md5(body).hexdigest()  # noqa: S324
         stubber.add_response(
             "head_object",
             {"ETag": f'"{md5_hash}"', "ContentLength": len(body)},
-            {"Bucket": self.bucket, "Key": s3_key},
+            {"Bucket": s3.bucket, "Key": s3_key},
         )
-        self.client.head_object(Bucket=self.bucket, Key=s3_key)
-        return f"s3://{self.bucket}/{s3_key}"
+        s3.client.head_object(Bucket=s3.bucket, Key=s3_key)
+        return f"s3://{s3.bucket}/{s3_key}"
 
     monkeypatch.setattr("aizk.conversion.workers.uploader.S3Client.__init__", _init_s3_client)
     monkeypatch.setattr("aizk.conversion.workers.uploader.S3Client.upload_file", _upload_file)
+    monkeypatch.setattr("aizk.conversion.workers.uploader.S3Client.upload_fileobj", _upload_fileobj)
 
     with TestClient(app) as client:
         response = client.post(
