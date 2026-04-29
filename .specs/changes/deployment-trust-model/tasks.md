@@ -33,15 +33,18 @@
 
 ## Trusted-host middleware
 
-- [ ] Locate `create_app()` in `src/aizk/conversion/api/main.py`.
-- [ ] In `create_app()`, BEFORE routers are mounted, call `app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts)`.
+- [x] Locate `create_app()` in `src/aizk/conversion/api/main.py`.
+- [x] In `create_app()`, BEFORE routers are mounted, call `app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts)`.
   Import `TrustedHostMiddleware` from `starlette.middleware.trustedhost`.
-- [ ] Add a one-line code comment at the middleware registration site noting that any future CORS middleware MUST be registered BEFORE this one (so CORS preflight succeeds even on Host-mismatch requests).
-- [ ] Integration test `tests/aizk/conversion/api/test_trusted_host.py`: with `AIZK_TRUSTED_HOSTS=["api.example.internal"]`, a request to any endpoint with `Host: api.example.internal` succeeds.
-- [ ] Integration test: a request with `Host: evil.example.com` returns HTTP 400 with body `"Invalid host header"` (the Starlette default).
-- [ ] Integration test: a request with `Host: localhost` against default settings (`AIZK_TRUSTED_HOSTS` unset) succeeds.
-- [ ] Integration test: a request with `Host: api.example.internal` AND `X-Forwarded-Host: api.example.internal` AND actual middleware-allowed-hosts `["other.example.internal"]` returns HTTP 400 — confirms `X-Forwarded-Host` is NOT consulted.
-- [ ] Integration test: with `AIZK_TRUSTED_HOSTS=["*.internal"]`, a request with `Host: api.internal` succeeds (wildcard subdomain support).
+  Reads `ConversionConfig().trusted_hosts` at app-build time (env vars must be in process env or loaded via dotenv before `create_app()`).
+- [x] Add a one-line code comment at the middleware registration site noting that any future CORS middleware MUST be registered BEFORE this one (so CORS preflight succeeds even on Host-mismatch requests).
+- [x] Integration test `tests/aizk/conversion/api/test_trusted_host.py`: with `AIZK_TRUSTED_HOSTS=["api.example.internal"]`, a request to any endpoint with `Host: api.example.internal` succeeds.
+  Placed in `tests/conversion/integration/test_trusted_host.py` (matches project test layout).
+  Conftest now sets `AIZK_TRUSTED_HOSTS='["testserver", "localhost", "127.0.0.1"]'` so existing `TestClient` (default `Host: testserver`) calls don't 400.
+- [x] Integration test: a request with `Host: evil.example.com` returns HTTP 400 with body `"Invalid host header"` (the Starlette default).
+- [x] Integration test: a request with `Host: localhost` against default settings (`AIZK_TRUSTED_HOSTS` unset) succeeds.
+- [x] Integration test: a request with `Host: api.example.internal` AND `X-Forwarded-Host: api.example.internal` AND actual middleware-allowed-hosts `["other.example.internal"]` returns HTTP 400 — confirms `X-Forwarded-Host` is NOT consulted.
+- [x] Integration test: with `AIZK_TRUSTED_HOSTS=["*.internal"]`, a request with `Host: api.internal` succeeds (wildcard subdomain support).
 
 ## Principal resolution dependency
 
