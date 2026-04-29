@@ -103,9 +103,13 @@
 - [x] Audit other write-path routes (retry, cancel, bulk-actions) and add `principal: Principal = Depends(get_principal)` parameters so the dependency runs uniformly.
   Added to `retry_job`, `cancel_job`, and `bulk_job_actions` with `# noqa: ARG001 — runs uniformly; not persisted yet`.
   Per the proposal's resolved Open Questions, do NOT persist `last_actor_id` at this cutover.
-- [ ] Integration test: submit a job with `AIZK_DEFAULT_PRINCIPAL=alice` → the new `sources` row has `owner_id="alice"` and the new `conversion_jobs` row has `owner_id="alice"`.
-- [ ] Integration test: submit two jobs whose `source_ref` canonicalizes to the same hash, with two different `default_principal` values across the two requests (mock settings per-request) → exactly one `sources` row exists, its `owner_id` matches the first submitter, both `conversion_jobs` rows have their respective request's `owner_id`.
-- [ ] Integration test: the OpenAPI schema for `POST /v1/jobs` does NOT include `owner_id` in any request or response field — confirms internal-only invariant.
+- [x] Integration test: submit a job with `AIZK_DEFAULT_PRINCIPAL=alice` → the new `sources` row has `owner_id="alice"` and the new `conversion_jobs` row has `owner_id="alice"`.
+  Added at `tests/conversion/integration/test_owner_id_materialization.py::test_submit_persists_principal_subject_on_source_and_job`.
+- [x] Integration test: submit two jobs whose `source_ref` canonicalizes to the same hash, with two different `default_principal` values across the two requests (mock settings per-request) → exactly one `sources` row exists, its `owner_id` matches the first submitter, both `conversion_jobs` rows have their respective request's `owner_id`.
+  Implemented at `test_owner_id_materialization.py::test_source_reuse_preserves_first_writers_owner_id` via FastAPI `dependency_overrides[get_principal]` to swap the principal between calls.
+  Note: same-source resubmissions converge on the same idempotency key, so the second request hits the existing-Job replay (200) path rather than creating a new Job — the test asserts the Source `owner_id` invariant explicitly.
+- [x] Integration test: the OpenAPI schema for `POST /v1/jobs` does NOT include `owner_id` in any request or response field — confirms internal-only invariant.
+  `test_openapi_schema_excludes_owner_id_from_jobs_endpoint` walks every component schema and asserts no `owner_id` property; also belt-and-braces by checking the raw JSON of `/v1/jobs` paths for the literal string.
 
 ## Worker materialization
 
@@ -119,8 +123,12 @@
   Note that this should be impossible after the migration; the check is defensive.
 - [x] Confirm the worker NEVER writes to `Job.owner_id` in any code path; grep for `Job.owner_id =` assignments after the change and assert there are none outside the API materialization path.
   `git grep -n "owner_id\s*=" src/aizk/conversion/workers/` shows only reads, not assignments.
-- [ ] Integration test: a Job with `owner_id="bob"` runs to success → the new `conversion_outputs` row has `owner_id="bob"`.
-- [ ] Integration test: a Job whose `owner_id` is somehow NULL at runtime (force-injected via direct SQL) → the worker fails the job non-retryably with `MissingOwnerOnJob`; the Output row is NOT created.
+- [x] Integration test: a Job with `owner_id="bob"` runs to success → the new `conversion_outputs` row has `owner_id="bob"`.
+  Added at `tests/conversion/integration/test_owner_id_worker_propagation.py::test_upload_propagates_owner_id_from_job_to_output`.
+  Also asserts the worker does NOT mutate `Job.owner_id`.
+- [x] Integration test: a Job whose `owner_id` is somehow NULL at runtime (force-injected via direct SQL) → the worker fails the job non-retryably with `MissingOwnerOnJob`; the Output row is NOT created.
+  Implemented as `test_upload_raises_missing_owner_when_job_owner_id_is_falsy`: SQLite's NOT NULL constraint blocks a literal NULL via the live session, so the test exercises the `if not job.owner_id:` defensive guard with the closest reachable degenerate state — empty string.
+  The guard catches both NULL and empty.
 
 ## Documentation
 
