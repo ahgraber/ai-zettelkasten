@@ -8,7 +8,13 @@ from pathlib import Path
 from pydantic import ValidationError
 import pytest
 
-from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
+from aizk.conversion.core.errors import ConfigurationError
+from aizk.conversion.utilities.config import (
+    AuthSettings,
+    ConversionConfig,
+    DoclingConverterConfig,
+    KarakeepFetcherConfig,
+)
 from aizk.conversion.wiring.ingress_policy import IngressPolicy
 
 
@@ -120,6 +126,73 @@ def test_karakeep_config_reads_new_env_vars(monkeypatch):
     assert config.api_key == "mytoken"
 
 
+# --- AuthSettings ------------------------------------------------------------
+
+
+def test_auth_settings_default_is_trust_network(monkeypatch):
+    """No env vars set → defaults to trust_network / local."""
+    monkeypatch.delenv("AIZK_AUTH_MODE", raising=False)
+    monkeypatch.delenv("AIZK_DEFAULT_PRINCIPAL", raising=False)
+
+    settings = AuthSettings(_env_file=None)
+
+    assert settings.auth_mode == "trust_network"
+    assert settings.default_principal == "local"
+
+
+def test_auth_settings_explicit_trust_network_constructs(monkeypatch):
+    monkeypatch.setenv("AIZK_AUTH_MODE", "trust_network")
+    monkeypatch.setenv("AIZK_DEFAULT_PRINCIPAL", "alice")
+
+    settings = AuthSettings(_env_file=None)
+
+    assert settings.auth_mode == "trust_network"
+    assert settings.default_principal == "alice"
+
+
+@pytest.mark.parametrize("reserved_mode", ["token", "proxy_headers", "oidc"])
+def test_auth_settings_rejects_unimplemented_modes(monkeypatch, reserved_mode):
+    """Reserved-but-unimplemented modes are rejected with the not-implemented message.
+
+    `ConfigurationError` is a `RuntimeError` subclass, so pydantic propagates it
+    rather than wrapping it in `ValidationError` (which only wraps `ValueError`
+    and `AssertionError`). Asserting on the typed error here matches the
+    project's startup-time `ConfigurationError` precedent.
+    """
+    monkeypatch.setenv("AIZK_AUTH_MODE", reserved_mode)
+
+    with pytest.raises(ConfigurationError, match="reserved for a future build but not implemented at this cutover"):
+        AuthSettings(_env_file=None)
+
+
+def test_auth_settings_rejects_unknown_mode(monkeypatch):
+    """A value outside the literal type is rejected by pydantic before the validator runs."""
+    monkeypatch.setenv("AIZK_AUTH_MODE", "lol_anyone_can_in")
+
+    with pytest.raises(ValidationError):
+        AuthSettings(_env_file=None)
+
+
+# --- ConversionConfig.trusted_hosts ------------------------------------------
+
+
+def test_trusted_hosts_default_includes_loopback(monkeypatch):
+    monkeypatch.delenv("AIZK_TRUSTED_HOSTS", raising=False)
+
+    config = ConversionConfig(_env_file=None)
+
+    assert config.trusted_hosts == ["localhost", "127.0.0.1"]
+
+
+def test_trusted_hosts_parses_json_list_from_env(monkeypatch):
+    """List-shaped env vars use pydantic-settings' default JSON parsing."""
+    monkeypatch.setenv("AIZK_TRUSTED_HOSTS", '["api.example.com", "*.internal"]')
+
+    config = ConversionConfig(_env_file=None)
+
+    assert config.trusted_hosts == ["api.example.com", "*.internal"]
+
+
 # --- Settings hermeticity (H7) -----------------------------------------------
 
 
@@ -133,6 +206,7 @@ def test_all_settings_classes_declare_env_file_none():
     assert DoclingConverterConfig.model_config.get("env_file") is None
     assert KarakeepFetcherConfig.model_config.get("env_file") is None
     assert IngressPolicy.model_config.get("env_file") is None
+    assert AuthSettings.model_config.get("env_file") is None
 
 
 def _calls_named_function(source: Path, function_name: str) -> bool:

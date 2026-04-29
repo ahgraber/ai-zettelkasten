@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import os
 import re
+from typing import ClassVar, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from aizk.conversion.core.errors import ConfigurationError
 
 _UNRESOLVED_ENV_PATTERN = re.compile(r"\$\{[^}]+\}|\$[A-Za-z_][A-Za-z0-9_]*")
 
@@ -47,6 +50,40 @@ class DoclingConverterConfig(BaseSettings):
     def is_picture_description_enabled(self) -> bool:
         """Return whether upstream picture-description chat calls are enabled."""
         return bool(self.picture_description_base_url.rstrip("/") and self.picture_description_api_key)
+
+
+class AuthSettings(BaseSettings):
+    """Deployment trust-mode configuration for the conversion API.
+
+    The `auth_mode` field reserves names for future modes (`token`,
+    `proxy_headers`, `oidc`) at the type level so that exhaustive `match`
+    statements in the principal resolver can be type-checked against the full
+    eventual surface, while a runtime validator rejects any value that lacks
+    an implemented resolver branch.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="", env_file=None, extra="ignore", populate_by_name=True)
+
+    auth_mode: Literal["trust_network", "token", "proxy_headers", "oidc"] = Field(
+        default="trust_network",
+        validation_alias="AIZK_AUTH_MODE",
+    )
+    default_principal: str = Field(
+        default="local",
+        validation_alias="AIZK_DEFAULT_PRINCIPAL",
+    )
+
+    _IMPLEMENTED_MODES: ClassVar[frozenset[str]] = frozenset({"trust_network"})
+
+    @field_validator("auth_mode")
+    @classmethod
+    def _reject_unimplemented_modes(cls, value: str) -> str:
+        """Reject auth modes whose resolver branch is not implemented in this build."""
+        if value not in cls._IMPLEMENTED_MODES:
+            raise ConfigurationError(
+                f"auth mode '{value}' is reserved for a future build but not implemented at this cutover"
+            )
+        return value
 
 
 class KarakeepFetcherConfig(BaseSettings):
@@ -139,6 +176,17 @@ class ConversionConfig(BaseSettings):
     api_host: str = Field(default="0.0.0.0", validation_alias="API_HOST")  # NOQA: S104
     api_port: int = Field(default=8000, validation_alias="API_PORT")
     api_reload: bool = Field(default=False, validation_alias="API_RELOAD")
+
+    trusted_hosts: list[str] = Field(
+        default=["localhost", "127.0.0.1"],
+        validation_alias="AIZK_TRUSTED_HOSTS",
+        description=(
+            "Allowlist enforced by Starlette TrustedHostMiddleware against the "
+            "inbound Host header. Operators deploying behind a reverse proxy MUST "
+            "override this and ensure the proxy rewrites Host AND strips client-supplied "
+            "X-Forwarded-Host."
+        ),
+    )
 
     prefetch_per_image_max_bytes: int = Field(
         default=10 * 1024 * 1024,
