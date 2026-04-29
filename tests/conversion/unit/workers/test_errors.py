@@ -110,6 +110,7 @@ def bookmark(db_session: Session) -> Source:
         karakeep_id="bm_traceback_test",
         source_ref=_ref.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(_ref),
+        owner_id="self",
         url="https://example.com",
         normalized_url="https://example.com",
         title="Traceback Test",
@@ -127,6 +128,7 @@ def job(db_session: Session, bookmark: Source) -> ConversionJob:
     """Create and return a RUNNING test job."""
     j = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         status=ConversionJobStatus.RUNNING,
         idempotency_key="test-traceback-key",
@@ -421,6 +423,7 @@ def test_handle_job_error_skips_cancelled_job(
     """A CANCELLED job must not be re-mapped to FAILED_* by handle_job_error."""
     j = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         status=ConversionJobStatus.CANCELLED,
         idempotency_key="cancelled-key",
@@ -448,6 +451,7 @@ def test_error_detail_column_exists_after_migration(db_session: Session, bookmar
     """Verify the error_detail column is writable after migrations run."""
     j = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title="Migration Test",
         status=ConversionJobStatus.FAILED_PERM,
         idempotency_key="migration-test-key",

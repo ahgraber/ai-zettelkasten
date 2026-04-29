@@ -7,7 +7,7 @@
 The API process SHALL validate the `AIZK_AUTH_MODE` configuration value during startup and SHALL refuse to start if the value is unrecognized or names a mode that is not implemented in the current build.
 At cutover, the only implemented mode is `trust_network`; any other value reserved by the type (`token`, `proxy_headers`, `oidc`) or any string outside the recognized set SHALL cause the process to fail to start with a typed startup error and a non-zero exit code.
 
-When `AIZK_AUTH_MODE` is unset, the setting SHALL default to `trust_network` so that a fresh-clone deployment runs without explicit configuration; this matches the shipped defaults for `AIZK_DEFAULT_PRINCIPAL` (`"local"`) and `AIZK_TRUSTED_HOSTS` (`["localhost", "127.0.0.1"]`).
+When `AIZK_AUTH_MODE` is unset, the setting SHALL default to `trust_network` so that a fresh-clone deployment runs without explicit configuration; this matches the shipped defaults for `AIZK_DEFAULT_PRINCIPAL` (`"self"`) and `AIZK_TRUSTED_HOSTS` (`["localhost", "127.0.0.1"]`).
 This default does not weaken the trust posture: every recognized mode is rejected unless its resolver branch is implemented, so the only way the process boots is in a mode whose behavior is fully specified.
 
 This requirement guarantees that a misconfigured deployment fails loudly at process boot rather than silently default-opening to an unintended trust posture.
@@ -51,7 +51,7 @@ This requirement does not by itself create or persist anything; it establishes t
 
 - **GIVEN** `AIZK_AUTH_MODE=trust_network` and `AIZK_DEFAULT_PRINCIPAL=local`
 - **WHEN** any API request reaches a route handler
-- **THEN** the handler receives a `Principal(subject="local", provenance="trust_network")` via the dependency, regardless of route or method
+- **THEN** the handler receives a `Principal(subject="self", provenance="trust_network")` via the dependency, regardless of route or method
 
 #### Scenario: Principal resolution does not consult auth headers in trust_network mode
 
@@ -116,11 +116,11 @@ The existing schema-reference clause is unchanged; the column is internal-only a
 
 - **GIVEN** `AIZK_AUTH_MODE=trust_network`, `AIZK_DEFAULT_PRINCIPAL=local`, and a valid `KarakeepBookmarkRef` submission
 - **WHEN** the API materializes Source identity and creates the Job
-- **THEN** the new `sources` row has `owner_id = "local"` and the new `conversion_jobs` row has `owner_id = "local"`
+- **THEN** the new `sources` row has `owner_id = "self"` and the new `conversion_jobs` row has `owner_id = "self"`
 
 #### Scenario: Source reuse preserves original owner_id
 
-- **GIVEN** an existing `sources` row with `owner_id = "local"` and `source_ref_hash = H`, and a new submission whose `source_ref` canonicalizes to the same hash
+- **GIVEN** an existing `sources` row with `owner_id = "self"` and `source_ref_hash = H`, and a new submission whose `source_ref` canonicalizes to the same hash
 - **WHEN** the API materializes Source identity (the `INSERT ... ON CONFLICT DO NOTHING` resolves to reuse)
 - **THEN** the existing Source row's `owner_id` is unchanged; only the new Job row is created, with its own `owner_id` from the current Principal
 

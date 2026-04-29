@@ -48,6 +48,7 @@ def _create_bookmark(db_session: Session) -> Bookmark:
 def _create_running_job(db_session: Session, bookmark: Bookmark) -> ConversionJob:
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title or "",
         idempotency_key="s" * 64,
         status=ConversionJobStatus.RUNNING,

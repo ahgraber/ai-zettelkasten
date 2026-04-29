@@ -44,6 +44,7 @@ def _create_bookmark(db_session: Session) -> Bookmark:
 def _create_queued_job(db_session: Session, bookmark: Bookmark, *, suffix: str = "") -> ConversionJob:
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title or "",
         idempotency_key=("q" + suffix).ljust(64, "0"),
         status=ConversionJobStatus.QUEUED,
@@ -458,6 +459,7 @@ def test_poll_and_process_jobs_is_atomic(db_session, monkeypatch):
 
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
         title=bookmark.title,
         payload_version=1,
         status=ConversionJobStatus.QUEUED,

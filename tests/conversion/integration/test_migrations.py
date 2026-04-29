@@ -706,3 +706,205 @@ def test_enforce_not_null_round_trip_on_populated_database(tmp_path):
     col_nullable = {c["name"]: c["nullable"] for c in inspector.get_columns("sources")}
     assert col_nullable["source_ref"] is True
     assert col_nullable["source_ref_hash"] is True
+
+
+# ---------------------------------------------------------------------------
+# e6f7a8b9c0d1 add_owner_id_columns
+# ---------------------------------------------------------------------------
+
+_OWNER_PREV_REVISION = "d5e6f7a8b9c0"
+_OWNER_THIS_REVISION = "e6f7a8b9c0d1"
+_OWNER_TABLES = ("sources", "conversion_jobs", "conversion_outputs")
+
+
+def _seed_pre_owner_rows(engine, *, karakeep_id: str = "owner_seed_bm") -> dict[str, int]:
+    """Insert one row in each of sources/conversion_jobs/conversion_outputs.
+
+    The schema at the d5e6f7a8b9c0 revision has no owner_id columns yet, so
+    the inserts use only the columns that exist at that revision.
+    """
+    import json as _json
+
+    source_ref = _json.dumps(
+        {"kind": "karakeep_bookmark", "bookmark_id": karakeep_id},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    source_ref_hash = _sha256_hex(source_ref)
+    aizk_uuid_value = str(uuid4())
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO sources "
+                "(karakeep_id, aizk_uuid, source_ref, source_ref_hash, "
+                "url, normalized_url, title, content_type, source_type, "
+                "created_at, updated_at) "
+                "VALUES (:kid, :uuid, :ref, :hash, NULL, NULL, :title, NULL, NULL, :now, :now)"
+            ),
+            {
+                "kid": karakeep_id,
+                "uuid": aizk_uuid_value,
+                "ref": source_ref,
+                "hash": source_ref_hash,
+                "title": karakeep_id,
+                "now": now,
+            },
+        )
+        job_result = conn.execute(
+            sa.text(
+                "INSERT INTO conversion_jobs "
+                "(aizk_uuid, title, payload_version, status, attempts, "
+                "idempotency_key, created_at, updated_at) "
+                "VALUES (:uuid, 'seed', 1, 'SUCCEEDED', 1, :key, :now, :now)"
+            ),
+            {"uuid": aizk_uuid_value, "key": ("o" * 64), "now": now},
+        )
+        job_id = job_result.lastrowid
+        output_result = conn.execute(
+            sa.text(
+                "INSERT INTO conversion_outputs "
+                "(job_id, aizk_uuid, title, payload_version, "
+                "s3_prefix, markdown_key, manifest_key, "
+                "markdown_hash_xx64, figure_count, docling_version, "
+                "pipeline_name, created_at) "
+                "VALUES (:jid, :uuid, 'seed', 1, "
+                "'s3://b/p', 'p/o.md', 'p/m.json', "
+                "'deadbeef', 0, '1.0.0', 'default', :now)"
+            ),
+            {"jid": job_id, "uuid": aizk_uuid_value, "now": now},
+        )
+        output_id = output_result.lastrowid
+    return {"job_id": job_id, "output_id": output_id, "aizk_uuid": aizk_uuid_value}
+
+
+def test_owner_id_upgrade_backfills_default_principal_and_enforces_not_null(tmp_path, monkeypatch):
+    """All pre-existing rows get owner_id == AIZK_DEFAULT_PRINCIPAL; columns are NOT NULL with index."""
+    monkeypatch.setenv("AIZK_DEFAULT_PRINCIPAL", "alice-default")
+    db_url = _db_url(tmp_path, "owner_upgrade.db")
+    cfg = _alembic_cfg(db_url)
+
+    command.upgrade(cfg, _OWNER_PREV_REVISION)
+    engine = create_engine(db_url)
+    seeded = _seed_pre_owner_rows(engine)
+
+    command.upgrade(cfg, _OWNER_THIS_REVISION)
+
+    with engine.connect() as conn:
+        row_owners = {
+            table: conn.execute(sa.text(f"SELECT owner_id FROM {table}")).scalar()  # noqa: S608 — table name from fixed tuple
+            for table in _OWNER_TABLES
+        }
+    assert row_owners == dict.fromkeys(_OWNER_TABLES, "alice-default"), row_owners
+
+    inspector = inspect(engine)
+    for table in _OWNER_TABLES:
+        cols = {c["name"]: c for c in inspector.get_columns(table)}
+        assert "owner_id" in cols, f"{table}.owner_id column missing"
+        assert cols["owner_id"]["nullable"] is False, f"{table}.owner_id must be NOT NULL"
+        index_names = {idx["name"] for idx in inspector.get_indexes(table)}
+        assert f"ix_{table}_owner_id" in index_names, f"{table} missing ix_{table}_owner_id"
+
+    # Sanity: seeded ids preserved, no row loss across the column transition.
+    with engine.connect() as conn:
+        assert conn.execute(sa.text("SELECT COUNT(*) FROM conversion_jobs")).scalar() == 1
+        assert conn.execute(sa.text("SELECT COUNT(*) FROM conversion_outputs")).scalar() == 1
+        assert conn.execute(sa.text("SELECT id FROM conversion_jobs")).scalar() == seeded["job_id"]
+        assert conn.execute(sa.text("SELECT id FROM conversion_outputs")).scalar() == seeded["output_id"]
+
+
+def test_owner_id_upgrade_downgrade_upgrade_round_trip_preserves_data(tmp_path, monkeypatch):
+    """upgrade -> downgrade -> upgrade leaves the post-upgrade shape with seeded data intact."""
+    monkeypatch.setenv("AIZK_DEFAULT_PRINCIPAL", "round-trip-owner")
+    db_url = _db_url(tmp_path, "owner_round_trip.db")
+    cfg = _alembic_cfg(db_url)
+
+    command.upgrade(cfg, _OWNER_PREV_REVISION)
+    engine = create_engine(db_url)
+    seeded = _seed_pre_owner_rows(engine, karakeep_id="owner_rt")
+
+    command.upgrade(cfg, _OWNER_THIS_REVISION)
+    command.downgrade(cfg, _OWNER_PREV_REVISION)
+
+    inspector = inspect(engine)
+    for table in _OWNER_TABLES:
+        cols = {c["name"] for c in inspector.get_columns(table)}
+        assert "owner_id" not in cols, f"{table}.owner_id should not exist after downgrade"
+    with engine.connect() as conn:
+        assert conn.execute(sa.text("SELECT karakeep_id FROM sources")).scalar() == "owner_rt"
+        assert conn.execute(sa.text("SELECT id FROM conversion_jobs")).scalar() == seeded["job_id"]
+
+    command.upgrade(cfg, _OWNER_THIS_REVISION)
+
+    with engine.connect() as conn:
+        for table in _OWNER_TABLES:
+            assert conn.execute(sa.text(f"SELECT owner_id FROM {table}")).scalar() == "round-trip-owner"  # noqa: S608
+
+    inspector = inspect(create_engine(db_url))
+    for table in _OWNER_TABLES:
+        cols = {c["name"]: c for c in inspector.get_columns(table)}
+        assert cols["owner_id"]["nullable"] is False
+        assert f"ix_{table}_owner_id" in {idx["name"] for idx in inspector.get_indexes(table)}
+
+
+def test_owner_id_upgrade_aborts_when_backfill_leaves_nulls(tmp_path, monkeypatch):
+    """If the post-backfill scan finds a NULL ``owner_id``, the migration aborts.
+
+    The migration runs ``UPDATE ... SET owner_id = :value WHERE owner_id IS NULL``
+    bound to ``AuthSettings().default_principal``. We stub the settings object so
+    the bound value is ``None``, simulating a degenerate deployment configuration
+    in which the UPDATE writes NULL back into the column. The post-backfill
+    ``SELECT COUNT(*) WHERE owner_id IS NULL`` then finds the offending rows and
+    the migration raises ``IrreversibleMigrationError`` naming the per-table NULL
+    counts. Equivalent in observable behaviour to a trigger that re-NULLs the
+    column between backfill and the NOT NULL assertion.
+    """
+    db_url = _db_url(tmp_path, "owner_abort.db")
+    cfg = _alembic_cfg(db_url)
+
+    command.upgrade(cfg, _OWNER_PREV_REVISION)
+    engine = create_engine(db_url)
+    _seed_pre_owner_rows(engine, karakeep_id="owner_abort")
+
+    class _NullPrincipalSettings:
+        default_principal = None
+
+    # Alembic loads migration modules dynamically by file path, so patching the
+    # already-imported migration module is unreliable. Patch the source class on
+    # its defining module so the dynamic import resolves to the stub.
+    from aizk.conversion.utilities import config as config_mod
+
+    monkeypatch.setattr(config_mod, "AuthSettings", lambda: _NullPrincipalSettings())
+
+    with pytest.raises(IrreversibleMigrationError, match=r"sources=1.*conversion_jobs=1.*conversion_outputs=1"):
+        command.upgrade(cfg, _OWNER_THIS_REVISION)
+
+
+def test_owner_id_post_migration_schema_matches_create_all(tmp_path):
+    """Schema-equivalence test: post-migration columns/indexes match SQLModel.create_all().
+
+    The repo-wide schema-parity check at ``test_upgrade_produces_schema_matching_create_all``
+    already covers this, but we pin the owner_id columns explicitly here so a
+    regression on this migration shows up next to the migration's own tests.
+    """
+    db_url = _db_url(tmp_path, "owner_schema.db")
+    cfg = _alembic_cfg(db_url)
+    command.upgrade(cfg, _OWNER_THIS_REVISION)
+
+    baseline_url = f"sqlite:///{tmp_path / 'baseline.db'}"
+    baseline_engine = create_engine(baseline_url)
+    SQLModel.metadata.create_all(baseline_engine)
+
+    migrated_inspector = inspect(create_engine(db_url))
+    baseline_inspector = inspect(baseline_engine)
+
+    for table in _OWNER_TABLES:
+        m_owner = next(c for c in migrated_inspector.get_columns(table) if c["name"] == "owner_id")
+        b_owner = next(c for c in baseline_inspector.get_columns(table) if c["name"] == "owner_id")
+        assert m_owner["nullable"] == b_owner["nullable"] is False, (
+            f"{table}.owner_id nullable mismatch: migrated={m_owner['nullable']}, baseline={b_owner['nullable']}"
+        )
+        m_idx = {idx["name"] for idx in migrated_inspector.get_indexes(table)}
+        b_idx = {idx["name"] for idx in baseline_inspector.get_indexes(table)}
+        assert f"ix_{table}_owner_id" in m_idx
+        assert f"ix_{table}_owner_id" in b_idx

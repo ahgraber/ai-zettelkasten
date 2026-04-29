@@ -15,12 +15,12 @@ The change adds the column and ties its value to the parent Job's owner; the exi
 
 #### Scenario: Output owner_id copied from parent Job
 
-- **GIVEN** a Job with `owner_id = "local"` reaches successful completion
+- **GIVEN** a Job with `owner_id = "self"` reaches successful completion
 - **WHEN** the worker creates the conversion output record
-- **THEN** the new `conversion_outputs` row has `owner_id = "local"`, matching the parent Job's owner
+- **THEN** the new `conversion_outputs` row has `owner_id = "self"`, matching the parent Job's owner
 
 #### Scenario: Worker does not mutate Job.owner_id
 
-- **GIVEN** a Job with `owner_id = "local"` is processed by the worker
+- **GIVEN** a Job with `owner_id = "self"` is processed by the worker
 - **WHEN** the worker writes any of its mutable metadata columns (status, attempt count, error message, output reference)
 - **THEN** the Job's `owner_id` value is unchanged, consistent with the existing Source-identity immutability invariant

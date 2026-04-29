@@ -15,7 +15,7 @@ from sqlmodel import Session, select
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 
-from aizk.conversion.api.dependencies import get_config, get_db_session
+from aizk.conversion.api.dependencies import get_config, get_db_session, get_principal
 from aizk.conversion.api.schemas import (
     ArtifactSummary,
     BulkActionResponse,
@@ -28,6 +28,7 @@ from aizk.conversion.api.schemas import (
     JobSubmission,
     QueueFullResponse,
 )
+from aizk.conversion.auth import Principal
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, SourceRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
@@ -164,6 +165,7 @@ def submit_job(
     api_response: Response,
     session: Annotated[Session, Depends(get_db_session)],
     request: Request,
+    principal: Annotated[Principal, Depends(get_principal)],
 ) -> JobResponse:
     """Submit a new conversion job."""
     from uuid import uuid4
@@ -194,17 +196,21 @@ def submit_job(
 
     session.commit()  # end any auto-begun read transaction
 
+    # `INSERT OR IGNORE` (no `DO UPDATE`) preserves the existing row's owner_id on
+    # source-reuse races: the first writer's principal wins; subsequent submitters
+    # for the same source_ref_hash get their own Job row but do not change Source ownership.
     session.execute(
         text(
             "INSERT OR IGNORE INTO sources "
-            "(aizk_uuid, source_ref, source_ref_hash, karakeep_id, created_at, updated_at) "
-            "VALUES (:aizk_uuid, :source_ref, :source_ref_hash, :karakeep_id, :created_at, :updated_at)"
+            "(aizk_uuid, source_ref, source_ref_hash, karakeep_id, owner_id, created_at, updated_at) "
+            "VALUES (:aizk_uuid, :source_ref, :source_ref_hash, :karakeep_id, :owner_id, :created_at, :updated_at)"
         ),
         {
             "aizk_uuid": candidate_uuid.hex,
             "source_ref": source_ref_json,
             "source_ref_hash": source_ref_hash,
             "karakeep_id": karakeep_id,
+            "owner_id": principal.subject,
             "created_at": now_utc,
             "updated_at": now_utc,
         },
@@ -244,6 +250,7 @@ def submit_job(
     now = _utcnow()
     job = ConversionJob(
         aizk_uuid=source.aizk_uuid,
+        owner_id=principal.subject,
         title=source.title or source.karakeep_id or str(source.aizk_uuid),
         payload_version=submission.payload_version,
         status=ConversionJobStatus.QUEUED,
@@ -345,6 +352,7 @@ def list_jobs(
 def retry_job(
     job_id: int,
     session: Annotated[Session, Depends(get_db_session)],
+    principal: Annotated[Principal, Depends(get_principal)],  # noqa: ARG001 — runs uniformly; not persisted yet
 ) -> JobResponse:
     """Retry a failed or cancelled job."""
     session.exec(text("BEGIN IMMEDIATE"))
@@ -371,6 +379,7 @@ def retry_job(
 def cancel_job(
     job_id: int,
     session: Annotated[Session, Depends(get_db_session)],
+    principal: Annotated[Principal, Depends(get_principal)],  # noqa: ARG001 — runs uniformly; not persisted yet
 ) -> JobResponse:
     """Cancel a queued or running job."""
     session.exec(text("BEGIN IMMEDIATE"))
@@ -397,6 +406,7 @@ def cancel_job(
 def bulk_job_actions(
     payload: BulkJobActionRequest,
     session: Annotated[Session, Depends(get_db_session)],
+    principal: Annotated[Principal, Depends(get_principal)],  # noqa: ARG001 — runs uniformly; not persisted yet
 ) -> BulkActionResponse:
     """Apply retry or cancel actions across multiple jobs."""
     session.exec(text("BEGIN IMMEDIATE"))

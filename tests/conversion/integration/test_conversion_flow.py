@@ -158,6 +158,7 @@ def _fake_convert_pdf(content: bytes, temp_dir, config):
 def _create_job_for_ref(db_session, ref, *, idempotency_key: str) -> int:
     source = Source(
         aizk_uuid=uuid4(),
+        owner_id="self",
         karakeep_id=ref.bookmark_id if isinstance(ref, KarakeepBookmarkRef) else None,
         source_ref=ref.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(ref),
@@ -169,6 +170,7 @@ def _create_job_for_ref(db_session, ref, *, idempotency_key: str) -> int:
 
     job = ConversionJob(
         aizk_uuid=source.aizk_uuid,
+        owner_id="self",
         title="Integration Job",
         payload_version=1,
         status=ConversionJobStatus.QUEUED,

@@ -34,6 +34,7 @@ def _source_kwargs(**overrides):
         karakeep_id=f"k_{uuid4().hex[:8]}",
         source_ref='{"kind":"karakeep_bookmark","bookmark_id":"x"}',
         source_ref_hash=uuid4().hex,
+        owner_id="self",
         created_at=now,
         updated_at=now,
     )

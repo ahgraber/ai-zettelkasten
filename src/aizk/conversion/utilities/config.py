@@ -69,7 +69,7 @@ class AuthSettings(BaseSettings):
         validation_alias="AIZK_AUTH_MODE",
     )
     default_principal: str = Field(
-        default="local",
+        default="self",
         validation_alias="AIZK_DEFAULT_PRINCIPAL",
     )
 

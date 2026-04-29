@@ -26,7 +26,7 @@ This requirement extends the precedent established by the `source_ref` / `source
 
 - **GIVEN** a database with rows in `sources`, `conversion_jobs`, and `conversion_outputs` that pre-date this migration, and `AIZK_DEFAULT_PRINCIPAL=local` set at migration time
 - **WHEN** the upgrade migration runs
-- **THEN** every existing row in all three tables has `owner_id = "local"`, all three `owner_id` columns are `NOT NULL`, and the three indexes are present
+- **THEN** every existing row in all three tables has `owner_id = "self"`, all three `owner_id` columns are `NOT NULL`, and the three indexes are present
 
 #### Scenario: Migration aborts when backfill leaves NULL rows
 

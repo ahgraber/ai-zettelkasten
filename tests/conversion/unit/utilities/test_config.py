@@ -130,14 +130,14 @@ def test_karakeep_config_reads_new_env_vars(monkeypatch):
 
 
 def test_auth_settings_default_is_trust_network(monkeypatch):
-    """No env vars set → defaults to trust_network / local."""
+    """No env vars set → defaults to trust_network / self."""
     monkeypatch.delenv("AIZK_AUTH_MODE", raising=False)
     monkeypatch.delenv("AIZK_DEFAULT_PRINCIPAL", raising=False)
 
     settings = AuthSettings(_env_file=None)
 
     assert settings.auth_mode == "trust_network"
-    assert settings.default_principal == "local"
+    assert settings.default_principal == "self"
 
 
 def test_auth_settings_explicit_trust_network_constructs(monkeypatch):

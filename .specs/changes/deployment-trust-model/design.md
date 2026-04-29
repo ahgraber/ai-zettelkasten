@@ -167,12 +167,12 @@ SQLite's `ALTER TABLE ... ALTER COLUMN` requires the table-rebuild dance via `op
 
 ```python
 auth_mode: Literal["trust_network", "token", "proxy_headers", "oidc"] = "trust_network"
-default_principal: str = "local"
+default_principal: str = "self"
 trusted_hosts: list[str] = ["localhost", "127.0.0.1"]
 ```
 
 The `auth_mode` literal includes future modes as reserved values rejected by the validator with a "not implemented at this build" message (per the auth-mode validation decision).
-`default_principal="local"` is the shipped default; operators can override.
+`default_principal="self"` is the shipped default; operators can override.
 `trusted_hosts` ships with the localhost defaults documented in the proposal; the operator-deployment docs MUST call out the override requirement for production.
 
 Environment-variable mapping follows the existing `AIZK_*` convention via pydantic-settings: `AIZK_AUTH_MODE`, `AIZK_DEFAULT_PRINCIPAL`, `AIZK_TRUSTED_HOSTS`.

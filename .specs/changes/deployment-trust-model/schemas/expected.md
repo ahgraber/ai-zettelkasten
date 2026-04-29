@@ -22,5 +22,5 @@ The shape of those database additions:
 - `conversion_jobs.owner_id` — `TEXT NOT NULL` (after backfill); index `ix_conversion_jobs_owner_id` on `(owner_id)`.
 - `conversion_outputs.owner_id` — `TEXT NOT NULL` (after backfill); index `ix_conversion_outputs_owner_id` on `(owner_id)`.
 
-Backfill value: `AIZK_DEFAULT_PRINCIPAL` (e.g., `"local"`) in `trust_network` mode at migration time.
+Backfill value: `AIZK_DEFAULT_PRINCIPAL` (e.g., `"self"`) in `trust_network` mode at migration time.
 Verification of the database additions is handled by the schema-migrations spec's existing ORM-baseline-equivalence requirement, not by `sdd-verify`.

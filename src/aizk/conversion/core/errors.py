@@ -84,6 +84,18 @@ class IrreversibleMigrationError(RuntimeError):  # noqa: N818 — canonical spec
     retryable: ClassVar[bool] = False
 
 
+class MissingOwnerOnJob(RuntimeError):  # noqa: N818 — canonical spec name
+    """Raised when the worker observes a Job whose `owner_id` is unset at Output-creation time.
+
+    Impossible after the deployment-trust-model migration runs, because the
+    column is NOT NULL. This is a defensive guard so an Output row is never
+    written without an owner — non-retryable, fails the job permanently.
+    """
+
+    error_code = "missing_owner_on_job"
+    retryable: ClassVar[bool] = False
+
+
 class FetchError(Exception):  # noqa: N818 — canonical spec name
     """Base exception for fetch errors. Network errors are typically transient and retryable."""
 
