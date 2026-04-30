@@ -91,17 +91,17 @@ def _litestream_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     db_path = tmp_path / "conversion.db"
     config_path = tmp_path / "litestream.yaml"
 
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
-    monkeypatch.setenv("LITESTREAM_ENABLED", "true")
-    monkeypatch.setenv("LITESTREAM_S3_BUCKET_NAME", "test-bucket")
-    monkeypatch.setenv("LITESTREAM_CONFIG_PATH", str(config_path))
-    monkeypatch.setenv("LITESTREAM_RESTORE_ON_STARTUP", "false")
-    monkeypatch.setenv("LITESTREAM_START_ROLE", "both")
-    monkeypatch.setenv("S3_REGION", "us-east-1")
-    monkeypatch.setenv("S3_ACCESS_KEY_ID", "test")
-    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "test")
-    monkeypatch.setenv("S3_BUCKET_NAME", "test-bucket")
-    monkeypatch.setenv("S3_ENDPOINT_URL", "http://localhost:9000")
+    monkeypatch.setenv("AIZK_DATABASE_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("AIZK_LITESTREAM_ENABLED", "true")
+    monkeypatch.setenv("AIZK_LITESTREAM_S3_BUCKET_NAME", "test-bucket")
+    monkeypatch.setenv("AIZK_LITESTREAM_CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("AIZK_LITESTREAM_RESTORE_ON_STARTUP", "false")
+    monkeypatch.setenv("AIZK_LITESTREAM_START_ROLE", "both")
+    monkeypatch.setenv("AIZK_S3_REGION", "us-east-1")
+    monkeypatch.setenv("AIZK_S3_ACCESS_KEY_ID", "test")
+    monkeypatch.setenv("AIZK_S3_SECRET_ACCESS_KEY", "test")
+    monkeypatch.setenv("AIZK_S3_BUCKET_NAME", "test-bucket")
+    monkeypatch.setenv("AIZK_S3_ENDPOINT_URL", "http://localhost:9000")
 
     return ConversionConfig(_env_file=None)
 

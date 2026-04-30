@@ -42,7 +42,7 @@ def _is_enabled() -> bool:
     """Return whether tracing is enabled via configured state or environment."""
     if _tracing_enabled:
         return True
-    raw = os.getenv("MLFLOW_TRACING_ENABLED", "")
+    raw = os.getenv("AIZK_MLFLOW_TRACING_ENABLED", "")
     return raw.lower() in {"1", "true", "yes", "on"}
 
 
@@ -94,8 +94,8 @@ def _ensure_runtime_configured(mlflow_module: Any) -> None:
     if _runtime_configured:
         return
 
-    tracking_uri = _env_or_configured("MLFLOW_TRACKING_URI", _tracking_uri)
-    experiment_name = _env_or_configured("MLFLOW_EXPERIMENT_NAME", _experiment_name)
+    tracking_uri = _env_or_configured("AIZK_MLFLOW_TRACKING_URI", _tracking_uri)
+    experiment_name = _env_or_configured("AIZK_MLFLOW_EXPERIMENT_NAME", _experiment_name)
 
     if tracking_uri:
         mlflow_module.set_tracking_uri(tracking_uri)

@@ -93,12 +93,12 @@ class TestErrorTaxonomy:
 @pytest.fixture()
 def config(monkeypatch: pytest.MonkeyPatch) -> ConversionConfig:
     """Return a ConversionConfig with minimal valid settings."""
-    monkeypatch.setenv("S3_ACCESS_KEY_ID", "test")
-    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "test")
-    monkeypatch.setenv("S3_REGION", "us-east-1")
-    monkeypatch.setenv("S3_BUCKET_NAME", "test-bucket")
-    monkeypatch.setenv("S3_ENDPOINT_URL", "http://localhost:9000")
-    monkeypatch.setenv("RETRY_BASE_DELAY_SECONDS", "0")
+    monkeypatch.setenv("AIZK_S3_ACCESS_KEY_ID", "test")
+    monkeypatch.setenv("AIZK_S3_SECRET_ACCESS_KEY", "test")
+    monkeypatch.setenv("AIZK_S3_REGION", "us-east-1")
+    monkeypatch.setenv("AIZK_S3_BUCKET_NAME", "test-bucket")
+    monkeypatch.setenv("AIZK_S3_ENDPOINT_URL", "http://localhost:9000")
+    monkeypatch.setenv("AIZK_RETRY_BASE_DELAY_SECONDS", "0")
     return ConversionConfig(_env_file=None)
 
 

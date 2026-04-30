@@ -206,10 +206,10 @@ _LABEL_TO_PROMPT: dict[str, str] = {
 def build_picture_description_options() -> PictureDescriptionApiOptions:
     """Configure picture descriptions to use the configured OpenAI-compatible endpoint."""
 
-    base_url = os.environ["DOCLING_PICTURE_DESCRIPTION_BASE_URL"].rstrip("/")
-    api_key = os.environ["DOCLING_PICTURE_DESCRIPTION_API_KEY"]
-    model_name = os.environ.get("DOCLING_PICTURE_DESCRIPTION_MODEL", "openai/gpt-4.1-nano")
-    timeout = float(os.environ.get("DOCLING_PICTURE_TIMEOUT", "180"))
+    base_url = os.environ["AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL"].rstrip("/")
+    api_key = os.environ["AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY"]
+    model_name = os.environ.get("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_MODEL", "openai/gpt-4.1-nano")
+    timeout = float(os.environ.get("AIZK_CONVERTER__DOCLING__PICTURE_TIMEOUT", "180"))
     return PictureDescriptionApiOptions(
         url=AnyUrl(f"{base_url}/chat/completions"),
         params={
@@ -334,10 +334,10 @@ def enrich_picture_descriptions(
 
     Mirrors the production _enrich_picture_descriptions() logic in converter.py.
     """
-    base_url = os.environ.get("DOCLING_PICTURE_DESCRIPTION_BASE_URL", "").rstrip("/")
-    api_key = os.environ.get("DOCLING_PICTURE_DESCRIPTION_API_KEY", "")
-    model_name = os.environ.get("DOCLING_PICTURE_DESCRIPTION_MODEL", "openai/gpt-4.1-nano")
-    timeout = float(os.environ.get("DOCLING_PICTURE_TIMEOUT", "180"))
+    base_url = os.environ.get("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL", "").rstrip("/")
+    api_key = os.environ.get("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_API_KEY", "")
+    model_name = os.environ.get("AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_MODEL", "openai/gpt-4.1-nano")
+    timeout = float(os.environ.get("AIZK_CONVERTER__DOCLING__PICTURE_TIMEOUT", "180"))
 
     if not base_url or not api_key:
         logger.warning("enrich_picture_descriptions: VLM endpoint not configured, skipping")

@@ -348,7 +348,7 @@ class TestGpuSemaphoreGuard:
 class TestRunWorkerConcurrency:
     def test_processes_up_to_concurrency_limit(self, monkeypatch):
         """Verify at most worker_concurrency jobs run simultaneously."""
-        monkeypatch.setenv("WORKER_CONCURRENCY", "2")
+        monkeypatch.setenv("AIZK_WORKER_CONCURRENCY", "2")
         config = ConversionConfig(_env_file=None)
 
         max_concurrent = {"value": 0}
@@ -392,7 +392,7 @@ class TestRunWorkerConcurrency:
 
     def test_shutdown_drains_all_in_flight_jobs(self, monkeypatch):
         """All in-flight jobs complete before exit on shutdown signal."""
-        monkeypatch.setenv("WORKER_CONCURRENCY", "3")
+        monkeypatch.setenv("AIZK_WORKER_CONCURRENCY", "3")
         config = ConversionConfig(_env_file=None)
 
         completed_jobs = []
