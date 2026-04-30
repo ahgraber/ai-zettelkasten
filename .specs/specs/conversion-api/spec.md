@@ -115,6 +115,10 @@ The system SHALL include the `source_ref` in the job response as the canonical s
 Existing fields `url: AnyUrl | None` and `title: str | None` SHALL retain their current names and semantics (populated for sources that have been enriched with a URL or title; null otherwise). (Previously: response always included a non-null top-level `karakeep_id`.
 Now `karakeep_id` is nullable, and `source_ref` is added alongside it.)
 
+The system SHALL return 404 when the resolved `principal.subject` does not match the job's `owner_id`.
+The `principal` SHALL be resolved via the `get_principal` dependency and injected into the handler on every request.
+The response body and status code SHALL be identical to the not-found case so that cross-owner access does not leak job existence. (Previously: any job retrievable by id regardless of `owner_id`; `get_principal` not injected.)
+
 **Schema reference:** `GET /v1/jobs/{job_id}` · response: `JobResponse` (updated)
 
 #### Scenario: KaraKeep job response includes source_ref and karakeep_id
@@ -129,9 +133,17 @@ Now `karakeep_id` is nullable, and `source_ref` is added alongside it.)
 - **WHEN** the job is retrieved
 - **THEN** the response includes `source_ref` with kind `"url"`, and `karakeep_id` is null
 
+#### Scenario: Cross-owner get returns 404
+
+- **GIVEN** a job exists with `owner_id != principal.subject`
+- **WHEN** a client calls `GET /v1/jobs/{job_id}` for that job
+- **THEN** the system returns HTTP 404 with `error: job_not_found`; the response is indistinguishable from a request for a non-existent job id
+
 ### Requirement: List jobs with filters and pagination
 
 The system SHALL expose an endpoint to list conversion jobs filterable by status, internal source identifier, and supporting pagination.
+The system SHALL filter the job list to jobs whose `owner_id` matches `principal.subject`.
+The `principal` SHALL be resolved via the `get_principal` dependency and injected into the handler on every request. (Previously: all jobs returned regardless of `owner_id`; `get_principal` not injected.)
 
 **Schema reference:** `GET /v1/jobs` · query params: status, aizk_uuid, created_after, created_before, limit (1–1000, default 50), offset (≥0, default 0) · response: `JobList`
 
@@ -147,9 +159,23 @@ The system SHALL expose an endpoint to list conversion jobs filterable by status
 - **WHEN** a client filters by internal bookmark identifier or KaraKeep identifier
 - **THEN** only matching jobs are returned with pagination applied
 
+#### Scenario: List returns only caller-owned jobs
+
+- **GIVEN** jobs exist with two distinct `owner_id` values and `AIZK_AUTH_MODE=trust_network`
+- **WHEN** a client calls `GET /v1/jobs`
+- **THEN** only jobs whose `owner_id` matches `principal.subject` are returned; jobs owned by other principals are absent from the result and the `total` count
+
+#### Scenario: trust_network list is unchanged
+
+- **GIVEN** `AIZK_AUTH_MODE=trust_network` and all jobs share `owner_id = AIZK_DEFAULT_PRINCIPAL`
+- **WHEN** a client calls `GET /v1/jobs`
+- **THEN** the response is identical to the pre-change behavior (all jobs visible, filter is a no-op because every job is owned by the single principal)
+
 ### Requirement: Return aggregate job status counts
 
 The system SHALL expose an endpoint returning the count of jobs grouped by status.
+The system SHALL count only jobs whose `owner_id` matches `principal.subject`.
+The `principal` SHALL be resolved via the `get_principal` dependency and injected into the handler on every request. (Previously: counts are global across all jobs; `get_principal` not injected.)
 
 **Schema reference:** `GET /v1/jobs/status-counts` · response: `JobStatusCounts`
 
@@ -159,9 +185,22 @@ The system SHALL expose an endpoint returning the count of jobs grouped by statu
 - **WHEN** a client requests the status counts endpoint
 - **THEN** the response returns a count for each status value present in the system
 
+#### Scenario: Status counts are owner-scoped
+
+- **GIVEN** jobs exist for two distinct owners and `AIZK_AUTH_MODE` admits multiple principals
+- **WHEN** each principal calls `GET /v1/jobs/status-counts`
+- **THEN** each response reflects only that principal's jobs; the two responses need not sum to the global total
+
+#### Scenario: trust_network counts are unchanged
+
+- **GIVEN** `AIZK_AUTH_MODE=trust_network`
+- **WHEN** a client calls `GET /v1/jobs/status-counts`
+- **THEN** the response is identical to the pre-change behavior (all jobs counted, filter is a no-op)
+
 ### Requirement: Retry failed jobs
 
 The system SHALL expose an endpoint to retry a failed or permanently failed job by resetting its status to QUEUED and incrementing its attempt count.
+The system SHALL return 404 when the resolved `principal.subject` does not match the target job's `owner_id`, using the same response body as the not-found case. (Previously: `principal` injected but not used for authorization enforcement.)
 
 **Schema reference:** `POST /v1/jobs/{job_id}/retry` · response: `JobResponse`
 
@@ -171,9 +210,16 @@ The system SHALL expose an endpoint to retry a failed or permanently failed job 
 - **WHEN** a client posts a retry request for that job
 - **THEN** the job status resets to QUEUED, the attempt count increments by one, and the retry scheduling timestamp is cleared
 
+#### Scenario: Cross-owner retry returns 404
+
+- **GIVEN** a job with `owner_id != principal.subject`
+- **WHEN** a client posts `POST /v1/jobs/{job_id}/retry`
+- **THEN** the system returns HTTP 404 with `error: job_not_found`
+
 ### Requirement: Cancel jobs
 
 The system SHALL expose an endpoint to cancel queued or running jobs on a best-effort basis.
+The system SHALL return 404 when the resolved `principal.subject` does not match the target job's `owner_id`, using the same response body as the not-found case. (Previously: `principal` injected but not used for authorization enforcement.)
 
 **Schema reference:** `POST /v1/jobs/{job_id}/cancel` · response: `JobResponse`
 
@@ -189,9 +235,17 @@ The system SHALL expose an endpoint to cancel queued or running jobs on a best-e
 - **WHEN** a client posts a cancel request for that job
 - **THEN** the system attempts best-effort cancellation and updates the job status to CANCELLED
 
+#### Scenario: Cross-owner cancel returns 404
+
+- **GIVEN** a job with `owner_id != principal.subject`
+- **WHEN** a client posts `POST /v1/jobs/{job_id}/cancel`
+- **THEN** the system returns HTTP 404 with `error: job_not_found`
+
 ### Requirement: Apply bulk actions across multiple jobs
 
 The system SHALL expose an endpoint accepting a list of job identifiers and a bulk action (retry or cancel) to apply to all specified jobs, accepting between 1 and 100 job identifiers.
+The system SHALL treat each job in the request independently: a job whose `owner_id` does not match `principal.subject` SHALL be returned with `status: "error"` and `error: "job_not_found"` in the per-job result, consistent with the existing not-found error path and the 404-posture for cross-owner access.
+The presence of cross-owner job ids in the request SHALL NOT cause the entire bulk operation to fail; eligible owned jobs SHALL still be actioned. (Previously: `principal` injected but not used for authorization enforcement.)
 
 **Schema reference:** `POST /v1/jobs/actions` · request: `BulkJobActionRequest` · response: `BulkActionResponse`
 
@@ -206,6 +260,12 @@ The system SHALL expose an endpoint accepting a list of job identifiers and a bu
 - **GIVEN** multiple queued or running jobs are selected
 - **WHEN** a client posts a bulk cancel action with their identifiers
 - **THEN** all eligible jobs are transitioned to CANCELLED and a result summary is returned
+
+#### Scenario: Bulk action skips cross-owner jobs
+
+- **GIVEN** a bulk request containing one job owned by the caller and one job owned by a different principal
+- **WHEN** a client posts `POST /v1/jobs/actions`
+- **THEN** the owned job is actioned and returned with `status: "success"`; the cross-owner job is returned with `status: "error"` and `error: "job_not_found"`; the summary `errors` count includes the cross-owner job
 
 ### Requirement: Retrieve conversion outputs for a bookmark
 
