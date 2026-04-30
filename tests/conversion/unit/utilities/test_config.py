@@ -26,12 +26,12 @@ def test_config_reads_env_vars(monkeypatch):
     mlflow_tracking_uri = "http://mlflow:5000"
     mlflow_experiment_name = "aizk-conversion"
 
-    monkeypatch.setenv("DATABASE_URL", database_url)
-    monkeypatch.setenv("S3_BUCKET_NAME", s3_bucket_name)
-    monkeypatch.setenv("WORKER_CONCURRENCY", str(worker_concurrency))
-    monkeypatch.setenv("MLFLOW_TRACING_ENABLED", mlflow_tracing_enabled)
-    monkeypatch.setenv("MLFLOW_TRACKING_URI", mlflow_tracking_uri)
-    monkeypatch.setenv("MLFLOW_EXPERIMENT_NAME", mlflow_experiment_name)
+    monkeypatch.setenv("AIZK_DATABASE_URL", database_url)
+    monkeypatch.setenv("AIZK_S3_BUCKET_NAME", s3_bucket_name)
+    monkeypatch.setenv("AIZK_WORKER_CONCURRENCY", str(worker_concurrency))
+    monkeypatch.setenv("AIZK_MLFLOW_TRACING_ENABLED", mlflow_tracing_enabled)
+    monkeypatch.setenv("AIZK_MLFLOW_TRACKING_URI", mlflow_tracking_uri)
+    monkeypatch.setenv("AIZK_MLFLOW_EXPERIMENT_NAME", mlflow_experiment_name)
     config = ConversionConfig(_env_file=None)
     assert config.database_url == database_url
     assert config.s3_bucket_name == s3_bucket_name
@@ -42,13 +42,13 @@ def test_config_reads_env_vars(monkeypatch):
 
 
 def test_api_reload_defaults_to_false(monkeypatch):
-    monkeypatch.delenv("API_RELOAD", raising=False)
+    monkeypatch.delenv("AIZK_API_RELOAD", raising=False)
     config = ConversionConfig(_env_file=None)
     assert config.api_reload is False
 
 
 def test_fetch_max_response_bytes_reads_env_var(monkeypatch):
-    monkeypatch.setenv("FETCH_MAX_RESPONSE_BYTES", "12345")
+    monkeypatch.setenv("AIZK_FETCH_MAX_RESPONSE_BYTES", "12345")
 
     config = ConversionConfig(_env_file=None)
 

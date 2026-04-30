@@ -88,7 +88,7 @@ DEFAULT_PAGE_LIMIT = 100
 
 def resolve_conversion_api_base_url() -> str:
     """Return the conversion API base URL."""
-    return os.environ.get("CONVERSION_API_BASE_URL", DEFAULT_CONVERSION_API_BASE_URL)
+    return os.environ.get("AIZK_CONVERSION_API_BASE_URL", DEFAULT_CONVERSION_API_BASE_URL)
 
 
 @retry()

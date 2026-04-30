@@ -19,11 +19,11 @@ def _make_client_error(code: str) -> ClientError:
 @pytest.fixture()
 def s3_client(monkeypatch: pytest.MonkeyPatch) -> S3Client:
     """Return an S3Client with a mocked boto3 client."""
-    monkeypatch.setenv("S3_ACCESS_KEY_ID", "test")
-    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "test")
-    monkeypatch.setenv("S3_REGION", "us-east-1")
-    monkeypatch.setenv("S3_BUCKET_NAME", "test-bucket")
-    monkeypatch.setenv("S3_ENDPOINT_URL", "http://localhost:9000")
+    monkeypatch.setenv("AIZK_S3_ACCESS_KEY_ID", "test")
+    monkeypatch.setenv("AIZK_S3_SECRET_ACCESS_KEY", "test")
+    monkeypatch.setenv("AIZK_S3_REGION", "us-east-1")
+    monkeypatch.setenv("AIZK_S3_BUCKET_NAME", "test-bucket")
+    monkeypatch.setenv("AIZK_S3_ENDPOINT_URL", "http://localhost:9000")
     config = ConversionConfig(_env_file=None)
     client = S3Client.__new__(S3Client)
     client.config = config

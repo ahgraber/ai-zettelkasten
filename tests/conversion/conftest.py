@@ -44,13 +44,13 @@ from karakeep_client.models import Bookmark
 # Aliases in this set survive the session-start cleanup so `set_test_env` can set them per test.
 _HARNESS_ENV_ALLOWLIST: frozenset[str] = frozenset(
     {
-        "DATABASE_URL",
-        "S3_ACCESS_KEY_ID",
-        "S3_SECRET_ACCESS_KEY",
-        "S3_REGION",
-        "S3_BUCKET_NAME",
-        "S3_ENDPOINT_URL",
-        "RETRY_BASE_DELAY_SECONDS",
+        "AIZK_DATABASE_URL",
+        "AIZK_S3_ACCESS_KEY_ID",
+        "AIZK_S3_SECRET_ACCESS_KEY",
+        "AIZK_S3_REGION",
+        "AIZK_S3_BUCKET_NAME",
+        "AIZK_S3_ENDPOINT_URL",
+        "AIZK_RETRY_BASE_DELAY_SECONDS",
         # FastAPI TestClient sends `Host: testserver` by default; tests that build
         # the app without overriding `AIZK_TRUSTED_HOSTS` need testserver allowed
         # alongside the loopback defaults so TrustedHostMiddleware doesn't 400 every
@@ -63,12 +63,7 @@ _HARNESS_ENV_ALLOWLIST: frozenset[str] = frozenset(
 def _conversion_config_aliases() -> frozenset[str]:
     """Return all env-var names read by any conversion config class."""
     aliases: set[str] = set()
-    # ConversionConfig uses explicit validation_alias per field
-    for field in ConversionConfig.model_fields.values():
-        if isinstance(field.validation_alias, str):
-            aliases.add(field.validation_alias)
-    # Adapter configs use env_prefix + field_name
-    for cls in (DoclingConverterConfig, KarakeepFetcherConfig):
+    for cls in (ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig):
         prefix = cls.model_config.get("env_prefix", "")
         for field_name in cls.model_fields:
             aliases.add((prefix + field_name).upper())
@@ -171,16 +166,16 @@ def set_test_env(monkeypatch: pytest.MonkeyPatch, test_db_path: Path) -> None:
     Keep every `ConversionConfig`-aliased variable set here listed in `_HARNESS_ENV_ALLOWLIST`;
     aliases absent from that set are stripped from the environment before tests run.
     """
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{test_db_path}")
+    monkeypatch.setenv("AIZK_DATABASE_URL", f"sqlite:///{test_db_path}")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
     monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
-    monkeypatch.setenv("S3_ACCESS_KEY_ID", "test")
-    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "test")
-    monkeypatch.setenv("S3_REGION", "us-east-1")
-    monkeypatch.setenv("S3_BUCKET_NAME", "test-bucket")
-    monkeypatch.setenv("S3_ENDPOINT_URL", "http://localhost:9000")
-    monkeypatch.setenv("RETRY_BASE_DELAY_SECONDS", "0")
+    monkeypatch.setenv("AIZK_S3_ACCESS_KEY_ID", "test")
+    monkeypatch.setenv("AIZK_S3_SECRET_ACCESS_KEY", "test")
+    monkeypatch.setenv("AIZK_S3_REGION", "us-east-1")
+    monkeypatch.setenv("AIZK_S3_BUCKET_NAME", "test-bucket")
+    monkeypatch.setenv("AIZK_S3_ENDPOINT_URL", "http://localhost:9000")
+    monkeypatch.setenv("AIZK_RETRY_BASE_DELAY_SECONDS", "0")
     monkeypatch.setenv("AIZK_TRUSTED_HOSTS", '["testserver", "localhost", "127.0.0.1"]')
 
 

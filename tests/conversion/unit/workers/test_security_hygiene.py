@@ -39,7 +39,7 @@ from aizk.conversion.workers.orchestrator import handle_job_error
 @pytest.fixture()
 def config(monkeypatch: pytest.MonkeyPatch) -> ConversionConfig:
     """Minimal ConversionConfig for orchestrator tests."""
-    monkeypatch.setenv("RETRY_BASE_DELAY_SECONDS", "0")
+    monkeypatch.setenv("AIZK_RETRY_BASE_DELAY_SECONDS", "0")
     return ConversionConfig(_env_file=None)
 
 

@@ -8,8 +8,8 @@ Usage:
   uv run scripts/sample_whitespace_patterns.py [--batch-size 50] [--offset 0]
 
 Reads S3 credentials from environment:
-  S3_ENDPOINT_URL, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY,
-  S3_BUCKET_NAME, S3_REGION
+  AIZK_S3_ENDPOINT_URL, AIZK_S3_ACCESS_KEY_ID, AIZK_S3_SECRET_ACCESS_KEY,
+  AIZK_S3_BUCKET_NAME, AIZK_S3_REGION
 
 Outputs JSON: list of documents with pattern counts and excerpts.
 Documents are sampled stratified by pipeline (html/pdf) and diversity
@@ -114,10 +114,10 @@ def make_s3_client():
 
     return boto3.client(
         "s3",
-        endpoint_url=os.environ["S3_ENDPOINT_URL"],
-        aws_access_key_id=os.environ["S3_ACCESS_KEY_ID"],
-        aws_secret_access_key=os.environ["S3_SECRET_ACCESS_KEY"],
-        region_name=os.environ.get("S3_REGION", "us-east-1"),
+        endpoint_url=os.environ["AIZK_S3_ENDPOINT_URL"],
+        aws_access_key_id=os.environ["AIZK_S3_ACCESS_KEY_ID"],
+        aws_secret_access_key=os.environ["AIZK_S3_SECRET_ACCESS_KEY"],
+        region_name=os.environ.get("AIZK_S3_REGION", "us-east-1"),
         config=Config(signature_version="s3v4"),
     )
 
@@ -192,12 +192,12 @@ def main():
     )
     args = parser.parse_args()
 
-    for var in ("S3_ENDPOINT_URL", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"):
+    for var in ("AIZK_S3_ENDPOINT_URL", "AIZK_S3_ACCESS_KEY_ID", "AIZK_S3_SECRET_ACCESS_KEY"):
         if not os.environ.get(var):
             print(f"ERROR: {var} not set", file=sys.stderr)
             sys.exit(1)
 
-    bucket = os.environ.get("S3_BUCKET_NAME", "aizk")
+    bucket = os.environ.get("AIZK_S3_BUCKET_NAME", "aizk")
     rows = sample_rows(args.db, args.batch_size, args.offset)
     print(f"Sampled {len(rows)} rows (offset={args.offset})", file=sys.stderr)
 

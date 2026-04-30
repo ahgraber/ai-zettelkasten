@@ -136,8 +136,8 @@ def test_plain_text_format_includes_arbitrary_extra_keys(
     """
     from aizk.conversion.utilities.config import ConversionConfig
 
-    monkeypatch.setenv("LOG_FORMAT", "text")
-    monkeypatch.setenv("LOG_LEVEL", "WARNING")
+    monkeypatch.setenv("AIZK_LOG_FORMAT", "text")
+    monkeypatch.setenv("AIZK_LOG_LEVEL", "WARNING")
 
     # Re-configure the root logger using the production code path.
     configure_logging(ConversionConfig(_env_file=None))

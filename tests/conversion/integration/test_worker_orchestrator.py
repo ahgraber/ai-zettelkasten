@@ -258,7 +258,7 @@ def _create_running_job(db_session: Session, bookmark: Bookmark, source_ref_json
 
 def test_process_job_retries_upload(monkeypatch, db_session: Session) -> None:
     """Verify upload retries without invoking real conversion or network calls."""
-    monkeypatch.setenv("RETRY_BASE_DELAY_SECONDS", "1")
+    monkeypatch.setenv("AIZK_RETRY_BASE_DELAY_SECONDS", "1")
     monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
 
     _ref_retry = KarakeepBookmarkRef(bookmark_id="bm_retry_test")
@@ -505,7 +505,7 @@ def test_process_job_supervised_cancels_child(monkeypatch, db_session: Session) 
     """Cancellation polling terminates the child process."""
     import os
 
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "30")
+    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "30")
     monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _TestContext())
     bookmark = _create_bookmark(db_session)
     job = _create_running_job(db_session, bookmark)
@@ -536,7 +536,7 @@ def test_process_job_supervised_cancels_child(monkeypatch, db_session: Session) 
 
 def test_process_job_supervised_reports_subprocess_error(monkeypatch, db_session: Session) -> None:
     """Non-zero exit codes report a subprocess error."""
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "30")
+    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "30")
     monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _TestContext(exitcode=1))
     bookmark = _create_bookmark(db_session)
     job = _create_running_job(db_session, bookmark)
@@ -560,8 +560,8 @@ def test_timeout_during_subprocess_terminates_and_reports_phase(monkeypatch, db_
     """Deadline during polling terminates child and reports last phase."""
     import os
 
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "1.0")
-    monkeypatch.setenv("RETRY_MAX_ATTEMPTS", "2")
+    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "1.0")
+    monkeypatch.setenv("AIZK_RETRY_MAX_ATTEMPTS", "2")
     config = ConversionConfig(_env_file=None)
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
     bookmark = _create_bookmark(db_session)
@@ -602,8 +602,8 @@ def test_timeout_during_subprocess_terminates_and_reports_phase(monkeypatch, db_
 
 def test_timeout_before_upload_reports_uploading_phase(monkeypatch, db_session: Session) -> None:
     """Deadline exceeded before upload raises ConversionTimeoutError with uploading phase."""
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "1.0")
-    monkeypatch.setenv("RETRY_MAX_ATTEMPTS", "2")
+    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "1.0")
+    monkeypatch.setenv("AIZK_RETRY_MAX_ATTEMPTS", "2")
     config = ConversionConfig(_env_file=None)
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
     bookmark = _create_bookmark(db_session)
@@ -661,8 +661,8 @@ def test_timeout_during_upload_retry_stops_retrying(monkeypatch, db_session: Ses
     # clock past the deadline on its first call (i.e. couple the clock advance to the
     # failure event itself). That makes the deadline-vs-attempt relationship
     # explicit and refactor-tolerant.
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "0.005")
-    monkeypatch.setenv("RETRY_MAX_ATTEMPTS", "2")
+    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "0.005")
+    monkeypatch.setenv("AIZK_RETRY_MAX_ATTEMPTS", "2")
     config = ConversionConfig(_env_file=None)
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
     bookmark = _create_bookmark(db_session)
@@ -709,8 +709,8 @@ def test_timeout_logs_elapsed_with_phase(monkeypatch, db_session: Session, caplo
     import os
 
     caplog.set_level("INFO")
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "1.0")
-    monkeypatch.setenv("RETRY_MAX_ATTEMPTS", "2")
+    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "1.0")
+    monkeypatch.setenv("AIZK_RETRY_MAX_ATTEMPTS", "2")
     config = ConversionConfig(_env_file=None)
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
     bookmark = _create_bookmark(db_session)
@@ -752,7 +752,7 @@ def test_retried_job_receives_fresh_timeout_window(monkeypatch, db_session: Sess
     every call and passes it to _spawn_and_supervise — no inheritance from the prior
     attempt's deadline.
     """
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "42")
+    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "42")
     config = ConversionConfig(_env_file=None)
     monkeypatch.setattr(orchestrator, "get_engine", lambda _database_url=None: db_session.get_bind())
     monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
@@ -938,7 +938,7 @@ def test_process_group_termination_uses_killpg(monkeypatch, db_session: Session)
         killpg_calls.append({"pgid": pgid, "signal": sig})
 
     monkeypatch.setattr(os, "killpg", _mock_killpg)
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "30")
+    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "30")
 
     bookmark = _create_bookmark(db_session)
     job = _create_running_job(db_session, bookmark)
@@ -967,7 +967,7 @@ def test_process_group_handles_esrch_gracefully(monkeypatch, db_session: Session
         raise ProcessLookupError("Process group already gone")
 
     monkeypatch.setattr(os, "killpg", _mock_killpg)
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "30")
+    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "30")
 
     bookmark = _create_bookmark(db_session)
     job = _create_running_job(db_session, bookmark)

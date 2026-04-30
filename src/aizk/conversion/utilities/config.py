@@ -62,16 +62,10 @@ class AuthSettings(BaseSettings):
     an implemented resolver branch.
     """
 
-    model_config = SettingsConfigDict(env_prefix="", env_file=None, extra="ignore", populate_by_name=True)
+    model_config = SettingsConfigDict(env_prefix="AIZK_", env_file=None, extra="ignore")
 
-    auth_mode: Literal["trust_network", "token", "proxy_headers", "oidc"] = Field(
-        default="trust_network",
-        validation_alias="AIZK_AUTH_MODE",
-    )
-    default_principal: str = Field(
-        default="self",
-        validation_alias="AIZK_DEFAULT_PRINCIPAL",
-    )
+    auth_mode: Literal["trust_network", "token", "proxy_headers", "oidc"] = "trust_network"
+    default_principal: str = "self"
 
     _IMPLEMENTED_MODES: ClassVar[frozenset[str]] = frozenset({"trust_network"})
 
@@ -102,84 +96,53 @@ class KarakeepFetcherConfig(BaseSettings):
 class ConversionConfig(BaseSettings):
     """Environment-driven configuration for the conversion service."""
 
-    model_config = SettingsConfigDict(env_prefix="", env_file=None, extra="ignore", populate_by_name=True)
+    model_config = SettingsConfigDict(env_prefix="AIZK_", env_file=None, extra="ignore")
 
-    database_url: str = Field(
-        default="sqlite:///./data/conversion_service.db",
-        validation_alias="DATABASE_URL",
-    )
-    s3_endpoint_url: str = Field(default="", validation_alias="S3_ENDPOINT_URL")
-    s3_bucket_name: str = Field(default="aizk", validation_alias="S3_BUCKET_NAME")
-    s3_access_key_id: str = Field(default="", validation_alias="S3_ACCESS_KEY_ID")
-    s3_secret_access_key: str = Field(default="", validation_alias="S3_SECRET_ACCESS_KEY")
-    s3_region: str = Field(default="us-east-1", validation_alias="S3_REGION")
+    database_url: str = "sqlite:///./data/conversion_service.db"
+    s3_endpoint_url: str = ""
+    s3_bucket_name: str = "aizk"
+    s3_access_key_id: str = ""
+    s3_secret_access_key: str = ""
+    s3_region: str = "us-east-1"
 
-    queue_max_depth: int = Field(default=1000, validation_alias="QUEUE_MAX_DEPTH")
-    queue_retry_after_seconds: int = Field(default=30, validation_alias="QUEUE_RETRY_AFTER_SECONDS")
-    worker_concurrency: int = Field(default=4, validation_alias="WORKER_CONCURRENCY")
-    worker_gpu_concurrency: int = Field(default=1, validation_alias="WORKER_GPU_CONCURRENCY")
-    fetch_timeout_seconds: int = Field(default=30, validation_alias="FETCH_TIMEOUT_SECONDS")
-    retry_max_attempts: int = Field(default=3, validation_alias="RETRY_MAX_ATTEMPTS")
-    retry_base_delay_seconds: int = Field(default=60, validation_alias="RETRY_BASE_DELAY_SECONDS")
-    worker_stale_job_minutes: int = Field(default=30, validation_alias="WORKER_STALE_JOB_MINUTES")
-    worker_stale_job_check_seconds: float = Field(
-        default=60.0,
-        validation_alias="WORKER_STALE_JOB_CHECK_SECONDS",
-    )
-    fetch_max_response_bytes: int = Field(default=25 * 1024 * 1024, validation_alias="FETCH_MAX_RESPONSE_BYTES")
-    worker_job_timeout_seconds: float = Field(
-        default=7200,
-        validation_alias="WORKER_JOB_TIMEOUT_SECONDS",
-    )
-    worker_drain_timeout_seconds: int = Field(
-        default=300,
-        validation_alias="WORKER_DRAIN_TIMEOUT_SECONDS",
-    )
-    worker_converter_name: str = Field(default="docling", validation_alias="WORKER_CONVERTER_NAME")
+    queue_max_depth: int = 1000
+    queue_retry_after_seconds: int = 30
+    worker_concurrency: int = 4
+    worker_gpu_concurrency: int = 1
+    fetch_timeout_seconds: int = 30
+    retry_max_attempts: int = 3
+    retry_base_delay_seconds: int = 60
+    worker_stale_job_minutes: int = 30
+    worker_stale_job_check_seconds: float = 60.0
+    fetch_max_response_bytes: int = 25 * 1024 * 1024
+    worker_job_timeout_seconds: float = 7200
+    worker_drain_timeout_seconds: int = 300
+    worker_converter_name: str = "docling"
 
-    mlflow_tracing_enabled: bool = Field(default=False, validation_alias="MLFLOW_TRACING_ENABLED")
-    mlflow_tracking_uri: str = Field(default="", validation_alias="MLFLOW_TRACKING_URI")
-    mlflow_experiment_name: str = Field(default="", validation_alias="MLFLOW_EXPERIMENT_NAME")
+    mlflow_tracing_enabled: bool = False
+    mlflow_tracking_uri: str = ""
+    mlflow_experiment_name: str = ""
 
-    log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
-    log_format: str = Field(default="json", validation_alias="LOG_FORMAT")
+    log_level: str = "INFO"
+    log_format: str = "json"
 
-    litestream_enabled: bool = Field(default=True, validation_alias="LITESTREAM_ENABLED")
-    litestream_start_role: str = Field(default="api", validation_alias="LITESTREAM_START_ROLE")
-    litestream_binary: str = Field(default="litestream", validation_alias="LITESTREAM_BINARY")
-    litestream_config_path: str = Field(
-        default="./data/litestream.yaml",
-        validation_alias="LITESTREAM_CONFIG_PATH",
-    )
-    litestream_s3_bucket_name: str = Field(
-        default="",
-        validation_alias="LITESTREAM_S3_BUCKET_NAME",
-    )
-    litestream_s3_prefix: str = Field(default="db", validation_alias="LITESTREAM_S3_PREFIX")
-    litestream_s3_force_path_style: bool = Field(
-        default=True,
-        validation_alias="LITESTREAM_S3_FORCE_PATH_STYLE",
-    )
-    litestream_s3_sign_payload: bool = Field(
-        default=True,
-        validation_alias="LITESTREAM_S3_SIGN_PAYLOAD",
-    )
-    litestream_restore_on_startup: bool = Field(
-        default=True,
-        validation_alias="LITESTREAM_RESTORE_ON_STARTUP",
-    )
-    litestream_allow_empty_restore: bool = Field(
-        default=True,
-        validation_alias="LITESTREAM_ALLOW_EMPTY_RESTORE",
-    )
+    litestream_enabled: bool = True
+    litestream_start_role: str = "api"
+    litestream_binary: str = "litestream"
+    litestream_config_path: str = "./data/litestream.yaml"
+    litestream_s3_bucket_name: str = ""
+    litestream_s3_prefix: str = "db"
+    litestream_s3_force_path_style: bool = True
+    litestream_s3_sign_payload: bool = True
+    litestream_restore_on_startup: bool = True
+    litestream_allow_empty_restore: bool = True
 
-    api_host: str = Field(default="0.0.0.0", validation_alias="API_HOST")  # NOQA: S104
-    api_port: int = Field(default=8000, validation_alias="API_PORT")
-    api_reload: bool = Field(default=False, validation_alias="API_RELOAD")
+    api_host: str = "0.0.0.0"  # noqa: S104
+    api_port: int = 8000
+    api_reload: bool = False
 
     trusted_hosts: list[str] = Field(
         default=["localhost", "127.0.0.1"],
-        validation_alias="AIZK_TRUSTED_HOSTS",
         description=(
             "Allowlist enforced by Starlette TrustedHostMiddleware against the "
             "inbound Host header. Operators deploying behind a reverse proxy MUST "
@@ -188,36 +151,21 @@ class ConversionConfig(BaseSettings):
         ),
     )
 
-    prefetch_per_image_max_bytes: int = Field(
-        default=10 * 1024 * 1024,
-        validation_alias="PREFETCH_PER_IMAGE_MAX_BYTES",
-    )
-    prefetch_max_images_per_doc: int = Field(
-        default=50,
-        validation_alias="PREFETCH_MAX_IMAGES_PER_DOC",
-    )
-    prefetch_max_total_bytes_per_doc: int = Field(
-        default=100 * 1024 * 1024,
-        validation_alias="PREFETCH_MAX_TOTAL_BYTES_PER_DOC",
-    )
-    prefetch_phase_deadline_seconds: float = Field(
-        default=60.0,
-        validation_alias="PREFETCH_PHASE_DEADLINE_SECONDS",
-    )
+    prefetch_per_image_max_bytes: int = 10 * 1024 * 1024
+    prefetch_max_images_per_doc: int = 50
+    prefetch_max_total_bytes_per_doc: int = 100 * 1024 * 1024
+    prefetch_phase_deadline_seconds: float = 60.0
     prefetch_max_images_per_host: int = Field(
         default=10,
-        validation_alias="PREFETCH_MAX_IMAGES_PER_HOST",
         description="Per-hostname cap on prefetched images per HTML document (outbound-amplification defence).",
     )
 
     egress_dns_workers: int = Field(
         default=4,
-        validation_alias="EGRESS_DNS_WORKERS",
         description="Thread-pool size for synchronous DNS resolution in the egress validator.",
     )
     egress_validation_workers: int = Field(
         default=4,
-        validation_alias="EGRESS_VALIDATION_WORKERS",
         description="Thread-pool size for the async-egress validation executor.",
     )
 

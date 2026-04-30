@@ -230,7 +230,7 @@ def _create_test_job(db_session: Session, bookmark: Bookmark, status: Conversion
 
 def test_real_subprocess_spawned_and_terminated(monkeypatch, db_session: Session) -> None:
     """Verify process_job_supervised spawns real subprocess and can terminate it."""
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "30")
+    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("WORKER_TEST_SLEEP_SECONDS", "10")
 
     bookmark = _create_test_bookmark(db_session)
@@ -283,7 +283,7 @@ def test_real_subprocess_spawned_and_terminated(monkeypatch, db_session: Session
 
 def test_cancelled_job_terminates_subprocess_with_no_zombies(monkeypatch, db_session: Session) -> None:
     """Verify cancelling a job terminates subprocess and leaves no zombie processes."""
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "30")
+    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("WORKER_TEST_SLEEP_SECONDS", "10")
 
     bookmark = _create_test_bookmark(db_session)
@@ -321,7 +321,7 @@ def test_cancelled_job_terminates_subprocess_with_no_zombies(monkeypatch, db_ses
 
 def test_timeout_terminates_subprocess(monkeypatch, db_session: Session) -> None:
     """Verify timeout terminates subprocess near the configured deadline."""
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "5")  # Short timeout for test
+    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "5")  # Short timeout for test
     monkeypatch.setenv("WORKER_TEST_SLEEP_SECONDS", "10")
 
     bookmark = _create_test_bookmark(db_session)
@@ -372,7 +372,7 @@ def test_subprocess_completes_normally_no_zombies(
     tmp_path: Path,
 ) -> None:
     """Verify subprocess that completes normally leaves no zombie processes."""
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "30")
+    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("WORKER_TEST_SLEEP_SECONDS", "0.1")
 
     bookmark = _create_test_bookmark(db_session)
@@ -433,7 +433,7 @@ def test_process_group_terminates_grandchild(
     tmp_path: Path,
 ) -> None:
     """Verify process group termination kills child and grandchild processes."""
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "30")
+    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "30")
     pid_file = tmp_path / "worker_child_pids.txt"
     monkeypatch.setenv("WORKER_TEST_PID_FILE", str(pid_file))
 
@@ -486,7 +486,7 @@ def test_sigterm_graceful_shutdown_within_grace_period(
     tmp_path: Path,
 ) -> None:
     """Verify SIGTERM shutdown completes within the grace period."""
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "30")
+    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "30")
     marker_path = tmp_path / "sigterm_marker.txt"
     monkeypatch.setenv("WORKER_TEST_MARKER_PATH", str(marker_path))
     ready_path = tmp_path / "sigterm_ready.txt"
@@ -541,7 +541,7 @@ def test_sigterm_graceful_shutdown_within_grace_period(
 def test_sigkill_after_sigterm_on_timeout(monkeypatch, db_session: Session) -> None:
     """Verify SIGKILL is sent after SIGTERM when subprocess ignores termination."""
     timeout_seconds = 1.0
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", str(timeout_seconds))
+    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", str(timeout_seconds))
 
     bookmark = _create_test_bookmark(db_session)
     job = _create_test_job(db_session, bookmark, ConversionJobStatus.QUEUED)
@@ -595,7 +595,7 @@ def test_cancel_mid_execution_terminates_within_poll_interval(
     db_session: Session,
 ) -> None:
     """Verify cancellation ends the subprocess within the poll interval."""
-    monkeypatch.setenv("WORKER_JOB_TIMEOUT_SECONDS", "30")
+    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("WORKER_TEST_SLEEP_SECONDS", "10")
 
     bookmark = _create_test_bookmark(db_session)
@@ -646,7 +646,7 @@ def test_cancel_mid_execution_terminates_within_poll_interval(
 
 def test_recover_stale_running_job_marks_retryable(monkeypatch, db_session: Session) -> None:
     """Verify stale running jobs are marked retryable for recovery."""
-    monkeypatch.setenv("WORKER_STALE_JOB_MINUTES", "0")
+    monkeypatch.setenv("AIZK_WORKER_STALE_JOB_MINUTES", "0")
 
     bookmark = _create_test_bookmark(db_session)
     job = _create_test_job(db_session, bookmark, ConversionJobStatus.RUNNING)

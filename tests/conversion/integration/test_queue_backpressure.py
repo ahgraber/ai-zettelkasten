@@ -65,7 +65,7 @@ def _fill_queue(session, bookmark: Bookmark, count: int) -> list[ConversionJob]:
 
 
 def test_submit_rejected_when_queue_at_capacity(db_session, monkeypatch) -> None:
-    monkeypatch.setenv("QUEUE_MAX_DEPTH", "3")
+    monkeypatch.setenv("AIZK_QUEUE_MAX_DEPTH", "3")
     app = create_app()
     bookmark = _create_source(db_session, "bp-reject")
     _fill_queue(db_session, bookmark, 3)
@@ -85,7 +85,7 @@ def test_submit_rejected_when_queue_at_capacity(db_session, monkeypatch) -> None
 
 def test_rejected_submission_does_not_create_orphan_job(db_session, monkeypatch) -> None:
     """Queue-full rejection materializes the Source row but does NOT create a job."""
-    monkeypatch.setenv("QUEUE_MAX_DEPTH", "1")
+    monkeypatch.setenv("AIZK_QUEUE_MAX_DEPTH", "1")
     app = create_app()
     existing_bm = _create_source(db_session, "bp-orphan-fill")
     _fill_queue(db_session, existing_bm, 1)
@@ -105,7 +105,7 @@ def test_rejected_submission_does_not_create_orphan_job(db_session, monkeypatch)
 
 
 def test_submit_accepted_when_queue_below_capacity(db_session, monkeypatch) -> None:
-    monkeypatch.setenv("QUEUE_MAX_DEPTH", "5")
+    monkeypatch.setenv("AIZK_QUEUE_MAX_DEPTH", "5")
     app = create_app()
     bookmark = _create_source(db_session, "bp-accept")
     _fill_queue(db_session, bookmark, 2)
@@ -119,7 +119,7 @@ def test_submit_accepted_when_queue_below_capacity(db_session, monkeypatch) -> N
 
 
 def test_duplicate_bypasses_queue_depth_check(db_session, monkeypatch) -> None:
-    monkeypatch.setenv("QUEUE_MAX_DEPTH", "2")
+    monkeypatch.setenv("AIZK_QUEUE_MAX_DEPTH", "2")
     app = create_app()
     # Source must have source_ref_hash set so the API upsert matches it
     bookmark = _create_source(db_session, "bp-dup")
@@ -147,8 +147,8 @@ def test_duplicate_bypasses_queue_depth_check(db_session, monkeypatch) -> None:
 
 
 def test_retry_after_header_present_on_503(db_session, monkeypatch) -> None:
-    monkeypatch.setenv("QUEUE_MAX_DEPTH", "1")
-    monkeypatch.setenv("QUEUE_RETRY_AFTER_SECONDS", "45")
+    monkeypatch.setenv("AIZK_QUEUE_MAX_DEPTH", "1")
+    monkeypatch.setenv("AIZK_QUEUE_RETRY_AFTER_SECONDS", "45")
     app = create_app()
     bookmark = _create_source(db_session, "bp-header")
     _fill_queue(db_session, bookmark, 1)
