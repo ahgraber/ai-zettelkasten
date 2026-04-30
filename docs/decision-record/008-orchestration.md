@@ -69,7 +69,30 @@ The throughput ceiling of SQLite is not a constraint for personal/internal use.
 
 ### Alternatives Considered
 
-#### Option 1: absurd _(preferred if migrating to Postgres)_
+#### Option 1: honker _(preferred if staying on SQLite)_
+
+**Description**: SQLite-native durable queue, pub/sub, event streams, and cron scheduler implemented as a loadable SQLite extension.
+Adds Postgres-style `NOTIFY`/`LISTEN` semantics by polling `PRAGMA data_version` every millisecond; no separate broker or daemon.
+
+**Pros**:
+
+- **Same file as the application database**: enqueue commits atomically with business writes in the same transaction — eliminates the dual-write problem the current `ConversionJob` table already avoids, but with proper queue primitives instead of hand-rolled polling
+- **No additional infrastructure**: just a SQLite extension; works with the existing Litestream replication story
+- **Multi-language bindings**: Python, Node, Rust, Go, Ruby, Bun, Elixir share one on-disk format
+- **Built-in primitives**: durable queues, retries, timeouts, pub/sub, event streams, cron — replaces the bespoke status machine, retry counter, and stale-job recovery in `workers/loop.py` / `workers/orchestrator.py`
+- **Low wake latency**: ~0.7 ms p50 cross-process wake without client polling
+- **Decorator API** available (Huey-style) for ergonomic task definitions
+
+**Cons**:
+
+- Newer project with a smaller ecosystem than Prefect / Temporal
+- No built-in dashboard
+- Inherits SQLite's single-writer ceiling (same constraint as the current setup)
+
+**When to select**: If workflow primitives outgrow the current hand-rolled `ConversionJob` machinery but a Postgres migration is not warranted, honker is the natural in-place upgrade.
+It keeps the "SQLite as the only datastore" philosophy while replacing the bespoke polling loop with a maintained library.
+
+#### Option 2: absurd _(preferred if migrating to Postgres)_
 
 **Description**: Postgres-native durable workflow system.
 The engine lives entirely in a single `.sql` schema applied to the database; thin SDKs handle worker logic in Python, TypeScript, or Go.
@@ -95,7 +118,7 @@ The engine lives entirely in a single `.sql` schema applied to the database; thi
 It extends the "Postgres as infrastructure" philosophy and avoids introducing a separate orchestration server.
 Installation is `uv add absurd-sdk`; schema setup is `uvx absurdctl init -d <database>`.
 
-#### Option 2: Prefect.io _(original selection — not pursued)_
+#### Option 3: Prefect.io _(original selection — not pursued)_
 
 **Description**: Python-native workflow orchestration platform with a self-hosted server and worker pools
 
@@ -114,7 +137,7 @@ Installation is `uv add absurd-sdk`; schema setup is `uvx absurdctl init -d <dat
 **Reason for not selecting**: The actual workflows fit comfortably within a simple job table.
 The operational cost of Prefect is not justified.
 
-#### Option 3: Temporal.io
+#### Option 4: Temporal.io
 
 **Description**: Event-sourced workflow engine with strong durability guarantees
 
@@ -132,7 +155,7 @@ The operational cost of Prefect is not justified.
 
 **Reason for not selecting**: Operational and conceptual overhead is not justified for a personal/internal document processing project.
 
-#### Option 4: Windmill.dev
+#### Option 5: Windmill.dev
 
 **Description**: UI-driven automation platform with visual workflow building
 
@@ -184,12 +207,14 @@ May be revisited for operator-facing dashboards if needed.
 
 **Future Considerations**:
 
+- If queue ergonomics outgrow the hand-rolled `ConversionJob` machinery but staying on SQLite is still appropriate, adopt **honker** as an in-place upgrade
 - If workflow complexity increases significantly (step-level checkpointing, event-await semantics, fan-out), migrate to **absurd** on Postgres before reaching for Prefect or Temporal
 - Windmill could be added as a complementary tool for operator-facing administrative workflows
 - Monitor SQLite write throughput if concurrent workers are added; this is the primary scaling signal for when a migration becomes necessary
 
 **References**:
 
+- [honker](https://honker.dev/)
 - [absurd documentation](https://earendil-works.github.io/absurd/)
 - [absurd GitHub repository](https://github.com/earendil-works/absurd)
 - [absurd comparison: PGMQ, Temporal, Inngest, DBOS](https://earendil-works.github.io/absurd/comparison/)
