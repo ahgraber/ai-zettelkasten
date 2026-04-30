@@ -105,7 +105,7 @@
           "jobs"
         ],
         "summary": "List Jobs",
-        "description": "List conversion jobs with filters, scoped to the caller.",
+        "description": "List conversion jobs with filters.",
         "operationId": "list_jobs_v1_jobs_get",
         "parameters": [
           {
@@ -229,7 +229,7 @@
           "jobs"
         ],
         "summary": "Get Job Status Counts",
-        "description": "Return aggregated counts of jobs by status, scoped to the caller.",
+        "description": "Return aggregated counts of jobs by status.",
         "operationId": "get_job_status_counts_v1_jobs_status_counts_get",
         "responses": {
           "200": {
