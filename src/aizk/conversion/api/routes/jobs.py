@@ -272,9 +272,14 @@ def submit_job(
 @router.get("/status-counts", response_model=JobStatusCounts)
 def get_job_status_counts(
     session: Annotated[Session, Depends(get_db_session)],
+    principal: Annotated[Principal, Depends(get_principal)],
 ) -> JobStatusCounts:
-    """Return aggregated counts of jobs by status."""
-    rows = session.exec(select(ConversionJob.status, func.count()).group_by(ConversionJob.status)).all()
+    """Return aggregated counts of jobs by status, scoped to the caller."""
+    rows = session.exec(
+        select(ConversionJob.status, func.count())
+        .where(ConversionJob.owner_id == principal.subject)
+        .group_by(ConversionJob.status)
+    ).all()
     counts: dict[str, int] = {}
     for status_, count in rows:
         key = status_.value if isinstance(status_, ConversionJobStatus) else str(status_)
@@ -287,10 +292,13 @@ def get_job_status_counts(
 def get_job(
     job_id: int,
     session: Annotated[Session, Depends(get_db_session)],
+    principal: Annotated[Principal, Depends(get_principal)],
 ) -> JobResponse:
     """Get conversion job details."""
     job = session.get(ConversionJob, job_id)
-    if not job:
+    # Cross-owner access returns the same 404 as a missing job so existence
+    # is not leaked to other principals.
+    if not job or job.owner_id != principal.subject:
         raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
     output = _get_output_summary(session, job_id)
     source = session.exec(select(Source).where(Source.aizk_uuid == job.aizk_uuid)).one()
@@ -300,6 +308,7 @@ def get_job(
 @router.get("", response_model=JobList)
 def list_jobs(
     session: Annotated[Session, Depends(get_db_session)],
+    principal: Annotated[Principal, Depends(get_principal)],
     status_filter: Annotated[ConversionJobStatus | None, Query(alias="status")] = None,
     aizk_uuid: Annotated[UUID | None, Query()] = None,
     created_after: Annotated[dt.datetime | None, Query()] = None,
@@ -307,9 +316,9 @@ def list_jobs(
     limit: Annotated[int, Query(ge=1, le=1000)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> JobList:
-    """List conversion jobs with filters."""
-    query = select(ConversionJob)
-    count_query = select(ConversionJob)
+    """List conversion jobs with filters, scoped to the caller."""
+    query = select(ConversionJob).where(ConversionJob.owner_id == principal.subject)
+    count_query = select(ConversionJob).where(ConversionJob.owner_id == principal.subject)
 
     if status_filter:
         query = query.where(ConversionJob.status == status_filter)
@@ -352,12 +361,12 @@ def list_jobs(
 def retry_job(
     job_id: int,
     session: Annotated[Session, Depends(get_db_session)],
-    principal: Annotated[Principal, Depends(get_principal)],  # noqa: ARG001 — runs uniformly; not persisted yet
+    principal: Annotated[Principal, Depends(get_principal)],
 ) -> JobResponse:
     """Retry a failed or cancelled job."""
     session.exec(text("BEGIN IMMEDIATE"))
     job = session.get(ConversionJob, job_id)
-    if not job:
+    if not job or job.owner_id != principal.subject:
         raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
     now = _utcnow()
     try:
@@ -379,12 +388,12 @@ def retry_job(
 def cancel_job(
     job_id: int,
     session: Annotated[Session, Depends(get_db_session)],
-    principal: Annotated[Principal, Depends(get_principal)],  # noqa: ARG001 — runs uniformly; not persisted yet
+    principal: Annotated[Principal, Depends(get_principal)],
 ) -> JobResponse:
     """Cancel a queued or running job."""
     session.exec(text("BEGIN IMMEDIATE"))
     job = session.get(ConversionJob, job_id)
-    if not job:
+    if not job or job.owner_id != principal.subject:
         raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
     now = _utcnow()
     try:
@@ -406,7 +415,7 @@ def cancel_job(
 def bulk_job_actions(
     payload: BulkJobActionRequest,
     session: Annotated[Session, Depends(get_db_session)],
-    principal: Annotated[Principal, Depends(get_principal)],  # noqa: ARG001 — runs uniformly; not persisted yet
+    principal: Annotated[Principal, Depends(get_principal)],
 ) -> BulkActionResponse:
     """Apply retry or cancel actions across multiple jobs."""
     session.exec(text("BEGIN IMMEDIATE"))
@@ -417,7 +426,9 @@ def bulk_job_actions(
 
     for job_id in payload.job_ids:
         job = session.get(ConversionJob, job_id)
-        if not job:
+        # Cross-owner job ids surface as the same `job_not_found` error as missing
+        # ids so existence is not leaked across principals.
+        if not job or job.owner_id != principal.subject:
             results.append(BulkActionResult(job_id=job_id, status="error", error="job_not_found"))
             errors += 1
             continue
