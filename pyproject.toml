@@ -1,5 +1,5 @@
 [build-system]
-requires = ["uv_build>=0.11"]
+requires = ["uv_build>=0.11,<0.12"]
 build-backend = "uv_build"
 
 [project]
@@ -35,7 +35,7 @@ dependencies = [
     "openai>=1.55",
     "pillow>=12.1.1",
     "pydantic>=2.9.2",
-    "pydantic-ai-slim[openai,anthropic,huggingface,openrouter,cli,mcp,fastmcp,evals,ag-ui,retries,temporal,ui]",
+    "pydantic-ai-slim[ag-ui,anthropic,cli,evals,fastmcp,huggingface,mcp,openai,openrouter,retries,temporal,ui]>=1.87.0",
     "pydantic-settings>2.10",
     "python-dateutil>=2.9.0.post0",
     "rensa>=0.2.5",
@@ -168,6 +168,8 @@ default-groups = [ "dev", "experiment", "ipynb", "lint", "test", "type" ]
 python-preference = "managed"
 exclude-newer = "3 days"
 exclude-newer-package = { torch = false, torchvision = false }
+override-dependencies = ["litellm>=1.83"] # override dspy 3.2's upper bound
+
 
 [tool.uv.build-backend]
 module-name = "aizk"

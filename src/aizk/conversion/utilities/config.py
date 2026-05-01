@@ -79,6 +79,19 @@ class AuthSettings(BaseSettings):
             )
         return value
 
+    @field_validator("default_principal")
+    @classmethod
+    def _reject_blank_default_principal(cls, value: str) -> str:
+        """Reject empty/whitespace `default_principal`.
+
+        The value lands in `owner_id` for every backfilled and newly-minted row;
+        a blank value would silently orphan rows from any non-blank principal
+        and pass the migration's `WHERE owner_id IS NULL` post-check.
+        """
+        if not value or not value.strip():
+            raise ConfigurationError("AIZK_DEFAULT_PRINCIPAL must be a non-empty, non-whitespace string")
+        return value
+
 
 class KarakeepFetcherConfig(BaseSettings):
     """Per-adapter config for KaraKeep bookmark fetching."""
