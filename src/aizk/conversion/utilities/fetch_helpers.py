@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from urllib.parse import urlparse
 
-from aizk.conversion.core.errors import ArxivPdfFetchError, EgressPolicyError, FetchError
+from aizk.conversion.core.errors import ArxivPdfFetchError, EgressPolicyError, FetchError, FetchTooLargeError
 from aizk.conversion.utilities.arxiv_utils import _arxiv_rate_limiter, arxiv_pdf_url
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.egress_fetch import egress_fetch_bytes
@@ -87,9 +87,13 @@ async def fetch_arxiv_pdf(arxiv_id: str, config: ConversionConfig) -> bytes:
     deny-list classification, connection pinning, and redirect-loop hygiene.
 
     Raises:
-        ArxivPdfFetchError: If the PDF fetch fails for non-egress reasons.
+        ArxivPdfFetchError: If the PDF fetch fails for transient reasons.
         EgressPolicyError: If the destination is denied by the egress policy
             (non-retryable; propagated unchanged).
+        FetchTooLargeError: If the response body exceeds
+            ``fetch_max_response_bytes`` (non-retryable; propagated unchanged
+            so the worker classifies the job as a permanent failure rather
+            than retrying the same oversized fetch).
     """
     logger.info("Fetching arXiv PDF by id: %s", arxiv_id)
     url = arxiv_pdf_url(arxiv_id, use_export_url=True)
@@ -100,7 +104,7 @@ async def fetch_arxiv_pdf(arxiv_id: str, config: ConversionConfig) -> bytes:
             max_response_bytes=config.fetch_max_response_bytes,
         )
         return body
-    except EgressPolicyError:
+    except (EgressPolicyError, FetchTooLargeError):
         raise
     except Exception as exc:
         raise ArxivPdfFetchError(f"Failed to fetch arXiv PDF for {arxiv_id}: {exc}") from exc

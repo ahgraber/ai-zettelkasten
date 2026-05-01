@@ -54,24 +54,30 @@ Required for API/worker:
 
 Storage (S3 or compatible):
 
-- `S3_BUCKET_NAME` (default `aizk`)
-- `S3_ENDPOINT_URL` (required for MinIO/Garage or other S3-compatible endpoints)
-- `S3_ACCESS_KEY_ID`
-- `S3_SECRET_ACCESS_KEY`
-- `S3_REGION` (default `us-east-1`)
+- `AIZK_S3_BUCKET_NAME` (default `aizk`)
+- `AIZK_S3_ENDPOINT_URL` (required for MinIO/Garage or other S3-compatible endpoints)
+- `AIZK_S3_ACCESS_KEY_ID`
+- `AIZK_S3_SECRET_ACCESS_KEY`
+- `AIZK_S3_REGION` (default `us-east-1`)
 
 Litestream (SQLite replication):
 
-- `LITESTREAM_ENABLED` (default `true`)
-- `LITESTREAM_CONFIG_PATH` (default `./data/litestream.yaml`)
-- `LITESTREAM_S3_BUCKET_NAME` (optional override; otherwise `S3_BUCKET_NAME`)
-- `LITESTREAM_S3_PREFIX` (default `db`)
+- `AIZK_LITESTREAM_ENABLED` (default `true`)
+- `AIZK_LITESTREAM_START_ROLE` (default `api`)
+- `AIZK_LITESTREAM_BINARY` (default `litestream`)
+- `AIZK_LITESTREAM_CONFIG_PATH` (default `./data/litestream.yaml`)
+- `AIZK_LITESTREAM_S3_BUCKET_NAME` (optional override; otherwise `AIZK_S3_BUCKET_NAME`)
+- `AIZK_LITESTREAM_S3_PREFIX` (default `db`)
+- `AIZK_LITESTREAM_S3_FORCE_PATH_STYLE` (default `true`)
+- `AIZK_LITESTREAM_S3_SIGN_PAYLOAD` (default `true`)
+- `AIZK_LITESTREAM_RESTORE_ON_STARTUP` (default `true`)
+- `AIZK_LITESTREAM_ALLOW_EMPTY_RESTORE` (default `true`)
 
 MLflow tracing (optional):
 
-- `MLFLOW_TRACING_ENABLED` (default `false`)
-- `MLFLOW_TRACKING_URI` (optional; uses MLflow defaults when unset)
-- `MLFLOW_EXPERIMENT_NAME` (optional)
+- `AIZK_MLFLOW_TRACING_ENABLED` (default `false`)
+- `AIZK_MLFLOW_TRACKING_URI` (optional; uses MLflow defaults when unset)
+- `AIZK_MLFLOW_EXPERIMENT_NAME` (optional)
 
 Deployment trust model:
 
