@@ -173,6 +173,19 @@ def test_auth_settings_rejects_unknown_mode(monkeypatch):
         AuthSettings(_env_file=None)
 
 
+@pytest.mark.parametrize("blank_value", ["", " ", "\t", "\n", "   \t  "])
+def test_auth_settings_rejects_blank_default_principal(monkeypatch, blank_value):
+    """Empty/whitespace `AIZK_DEFAULT_PRINCIPAL` is rejected at construction time.
+
+    A blank value would otherwise land in `owner_id` for every backfilled and
+    newly-minted row and silently orphan rows from any non-blank principal.
+    """
+    monkeypatch.setenv("AIZK_DEFAULT_PRINCIPAL", blank_value)
+
+    with pytest.raises(ConfigurationError, match="non-empty, non-whitespace"):
+        AuthSettings(_env_file=None)
+
+
 # --- ConversionConfig.trusted_hosts ------------------------------------------
 
 

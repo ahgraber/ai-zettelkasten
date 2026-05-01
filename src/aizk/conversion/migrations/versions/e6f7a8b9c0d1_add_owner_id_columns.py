@@ -35,6 +35,13 @@ def upgrade() -> None:
     # Snapshot the deployment's default principal once so a mid-migration env-var
     # rotation cannot produce inconsistent attribution across the three tables.
     default_principal_value = AuthSettings().default_principal
+    # Surface the resolved value in deploy logs: this string becomes the durable
+    # owner_id for every pre-migration row and is the only audit trail of which
+    # principal was attributed to historical data.
+    print(
+        f"[migration {revision}] backfilling owner_id with default_principal={default_principal_value!r}",
+        flush=True,
+    )
 
     for table in _TABLES:
         with op.batch_alter_table(table, schema=None) as batch_op:
