@@ -229,7 +229,15 @@ def submit_job(
         source_ref_hash, converter_name, config_snap
     )
 
-    existing_job = session.exec(select(ConversionJob).where(ConversionJob.idempotency_key == idempotency_key)).first()
+    # Owner-scoped duplicate detection: a same-key match from a different
+    # principal must not satisfy the duplicate-submission path. The
+    # database uniqueness constraint on (owner_id, idempotency_key) keeps
+    # this safe under concurrent submits as well.
+    existing_job = session.exec(
+        select(ConversionJob)
+        .where(ConversionJob.idempotency_key == idempotency_key)
+        .where(ConversionJob.owner_id == principal.subject)
+    ).first()
     if existing_job:
         output = _get_output_summary(session, existing_job.id)
         api_response.status_code = status.HTTP_200_OK

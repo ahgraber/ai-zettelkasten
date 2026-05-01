@@ -880,6 +880,140 @@ def test_owner_id_upgrade_aborts_when_backfill_leaves_nulls(tmp_path, monkeypatc
         command.upgrade(cfg, _OWNER_THIS_REVISION)
 
 
+# ---------------------------------------------------------------------------
+# f7a8b9c0d1e2 owner_scoped_idempotency_key
+# ---------------------------------------------------------------------------
+
+_IDEM_PREV_REVISION = "e6f7a8b9c0d1"
+_IDEM_THIS_REVISION = "f7a8b9c0d1e2"
+
+
+def _seed_owner_scoped_job(
+    engine, *, aizk_uuid: str, owner_id: str, idempotency_key: str, status: str = "QUEUED"
+) -> int:
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with engine.begin() as conn:
+        result = conn.execute(
+            sa.text(
+                "INSERT INTO conversion_jobs "
+                "(aizk_uuid, owner_id, title, payload_version, status, attempts, "
+                "idempotency_key, created_at, updated_at) "
+                "VALUES (:uuid, :owner, 'seed', 1, :status, 0, :key, :now, :now)"
+            ),
+            {"uuid": aizk_uuid, "owner": owner_id, "status": status, "key": idempotency_key, "now": now},
+        )
+        return result.lastrowid
+
+
+def test_owner_scoped_idempotency_upgrade_permits_same_key_across_owners(tmp_path):
+    """After upgrade, two different owners may hold rows with the same idempotency_key."""
+    db_url = _db_url(tmp_path, "idem_xowner.db")
+    cfg = _alembic_cfg(db_url)
+    command.upgrade(cfg, _IDEM_THIS_REVISION)
+
+    engine = create_engine(db_url)
+    aizk_uuid_value = _seed_source_for_jobs(engine, karakeep_id="idem_xowner")
+    key = "k" * 64
+    _seed_owner_scoped_job(engine, aizk_uuid=aizk_uuid_value, owner_id="alice", idempotency_key=key)
+    _seed_owner_scoped_job(engine, aizk_uuid=aizk_uuid_value, owner_id="bob", idempotency_key=key)
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            sa.text("SELECT owner_id FROM conversion_jobs WHERE idempotency_key = :k"),
+            {"k": key},
+        ).fetchall()
+    assert sorted(r[0] for r in rows) == ["alice", "bob"]
+
+
+def test_owner_scoped_idempotency_upgrade_rejects_same_owner_duplicate(tmp_path):
+    """After upgrade, the composite uniqueness still blocks duplicates within one owner."""
+    db_url = _db_url(tmp_path, "idem_same_owner.db")
+    cfg = _alembic_cfg(db_url)
+    command.upgrade(cfg, _IDEM_THIS_REVISION)
+
+    engine = create_engine(db_url)
+    aizk_uuid_value = _seed_source_for_jobs(engine, karakeep_id="idem_same_owner")
+    key = "m" * 64
+    _seed_owner_scoped_job(engine, aizk_uuid=aizk_uuid_value, owner_id="alice", idempotency_key=key)
+    with pytest.raises(sa.exc.IntegrityError):
+        _seed_owner_scoped_job(engine, aizk_uuid=aizk_uuid_value, owner_id="alice", idempotency_key=key)
+
+
+def test_owner_scoped_idempotency_downgrade_aborts_when_cross_owner_duplicates_exist(tmp_path):
+    """``downgrade()`` raises IrreversibleMigrationError before changing the schema."""
+    db_url = _db_url(tmp_path, "idem_downgrade_block.db")
+    cfg = _alembic_cfg(db_url)
+    command.upgrade(cfg, _IDEM_THIS_REVISION)
+
+    engine = create_engine(db_url)
+    aizk_uuid_value = _seed_source_for_jobs(engine, karakeep_id="idem_downgrade_block")
+    key = "z" * 64
+    _seed_owner_scoped_job(engine, aizk_uuid=aizk_uuid_value, owner_id="alice", idempotency_key=key)
+    _seed_owner_scoped_job(engine, aizk_uuid=aizk_uuid_value, owner_id="bob", idempotency_key=key)
+
+    with pytest.raises(IrreversibleMigrationError, match="multiple owner_id"):
+        command.downgrade(cfg, _IDEM_PREV_REVISION)
+
+    # Schema remained at post-upgrade shape.
+    inspector = inspect(create_engine(db_url))
+    idx_names = {idx["name"] for idx in inspector.get_indexes("conversion_jobs")}
+    assert "uq_conversion_jobs_owner_idempotency_key" in idx_names
+
+
+def test_owner_scoped_idempotency_downgrade_round_trip_with_no_conflicts(tmp_path):
+    """``downgrade()`` succeeds and restores global-unique shape when no conflicts exist."""
+    db_url = _db_url(tmp_path, "idem_downgrade_clean.db")
+    cfg = _alembic_cfg(db_url)
+    command.upgrade(cfg, _IDEM_THIS_REVISION)
+
+    engine = create_engine(db_url)
+    aizk_uuid_value = _seed_source_for_jobs(engine, karakeep_id="idem_downgrade_clean")
+    _seed_owner_scoped_job(engine, aizk_uuid=aizk_uuid_value, owner_id="alice", idempotency_key="x" * 64)
+
+    command.downgrade(cfg, _IDEM_PREV_REVISION)
+
+    inspector = inspect(create_engine(db_url))
+    idem_indexes = [
+        idx for idx in inspector.get_indexes("conversion_jobs") if "idempotency_key" in idx["column_names"]
+    ]
+    # After downgrade: global-unique single-column index, no composite.
+    assert any(idx["unique"] and idx["column_names"] == ["idempotency_key"] for idx in idem_indexes)
+    assert not any(idx["name"] == "uq_conversion_jobs_owner_idempotency_key" for idx in idem_indexes)
+
+
+def _seed_source_for_jobs(engine, *, karakeep_id: str) -> str:
+    """Insert a sources row at the post-owner-id schema and return its aizk_uuid."""
+    import json as _json
+
+    source_ref = _json.dumps(
+        {"kind": "karakeep_bookmark", "bookmark_id": karakeep_id},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    source_ref_hash = _sha256_hex(source_ref)
+    aizk_uuid_value = str(uuid4())
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO sources "
+                "(karakeep_id, aizk_uuid, source_ref, source_ref_hash, owner_id, "
+                "url, normalized_url, title, content_type, source_type, "
+                "created_at, updated_at) "
+                "VALUES (:kid, :uuid, :ref, :hash, 'self', NULL, NULL, :title, NULL, NULL, :now, :now)"
+            ),
+            {
+                "kid": karakeep_id,
+                "uuid": aizk_uuid_value,
+                "ref": source_ref,
+                "hash": source_ref_hash,
+                "title": karakeep_id,
+                "now": now,
+            },
+        )
+    return aizk_uuid_value
+
+
 def test_owner_id_post_migration_schema_matches_create_all(tmp_path):
     """Schema-equivalence test: post-migration columns/indexes match SQLModel.create_all().
 

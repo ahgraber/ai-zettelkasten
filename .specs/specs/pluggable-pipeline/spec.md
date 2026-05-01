@@ -511,6 +511,12 @@ Local filesystem dereferences triggered during conversion SHALL be confined to t
 
 Rejections SHALL surface as a typed error and SHALL be classified as non-retryable; the job SHALL fail with an error message identifying the policy violation class (deny-list category, scheme, redirect hop, or out-of-workspace read) without echoing the rejected destination back into structured output served to clients.
 
+**Operator-trusted KaraKeep carve-out — parsed-origin exact match, never string prefix.**
+A candidate URL qualifies for the KaraKeep trusted-infrastructure path only when its effective origin exactly matches the configured `karakeep_base_url` origin (`scheme`, normalized hostname, and effective port) **and** its path begins with `/api/v1/assets/`.
+URLs that merely share a textual prefix with `karakeep_base_url` SHALL NOT qualify.
+Same-origin URLs outside the asset path prefix SHALL NOT qualify.
+Non-qualifying URLs SHALL be treated as ordinary outbound URLs and SHALL go through the normal egress-validation path.
+
 **Trust boundary — fetch time, not construction time.**
 `UrlRef` construction performs URL normalization for dedup identity but does **not** call the egress validator and does **not** resolve DNS.
 The load-bearing trust boundary is fetch time: every fetcher (`UrlFetcher`, `ArxivFetcher`, `GithubReadmeFetcher`) and the image-prefetch path route through `egress_fetch_bytes`, which calls the async egress validator for the initial hop and again for every redirect target.
@@ -594,6 +600,27 @@ This shape exists because (1) operator-configured KaraKeep base URLs are typical
 - **GIVEN** a `UrlRef(url="http://169.254.169.254/latest/meta-data/")` reaches `UrlFetcher.fetch` (e.g., constructed by a future widening of `_API_SUBMITTABLE_KINDS`)
 - **WHEN** the fetcher dispatches via `egress_fetch_bytes`
 - **THEN** `async_assert_egress_allowed` raises `DenyListDestination`, the fetcher propagates the typed error unwrapped, the job is classified non-retryable, and no socket connection to the metadata service is opened
+
+#### Scenario: Exact-origin KaraKeep asset URL is trusted
+
+- **GIVEN** `karakeep_base_url = "https://karakeep.example.internal"`
+- **AND** a candidate URL of `https://karakeep.example.internal/api/v1/assets/abc123`
+- **WHEN** the fetcher decides whether to use the KaraKeep trusted-infrastructure path
+- **THEN** the URL qualifies for the carve-out because the origin matches exactly and the path is under `/api/v1/assets/`
+
+#### Scenario: Lookalike host does not qualify for KaraKeep trust
+
+- **GIVEN** `karakeep_base_url = "https://karakeep.example.internal"`
+- **AND** a candidate URL of `https://karakeep.example.internal.evil.test/api/v1/assets/abc123`
+- **WHEN** the fetcher decides whether to use the KaraKeep trusted-infrastructure path
+- **THEN** the URL does not qualify for the carve-out and is processed through the normal egress-validation path
+
+#### Scenario: Same-origin non-asset URL does not qualify for KaraKeep trust
+
+- **GIVEN** `karakeep_base_url = "https://karakeep.example.internal"`
+- **AND** a candidate URL of `https://karakeep.example.internal/api/v1/bookmarks/abc123`
+- **WHEN** the fetcher decides whether to use the KaraKeep trusted-infrastructure path
+- **THEN** the URL does not qualify for the carve-out because the path is outside `/api/v1/assets/`, and it is processed through the normal egress-validation path
 
 ## Technical Notes
 

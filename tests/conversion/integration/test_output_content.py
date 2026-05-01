@@ -41,11 +41,18 @@ def _create_job(session, *, aizk_uuid, idempotency_key: str):
     )
 
 
-def _create_output(session, *, job_id: int, aizk_uuid: UUID, s3_prefix: str = "prefix/abc") -> ConversionOutput:
+def _create_output(
+    session,
+    *,
+    job_id: int,
+    aizk_uuid: UUID,
+    s3_prefix: str = "prefix/abc",
+    owner_id: str = "self",
+) -> ConversionOutput:
     output = ConversionOutput(
         job_id=job_id,
         aizk_uuid=aizk_uuid,
-        owner_id="self",
+        owner_id=owner_id,
         title="Test Output",
         payload_version=1,
         s3_prefix=s3_prefix,
@@ -112,11 +119,16 @@ def mock_s3() -> MagicMock:
 
 @pytest.fixture()
 def client(db_session, mock_s3) -> TestClient:
-    from aizk.conversion.api.dependencies import get_db_session, get_s3_client
+    from aizk.conversion.api.dependencies import get_db_session, get_principal, get_s3_client
+    from aizk.conversion.auth import Principal
 
     app = create_app()
     app.dependency_overrides[get_db_session] = lambda: db_session
     app.dependency_overrides[get_s3_client] = lambda: mock_s3
+    # Tests construct TestClient without `with`, so the lifespan that normally
+    # populates app.state.auth_settings doesn't run; override get_principal
+    # directly to keep ownership-aware routes resolvable in this fixture.
+    app.dependency_overrides[get_principal] = lambda: Principal(subject="self", provenance="trust_network")
     return TestClient(app)
 
 
@@ -213,6 +225,21 @@ def test_get_figure_rejects_path_traversal(client, filename) -> None:
     # Either way the request is rejected — assert no 2xx/5xx response.
     response = client.get(f"/v1/outputs/1/figures/{filename}")
     assert response.status_code in {400, 404}
+
+
+@pytest.mark.parametrize("suffix", _ENDPOINT_SUFFIXES)
+def test_endpoint_404_when_output_belongs_to_different_owner(db_session, client, mock_s3, suffix) -> None:
+    """Cross-owner artifact reads return the not-found shape, not the row."""
+    bookmark = _create_bookmark(db_session, f"bm_xowner_{suffix.replace('/', '_')}")
+    key = ("xo_" + suffix.replace("/", "_")).ljust(64, "0")
+    job = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key=key)
+    output = _create_output(db_session, job_id=job.id, aizk_uuid=bookmark.aizk_uuid, owner_id="someone_else")
+
+    response = client.get(f"/v1/outputs/{output.id}/{suffix}")
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["error"] == "output_not_found"
+    mock_s3.get_object_bytes.assert_not_called()
 
 
 def test_get_figure_404_when_no_figures(db_session, client, mock_s3) -> None:
