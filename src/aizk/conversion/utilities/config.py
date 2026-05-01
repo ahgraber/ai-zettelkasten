@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import os
 import re
-from typing import ClassVar, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from aizk.conversion.core.errors import ConfigurationError
+
+if TYPE_CHECKING:
+    from aizk.conversion.utilities.html_prefetch import PrefetchPolicy
 
 _UNRESOLVED_ENV_PATTERN = re.compile(r"\$\{[^}]+\}|\$[A-Za-z_][A-Za-z0-9_]*")
 

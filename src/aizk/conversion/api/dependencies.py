@@ -25,7 +25,7 @@ def get_auth_settings(request: Request) -> AuthSettings:
     return request.app.state.auth_settings
 
 
-def get_principal(auth_settings: AuthSettings = Depends(get_auth_settings)) -> Principal:
+def get_principal(auth_settings: AuthSettings = Depends(get_auth_settings)) -> Principal:  # noqa: B008
     """Resolve the Principal for the current request based on the active auth mode.
 
     In `trust_network` mode (the only mode implemented at this build), every

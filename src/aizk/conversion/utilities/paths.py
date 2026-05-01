@@ -18,7 +18,7 @@ FIGURES_DIRNAME = "figures"
 
 
 def _assert_within(workspace: Path, name: str) -> Path:
-    """Validate ``name`` and return a resolved path guaranteed to be inside ``workspace``.
+    r"""Validate ``name`` and return a resolved path guaranteed to be inside ``workspace``.
 
     Applies a two-layer check:
 

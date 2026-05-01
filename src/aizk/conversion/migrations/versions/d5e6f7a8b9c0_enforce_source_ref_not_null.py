@@ -21,6 +21,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    """Enforce NOT NULL on source_ref and source_ref_hash; fail fast if nulls remain."""
     conn = op.get_bind()
 
     null_count = conn.execute(
@@ -38,6 +39,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Revert source_ref and source_ref_hash columns back to nullable."""
     with op.batch_alter_table("sources", schema=None) as batch_op:
         batch_op.alter_column("source_ref", existing_type=sa.Text(), nullable=True)
         batch_op.alter_column("source_ref_hash", existing_type=sa.Text(), nullable=True)

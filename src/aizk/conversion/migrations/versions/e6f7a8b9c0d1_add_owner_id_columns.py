@@ -50,12 +50,12 @@ def upgrade() -> None:
     conn = op.get_bind()
     for table in _TABLES:
         conn.execute(
-            sa.text(f"UPDATE {table} SET owner_id = :value WHERE owner_id IS NULL"),
+            sa.text(f"UPDATE {table} SET owner_id = :value WHERE owner_id IS NULL"),  # noqa: S608 - table from fixed _TABLES tuple
             {"value": default_principal_value},
         )
 
     null_counts = {
-        table: conn.execute(sa.text(f"SELECT COUNT(*) FROM {table} WHERE owner_id IS NULL")).scalar()
+        table: conn.execute(sa.text(f"SELECT COUNT(*) FROM {table} WHERE owner_id IS NULL")).scalar()  # noqa: S608 - table from fixed _TABLES tuple
         for table in _TABLES
     }
     offenders = {table: count for table, count in null_counts.items() if count}

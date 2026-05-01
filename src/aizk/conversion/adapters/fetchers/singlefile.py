@@ -14,6 +14,7 @@ class SingleFileFetcher:
     produces: ClassVar[frozenset[ContentType]] = frozenset({ContentType.HTML})
 
     def fetch(self, ref: SourceRef) -> ConversionInput:
+        """Fetch content for the given source ref (not yet implemented)."""
         raise NotImplementedError("SingleFileFetcher is not yet implemented")
 
 

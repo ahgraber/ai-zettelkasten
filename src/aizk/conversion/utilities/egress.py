@@ -225,10 +225,7 @@ def _classify_address(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool
     if isinstance(ip, ipaddress.IPv4Address):
         if ip in _IPV4_DENY_ADDRESSES:
             return True
-        for network in _IPV4_DENY_NETWORKS:
-            if ip in network:
-                return True
-        return False
+        return any(ip in network for network in _IPV4_DENY_NETWORKS)
 
     if ip in _IPV6_DENY_ADDRESSES:
         return True

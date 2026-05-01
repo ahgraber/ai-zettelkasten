@@ -279,12 +279,12 @@ def test_prefetch_skips_private_image_and_rewrites_public(
     _stub_dns(monkeypatch, {"public.example.com": "93.184.216.34"})
 
     # Minimal valid PNG bytes (8-byte PNG signature)
-    _PNG_STUB = b"\x89PNG\r\n\x1a\n"
+    _png_stub = b"\x89PNG\r\n\x1a\n"
 
     async def _mock_fetch(url: str, **kwargs: Any) -> tuple[bytes, dict[str, str]]:
         if "169.254.169.254" in url:
             raise DenyListDestination(f"Deny-list address in {url!r}")
-        return _PNG_STUB, {"content-type": "image/png"}
+        return _png_stub, {"content-type": "image/png"}
 
     monkeypatch.setattr(
         "aizk.conversion.utilities.html_prefetch.egress_fetch_bytes",
@@ -305,7 +305,7 @@ def test_prefetch_skips_private_image_and_rewrites_public(
     assert str(local_path) in output_html, (
         f"Output HTML must reference the workspace-local copy {local_path}; got html:\n{output_html}"
     )
-    assert local_path.read_bytes() == _PNG_STUB
+    assert local_path.read_bytes() == _png_stub
 
 
 # ---------------------------------------------------------------------------

@@ -36,9 +36,13 @@ def _public_hostbyname_stub(_host: str) -> str:
 socket.getaddrinfo = _public_addr_stub  # type: ignore[assignment]
 socket.gethostbyname = _public_hostbyname_stub  # type: ignore[assignment]
 
-from aizk.conversion.db import get_engine
-from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
-from karakeep_client.models import Bookmark
+from aizk.conversion.db import get_engine  # noqa: E402
+from aizk.conversion.utilities.config import (  # noqa: E402
+    ConversionConfig,
+    DoclingConverterConfig,
+    KarakeepFetcherConfig,
+)
+from karakeep_client.models import Bookmark  # noqa: E402
 
 # Env-var aliases the harness intentionally owns — kept in sync with `set_test_env` below.
 # Aliases in this set survive the session-start cleanup so `set_test_env` can set them per test.

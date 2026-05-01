@@ -103,11 +103,12 @@ async def fetch_arxiv_pdf(arxiv_id: str, config: ConversionConfig) -> bytes:
             url,
             max_response_bytes=config.fetch_max_response_bytes,
         )
-        return body
     except (EgressPolicyError, FetchTooLargeError):
         raise
     except Exception as exc:
         raise ArxivPdfFetchError(f"Failed to fetch arXiv PDF for {arxiv_id}: {exc}") from exc
+    else:
+        return body
 
 
 __all__ = ["fetch_arxiv_pdf", "fetch_karakeep_asset"]

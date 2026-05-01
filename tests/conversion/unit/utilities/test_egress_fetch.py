@@ -298,7 +298,7 @@ async def test_cross_host_redirect_strips_authorization(monkeypatch: pytest.Monk
     captured: list[dict[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured.append({k: v for k, v in request.headers.items()})
+        captured.append(dict(request.headers.items()))
         if "a.example" in str(request.url):
             return httpx.Response(302, headers={"location": "https://b.example/secrets"})
         return httpx.Response(200, content=b"OK")
@@ -324,7 +324,7 @@ async def test_same_host_redirect_preserves_authorization(
     captured: list[dict[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured.append({k: v for k, v in request.headers.items()})
+        captured.append(dict(request.headers.items()))
         if request.url.path == "/start":
             return httpx.Response(302, headers={"location": "https://a.example/next"})
         return httpx.Response(200, content=b"OK")
