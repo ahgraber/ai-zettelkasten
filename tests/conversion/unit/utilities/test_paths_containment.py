@@ -43,7 +43,7 @@ def test_assert_within_rejects_names_with_forward_slash(tmp_path: Path, name: st
     "name",
     [
         "/etc/hostname",
-        "/tmp/secret",
+        "/tmp/secret",  # noqa: S108
     ],
 )
 def test_assert_within_rejects_absolute_paths(tmp_path: Path, name: str) -> None:

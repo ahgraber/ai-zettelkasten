@@ -31,8 +31,6 @@ import time
 from typing import Final
 from urllib.parse import urljoin, urlparse
 
-logger = logging.getLogger(__name__)
-
 import httpx
 
 from aizk.conversion.core.errors import (
@@ -48,6 +46,8 @@ from aizk.conversion.utilities.egress import (
 )
 from aizk.conversion.utilities.egress_transport import EgressPinnedTransport
 from aizk.utilities.url_utils import sanitize_url_for_log
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_REDIRECTS: Final[int] = 5
 _DEFAULT_TOTAL_BUDGET_SECONDS: Final[float] = 120.0

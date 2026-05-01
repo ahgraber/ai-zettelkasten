@@ -906,8 +906,6 @@ def test_process_group_creation_called_in_subprocess(monkeypatch) -> None:
         pass
 
     # Patch _process_job_subprocess to only call setpgrp then do nothing
-    original_fn = orchestrator._process_job_subprocess
-
     def _patched_subprocess(job_id, workspace_path, source_ref_json, status_queue):
         os.setpgrp()
         # Exit without doing real work

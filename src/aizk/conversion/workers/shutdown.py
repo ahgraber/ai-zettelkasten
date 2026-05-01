@@ -66,6 +66,7 @@ def register_signal_handlers() -> None:
 
 
 def force_exit(code: int = 1) -> None:
+    """Exit the process immediately via os._exit, bypassing atexit handlers."""
     # Seam for tests: patchable wrapper around os._exit. os._exit bypasses
     # non-daemon ThreadPoolExecutor worker joins that would otherwise keep
     # a stuck task alive indefinitely during interpreter shutdown.

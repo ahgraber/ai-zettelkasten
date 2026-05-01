@@ -38,17 +38,17 @@ def make_source(
     constraint is satisfied without forcing every test to pass it explicitly.
     """
     ref = KarakeepBookmarkRef(bookmark_id=source_ref_bookmark_id or karakeep_id)
-    kwargs = dict(
-        karakeep_id=karakeep_id,
-        source_ref=ref.model_dump_json(),
-        source_ref_hash=compute_source_ref_hash(ref),
-        owner_id=owner_id,
-        url=url,
-        normalized_url=url,
-        title=title,
-        content_type=content_type,
-        source_type=source_type,
-    )
+    kwargs = {
+        "karakeep_id": karakeep_id,
+        "source_ref": ref.model_dump_json(),
+        "source_ref_hash": compute_source_ref_hash(ref),
+        "owner_id": owner_id,
+        "url": url,
+        "normalized_url": url,
+        "title": title,
+        "content_type": content_type,
+        "source_type": source_type,
+    }
     if aizk_uuid is not None:
         kwargs["aizk_uuid"] = aizk_uuid
     source = Source(**kwargs)

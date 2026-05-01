@@ -207,9 +207,11 @@ def test_assert_egress_allowed_logs_warning_with_rejected_destination(
 
     monkeypatch.setattr(socket, "getaddrinfo", _deny_set_getaddrinfo)
 
-    with caplog.at_level(logging.WARNING, logger="aizk.conversion.utilities.egress"):
-        with pytest.raises(DenyListDestination):
-            assert_egress_allowed("http://private.corp.example/page")
+    with (
+        caplog.at_level(logging.WARNING, logger="aizk.conversion.utilities.egress"),
+        pytest.raises(DenyListDestination),
+    ):
+        assert_egress_allowed("http://private.corp.example/page")
 
     # The WARNING must carry the rejected host and IP as structured fields.
     warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]

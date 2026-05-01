@@ -109,10 +109,12 @@ _OUTPUTS_COPY_COLS = (
 
 
 def upgrade() -> None:
-    """Rename bookmarks → sources, make karakeep_id nullable, add source_ref columns,
-    rebuild conversion_jobs/conversion_outputs with clean FK → sources,
-    backfill source_ref + source_ref_hash, assert no hash collisions,
-    add unique index on source_ref_hash, and recompute idempotency_key.
+    """Rename bookmarks → sources table and rebuild all dependent objects.
+
+    Makes karakeep_id nullable, adds source_ref columns, rebuilds
+    conversion_jobs/conversion_outputs with clean FK → sources,
+    backfills source_ref + source_ref_hash, asserts no hash collisions,
+    adds unique index on source_ref_hash, and recomputes idempotency_key.
     """
     conn = op.get_bind()
 
@@ -210,7 +212,7 @@ def upgrade() -> None:
     )
     conn.execute(
         sa.text(
-            f"INSERT INTO conversion_jobs ({_JOBS_COPY_COLS}, source_ref) "
+            f"INSERT INTO conversion_jobs ({_JOBS_COPY_COLS}, source_ref) "  # noqa: S608
             f"SELECT {_JOBS_COPY_COLS}, NULL "
             "FROM _conversion_jobs_old"
         )
@@ -250,7 +252,7 @@ def upgrade() -> None:
     )
     conn.execute(
         sa.text(
-            f"INSERT INTO conversion_outputs ({_OUTPUTS_COPY_COLS}) "
+            f"INSERT INTO conversion_outputs ({_OUTPUTS_COPY_COLS}) "  # noqa: S608
             f"SELECT {_OUTPUTS_COPY_COLS} "
             "FROM _conversion_outputs_old"
         )
@@ -417,7 +419,7 @@ def downgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     conn.execute(
-        sa.text(f"INSERT INTO conversion_jobs ({_JOBS_COPY_COLS}) SELECT {_JOBS_COPY_COLS} FROM _conversion_jobs_old")
+        sa.text(f"INSERT INTO conversion_jobs ({_JOBS_COPY_COLS}) SELECT {_JOBS_COPY_COLS} FROM _conversion_jobs_old")  # noqa: S608
     )
     conn.execute(sa.text("DROP TABLE _conversion_jobs_old"))
 
@@ -452,7 +454,7 @@ def downgrade() -> None:
     )
     conn.execute(
         sa.text(
-            f"INSERT INTO conversion_outputs ({_OUTPUTS_COPY_COLS}) "
+            f"INSERT INTO conversion_outputs ({_OUTPUTS_COPY_COLS}) "  # noqa: S608
             f"SELECT {_OUTPUTS_COPY_COLS} "
             "FROM _conversion_outputs_old"
         )

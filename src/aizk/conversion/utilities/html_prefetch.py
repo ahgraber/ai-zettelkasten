@@ -1,5 +1,4 @@
-"""Pre-fetch ``<img src>`` URLs through the egress gate and rewrite HTML to point
-at workspace-local copies.
+"""Pre-fetch ``<img src>`` URLs through the egress gate and rewrite HTML to point at workspace-local copies.
 
 Run before HTML is handed to Docling so that Docling's HTML backend can be
 configured with ``enable_remote_fetch=False`` (no outbound HTTP from the

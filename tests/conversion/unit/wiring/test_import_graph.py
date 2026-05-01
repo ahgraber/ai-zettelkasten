@@ -45,9 +45,8 @@ def _collect_imports(path: Path) -> list[str]:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 imports.append(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                imports.append(node.module)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imports.append(node.module)
     return imports
 
 
@@ -78,14 +77,6 @@ def test_adapter_does_not_import_another_adapter(adapter_file: Path) -> None:
     boundary.
     """
     imports = _collect_imports(adapter_file)
-    violations = [
-        imp
-        for imp in imports
-        if imp.startswith("aizk.conversion.adapters")
-        and not adapter_file.is_relative_to(
-            _ADAPTERS_ROOT / imp.split(".")[3] if len(imp.split(".")) > 3 else _ADAPTERS_ROOT
-        )
-    ]
     # Simpler check: any import of aizk.conversion.adapters from inside adapters is a cross-adapter import.
     # We allow a file to import itself (same sub-package __init__), but not siblings.
     cross_adapter = []

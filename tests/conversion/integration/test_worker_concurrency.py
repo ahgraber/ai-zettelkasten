@@ -205,7 +205,7 @@ class TestGpuSemaphoreGuard:
 
         orchestrator_mod._spawn_and_supervise(
             job_id=1,
-            workspace=Path("/tmp"),
+            workspace=Path("/tmp"),  # noqa: S108
             source_ref_json='{"kind":"karakeep_bookmark","bookmark_id":"bm_x"}',
             poll_interval_seconds=0.001,
             timeout_seconds=0,
@@ -258,7 +258,7 @@ class TestGpuSemaphoreGuard:
 
         orchestrator_mod._spawn_and_supervise(
             job_id=1,
-            workspace=Path("/tmp"),
+            workspace=Path("/tmp"),  # noqa: S108
             source_ref_json='{"kind":"karakeep_bookmark","bookmark_id":"bm_x"}',
             poll_interval_seconds=0.001,
             timeout_seconds=0,
@@ -325,7 +325,7 @@ class TestGpuSemaphoreGuard:
 
         _, result, _ = orchestrator_mod._spawn_and_supervise(
             job_id=2,
-            workspace=Path("/tmp"),
+            workspace=Path("/tmp"),  # noqa: S108
             source_ref_json='{"kind":"karakeep_bookmark","bookmark_id":"bm_x"}',
             poll_interval_seconds=0.001,
             timeout_seconds=1.0,

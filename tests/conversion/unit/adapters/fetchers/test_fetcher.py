@@ -86,9 +86,11 @@ async def test_fetch_karakeep_asset_wraps_errors_as_retryable():
 
     import unittest.mock as _mock
 
-    with _mock.patch.object(_fetch_helpers, "KarakeepClient", lambda: _FailingClient()):
-        with pytest.raises(fetcher.FetchError) as excinfo:
-            await fetcher.fetch_karakeep_asset("asset-X")
+    with (
+        _mock.patch.object(_fetch_helpers, "KarakeepClient", lambda: _FailingClient()),
+        pytest.raises(fetcher.FetchError) as excinfo,
+    ):
+        await fetcher.fetch_karakeep_asset("asset-X")
 
     assert excinfo.value.retryable is True
     assert "asset-X" in str(excinfo.value)

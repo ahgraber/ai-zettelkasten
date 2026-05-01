@@ -198,9 +198,11 @@ def test_egress_denial_log_line_carries_rejected_destination(
 
     monkeypatch.setattr(socket, "getaddrinfo", _deny_set_getaddrinfo)
 
-    with caplog.at_level(logging.WARNING, logger="aizk.conversion.utilities.egress"):
-        with pytest.raises(DenyListDestination):
-            assert_egress_allowed("http://private.corp.example/page")
+    with (
+        caplog.at_level(logging.WARNING, logger="aizk.conversion.utilities.egress"),
+        pytest.raises(DenyListDestination),
+    ):
+        assert_egress_allowed("http://private.corp.example/page")
 
     # Find the deny WARNING.
     deny_record = next(

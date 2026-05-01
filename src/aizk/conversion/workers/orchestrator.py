@@ -321,7 +321,7 @@ def _spawn_and_supervise(
     return process, result, deadline
 
 
-def process_job_supervised(
+def process_job_supervised(  # noqa: C901
     job_id: int,
     config: ConversionConfig,
     runtime: "WorkerRuntime | None" = None,
