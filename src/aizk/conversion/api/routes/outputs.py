@@ -9,7 +9,8 @@ from sqlmodel import Session
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 
-from aizk.conversion.api.dependencies import get_db_session, get_s3_client
+from aizk.conversion.api.dependencies import get_db_session, get_principal, get_s3_client
+from aizk.conversion.auth import Principal
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.storage.s3_client import S3Client, S3Error, S3NotFoundError
 
@@ -24,9 +25,11 @@ _FIGURE_CONTENT_TYPES: dict[str, str] = {
 }
 
 
-def _get_output_or_404(session: Session, output_id: int) -> ConversionOutput:
+def _get_owned_output_or_404(session: Session, output_id: int, principal: Principal) -> ConversionOutput:
+    # Cross-owner access returns the same 404 shape as a missing row so existence
+    # of another principal's output is not leaked.
     output = session.get(ConversionOutput, output_id)
-    if not output:
+    if not output or output.owner_id != principal.subject:
         raise HTTPException(status_code=404, detail={"error": "output_not_found", "message": "Output not found"})
     return output
 
@@ -47,9 +50,10 @@ def get_output_manifest(
     output_id: int,
     session: Annotated[Session, Depends(get_db_session)],
     s3_client: Annotated[S3Client, Depends(get_s3_client)],
+    principal: Annotated[Principal, Depends(get_principal)],
 ) -> Response:
     """Return the raw manifest JSON for a conversion output."""
-    output = _get_output_or_404(session, output_id)
+    output = _get_owned_output_or_404(session, output_id, principal)
     data = _fetch_or_raise(s3_client, output.manifest_key)
     return Response(content=data, media_type="application/json")
 
@@ -59,9 +63,10 @@ def get_output_markdown(
     output_id: int,
     session: Annotated[Session, Depends(get_db_session)],
     s3_client: Annotated[S3Client, Depends(get_s3_client)],
+    principal: Annotated[Principal, Depends(get_principal)],
 ) -> Response:
     """Return the converted markdown for a conversion output."""
-    output = _get_output_or_404(session, output_id)
+    output = _get_owned_output_or_404(session, output_id, principal)
     data = _fetch_or_raise(s3_client, output.markdown_key)
     return Response(content=data, media_type="text/markdown; charset=utf-8")
 
@@ -72,6 +77,7 @@ def get_output_figure(
     filename: str,
     session: Annotated[Session, Depends(get_db_session)],
     s3_client: Annotated[S3Client, Depends(get_s3_client)],
+    principal: Annotated[Principal, Depends(get_principal)],
 ) -> Response:
     """Return a figure image for a conversion output by bare filename."""
     if not filename or "/" in filename:
@@ -79,7 +85,7 @@ def get_output_figure(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": "invalid_filename", "message": "Filename must be a bare name with no path separators"},
         )
-    output = _get_output_or_404(session, output_id)
+    output = _get_owned_output_or_404(session, output_id, principal)
     if output.figure_count == 0:
         raise HTTPException(status_code=404, detail={"error": "no_figures", "message": "This output has no figures"})
     key = f"{output.s3_prefix}/figures/{filename}"

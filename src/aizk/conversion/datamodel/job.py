@@ -33,6 +33,15 @@ class ConversionJob(SQLModel, table=True):
             "earliest_next_attempt_at",
             "queued_at",
         ),
+        # Owner-scoped uniqueness: two principals may legitimately hold the
+        # same idempotency_key (same source/config) while a single principal
+        # still cannot duplicate within their own scope.
+        Index(
+            "uq_conversion_jobs_owner_idempotency_key",
+            "owner_id",
+            "idempotency_key",
+            unique=True,
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True, nullable=False)
@@ -45,7 +54,7 @@ class ConversionJob(SQLModel, table=True):
     error_code: Optional[str] = Field(default=None, max_length=50)
     error_message: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     error_detail: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    idempotency_key: str = Field(max_length=64, nullable=False, unique=True, index=True)
+    idempotency_key: str = Field(max_length=64, nullable=False, index=True)
     source_ref: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     earliest_next_attempt_at: Optional[datetime.datetime] = Field(default=None, index=True)
     last_error_at: Optional[datetime.datetime] = Field(default=None)

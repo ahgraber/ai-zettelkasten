@@ -43,12 +43,16 @@ def test_submit_persists_principal_subject_on_source_and_job(db_session, monkeyp
 
 
 def test_source_reuse_preserves_first_writers_owner_id(db_session) -> None:
-    """Two submissions for the same source_ref under different principals: Source keeps first owner; each Job carries its own.
+    """Two submissions for the same source_ref under different principals: Source keeps first owner; Jobs do not collapse.
 
     Override `get_principal` per-call via FastAPI's dependency_overrides so the
-    same TestClient sees a different Principal across the two POSTs. Asserts the
-    Source row's `owner_id` is the FIRST writer's subject and that each Job row
-    carries its own request-time `owner_id`.
+    same TestClient sees a different Principal across the two POSTs. Asserts:
+
+    - the Source row's ``owner_id`` is the FIRST writer's subject (INSERT OR IGNORE
+      preserves the first-writer's principal);
+    - duplicate-submission detection is owner-scoped, so bob's submission does
+      NOT replay alice's job and instead creates a new Job row owned by bob,
+      while reusing the same Source row.
     """
     app = create_app()
     bookmark_id = "bm_owner_reuse_race"
@@ -66,21 +70,17 @@ def test_source_reuse_preserves_first_writers_owner_id(db_session) -> None:
         second = _submit(client, bookmark_id)
 
     assert first.status_code == 201
-    assert second.status_code == 200, "second submission should hit the idempotency-replay 200 path"
-    assert first.json()["aizk_uuid"] == second.json()["aizk_uuid"]
+    assert second.status_code == 201, "cross-owner submission must create a new job, not replay alice's"
+    assert first.json()["aizk_uuid"] == second.json()["aizk_uuid"], "Source row is shared across principals"
+    assert first.json()["id"] != second.json()["id"], "Job row is per-owner"
 
     sources = db_session.exec(select(Source).where(Source.karakeep_id == bookmark_id)).all()
     assert len(sources) == 1
     assert sources[0].owner_id == "alice", "Source owner_id must be the first writer (alice), not last (bob)"
 
-    # Two distinct submissions under different principals MAY converge on the
-    # same idempotency key (same source_ref + same converter snapshot), in
-    # which case the second submission is a replay and reuses the first Job
-    # row. The contract under test is that the Source row's owner is the
-    # first-writer's principal — which is asserted above.
     jobs = db_session.exec(select(ConversionJob).where(ConversionJob.aizk_uuid == sources[0].aizk_uuid)).all()
-    assert len(jobs) >= 1
-    assert all(j.owner_id == "alice" for j in jobs[:1])
+    owners = sorted(j.owner_id for j in jobs)
+    assert owners == ["alice", "bob"]
 
 
 def test_openapi_schema_excludes_owner_id_from_jobs_endpoint() -> None:

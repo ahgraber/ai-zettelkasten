@@ -16,7 +16,11 @@ from aizk.conversion.core.source_ref import ArxivRef, SourceRef
 from aizk.conversion.core.types import ContentType, ConversionInput
 from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
 from aizk.conversion.utilities.egress_fetch import egress_fetch_bytes
-from aizk.conversion.utilities.fetch_helpers import fetch_arxiv_pdf, fetch_karakeep_asset
+from aizk.conversion.utilities.fetch_helpers import (
+    fetch_arxiv_pdf,
+    fetch_karakeep_asset,
+    is_karakeep_trusted_asset_url,
+)
 
 
 class ArxivFetcher:
@@ -49,10 +53,10 @@ class ArxivFetcher:
         if not isinstance(ref, ArxivRef):
             raise TypeError(f"Expected ArxivRef, got {type(ref).__name__}")
 
-        karakeep_base_url = self._karakeep_cfg.base_url.rstrip("/")
+        karakeep_base_url = self._karakeep_cfg.base_url
 
-        # Step 1 — KaraKeep asset URL
-        if ref.arxiv_pdf_url and karakeep_base_url and ref.arxiv_pdf_url.startswith(karakeep_base_url):
+        # Step 1 — KaraKeep asset URL (parsed-origin exact match, not string prefix)
+        if ref.arxiv_pdf_url and is_karakeep_trusted_asset_url(ref.arxiv_pdf_url, karakeep_base_url):
             parsed = urlparse(ref.arxiv_pdf_url)
             asset_id = parsed.path.rstrip("/").rsplit("/", 1)[-1]
             pdf_bytes = asyncio.run(fetch_karakeep_asset(asset_id))

@@ -422,7 +422,7 @@
           "bookmarks"
         ],
         "summary": "Get Bookmark Outputs",
-        "description": "Return conversion outputs for a bookmark ordered by creation time descending.\n\nPass ``?latest=true`` to receive only the most recently created output.\nOutput rows are scoped to ``ConversionOutput.owner_id`` so a shared Source\ncannot leak another principal's outputs.",
+        "description": "Return conversion outputs for a bookmark ordered by creation time descending.\n\nPass ``?latest=true`` to receive only the most recently created output.",
         "operationId": "get_bookmark_outputs_v1_bookmarks__aizk_uuid__outputs_get",
         "parameters": [
           {

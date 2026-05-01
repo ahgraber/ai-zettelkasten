@@ -17,7 +17,7 @@ from aizk.conversion.core.source_ref import SourceRef, UrlRef
 from aizk.conversion.core.types import ContentType, ConversionInput
 from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
 from aizk.conversion.utilities.egress_fetch import egress_fetch_bytes
-from aizk.conversion.utilities.fetch_helpers import fetch_karakeep_asset
+from aizk.conversion.utilities.fetch_helpers import fetch_karakeep_asset, is_karakeep_trusted_asset_url
 
 
 class UrlFetcher:
@@ -49,10 +49,12 @@ class UrlFetcher:
             raise TypeError(f"Expected UrlRef, got {type(ref).__name__}")
 
         url = ref.url
-        karakeep_base_url = self._karakeep_cfg.base_url.rstrip("/")
+        karakeep_base_url = self._karakeep_cfg.base_url
 
-        # KaraKeep asset URL: extract asset_id from last path segment
-        if karakeep_base_url and url.startswith(karakeep_base_url):
+        # KaraKeep asset URL: extract asset_id from last path segment.
+        # Trust is matched by parsed origin + asset path, never string prefix,
+        # so lookalike hosts cannot bypass the egress gate.
+        if is_karakeep_trusted_asset_url(url, karakeep_base_url):
             parsed = urlparse(url)
             asset_id = parsed.path.rstrip("/").rsplit("/", 1)[-1]
             try:

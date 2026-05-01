@@ -125,6 +125,12 @@ When writing tests for code that spawns concurrent work, wrap the act phase with
 
 Existing examples: `test_fetcher.py`, `test_async_utils.py`, `test_limiters.py`, `test_health_checks.py`, `test_worker_shutdown.py`.
 
+## Commit & Review Guidelines
+
+**Every commit message draft, without exception, must be produced by invoking the `commit-message` skill first.**
+A prior invocation earlier in the same session does not satisfy this requirement — re-invoke for each request.
+Drafting inline, from memory, or from habit is not acceptable.
+
 ## Sandbox Limitations
 
 - You may add files but must ask the user to commit (hint: give them a commit message) so they can use their signing key.

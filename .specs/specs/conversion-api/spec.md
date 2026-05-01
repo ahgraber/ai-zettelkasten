@@ -20,7 +20,10 @@ Now it accepts only `source_ref`.)
 
 The API SHALL materialize Source identity at submit time: parse `source_ref` against `IngressSourceRef`, gate its `kind` against `SubmissionCapabilities.accepted_submission_kinds`, canonicalize via the variant's `to_dedup_payload()`, compute `source_ref_hash`, create or reuse a Source row keyed on the hash, and persist the job with the resulting `aizk_uuid` FK.
 The stored `Source.source_ref` and the denormalized `Job.source_ref` retain the wide `SourceRef` type so that future widening of `IngressPolicy` does not require a schema change.
-Source reuse under concurrent submission SHALL use `INSERT ... ON CONFLICT (source_ref_hash) DO NOTHING` followed by `SELECT` on the hash so that two simultaneous submissions of the same `source_ref` share a single Source row; distinct jobs MAY still be created and are deduplicated at the job level by `idempotency_key`.
+Source reuse under concurrent submission SHALL use `INSERT ... ON CONFLICT (source_ref_hash) DO NOTHING` followed by `SELECT` on the hash so that two simultaneous submissions of the same `source_ref` share a single Source row; distinct jobs MAY still be created and are deduplicated at the job level by `(owner_id, idempotency_key)`.
+Job-level deduplication SHALL be owner-scoped: duplicate detection SHALL match an existing job only when both `idempotency_key` and `owner_id` match the resolved principal.
+The API SHALL treat `(principal.subject, idempotency_key)` as the duplicate-submission identity, while preserving the existing key material (`source_ref_hash`, converter name, output-affecting config snapshot).
+Two principals submitting the same `source_ref_hash` MAY still share a single Source row; that shared Source row SHALL NOT cause the second principal to reuse the first principal's Job row.
 For `KarakeepBookmarkRef` submissions, the API SHALL populate `Source.karakeep_id` from `bookmark_id`; for all other variants (once admitted by `IngressPolicy`), `karakeep_id` SHALL be null.
 The API SHALL compute the idempotency key at submit time, including `source_ref_hash`, `converter_name`, and the converter's output-affecting config snapshot in the hash, so that jobs for different source refs, different converters, or different converter configurations produce distinct keys.
 This idempotency formula replaces the pre-refactor formula (which hashed `aizk_uuid` and Docling-specific fields).
@@ -49,6 +52,13 @@ The `owner_id` column is internal-only and SHALL NOT appear in the request or re
 - **GIVEN** two clients simultaneously submit jobs with `source_ref` values that canonicalize to the same `source_ref_hash`
 - **WHEN** both requests race through Source materialization
 - **THEN** exactly one Source row exists for that hash, both jobs reference its `aizk_uuid`, and job-level deduplication proceeds via `idempotency_key`
+
+#### Scenario: Different owners share a Source but not a Job
+
+- **GIVEN** principal A has already submitted a source/config pair, producing a Source row with hash `H` and a Job whose `idempotency_key = K`
+- **AND** principal B submits the same source/config pair, so the computed `source_ref_hash = H` and `idempotency_key = K`
+- **WHEN** the API handles principal B's submission
+- **THEN** the existing Source row MAY be reused, but duplicate detection does not match principal A's Job, and a new Job owned by principal B is created
 
 #### Scenario: Missing source_ref returns 422
 
@@ -100,13 +110,20 @@ The subset invariant `accepted_submission_kinds ⊆ DeploymentCapabilities.regis
 
 ### Requirement: Reject duplicate job submissions
 
-The system SHALL reject job submissions whose computed idempotency key matches an existing job record.
+The system SHALL return an existing job only when the computed idempotency key matches a job whose `owner_id` also matches `principal.subject`.
+A job with the same `idempotency_key` but a different `owner_id` SHALL NOT satisfy the duplicate-submission path.
 
-#### Scenario: Duplicate idempotency key rejected
+#### Scenario: Same-owner duplicate returns the existing job
 
-- **GIVEN** a bookmark with an identical idempotency key already exists
-- **WHEN** a client resubmits the same bookmark
+- **GIVEN** principal A has an existing job whose `idempotency_key = K`
+- **WHEN** principal A resubmits the same source/config and the API computes `idempotency_key = K`
 - **THEN** the system returns the existing job details without creating a new record
+
+#### Scenario: Cross-owner duplicate key does not return another owner's job
+
+- **GIVEN** principal A has an existing job whose `idempotency_key = K`
+- **WHEN** principal B submits a source/config pair that computes the same `idempotency_key = K`
+- **THEN** the system does not return principal A's job and proceeds as a new submission for principal B
 
 ### Requirement: Retrieve individual job status
 
@@ -270,6 +287,11 @@ The presence of cross-owner job ids in the request SHALL NOT cause the entire bu
 ### Requirement: Retrieve conversion outputs for a bookmark
 
 The system SHALL expose an endpoint returning all conversion output records for a bookmark ordered by creation time descending, with an option to return only the most recent output.
+The system SHALL scope bookmark-output listing to `ConversionOutput.owner_id`.
+The `principal` SHALL be resolved via the `get_principal` dependency and injected into the handler on every request.
+The response SHALL include only output rows whose `aizk_uuid` matches the requested bookmark identifier **and** whose `owner_id` matches `principal.subject`.
+This route SHALL authorize against Output ownership, not Source ownership.
+Shared Source rows are expected; they SHALL NOT cause one principal to see another principal's output records.
 
 **Schema reference:** `GET /v1/bookmarks/{aizk_uuid}/outputs` · query param: latest (bool, default false) · response: list of `OutputResponse`
 
@@ -285,9 +307,23 @@ The system SHALL expose an endpoint returning all conversion output records for 
 - **WHEN** a client requests outputs with the latest flag set
 - **THEN** only the most recently created conversion output record is returned
 
+#### Scenario: Shared source returns only caller-owned outputs
+
+- **GIVEN** two principals have Jobs against the same `aizk_uuid`, and successful conversion outputs exist for both owners
+- **WHEN** either principal calls `GET /v1/bookmarks/{aizk_uuid}/outputs`
+- **THEN** the response contains only outputs whose `owner_id` matches that caller; outputs owned by the other principal are absent from the list
+
+#### Scenario: Cross-owner bookmark query with no owned outputs returns an empty list
+
+- **GIVEN** outputs exist for the requested `aizk_uuid`, but all of them are owned by a different principal
+- **WHEN** a client calls `GET /v1/bookmarks/{aizk_uuid}/outputs`
+- **THEN** the system returns HTTP 200 with an empty list
+
 ### Requirement: Serve raw manifest JSON for a conversion output
 
 The system SHALL expose an endpoint that retrieves and returns the raw manifest JSON for a conversion output record directly from object storage without re-parsing or transforming the content.
+The system SHALL return 404 when the resolved `principal.subject` does not match the target output row's `owner_id`.
+The response body and status code SHALL be identical to the not-found case so that cross-owner access does not leak output existence.
 
 **Schema reference:** `GET /v1/outputs/{output_id}/manifest` · response: `application/json` raw bytes
 
@@ -303,9 +339,17 @@ The system SHALL expose an endpoint that retrieves and returns the raw manifest 
 - **WHEN** a client requests the manifest
 - **THEN** the system returns a 404 response
 
+#### Scenario: Cross-owner manifest read returns 404
+
+- **GIVEN** a conversion output row exists with `owner_id != principal.subject`
+- **WHEN** a client requests `GET /v1/outputs/{output_id}/manifest`
+- **THEN** the system returns HTTP 404, indistinguishable from a request for a non-existent output id
+
 ### Requirement: Serve markdown content for a conversion output
 
 The system SHALL expose an endpoint that retrieves and returns the converted markdown text for a conversion output record directly from object storage.
+The system SHALL return 404 when the resolved `principal.subject` does not match the target output row's `owner_id`.
+The response body and status code SHALL be identical to the not-found case so that cross-owner access does not leak output existence.
 
 **Schema reference:** `GET /v1/outputs/{output_id}/markdown` · response: `text/markdown; charset=utf-8` raw bytes
 
@@ -315,9 +359,17 @@ The system SHALL expose an endpoint that retrieves and returns the converted mar
 - **WHEN** a client requests the markdown by output identifier
 - **THEN** the system returns the markdown bytes with Content-Type `text/markdown; charset=utf-8`
 
+#### Scenario: Cross-owner markdown read returns 404
+
+- **GIVEN** a conversion output row exists with `owner_id != principal.subject`
+- **WHEN** a client requests `GET /v1/outputs/{output_id}/markdown`
+- **THEN** the system returns HTTP 404, indistinguishable from a request for a non-existent output id
+
 ### Requirement: Serve figure images for a conversion output
 
 The system SHALL expose an endpoint that retrieves and returns individual figure images for a conversion output record by filename, and SHALL reject filenames that could escape the figures storage prefix.
+The system SHALL return 404 when the resolved `principal.subject` does not match the target output row's `owner_id`, using the same not-found posture as the manifest and markdown routes.
+The existing filename-validation requirement remains in force.
 
 **Schema reference:** `GET /v1/outputs/{output_id}/figures/{filename}`
 
@@ -338,6 +390,12 @@ The system SHALL expose an endpoint that retrieves and returns individual figure
 - **GIVEN** a conversion output record with `figure_count == 0`
 - **WHEN** a client requests any figure by filename
 - **THEN** the system returns a 404 response
+
+#### Scenario: Cross-owner figure read returns 404
+
+- **GIVEN** a conversion output row exists with `owner_id != principal.subject`
+- **WHEN** a client requests `GET /v1/outputs/{output_id}/figures/{filename}`
+- **THEN** the system returns HTTP 404, indistinguishable from a request for a non-existent output id
 
 ### Requirement: Return structured error responses for storage failures
 
