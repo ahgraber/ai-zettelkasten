@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 
 from aizk.conversion.core.errors import ArxivPdfFetchError, EgressPolicyError, FetchError, FetchTooLargeError
 from aizk.conversion.utilities.arxiv_utils import _arxiv_rate_limiter, arxiv_pdf_url
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
 from aizk.conversion.utilities.egress_fetch import egress_fetch_bytes
 from karakeep_client.karakeep import KarakeepClient
 
@@ -62,7 +62,7 @@ async def fetch_karakeep_asset(asset_id: str) -> bytes:
     """Fetch asset bytes from KaraKeep by asset ID.
 
     Egress-policy note: this call uses ``KarakeepClient`` directly against the
-    operator-configured ``KARAKEEP_BASE_URL`` and is NOT routed through
+    operator-configured ``AIZK_FETCHER__KARAKEEP__BASE_URL`` and is NOT routed through
     ``egress_fetch_bytes``. The carve-out is intentional — see
     ``.specs/changes/network-egress-policy/design.md`` § "Operator-trusted
     endpoints are carved out of the egress gate". Self-hosted KaraKeep
@@ -73,7 +73,8 @@ async def fetch_karakeep_asset(asset_id: str) -> bytes:
         FetchError: If the asset fetch fails.
     """
     try:
-        async with KarakeepClient() as client:
+        cfg = KarakeepFetcherConfig()
+        async with KarakeepClient(api_key=cfg.api_key, base_url=cfg.base_url) as client:
             return await client.get_asset(asset_id=asset_id)
     except Exception as exc:
         raise FetchError(f"Failed to fetch KaraKeep asset {asset_id}: {exc}") from exc

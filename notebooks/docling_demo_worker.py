@@ -26,7 +26,7 @@ from aizk.conversion.utilities.bookmark_utils import (
     is_pdf_asset,
     validate_bookmark_content,
 )
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import DoclingConverterConfig
 from aizk.conversion.workers.converter import convert_html, convert_pdf
 from aizk.conversion.workers.fetcher import fetch_arxiv, fetch_github_readme, fetch_karakeep_asset
 from karakeep_client.models import Bookmark
@@ -60,10 +60,10 @@ output_dir.mkdir(parents=True, exist_ok=True)
 ProcessingPipeline = Literal["html", "pdf"]
 
 
-async def fetch_source_content(bookmark: Bookmark) -> tuple[ProcessingPipeline, bytes]:
+async def fetch_source_content(bookmark: Bookmark, source_type: str) -> tuple[ProcessingPipeline, bytes]:
     """Fetch source content bytes from KaraKeep bookmark."""
 
-    config = ConversionConfig()
+    config = DoclingConverterConfig()
     if source_type == "arxiv":
         # fetch_arxiv internal logic:
         #   1. If source URL is arxiv.org/abs (abstract page) → download PDF from arXiv
@@ -105,10 +105,8 @@ def convert_to_markdown(
     source_url: str | None = None,
 ) -> None:
     """Convert source content bytes to Markdown and save to output directory."""
-    # ConversionConfig reads DOCLING_ENABLE_PICTURE_CLASSIFICATION from the environment
-    # (default: True). Set it to "false" to disable classification-based prompt routing
-    # and fall back to a single generic alt-text prompt for all figures.
-    config = ConversionConfig()
+    # Set AIZK_CONVERTER__DOCLING__PICTURE_CLASSIFICATION_ENABLED=false to disable classification-based prompt routing.
+    config = DoclingConverterConfig()
     workspace = output_dir / bookmark_id
     workspace.mkdir(parents=True, exist_ok=True)
 
@@ -146,7 +144,7 @@ for bookmark_id in bookmarks:
     """.strip()
     )
 
-    pipeline, content_bytes = await fetch_source_content(bookmark)
+    pipeline, content_bytes = await fetch_source_content(bookmark, source_type)
     print(f"Selected processing pipeline: {pipeline}")
 
     convert_to_markdown(pipeline, content_bytes, output_dir, bookmark.id, source_url=source_url)

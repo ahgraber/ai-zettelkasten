@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
-"""Submit KaraKeep bookmarks to the conversion pipeline."""
+"""Submit KaraKeep bookmarks to the AIZK conversion pipeline.
 
-# %% [markdown]
-# # KaraKeep → conversion pipeline
-#
-# This notebook pages through all KaraKeep bookmarks and submits each bookmark ID
-# to the conversion service. It expects `KARAKEEP_API_KEY` and `KARAKEEP_BASE_URL`
-# to be set (or available via `.env`/direnv).
-#
-# Optional environment variables:
-# - `CONVERSION_API_BASE_URL` (default: `http://localhost:8000`)
-# - `KARAKEEP_PAGE_LIMIT` (default: `100`, max: `100`)
-# - `KARAKEEP_DRY_RUN` (default: `false`; set to `true` to log IDs without submitting)
+This notebook pages through all KaraKeep bookmarks and submits each bookmark ID
+to the conversion service. It expects `AIZK_FETCHER__KARAKEEP__API_KEY` and
+`AIZK_FETCHER__KARAKEEP__BASE_URL` to be set (or available via `.env`/direnv).
+
+The API base URL is derived from `AIZK_API_HOST` (default ``127.0.0.1``) and
+`AIZK_API_PORT` (default ``8000``).
+"""
 
 # %% [markdown]
 # ## Start the API + worker in background processes
@@ -21,12 +17,11 @@
 # ```bash
 # mkdir -p data/logs
 # uv run python -m aizk.conversion.cli db-init
-# KARAKEEP_API_KEY="$KARAKEEP_API_KEY" KARAKEEP_BASE_URL="$KARAKEEP_BASE_URL" uv run python -m aizk.conversion.cli serve > data/logs/conversion-api.log 2>&1 &
-# KARAKEEP_API_KEY="$KARAKEEP_API_KEY" KARAKEEP_BASE_URL="$KARAKEEP_BASE_URL" uv run python -m aizk.conversion.cli worker > data/logs/conversion-worker.log 2>&1 &
+# uv run python -m aizk.conversion.cli serve > data/logs/conversion-api.log 2>&1 &
+# uv run python -m aizk.conversion.cli worker > data/logs/conversion-worker.log 2>&1 &
 # ```
 #
-# The server listens on `http://localhost:8000` by default. Set
-# `CONVERSION_API_BASE_URL` if you use a different host/port.
+# The server listens on `AIZK_API_HOST:AIZK_API_PORT` (default `127.0.0.1:8000`).
 
 # %% [markdown]
 # ## GPU crash debugging (remote host)
@@ -82,13 +77,14 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 # %%
-DEFAULT_CONVERSION_API_BASE_URL = "http://localhost:8000"
 DEFAULT_PAGE_LIMIT = 100
 
 
 def resolve_conversion_api_base_url() -> str:
-    """Return the conversion API base URL."""
-    return os.environ.get("AIZK_CONVERSION_API_BASE_URL", DEFAULT_CONVERSION_API_BASE_URL)
+    """Return the conversion API base URL from AIZK_API_HOST and AIZK_API_PORT."""
+    host = os.environ.get("AIZK_API_HOST", "127.0.0.1")
+    port = os.environ.get("AIZK_API_PORT", "8000")
+    return f"http://{host}:{port}"
 
 
 @retry()
@@ -129,7 +125,10 @@ async def submit_all_bookmarks(
     Returns:
         Tuple of (submitted_count, failed_count).
     """
-    karakeep_client = KarakeepClient()
+    karakeep_client = KarakeepClient(
+        api_key=os.environ.get("AIZK_FETCHER__KARAKEEP__API_KEY"),
+        base_url=os.environ.get("AIZK_FETCHER__KARAKEEP__BASE_URL"),
+    )
     base_url = resolve_conversion_api_base_url()
     submitted = 0
     failed = 0
@@ -205,7 +204,10 @@ async def summarize_job_statuses() -> dict[str, int]:
 
 # %%
 # # test with a single bookmark ID
-# karakeep_client = KarakeepClient()
+# karakeep_client = KarakeepClient(
+#     api_key=os.environ.get("AIZK_FETCHER__KARAKEEP__API_KEY"),
+#     base_url=os.environ.get("AIZK_FETCHER__KARAKEEP__BASE_URL"),
+# )
 # base_url = resolve_conversion_api_base_url()
 
 # async with httpx.AsyncClient(base_url=base_url, timeout=30) as http_client:

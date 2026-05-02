@@ -7,6 +7,7 @@ import logging
 from typing import Literal
 
 from aizk.conversion.utilities.arxiv_utils import is_arxiv_url
+from aizk.conversion.utilities.config import KarakeepFetcherConfig
 from aizk.conversion.utilities.github_utils import is_github_url
 from karakeep_client.karakeep import KarakeepClient
 from karakeep_client.models import Bookmark, ContentTypeAsset, ContentTypeLink, ContentTypeText
@@ -65,7 +66,8 @@ def fetch_karakeep_bookmark(karakeep_id: str) -> Bookmark | None:
     """Fetch bookmark details from KaraKeep."""
 
     async def _get_bookmark() -> Bookmark | None:
-        async with KarakeepClient() as client:
+        cfg = KarakeepFetcherConfig()
+        async with KarakeepClient(api_key=cfg.api_key, base_url=cfg.base_url) as client:
             return await client.get_bookmark(karakeep_id)
 
     try:

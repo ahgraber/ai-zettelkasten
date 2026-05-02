@@ -19,6 +19,7 @@ import asyncio
 from collections import defaultdict
 from datetime import datetime, timezone
 import logging
+import os
 from pathlib import Path
 import sys
 from typing import Iterable
@@ -448,7 +449,10 @@ async def main() -> None:
     args = parse_args()
     _ = load_dotenv()
 
-    async with KarakeepClient() as client:
+    async with KarakeepClient(
+        api_key=os.environ.get("AIZK_FETCHER__KARAKEEP__API_KEY"),
+        base_url=os.environ.get("AIZK_FETCHER__KARAKEEP__BASE_URL"),
+    ) as client:
         bookmarks = await _get_all_bookmarks(client, page_size=args.page_size)
         bookmark_urls = {str(bookmark.id): _safe_get_bookmark_source_url(bookmark) for bookmark in bookmarks}
 

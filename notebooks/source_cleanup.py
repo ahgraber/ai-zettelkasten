@@ -16,6 +16,7 @@ import argparse
 import asyncio
 from collections import defaultdict
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlparse
@@ -167,7 +168,10 @@ async def query_karakeep_bookmarks(query: str) -> list[KKBookmark]:
         Matched bookmarks across paginated search results.
     """
     bookmarks: list[KKBookmark] = []
-    async with KarakeepClient() as client:
+    async with KarakeepClient(
+        api_key=os.environ.get("AIZK_FETCHER__KARAKEEP__API_KEY"),
+        base_url=os.environ.get("AIZK_FETCHER__KARAKEEP__BASE_URL"),
+    ) as client:
         results = await client.search_bookmarks(q=query)
         while results:
             bookmarks.extend(results.bookmarks)
@@ -188,7 +192,10 @@ async def fetch_all_karakeep_ids(page_size: int = KARAKEEP_PAGE_SIZE) -> set[str
     """
     karakeep_ids: set[str] = set()
     cursor: str | None = None
-    async with KarakeepClient() as client:
+    async with KarakeepClient(
+        api_key=os.environ.get("AIZK_FETCHER__KARAKEEP__API_KEY"),
+        base_url=os.environ.get("AIZK_FETCHER__KARAKEEP__BASE_URL"),
+    ) as client:
         while True:
             page = await client.get_bookmarks_paged(
                 limit=page_size,

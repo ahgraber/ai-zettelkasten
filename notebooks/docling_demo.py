@@ -4,7 +4,7 @@
 This notebook pulls bookmarks from the Karakeep API, runs assets and links through
 Docling's PDF and HTML pipelines (including picture description VLM enrichment),
 exports Markdown plus extracted images,..
-Environment variables such as ``KARAKEEP_API_KEY``, ``KARAKEEP_BASE_URL``.
+Environment variables such as ``AIZK_FETCHER__KARAKEEP__API_KEY``, ``AIZK_FETCHER__KARAKEEP__BASE_URL``.
 """
 
 # %%
@@ -507,6 +507,8 @@ def extract_and_save_figures(doc: DoclingDocument, output_dir: Path) -> int:
 # %%
 # Initialize client
 client = KarakeepClient(
+    api_key=os.environ.get("AIZK_FETCHER__KARAKEEP__API_KEY"),
+    base_url=os.environ.get("AIZK_FETCHER__KARAKEEP__BASE_URL"),
     # disable_response_validation=True,
     verbose=True,
 )

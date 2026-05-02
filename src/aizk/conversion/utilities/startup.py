@@ -141,7 +141,7 @@ def log_feature_summary(config: ConversionConfig, docling_cfg: DoclingConverterC
     else:
         features["mlflow_tracing"] = {
             "status": "disabled",
-            "reason": "MLFLOW_TRACING_ENABLED is false",
+            "reason": "AIZK_MLFLOW_TRACING_ENABLED is false",
         }
 
     # Litestream replication
@@ -149,9 +149,9 @@ def log_feature_summary(config: ConversionConfig, docling_cfg: DoclingConverterC
         features["litestream_replication"] = {"status": "enabled"}
     else:
         if not config.litestream_enabled:
-            reason = "LITESTREAM_ENABLED is false"
+            reason = "AIZK_LITESTREAM_ENABLED is false"
         else:
-            reason = "LITESTREAM_S3_BUCKET_NAME is empty"
+            reason = "AIZK_LITESTREAM_S3_BUCKET_NAME is empty"
         features["litestream_replication"] = {
             "status": "disabled",
             "reason": reason,
