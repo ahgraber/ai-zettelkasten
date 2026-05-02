@@ -15,11 +15,8 @@ Or run with custom marker:
 from __future__ import annotations
 
 import datetime as dt
-import os
 from pathlib import Path
 import shutil
-import subprocess
-import sys
 import tempfile
 import time
 
@@ -32,6 +29,7 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers import errors as errors_mod, loop, orchestrator
+from tests.conversion.integration import _subprocess_helpers
 
 # Mark all tests in this module to run in isolated process.
 # Incompatible with xdist — use -m "not integration_lifecycle" when running with -n auto.
@@ -41,100 +39,14 @@ pytestmark = [
 ]
 
 
-def _test_process_subprocess(
-    job_id: int,
-    workspace_path: str,
-    source_ref_json: str,
-    status_queue,
-) -> None:
-    import time
-
-    try:
-        os.setpgrp()
-    except OSError:
-        pass
-    if status_queue:
-        status_queue.put_nowait({"event": "phase", "message": "converting"})
-    sleep_seconds = float(os.getenv("WORKER_TEST_SLEEP_SECONDS", "0"))
-    if sleep_seconds > 0:
-        time.sleep(sleep_seconds)
-    if status_queue:
-        status_queue.put_nowait({"event": "completed", "message": "conversion completed"})
-
-
-def _process_job_subprocess_spawn_child(
-    job_id: int,
-    workspace_path: str,
-    source_ref_json: str,
-    status_queue,
-) -> None:
-    from pathlib import Path
-    import time
-
-    try:
-        os.setpgrp()
-    except OSError:
-        pass
-    if status_queue:
-        status_queue.put_nowait({"event": "phase", "message": "converting"})
-    pid_file = os.environ.get("WORKER_TEST_PID_FILE")
-    if not pid_file:
-        raise RuntimeError("Missing WORKER_TEST_PID_FILE")
-    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])  # noqa: S603
-    Path(pid_file).write_text(f"{os.getpid()},{child.pid}")
-    time.sleep(60)
-
-
-def _process_job_subprocess_graceful_sigterm(
-    job_id: int,
-    workspace_path: str,
-    source_ref_json: str,
-    status_queue,
-) -> None:
-    from pathlib import Path
-    import signal
-    import time
-
-    try:
-        os.setpgrp()
-    except OSError:
-        pass
-    marker = os.environ.get("WORKER_TEST_MARKER_PATH")
-    if not marker:
-        raise RuntimeError("Missing WORKER_TEST_MARKER_PATH")
-    ready_marker = os.environ.get("WORKER_TEST_READY_PATH")
-    if ready_marker:
-        Path(ready_marker).write_text("ready")
-
-    def _handle(_signum, _frame):
-        Path(marker).write_text("terminated")
-        sys.exit(0)
-
-    signal.signal(signal.SIGTERM, _handle)
-    if status_queue:
-        status_queue.put_nowait({"event": "phase", "message": "converting"})
-    while True:
-        time.sleep(1)
-
-
-def _process_job_subprocess_ignore_sigterm(
-    job_id: int,
-    workspace_path: str,
-    source_ref_json: str,
-    status_queue,
-) -> None:
-    import signal
-    import time
-
-    try:
-        os.setpgrp()
-    except OSError:
-        pass
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    if status_queue:
-        status_queue.put_nowait({"event": "phase", "message": "converting"})
-    while True:
-        time.sleep(1)
+# Aliases into the minimal-imports helper module.
+# These functions are passed # as spawn() targets, so the child process reimports their defining module.
+# Keeping them in _subprocess_helpers (stdlib-only) avoids loading the full aizk/CUDA graph on every spawn,
+# which would otherwise exceed short test timeouts on GPU machines.
+_test_process_subprocess = _subprocess_helpers.test_process_subprocess
+_process_job_subprocess_spawn_child = _subprocess_helpers.process_job_subprocess_spawn_child
+_process_job_subprocess_graceful_sigterm = _subprocess_helpers.process_job_subprocess_graceful_sigterm
+_process_job_subprocess_ignore_sigterm = _subprocess_helpers.process_job_subprocess_ignore_sigterm
 
 
 def _assert_pid_gone(pid: int, *, timeout_seconds: float, interval_seconds: float) -> None:

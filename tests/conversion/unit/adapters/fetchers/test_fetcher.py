@@ -62,7 +62,7 @@ async def test_fetch_karakeep_asset_returns_bytes(monkeypatch):
         async def get_asset(self, asset_id: str) -> bytes:
             return f"bytes-{asset_id}".encode()
 
-    monkeypatch.setattr(_fetch_helpers, "KarakeepClient", lambda: _DummyClient())
+    monkeypatch.setattr(_fetch_helpers, "KarakeepClient", lambda *_a, **_kw: _DummyClient())
 
     async with no_task_leaks(action="raise"):
         result = await fetcher.fetch_karakeep_asset("asset-1")
