@@ -173,7 +173,7 @@ for html in datadir.glob("*/**/*.html"):
 
 # %%
 async_client = httpx.AsyncClient(timeout=90)
-base_url = os.environ.get("DOCLING_BASE_URL", "http://localhost:5001")
+base_url = os.environ.get("AIZK_DOCLING_BASE_URL", "http://localhost:5001")
 endpoint = base_url + "/v1/convert/file/async"
 overwrite: bool = True
 

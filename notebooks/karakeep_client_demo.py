@@ -2,7 +2,7 @@
 """Demo script for KarakeepClient usage.
 
 This script demonstrates how to use the KarakeepClient to interact with the Karakeep API.
-Make sure to set KARAKEEP_API_KEY and KARAKEEP_BASE_URL environment variables.
+Make sure to set AIZK_FETCHER__KARAKEEP__API_KEY and AIZK_FETCHER__KARAKEEP__BASE_URL environment variables.
 """
 
 # %%
@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import sys
 
+from dotenv import load_dotenv
 from setproctitle import setproctitle
 
 from karakeep_client.karakeep import APIError, AuthenticationError, KarakeepClient, get_all_urls
@@ -30,8 +31,13 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 # %%
+_ = load_dotenv()
+
+# %%
 # Initialize client
 client = KarakeepClient(
+    api_key=os.environ.get("AIZK_FETCHER__KARAKEEP__API_KEY"),
+    base_url=os.environ.get("AIZK_FETCHER__KARAKEEP__BASE_URL"),
     # disable_response_validation=True,
     verbose=True,
 )
@@ -46,7 +52,10 @@ logger.info("Retrieved %d bookmarks", len(bookmarks_page.bookmarks))
 # %%
 # Get all URLs
 logger.info("Fetching all bookmark URLs...")
-all_urls = await get_all_urls()
+all_urls = await get_all_urls(
+    api_key=os.environ.get("AIZK_FETCHER__KARAKEEP__API_KEY"),
+    base_url=os.environ.get("AIZK_FETCHER__KARAKEEP__BASE_URL"),
+)
 logger.info("Found %d URLs total", len(all_urls))
 
 # Show first few URLs
@@ -77,7 +86,11 @@ else:
 async def demo_bookmark_creation():
     """Demonstrate bookmark creation."""
     try:
-        client = KarakeepClient(verbose=True)
+        client = KarakeepClient(
+            api_key=os.environ.get("AIZK_FETCHER__KARAKEEP__API_KEY"),
+            base_url=os.environ.get("AIZK_FETCHER__KARAKEEP__BASE_URL"),
+            verbose=True,
+        )
 
         # Create a link bookmark
         logger.info("Creating a link bookmark...")
@@ -132,7 +145,10 @@ async def demo_bookmark_creation():
 # %%
 async def create_pdf_bookmark_from_url():
     """Create a PDF bookmark from a URL."""
-    client = KarakeepClient()
+    client = KarakeepClient(
+        api_key=os.environ.get("AIZK_FETCHER__KARAKEEP__API_KEY"),
+        base_url=os.environ.get("AIZK_FETCHER__KARAKEEP__BASE_URL"),
+    )
 
     # Create a link bookmark for a PDF URL
     bookmark = await client.create_bookmark(
@@ -150,7 +166,10 @@ async def create_pdf_bookmark_from_url():
 # %%
 async def create_pdf_bookmark_from_local_file():
     """Create a PDF bookmark from a local file."""
-    client = KarakeepClient()
+    client = KarakeepClient(
+        api_key=os.environ.get("AIZK_FETCHER__KARAKEEP__API_KEY"),
+        base_url=os.environ.get("AIZK_FETCHER__KARAKEEP__BASE_URL"),
+    )
 
     # Step 1: Upload the local PDF file
     pdf_path = ...  # path/to/local.pdf
@@ -177,7 +196,11 @@ async def create_pdf_bookmark_from_local_file():
 async def demo_asset_operations():
     """Demonstrate asset upload and management."""
     try:
-        client = KarakeepClient(verbose=True)
+        client = KarakeepClient(
+            api_key=os.environ.get("AIZK_FETCHER__KARAKEEP__API_KEY"),
+            base_url=os.environ.get("AIZK_FETCHER__KARAKEEP__BASE_URL"),
+            verbose=True,
+        )
 
         # Create a simple text file to upload
         demo_file = Path("/tmp/karakeep_demo.txt")
