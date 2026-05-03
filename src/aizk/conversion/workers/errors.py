@@ -69,3 +69,14 @@ class PreflightError(RuntimeError):
 
     error_code = "conversion_preflight_failed"
     retryable: ClassVar[bool] = True
+
+
+class SubprocessMetadataInvalid(RuntimeError):  # noqa: N818
+    """Raised when metadata.json cannot be validated as SubprocessMetadata.
+
+    Triggered on unknown extra fields, missing required fields, or type mismatches.
+    Permanent failure — the subprocess produced a schema-incompatible artifact.
+    """
+
+    error_code = "subprocess_metadata_invalid"
+    retryable: ClassVar[bool] = False
