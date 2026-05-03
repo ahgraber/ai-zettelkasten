@@ -239,6 +239,8 @@ status_summary
 #
 # watch -n 300 'curl -s "http://localhost:${API_PORT}/v1/jobs/status-counts" | jq '.counts''
 
+# %% [markdown]
+# Or the ui at http://<API_HOST:{API_PORT}/ui/jobs
 
 # %% [markdown]
 # ## Stop the API + worker
