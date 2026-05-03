@@ -20,7 +20,7 @@ from aizk.conversion.storage.s3_client import S3Error, S3UploadError
 from aizk.conversion.utilities.bookmark_utils import BookmarkContentError
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers import converter, errors as errors_mod, fetcher
-from aizk.conversion.workers.errors import ReportedChildError
+from aizk.conversion.workers.errors import ReportedChildError, SubprocessMetadataInvalid
 from aizk.conversion.workers.orchestrator import (
     _report_status,
     handle_job_error,
@@ -42,6 +42,7 @@ class TestErrorTaxonomy:
             (errors_mod.ConversionCancelledError, "conversion_cancelled", False),
             (errors_mod.ConversionSubprocessError, "conversion_subprocess_failed", True),
             (errors_mod.PreflightError, "conversion_preflight_failed", True),
+            (SubprocessMetadataInvalid, "subprocess_metadata_invalid", False),
             (BookmarkContentError, "karakeep_bookmark_missing_contents", False),
             (fetcher.FetchError, "fetch_error", True),
         ],
@@ -356,6 +357,12 @@ def test_handle_job_error_logs_error_with_detail(
             True,
             id="ReportedChildError-marked-permanent",
         ),
+        pytest.param(
+            lambda: SubprocessMetadataInvalid("malformed metadata.json"),
+            ConversionJobStatus.FAILED_PERM,
+            True,
+            id="SubprocessMetadataInvalid-permanent",
+        ),
     ],
 )
 def test_handle_job_error_maps_retryable_to_status(
@@ -462,3 +469,122 @@ def test_error_detail_column_exists_after_migration(db_session: Session, bookmar
     db_session.refresh(j)
 
     assert j.error_detail == "Traceback ..."
+
+
+# ---------------------------------------------------------------------------
+# _load_subprocess_metadata — raises SubprocessMetadataInvalid for bad JSON
+# ---------------------------------------------------------------------------
+
+
+def test_load_subprocess_metadata_raises_on_unknown_extra_field(tmp_path):
+    """metadata.json with an unknown extra field raises SubprocessMetadataInvalid."""
+    import json
+
+    from aizk.conversion.workers.uploader import _load_subprocess_metadata
+
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    (ws / "metadata.json").write_text(
+        json.dumps(
+            {
+                "pipeline_name": "html",
+                "terminal_ref": {"kind": "inline_html", "body": "dGVzdA=="},
+                "content_type": "html",
+                "markdown_filename": "output.md",
+                "figure_files": [],
+                "markdown_hash_xx64": "abc123def456789a",
+                "docling_version": "test",
+                "config_snapshot": {"converter_name": "docling"},
+                "fetched_at": "2026-01-01T00:00:00+00:00",
+                "source_meta": {
+                    "source_url": None,
+                    "normalized_url": None,
+                    "document_base_url": None,
+                    "resolver_title": None,
+                },
+                "document_title": None,
+                "source_title": None,
+                "unexpected_field": "oops",
+            }
+        )
+    )
+
+    with pytest.raises(SubprocessMetadataInvalid) as exc_info:
+        _load_subprocess_metadata(ws, job_id=1)
+
+    assert exc_info.value.error_code == "subprocess_metadata_invalid"
+    assert exc_info.value.retryable is False
+
+
+def test_load_subprocess_metadata_raises_on_missing_required_field(tmp_path):
+    """metadata.json with a missing required field raises SubprocessMetadataInvalid."""
+    import json
+
+    from aizk.conversion.workers.uploader import _load_subprocess_metadata
+
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    # pipeline_name is required — omit it
+    (ws / "metadata.json").write_text(
+        json.dumps(
+            {
+                "terminal_ref": {"kind": "inline_html", "body": "dGVzdA=="},
+                "content_type": "html",
+                "markdown_filename": "output.md",
+                "figure_files": [],
+                "markdown_hash_xx64": "abc123def456789a",
+                "docling_version": "test",
+                "config_snapshot": {"converter_name": "docling"},
+                "fetched_at": "2026-01-01T00:00:00+00:00",
+                "source_meta": {
+                    "source_url": None,
+                    "normalized_url": None,
+                    "document_base_url": None,
+                    "resolver_title": None,
+                },
+                "document_title": None,
+                "source_title": None,
+            }
+        )
+    )
+
+    with pytest.raises(SubprocessMetadataInvalid) as exc_info:
+        _load_subprocess_metadata(ws, job_id=1)
+
+    assert exc_info.value.error_code == "subprocess_metadata_invalid"
+    assert exc_info.value.retryable is False
+
+
+# ---------------------------------------------------------------------------
+# Integrated — _prepare_upload failure → handle_job_error → FAILED_PERM
+# ---------------------------------------------------------------------------
+
+
+def test_prepare_upload_invalid_metadata_flows_to_failed_perm(
+    tmp_path,
+    db_session: Session,
+    job: ConversionJob,
+    config: ConversionConfig,
+) -> None:
+    """SubprocessMetadataInvalid from _prepare_upload flows through handle_job_error
+    to FAILED_PERM — mirrors the orchestrator's catch block at lines 509-513."""
+    import json
+
+    from aizk.conversion.workers.uploader import _prepare_upload
+
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    (ws / "metadata.json").write_text(json.dumps({"unexpected_only": "oops"}))
+
+    with patch("aizk.conversion.workers.orchestrator.get_engine", return_value=db_session.get_bind()):
+        try:
+            _prepare_upload(job.id, ws, config)
+        except Exception as exc:
+            handle_job_error(job.id, exc, config)
+
+    db_session.expire_all()
+    updated = db_session.get(ConversionJob, job.id)
+    assert updated is not None
+    assert updated.status == ConversionJobStatus.FAILED_PERM
+    assert updated.error_code == "subprocess_metadata_invalid"
+    assert updated.finished_at is not None

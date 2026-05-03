@@ -13,6 +13,7 @@ from aizk.conversion.core.types import (
     ContentType,
     ConversionArtifacts,
     ConversionInput,
+    SourceMetadata,
 )
 
 
@@ -69,14 +70,66 @@ def test_conversion_input_is_frozen():
         ci.content = b"y"  # type: ignore[misc]
 
 
-def test_conversion_input_defaults_metadata_empty():
+def test_conversion_input_defaults_source_meta_empty():
     ci = ConversionInput(content=b"x", content_type=ContentType.HTML)
-    assert ci.metadata == {}
+    assert ci.source_meta == SourceMetadata()
+    assert ci.source_meta.source_url is None
 
 
 def test_conversion_artifacts_defaults_and_frozen():
     art = ConversionArtifacts(markdown="# hi")
     assert art.figures == []
     assert art.metadata == {}
+    assert art.document_title is None
     with pytest.raises(ValidationError):
         art.markdown = "nope"  # type: ignore[misc]
+
+
+def test_conversion_artifacts_document_title():
+    art = ConversionArtifacts(markdown="# hi", document_title="My Title")
+    assert art.document_title == "My Title"
+
+
+# ---------------------------------------------------------------------------
+# SourceMetadata.merge()
+# ---------------------------------------------------------------------------
+
+
+def test_source_metadata_merge_empty_plus_populated():
+    empty = SourceMetadata()
+    populated = SourceMetadata(source_url="https://example.com", resolver_title="My Title")
+    result = empty.merge(populated)
+    assert result.source_url == "https://example.com"
+    assert result.resolver_title == "My Title"
+    assert result.normalized_url is None
+    assert result.document_base_url is None
+
+
+def test_source_metadata_merge_earlier_wins():
+    earlier = SourceMetadata(source_url="https://original.com", resolver_title="Resolver Title")
+    later = SourceMetadata(source_url="https://asset.com", resolver_title="Later Title")
+    result = earlier.merge(later)
+    assert result.source_url == "https://original.com"
+    assert result.resolver_title == "Resolver Title"
+
+
+def test_source_metadata_merge_fills_missing_fields():
+    partial = SourceMetadata(source_url="https://example.com")
+    filler = SourceMetadata(normalized_url="https://example.com", document_base_url="https://example.com")
+    result = partial.merge(filler)
+    assert result.source_url == "https://example.com"
+    assert result.normalized_url == "https://example.com"
+    assert result.document_base_url == "https://example.com"
+
+
+def test_source_metadata_merge_all_none():
+    a = SourceMetadata()
+    b = SourceMetadata()
+    result = a.merge(b)
+    assert result == SourceMetadata()
+
+
+def test_source_metadata_is_frozen():
+    meta = SourceMetadata(source_url="https://example.com")
+    with pytest.raises(Exception):
+        meta.source_url = "https://other.com"  # type: ignore[misc]

@@ -244,7 +244,6 @@ def test_confined_backend_blocks_remote_url_without_requests(
     tmp_path: Path,
 ) -> None:
     """ConfinedHTMLDocumentBackend drops remote URLs before requests.get is called."""
-    from docling.backend.html_backend import HTMLDocumentBackend
 
     requests_get_calls: list[str] = []
 

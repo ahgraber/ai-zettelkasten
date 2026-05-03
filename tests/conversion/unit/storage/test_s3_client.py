@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from io import BytesIO
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from botocore.exceptions import ClientError
 import pytest

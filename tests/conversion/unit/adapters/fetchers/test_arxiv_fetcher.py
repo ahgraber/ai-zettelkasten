@@ -5,12 +5,13 @@ All tests are hermetic: no .env, no real network calls.
 
 from __future__ import annotations
 
-import pytest
 
 from aizk.conversion.adapters.fetchers.arxiv import ArxivFetcher
 from aizk.conversion.core.source_ref import ArxivRef
-from aizk.conversion.core.types import ContentType, ConversionInput
+from aizk.conversion.core.types import ContentType, ConversionInput, SourceMetadata
 from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
+
+_EMPTY_META = SourceMetadata()
 
 
 def _config() -> ConversionConfig:
@@ -71,7 +72,7 @@ def test_arxiv_fetcher_uses_karakeep_asset_when_arxiv_pdf_url_is_karakeep_url(mo
         arxiv_id="2301.12345",
         arxiv_pdf_url="https://karakeep.example.com/api/v1/assets/asset-abc",
     )
-    result = fetcher.fetch(ref)
+    result = fetcher.fetch(ref, _EMPTY_META)
 
     assert isinstance(result, ConversionInput)
     assert result.content == pdf_bytes
@@ -102,7 +103,7 @@ def test_arxiv_fetcher_uses_arxiv_pdf_url_when_non_karakeep(monkeypatch):
         arxiv_id="2301.12345",
         arxiv_pdf_url="https://arxiv.org/pdf/2301.12345",
     )
-    result = fetcher.fetch(ref)
+    result = fetcher.fetch(ref, _EMPTY_META)
 
     assert result.content == pdf_bytes
     assert result.content_type == ContentType.PDF
@@ -128,7 +129,7 @@ def test_arxiv_fetcher_constructs_url_from_arxiv_id_when_no_pdf_url(monkeypatch)
 
     fetcher = ArxivFetcher(_config(), _karakeep_cfg())
     ref = ArxivRef(arxiv_id="2301.12345", arxiv_pdf_url=None)
-    result = fetcher.fetch(ref)
+    result = fetcher.fetch(ref, _EMPTY_META)
 
     assert result.content == pdf_bytes
     assert result.content_type == ContentType.PDF

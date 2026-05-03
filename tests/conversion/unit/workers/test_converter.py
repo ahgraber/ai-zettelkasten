@@ -9,8 +9,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -18,7 +17,6 @@ from aizk.conversion.utilities.config import DoclingConverterConfig
 import aizk.conversion.workers.converter as converter_module
 from aizk.conversion.workers.converter import (
     _ALT_TEXT_PROMPT,
-    _LABEL_TO_PROMPT,
     _enrich_picture_descriptions,
     _get_classification_label,
 )
@@ -254,12 +252,8 @@ class TestAnnotationPictureSerializer:
 
     def _serialize_picture(self, annotations: list) -> str:
         """Build a minimal DoclingDocument with one picture and serialize it."""
-        import json
 
-        from docling_core.transforms.serializer.html import HTMLTableSerializer
-        from docling_core.transforms.serializer.markdown import MarkdownDocSerializer, MarkdownParams
-        from docling_core.types.doc.base import ImageRefMode as IRMode
-        from docling_core.types.doc.document import DoclingDocument, ImageRefMode, PictureItem
+        from docling_core.types.doc.document import DoclingDocument, PictureItem
 
         # Build the minimal document JSON that docling_core can parse
         doc_dict = {
@@ -362,7 +356,7 @@ class TestConvertHtmlTracing:
             picture_description_api_key="test-key",
             picture_description_model="openai/gpt-5-nano",
         )
-        markdown, figures = converter_module.convert_html(b"<html></html>", temp_dir=tmp_path, config=config)
+        markdown, figures, _ = converter_module.convert_html(b"<html></html>", temp_dir=tmp_path, config=config)
 
         assert markdown == "markdown"
         assert figures == []
@@ -396,7 +390,7 @@ class TestConvertHtmlTracing:
             picture_description_model="openai/gpt-5-nano",
             picture_classification_enabled=False,
         )
-        markdown, figures = converter_module.convert_html(b"<html></html>", temp_dir=tmp_path, config=config)
+        markdown, figures, _ = converter_module.convert_html(b"<html></html>", temp_dir=tmp_path, config=config)
 
         assert markdown == "markdown"
         assert figures == []
@@ -427,7 +421,7 @@ class TestConvertHtmlTracing:
             picture_description_base_url="",
             picture_description_api_key="",
         )
-        markdown, figures = converter_module.convert_html(b"<html></html>", temp_dir=tmp_path, config=config)
+        markdown, figures, _ = converter_module.convert_html(b"<html></html>", temp_dir=tmp_path, config=config)
 
         assert markdown == "markdown"
         assert figures == []

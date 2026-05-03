@@ -101,6 +101,9 @@ def _make_subprocess_stub(markdowns_iter):
             "config_snapshot": {"converter_name": "docling"},
             "terminal_ref": {"kind": "karakeep_bookmark", "bookmark_id": "test"},
             "content_type": "html",
+            "source_meta": {},
+            "document_title": None,
+            "source_title": None,
         }
         metadata_path(workspace).write_text(json.dumps(metadata))
 

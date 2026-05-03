@@ -146,6 +146,134 @@ def test_ui_jobs_filters_across_all_jobs(db_session) -> None:
     assert 'id="filtered-count">1' in filtered.text
 
 
+def test_ui_jobs_title_column_prefers_enriched_source_title(db_session) -> None:
+    """Title cell renders Source.title when set; the placeholder ConversionJob.title is suppressed."""
+    app = create_app()
+    enriched_title = "Attention Is All You Need"
+
+    _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_enriched")
+    bookmark = Bookmark(
+        owner_id="self",
+        karakeep_id="bm_ui_enriched",
+        source_ref=_ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref),
+        url="https://example.com/attention",
+        normalized_url="https://example.com/attention",
+        title=enriched_title,
+        content_type="html",
+        source_type="other",
+    )
+    db_session.add(bookmark)
+    db_session.commit()
+    db_session.refresh(bookmark)
+
+    placeholder = str(bookmark.aizk_uuid)
+    job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
+        title=placeholder,
+        payload_version=1,
+        status=ConversionJobStatus.SUCCEEDED,
+        attempts=1,
+        idempotency_key="enriched-title-key",
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    with TestClient(app) as client:
+        response = client.get("/ui/jobs")
+
+    assert response.status_code == 200
+    body = response.text
+    assert enriched_title in body
+    # The aizk_uuid column always renders the UUID; with correct precedence the title
+    # column shows enriched_title instead of the placeholder, so the UUID appears once.
+    assert body.count(placeholder) == 1
+
+
+def test_ui_jobs_title_column_falls_back_to_placeholder_when_source_title_null(db_session) -> None:
+    """When Source.title is NULL the title cell falls back to ConversionJob.title (the placeholder)."""
+    app = create_app()
+
+    _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_no_enrich")
+    bookmark = Bookmark(
+        owner_id="self",
+        karakeep_id="bm_ui_no_enrich",
+        source_ref=_ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref),
+        title=None,
+        content_type="html",
+        source_type="other",
+    )
+    db_session.add(bookmark)
+    db_session.commit()
+    db_session.refresh(bookmark)
+
+    placeholder = str(bookmark.aizk_uuid)
+    job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
+        title=placeholder,
+        payload_version=1,
+        status=ConversionJobStatus.SUCCEEDED,
+        attempts=1,
+        idempotency_key="placeholder-fallback-key",
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    with TestClient(app) as client:
+        response = client.get("/ui/jobs")
+
+    assert response.status_code == 200
+    # Placeholder appears in both the aizk_uuid column and the title column when Source.title is NULL.
+    assert response.text.count(placeholder) == 2
+
+
+def test_ui_jobs_search_matches_enriched_source_title(db_session) -> None:
+    """Searching by enriched Source.title returns the row even when ConversionJob.title is the placeholder."""
+    app = create_app()
+    enriched_title = "Attention Is All You Need"
+
+    _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_search_enriched")
+    bookmark = Bookmark(
+        owner_id="self",
+        karakeep_id="bm_ui_search_enriched",
+        source_ref=_ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(_ref),
+        url="https://example.com/attention",
+        normalized_url="https://example.com/attention",
+        title=enriched_title,
+        content_type="html",
+        source_type="other",
+    )
+    db_session.add(bookmark)
+    db_session.commit()
+    db_session.refresh(bookmark)
+
+    placeholder = str(bookmark.aizk_uuid)
+    job = ConversionJob(
+        aizk_uuid=bookmark.aizk_uuid,
+        owner_id="self",
+        title=placeholder,  # placeholder UUID — does not contain "attention"
+        payload_version=1,
+        status=ConversionJobStatus.SUCCEEDED,
+        attempts=1,
+        idempotency_key="search-enriched-key",
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+
+    with TestClient(app) as client:
+        response = client.get("/ui/jobs", params={"search": "attention"})
+
+    assert response.status_code == 200
+    assert str(job.id) in response.text
+    assert enriched_title in response.text
+    assert 'id="filtered-count">1' in response.text
+
+
 def test_ui_jobs_delete_action_removes_failed_and_cancelled_jobs(db_session) -> None:
     app = create_app()
     _ref = KarakeepBookmarkRef(bookmark_id="bm_ui_delete")

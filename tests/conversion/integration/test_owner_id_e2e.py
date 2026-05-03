@@ -56,6 +56,7 @@ def _write_workspace(tmp_path: Path, *, bookmark_id: str, markdown_hash: str) ->
         "markdown_hash_xx64": markdown_hash,
         "docling_version": "1.0.0",
         "pipeline_name": "html",
+        "content_type": "html",
         "fetched_at": "2026-04-29T00:00:00+00:00",
         "terminal_ref": {"kind": "karakeep_bookmark", "bookmark_id": bookmark_id},
         "config_snapshot": {
@@ -67,6 +68,9 @@ def _write_workspace(tmp_path: Path, *, bookmark_id: str, markdown_hash: str) ->
             "docling_enable_picture_classification": True,
             "picture_description_enabled": False,
         },
+        "source_meta": {},
+        "document_title": None,
+        "source_title": None,
     }
     (tmp_path / "metadata.json").write_text(json.dumps(metadata))
     return tmp_path

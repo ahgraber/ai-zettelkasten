@@ -17,8 +17,7 @@ from typing import Any, ClassVar
 import pytest
 
 from aizk.conversion.core.errors import ConfigurationError
-from aizk.conversion.core.registry import ConverterRegistry, FetcherRegistry
-from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput
+from aizk.conversion.core.types import ContentType, ConversionInput
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.wiring.api import ApiRuntime, build_api_runtime
 from aizk.conversion.wiring.capabilities import DeploymentCapabilities, SubmissionCapabilities

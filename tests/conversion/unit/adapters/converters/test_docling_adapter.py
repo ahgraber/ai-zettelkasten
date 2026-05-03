@@ -14,7 +14,7 @@ import pytest
 from aizk.conversion.adapters.converters import docling as docling_module
 from aizk.conversion.adapters.converters.docling import DoclingConverter
 from aizk.conversion.core.protocols import Converter
-from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput
+from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput, SourceMetadata
 from aizk.conversion.utilities.config import DoclingConverterConfig
 from aizk.conversion.utilities.hashing import build_output_config_snapshot
 
@@ -121,12 +121,12 @@ def test_docling_convert_dispatches_pdf_to_convert_pdf(monkeypatch: pytest.Monke
         *,
         temp_dir: Path,
         config: DoclingConverterConfig,
-    ) -> tuple[str, list[Path]]:
+    ) -> tuple[str, list[Path], str | None]:
         captured["pdf_bytes"] = pdf_bytes
         captured["temp_dir"] = temp_dir
         captured["config"] = config
         figure = tmp_path / "figure-001.png"
-        return "# PDF markdown", [figure]
+        return "# PDF markdown", [figure], None
 
     monkeypatch.setattr(docling_module, "convert_pdf", _fake_convert_pdf)
 
@@ -157,13 +157,13 @@ def test_docling_convert_dispatches_html_to_convert_html(monkeypatch: pytest.Mon
         config: DoclingConverterConfig,
         source_url: str | None = None,
         prefetch_policy: Any = None,
-    ) -> tuple[str, list[Path]]:
+    ) -> tuple[str, list[Path], str | None]:
         captured["html_bytes"] = html_bytes
         captured["temp_dir"] = temp_dir
         captured["config"] = config
         captured["source_url"] = source_url
         captured["prefetch_policy"] = prefetch_policy
-        return "# HTML markdown", []
+        return "# HTML markdown", [], None
 
     monkeypatch.setattr(docling_module, "convert_html", _fake_convert_html)
 
@@ -173,7 +173,7 @@ def test_docling_convert_dispatches_html_to_convert_html(monkeypatch: pytest.Mon
         ConversionInput(
             content=b"<html></html>",
             content_type=ContentType.HTML,
-            metadata={"source_url": "https://example.com/p"},
+            source_meta=SourceMetadata(source_url="https://example.com/p"),
         )
     )
 
@@ -202,9 +202,9 @@ def test_docling_convert_html_without_source_url_passes_none(
         config: DoclingConverterConfig,
         source_url: str | None = None,
         prefetch_policy: Any = None,
-    ) -> tuple[str, list[Path]]:
+    ) -> tuple[str, list[Path], str | None]:
         captured["source_url"] = source_url
-        return "", []
+        return "", [], None
 
     monkeypatch.setattr(docling_module, "convert_html", _fake_convert_html)
 
@@ -212,6 +212,134 @@ def test_docling_convert_html_without_source_url_passes_none(
     DoclingConverter(config).convert(ConversionInput(content=b"<html></html>", content_type=ContentType.HTML))
 
     assert captured["source_url"] is None
+
+
+def test_docling_convert_pdf_propagates_document_title(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """When convert_pdf returns a non-None title, artifacts.document_title carries it."""
+
+    def _fake_convert_pdf(pdf_bytes, *, temp_dir, config) -> tuple[str, list[Path], str | None]:
+        return "# PDF", [], "Real Document Title"
+
+    monkeypatch.setattr(docling_module, "convert_pdf", _fake_convert_pdf)
+
+    adapter = DoclingConverter(_make_disabled_config())
+    artifacts = adapter.convert(ConversionInput(content=b"%PDF-1.4", content_type=ContentType.PDF))
+
+    assert artifacts.document_title == "Real Document Title"
+
+
+def test_docling_convert_pdf_document_title_none_when_not_extracted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When convert_pdf returns None for title, artifacts.document_title is None."""
+
+    def _fake_convert_pdf(pdf_bytes, *, temp_dir, config) -> tuple[str, list[Path], str | None]:
+        return "# PDF", [], None
+
+    monkeypatch.setattr(docling_module, "convert_pdf", _fake_convert_pdf)
+
+    adapter = DoclingConverter(_make_disabled_config())
+    artifacts = adapter.convert(ConversionInput(content=b"%PDF-1.4", content_type=ContentType.PDF))
+
+    assert artifacts.document_title is None
+
+
+def test_docling_convert_html_propagates_document_title(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When convert_html returns a non-None title, artifacts.document_title carries it."""
+
+    def _fake_convert_html(html_bytes, *, temp_dir, config, source_url=None, prefetch_policy=None):
+        return "# HTML", [], "Page Title From Docling"
+
+    monkeypatch.setattr(docling_module, "convert_html", _fake_convert_html)
+
+    adapter = DoclingConverter(_make_disabled_config())
+    artifacts = adapter.convert(ConversionInput(content=b"<html/>", content_type=ContentType.HTML))
+
+    assert artifacts.document_title == "Page Title From Docling"
+
+
+def test_docling_convert_html_prefers_document_base_url_as_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    """document_base_url takes precedence over source_url when both are set."""
+    captured: dict[str, Any] = {}
+
+    def _fake_convert_html(html_bytes, *, temp_dir, config, source_url=None, prefetch_policy=None):
+        captured["source_url"] = source_url
+        return "# HTML", [], None
+
+    monkeypatch.setattr(docling_module, "convert_html", _fake_convert_html)
+
+    adapter = DoclingConverter(_make_disabled_config())
+    adapter.convert(
+        ConversionInput(
+            content=b"<html/>",
+            content_type=ContentType.HTML,
+            source_meta=SourceMetadata(
+                source_url="https://example.com/page",
+                document_base_url="https://example.com/base/",
+            ),
+        )
+    )
+
+    assert captured["source_url"] == "https://example.com/base/"
+
+
+def test_extract_document_title_returns_first_title_item(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_extract_document_title_from_doc returns the text of the first TITLE item."""
+    from unittest.mock import MagicMock
+
+    from docling.datamodel.document import DocItemLabel
+
+    from aizk.conversion.workers.converter import _extract_document_title_from_doc
+
+    title_item = MagicMock()
+    title_item.label = DocItemLabel.TITLE
+    title_item.text = "  My Paper Title  "
+
+    body_item = MagicMock()
+    body_item.label = DocItemLabel.TEXT
+    body_item.text = "Abstract..."
+
+    doc = MagicMock()
+    doc.texts = [title_item, body_item]
+
+    result = _extract_document_title_from_doc(doc)
+    assert result == "My Paper Title"
+
+
+def test_extract_document_title_returns_none_when_no_title_item() -> None:
+    """_extract_document_title_from_doc returns None when no TITLE item exists."""
+    from unittest.mock import MagicMock
+
+    from docling.datamodel.document import DocItemLabel
+
+    from aizk.conversion.workers.converter import _extract_document_title_from_doc
+
+    body_item = MagicMock()
+    body_item.label = DocItemLabel.TEXT
+    body_item.text = "Just some body text."
+
+    doc = MagicMock()
+    doc.texts = [body_item]
+
+    assert _extract_document_title_from_doc(doc) is None
+
+
+def test_extract_document_title_skips_blank_title() -> None:
+    """A TITLE item with only whitespace is skipped; None is returned."""
+    from unittest.mock import MagicMock
+
+    from docling.datamodel.document import DocItemLabel
+
+    from aizk.conversion.workers.converter import _extract_document_title_from_doc
+
+    blank_title = MagicMock()
+    blank_title.label = DocItemLabel.TITLE
+    blank_title.text = "   "
+
+    doc = MagicMock()
+    doc.texts = [blank_title]
+
+    assert _extract_document_title_from_doc(doc) is None
 
 
 def test_docling_convert_raises_on_unsupported_content_type() -> None:
