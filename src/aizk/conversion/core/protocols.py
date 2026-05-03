@@ -15,28 +15,28 @@ from __future__ import annotations
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from aizk.conversion.core.source_ref import SourceRef
-from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput
+from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput, SourceMetadata
 
 
 @runtime_checkable
 class ContentFetcher(Protocol):
-    """Terminal fetcher: takes a ref and returns the content bytes."""
+    """Terminal fetcher: takes a ref and source metadata, returns the fetched content."""
 
     produces: ClassVar[frozenset[ContentType]]
 
-    def fetch(self, ref: SourceRef) -> ConversionInput:
-        """Fetch bytes for ``ref`` and return them with an authoritative content type."""
+    def fetch(self, ref: SourceRef, source_meta: SourceMetadata) -> ConversionInput:
+        """Fetch bytes for ``ref``, merge any observed metadata into ``source_meta``, and return both."""
         ...
 
 
 @runtime_checkable
 class RefResolver(Protocol):
-    """Intermediate fetcher: refines a ref into a more specific ref."""
+    """Intermediate fetcher: refines a ref into a more specific ref and observed source metadata."""
 
     resolves_to: ClassVar[frozenset[str]]
 
-    def resolve(self, ref: SourceRef) -> SourceRef:
-        """Resolve ``ref`` to a more specific ``SourceRef`` for the orchestrator to dispatch."""
+    def resolve(self, ref: SourceRef) -> tuple[SourceRef, SourceMetadata]:
+        """Resolve ``ref`` to a more specific ``SourceRef`` and the metadata observed during resolution."""
         ...
 
 

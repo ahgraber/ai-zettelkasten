@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Mapping
 
@@ -20,26 +21,52 @@ class ContentType(str, Enum):
     CSV = "csv"
 
 
-class ConversionInput(BaseModel):
-    """Fetched source bytes with their authoritative content type."""
+@dataclass(frozen=True)
+class SourceMetadata:
+    """Descriptive metadata about a source document, separate from its fetch identity.
 
-    model_config = ConfigDict(frozen=True)
+    Flows alongside the SourceRef through the resolver/fetcher chain and is merged
+    at each hop using field-wise "earlier non-None wins" semantics: the resolver sees
+    the most authoritative source identity, and downstream stages fill in fields the
+    resolver could not observe — they do not override it.
+    """
+
+    source_url: str | None = None
+    normalized_url: str | None = None
+    document_base_url: str | None = None
+    resolver_title: str | None = None
+
+    def merge(self, other: SourceMetadata) -> SourceMetadata:
+        """Return a new SourceMetadata where self's non-None fields take precedence over other's."""
+        return SourceMetadata(
+            source_url=self.source_url if self.source_url is not None else other.source_url,
+            normalized_url=self.normalized_url if self.normalized_url is not None else other.normalized_url,
+            document_base_url=self.document_base_url
+            if self.document_base_url is not None
+            else other.document_base_url,
+            resolver_title=self.resolver_title if self.resolver_title is not None else other.resolver_title,
+        )
+
+
+class ConversionInput(BaseModel):
+    """Fetched source bytes with their authoritative content type and source metadata."""
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     content: bytes
     content_type: ContentType
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    source_meta: SourceMetadata = Field(default_factory=SourceMetadata)
 
 
 class ConversionArtifacts(BaseModel):
-    """Converter output. Exact shape for figures/metadata firms up in later PRs."""
+    """Converter output: markdown, figures, and optional document title."""
 
     model_config = ConfigDict(frozen=True)
 
     markdown: str
-    # figures and metadata are intentionally permissive at this stage;
-    # concrete shape will be locked down when the Docling adapter lands.
     figures: list[Any] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    document_title: str | None = None
 
 
 # Canonical mapping from SourceRef.kind literals to the source_type classification
