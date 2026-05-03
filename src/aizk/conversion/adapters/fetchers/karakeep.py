@@ -10,6 +10,7 @@ import html as _html
 from typing import ClassVar
 
 from aizk.conversion.core.errors import BookmarkContentUnavailableError
+from aizk.conversion.core.protocols import RefResolver
 from aizk.conversion.core.source_ref import (
     ArxivRef,
     GithubReadmeRef,
@@ -18,7 +19,7 @@ from aizk.conversion.core.source_ref import (
     SourceRef,
     UrlRef,
 )
-from aizk.conversion.core.types import ContentType
+from aizk.conversion.core.types import ContentType, SourceMetadata
 from aizk.conversion.utilities.arxiv_utils import get_arxiv_id
 from aizk.conversion.utilities.bookmark_utils import (
     detect_source_type,
@@ -34,7 +35,7 @@ from aizk.conversion.utilities.config import KarakeepFetcherConfig
 from aizk.conversion.utilities.github_utils import parse_github_owner_repo
 
 
-class KarakeepBookmarkResolver:
+class KarakeepBookmarkResolver(RefResolver):
     """RefResolver that resolves a KarakeepBookmarkRef to a typed SourceRef.
 
     Applies a 7-step content-precedence chain against the fetched bookmark and
@@ -46,19 +47,26 @@ class KarakeepBookmarkResolver:
     def __init__(self, karakeep_cfg: KarakeepFetcherConfig) -> None:
         self._karakeep_cfg = karakeep_cfg
 
-    def resolve(self, ref: SourceRef) -> SourceRef:
-        """Fetch the KaraKeep bookmark and resolve it to a typed SourceRef.
+    def resolve(self, ref: SourceRef) -> tuple[SourceRef, SourceMetadata]:
+        """Fetch the KaraKeep bookmark and resolve it to a typed SourceRef and source metadata.
 
         Args:
             ref: A KarakeepBookmarkRef to resolve.
 
         Returns:
-            The resolved SourceRef (ArxivRef, GithubReadmeRef, UrlRef, or InlineHtmlRef).
+            A tuple of (resolved_ref, source_metadata) where source_metadata carries
+            the bookmark's source URL, document base URL, normalized URL, and title.
 
         Raises:
             BookmarkContentUnavailableError: If the bookmark cannot be fetched or has no
                 usable content.
         """
+        import logging
+
+        from aizk.utilities.url_utils import normalize_url
+
+        _logger = logging.getLogger(__name__)
+
         if not isinstance(ref, KarakeepBookmarkRef):
             raise TypeError(f"Expected KarakeepBookmarkRef, got {type(ref).__name__}")
 
@@ -74,6 +82,30 @@ class KarakeepBookmarkResolver:
         except Exception:
             source_url = None
 
+        # Extract bookmark title for human-readable fallback.
+        try:
+            resolver_title: str | None = getattr(bookmark, "title", None)
+        except Exception:
+            resolver_title = None
+
+        # Compute normalized_url from source_url; log and store None on failure.
+        normalized_url: str | None = None
+        if source_url:
+            try:
+                normalized_url = normalize_url(source_url)
+            except Exception:
+                _logger.debug(
+                    "normalize_url failed for KaraKeep bookmark source_url=%r; normalized_url=None",
+                    source_url,
+                )
+
+        source_meta = SourceMetadata(
+            source_url=source_url,
+            normalized_url=normalized_url,
+            document_base_url=source_url,
+            resolver_title=resolver_title,
+        )
+
         karakeep_base_url = self._karakeep_cfg.base_url.rstrip("/")
 
         # Step 1 — arXiv bookmark
@@ -84,38 +116,38 @@ class KarakeepBookmarkResolver:
                 arxiv_pdf_url: str | None = f"{karakeep_base_url}/api/v1/assets/{asset_id}"
             else:
                 arxiv_pdf_url = None
-            return ArxivRef(arxiv_id=arxiv_id, arxiv_pdf_url=arxiv_pdf_url)
+            return ArxivRef(arxiv_id=arxiv_id, arxiv_pdf_url=arxiv_pdf_url), source_meta
 
         # Step 2 — GitHub bookmark
         if source_url and detect_source_type(source_url) == "github":
             owner, repo = parse_github_owner_repo(source_url)
-            return GithubReadmeRef(owner=owner, repo=repo)
+            return GithubReadmeRef(owner=owner, repo=repo), source_meta
 
         # Step 3 — non-arxiv/non-github PDF asset
         if is_pdf_asset(bookmark):
             asset_id = get_bookmark_asset_id(bookmark)
             asset_url = f"{karakeep_base_url}/api/v1/assets/{asset_id}"
-            return UrlRef(url=asset_url, content_type_hint=ContentType.PDF)
+            return UrlRef(url=asset_url, content_type_hint=ContentType.PDF), source_meta
 
         # Step 4 — precrawled archive asset (HTML pipeline)
         if is_precrawled_archive_asset(bookmark):
             asset_id = get_bookmark_asset_id(bookmark)
             asset_url = f"{karakeep_base_url}/api/v1/assets/{asset_id}"
-            return UrlRef(url=asset_url)
+            return UrlRef(url=asset_url), source_meta
 
         # Step 5 — HTML content present
         html_content = get_bookmark_html_content(bookmark)
         if html_content:
             if source_url:
-                return UrlRef(url=source_url)
+                return UrlRef(url=source_url), source_meta
             html_bytes = html_content.encode("utf-8")
-            return InlineHtmlRef(body=html_bytes)
+            return InlineHtmlRef(body=html_bytes), source_meta
 
         # Step 6 — text content only
         text_content = get_bookmark_text_content(bookmark)
         if text_content:
             html = f"<html><body><pre>{_html.escape(text_content)}</pre></body></html>"
-            return InlineHtmlRef(body=html.encode("utf-8"))
+            return InlineHtmlRef(body=html.encode("utf-8")), source_meta
 
         # Step 7 — no usable content
         raise BookmarkContentUnavailableError(
