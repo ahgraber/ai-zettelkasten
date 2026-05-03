@@ -102,8 +102,7 @@ async def submit_bookmark(
         The conversion job response payload.
     """
     payload = {
-        "karakeep_id": karakeep_id,
-        "idempotency_key": f"karakeep:{karakeep_id}",
+        "source_ref": {"kind": "karakeep_bookmark", "bookmark_id": karakeep_id},
     }
     response = await http_client.post("/v1/jobs", json=payload)
     response.raise_for_status()
