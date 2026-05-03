@@ -13,14 +13,13 @@ import asyncio
 import logging
 from pathlib import Path
 import socket
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlmodel import Session
 
 from aizk.conversion.core.errors import (
     DenyListDestination,
-    EgressPolicyError,
     FetchTooLargeError,
 )
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash

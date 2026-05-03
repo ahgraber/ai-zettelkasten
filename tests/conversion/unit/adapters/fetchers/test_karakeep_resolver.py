@@ -16,7 +16,7 @@ from aizk.conversion.core.source_ref import (
     KarakeepBookmarkRef,
     UrlRef,
 )
-from aizk.conversion.core.types import ContentType
+from aizk.conversion.core.types import ContentType, SourceMetadata
 from aizk.conversion.utilities.config import KarakeepFetcherConfig
 from karakeep_client.models import Bookmark
 
@@ -137,7 +137,7 @@ def test_karakeep_resolver_arxiv_bookmark_returns_arxiv_ref(monkeypatch):
     )
 
     resolver = KarakeepBookmarkResolver(_DEFAULT_CFG)
-    result = resolver.resolve(ref)
+    result, _ = resolver.resolve(ref)
 
     assert isinstance(result, ArxivRef)
     assert result.arxiv_id == "2301.12345"
@@ -169,7 +169,7 @@ def test_karakeep_resolver_arxiv_pdf_asset_sets_arxiv_pdf_url(monkeypatch):
 
     cfg = KarakeepFetcherConfig(_env_file=None, base_url="https://karakeep.example.com", api_key="")
     resolver = KarakeepBookmarkResolver(cfg)
-    result = resolver.resolve(ref)
+    result, _ = resolver.resolve(ref)
 
     assert isinstance(result, ArxivRef)
     assert result.arxiv_id == "2301.12345"
@@ -195,7 +195,7 @@ def test_karakeep_resolver_github_bookmark_returns_github_readme_ref(monkeypatch
     )
 
     resolver = KarakeepBookmarkResolver(_DEFAULT_CFG)
-    result = resolver.resolve(ref)
+    result, _ = resolver.resolve(ref)
 
     assert isinstance(result, GithubReadmeRef)
     assert result.owner == "owner"
@@ -225,7 +225,7 @@ def test_karakeep_resolver_pdf_asset_bookmark_returns_url_ref(monkeypatch):
 
     cfg = KarakeepFetcherConfig(_env_file=None, base_url="https://karakeep.example.com", api_key="")
     resolver = KarakeepBookmarkResolver(cfg)
-    result = resolver.resolve(ref)
+    result, _ = resolver.resolve(ref)
 
     assert isinstance(result, UrlRef)
     assert result.url == "https://karakeep.example.com/api/v1/assets/pdf-asset-1"
@@ -254,7 +254,7 @@ def test_karakeep_resolver_html_content_returns_url_ref(monkeypatch):
     )
 
     resolver = KarakeepBookmarkResolver(_DEFAULT_CFG)
-    result = resolver.resolve(ref)
+    result, _ = resolver.resolve(ref)
 
     assert isinstance(result, UrlRef)
     assert "example.com" in result.url
@@ -287,7 +287,7 @@ def test_karakeep_resolver_step5_emits_urlref_for_deny_set_source_url(monkeypatc
     )
 
     resolver = KarakeepBookmarkResolver(_DEFAULT_CFG)
-    resolved = resolver.resolve(ref)
+    resolved, _ = resolver.resolve(ref)
 
     assert isinstance(resolved, UrlRef)
     # `normalize_url` strips the trailing slash; no DNS, no classification.
@@ -309,7 +309,7 @@ def test_karakeep_resolver_text_only_returns_inline_html_ref(monkeypatch):
     )
 
     resolver = KarakeepBookmarkResolver(_DEFAULT_CFG)
-    result = resolver.resolve(ref)
+    result, _ = resolver.resolve(ref)
 
     assert isinstance(result, InlineHtmlRef)
     assert result.body == b"<html><body><pre>hello world</pre></body></html>"
@@ -355,3 +355,163 @@ def test_karakeep_resolver_missing_bookmark_raises_content_unavailable(monkeypat
     resolver = KarakeepBookmarkResolver(_DEFAULT_CFG)
     with pytest.raises(BookmarkContentUnavailableError):
         resolver.resolve(ref)
+
+
+# ---------------------------------------------------------------------------
+# SourceMetadata fields — returned alongside the resolved ref
+# ---------------------------------------------------------------------------
+
+
+def _link_bookmark_with_title(url: str, title: str | None = None, **overrides):
+    """Bookmark with an explicit title field for metadata tests."""
+    base = {
+        **_BASE_BOOKMARK,
+        "title": title,
+        "content": {**_BASE_LINK_CONTENT, "url": url, **overrides},
+    }
+    return Bookmark.model_validate(base)
+
+
+def test_karakeep_resolver_arxiv_meta_source_url(monkeypatch):
+    """ArXiv branch: source_url and document_base_url come from the bookmark URL."""
+    bookmark = _link_bookmark_with_title("https://arxiv.org/abs/2301.12345", title="Attention Is All You Need")
+    ref = KarakeepBookmarkRef(bookmark_id="bm-arxiv-meta")
+
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.karakeep.fetch_karakeep_bookmark",
+        lambda _: bookmark,
+    )
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.karakeep.detect_source_type",
+        lambda url: "arxiv",
+    )
+
+    _, meta = KarakeepBookmarkResolver(_DEFAULT_CFG).resolve(ref)
+
+    assert isinstance(meta, SourceMetadata)
+    assert meta.source_url == "https://arxiv.org/abs/2301.12345"
+    assert meta.document_base_url == "https://arxiv.org/abs/2301.12345"
+    assert meta.resolver_title == "Attention Is All You Need"
+    assert meta.normalized_url is not None
+    assert "arxiv.org" in meta.normalized_url
+
+
+def test_karakeep_resolver_github_meta_source_url(monkeypatch):
+    """GitHub branch: source_url, document_base_url, and resolver_title populated."""
+    bookmark = _link_bookmark_with_title("https://github.com/owner/repo", title="owner/repo")
+    ref = KarakeepBookmarkRef(bookmark_id="bm-github-meta")
+
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.karakeep.fetch_karakeep_bookmark",
+        lambda _: bookmark,
+    )
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.karakeep.detect_source_type",
+        lambda url: "github",
+    )
+
+    _, meta = KarakeepBookmarkResolver(_DEFAULT_CFG).resolve(ref)
+
+    assert meta.source_url == "https://github.com/owner/repo"
+    assert meta.document_base_url == "https://github.com/owner/repo"
+    assert meta.resolver_title == "owner/repo"
+    assert meta.normalized_url is not None
+
+
+def test_karakeep_resolver_pdf_asset_meta_source_url(monkeypatch):
+    """PDF-asset branch: source_url comes from the bookmark's sourceUrl."""
+    bookmark = _pdf_asset_bookmark(source_url="https://example.com/paper.pdf", asset_id="pdf-asset-2")
+    ref = KarakeepBookmarkRef(bookmark_id="bm-pdf-meta")
+
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.karakeep.fetch_karakeep_bookmark",
+        lambda _: bookmark,
+    )
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.karakeep.detect_source_type",
+        lambda url: "other",
+    )
+
+    _, meta = KarakeepBookmarkResolver(_DEFAULT_CFG).resolve(ref)
+
+    assert meta.source_url == "https://example.com/paper.pdf"
+    assert meta.document_base_url == "https://example.com/paper.pdf"
+    assert meta.normalized_url is not None
+    assert "example.com" in meta.normalized_url
+
+
+def test_karakeep_resolver_inline_html_meta_null_source_url(monkeypatch):
+    """Inline HTML branch (no source URL): source_url and document_base_url are None."""
+    bookmark = _link_bookmark("https://placeholder.example.com", htmlContent="<html><body>hello</body></html>")
+    ref = KarakeepBookmarkRef(bookmark_id="bm-inline-meta")
+
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.karakeep.fetch_karakeep_bookmark",
+        lambda _: bookmark,
+    )
+    # Simulate a bookmark where the source URL is not extractable
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.karakeep.get_bookmark_source_url",
+        lambda _: None,
+    )
+
+    _, meta = KarakeepBookmarkResolver(_DEFAULT_CFG).resolve(ref)
+
+    assert meta.source_url is None
+    assert meta.document_base_url is None
+    assert meta.normalized_url is None
+
+
+def test_karakeep_resolver_normalize_url_failure_yields_none_and_logs_debug(monkeypatch, caplog):
+    """When normalize_url raises on the resolver path, normalized_url is None and a debug log is emitted."""
+    import logging
+
+    bookmark = _link_bookmark("https://example.com/page", htmlContent="<html/>")
+    ref = KarakeepBookmarkRef(bookmark_id="bm-norm-fail")
+
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.karakeep.fetch_karakeep_bookmark",
+        lambda _: bookmark,
+    )
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.karakeep.detect_source_type",
+        lambda url: "other",
+    )
+
+    def _raising_normalize(url):
+        raise ValueError(f"malformed url: {url}")
+
+    monkeypatch.setattr("aizk.utilities.url_utils.normalize_url", _raising_normalize)
+
+    with caplog.at_level(logging.DEBUG, logger="aizk.conversion.adapters.fetchers.karakeep"):
+        _, meta = KarakeepBookmarkResolver(_DEFAULT_CFG).resolve(ref)
+
+    assert meta.normalized_url is None
+    # Resolver still returns the source URL it observed; only normalization failed.
+    assert meta.source_url == "https://example.com/page"
+    assert any("normalize_url failed" in r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG), (
+        "expected a DEBUG log line announcing normalize_url failure"
+    )
+
+
+def test_karakeep_resolver_null_title_yields_none_resolver_title(monkeypatch):
+    """Bookmark with title=None produces resolver_title=None."""
+    bookmark = _link_bookmark_with_title("https://example.com/page", title=None)
+    ref = KarakeepBookmarkRef(bookmark_id="bm-no-title")
+
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.karakeep.fetch_karakeep_bookmark",
+        lambda _: bookmark,
+    )
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.karakeep.detect_source_type",
+        lambda url: "other",
+    )
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.karakeep.get_bookmark_html_content",
+        lambda _: "<html/>",
+    )
+
+    _, meta = KarakeepBookmarkResolver(_DEFAULT_CFG).resolve(ref)
+
+    assert meta.resolver_title is None

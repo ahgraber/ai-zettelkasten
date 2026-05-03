@@ -2,9 +2,6 @@
 
 from sqlmodel import SQLModel
 
-from aizk.conversion.datamodel.job import ConversionJob
-from aizk.conversion.datamodel.output import ConversionOutput
-from aizk.conversion.datamodel.source import Source
 
 
 def test_indexed_columns():

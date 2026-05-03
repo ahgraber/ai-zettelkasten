@@ -12,7 +12,7 @@ from pathlib import Path
 import queue as queue_module
 import socket
 from typing import Any, Callable
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -197,8 +197,9 @@ def test_karakeep_resolver_emits_urlref_then_fetcher_blocks_deny_list(
     ref = KarakeepBookmarkRef(bookmark_id="bm_ssrf_test")
 
     # Resolver SHALL succeed under the revised model — egress validation moved to fetch time.
-    resolved = resolver.resolve(ref)
+    resolved, _ = resolver.resolve(ref)
     from aizk.conversion.core.source_ref import UrlRef
+    from aizk.conversion.core.types import SourceMetadata
 
     assert isinstance(resolved, UrlRef)
     # `normalize_url` strips the trailing slash; identity normalization happens at construction.
@@ -209,7 +210,7 @@ def test_karakeep_resolver_emits_urlref_then_fetcher_blocks_deny_list(
     config = ConversionConfig(_env_file=None)
     fetcher = UrlFetcher(config, karakeep_cfg)
     with pytest.raises(EgressPolicyError):
-        fetcher.fetch(resolved)
+        fetcher.fetch(resolved, SourceMetadata())
 
 
 # ---------------------------------------------------------------------------
@@ -330,8 +331,18 @@ def test_malicious_metadata_raises_workspace_escape_before_upload(
     (workspace / "metadata.json").write_text(
         json.dumps(
             {
+                "pipeline_name": "html",
+                "terminal_ref": {"kind": "url", "url": "https://example.com"},
+                "content_type": "html",
                 "markdown_filename": "../../etc/hostname",
                 "figure_files": [],
+                "markdown_hash_xx64": "deadbeef00000001",
+                "docling_version": "test",
+                "config_snapshot": {"converter_name": "docling"},
+                "fetched_at": "2026-01-01T00:00:00+00:00",
+                "source_meta": {},
+                "document_title": None,
+                "source_title": None,
             }
         )
     )
@@ -389,6 +400,9 @@ def _make_subprocess_stub(markdown: str = "# Converted output") -> Callable:
             "config_snapshot": {"converter_name": "docling"},
             "terminal_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_egress_happy"},
             "content_type": "html",
+            "source_meta": {},
+            "document_title": None,
+            "source_title": None,
         }
         metadata_path(workspace).write_text(json.dumps(metadata))
 

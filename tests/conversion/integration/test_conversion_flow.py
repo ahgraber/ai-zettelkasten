@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import boto3
 from botocore.stub import ANY, Stubber
+import pytest
 from sqlmodel import Session, select
 
 from fastapi.testclient import TestClient
@@ -89,6 +90,9 @@ def _make_subprocess_stub(markdown: str = "# Test"):
             "config_snapshot": {"converter_name": "docling"},
             "terminal_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_test_001"},
             "content_type": "html",
+            "source_meta": {},
+            "document_title": None,
+            "source_title": None,
         }
         metadata_path(workspace).write_text(json.dumps(metadata))
 
@@ -157,7 +161,7 @@ def _install_memory_s3(monkeypatch) -> dict[str, bytes]:
 
 
 def _fake_convert_pdf(content: bytes, temp_dir, config):
-    return f"# {content.decode('ascii')}\n", []
+    return f"# {content.decode('ascii')}\n", [], None
 
 
 def _create_job_for_ref(db_session, ref, *, idempotency_key: str) -> int:
@@ -337,7 +341,7 @@ def test_conversion_flow_proceeds_when_source_enrichment_fails(monkeypatch, db_s
         raise RuntimeError("db write failed")
 
     monkeypatch.setattr("aizk.conversion.adapters.fetchers.arxiv._fetch_url", _fake_fetch_url)
-    monkeypatch.setattr(orchestrator, "_enrich_source_metadata", _boom)
+    monkeypatch.setattr(orchestrator, "_write_source_enrichment", _boom)
 
     ref = ArxivRef(arxiv_id="2301.12345", arxiv_pdf_url="https://arxiv.org/pdf/2301.12345")
     job_id = _create_job_for_ref(db_session, ref, idempotency_key="4" * 64)
@@ -351,6 +355,159 @@ def test_conversion_flow_proceeds_when_source_enrichment_fails(monkeypatch, db_s
         job_record = session.get(ConversionJob, job_id)
         assert job_record.status == ConversionJobStatus.SUCCEEDED
         assert storage[output.markdown_key].decode("utf-8") == "# direct-pdf-url\n"
+
+
+_ENRICH_BOOKMARK_TITLE = "Sycophancy, Planning, and the Pepsi Challenge"
+_ENRICH_BOOKMARK_URL = "https://aimlbling-about.example/blog/sycophancy"
+
+
+def _make_html_link_bookmark(*, bookmark_id: str, title: str | None, url: str):
+    """Build a Karakeep HTML link bookmark with configurable top-level title."""
+    from karakeep_client.models import Bookmark
+
+    return Bookmark.model_validate(
+        {
+            "id": bookmark_id,
+            "createdAt": "2025-07-08T01:00:00.000Z",
+            "modifiedAt": "2025-07-08T01:00:07.000Z",
+            "title": title,
+            "archived": False,
+            "favourited": False,
+            "taggingStatus": "success",
+            "summarizationStatus": "success",
+            "note": None,
+            "summary": None,
+            "tags": [],
+            "content": {
+                "type": "link",
+                "url": url,
+                "title": title,
+                "description": None,
+                "imageUrl": None,
+                "imageAssetId": None,
+                "screenshotAssetId": None,
+                "fullPageArchiveAssetId": None,
+                "precrawledArchiveAssetId": None,
+                "videoAssetId": None,
+                "favicon": None,
+                "htmlContent": "<html><body>hello</body></html>",
+                "contentAssetId": None,
+                "crawledAt": None,
+                "author": None,
+                "publisher": None,
+                "datePublished": None,
+                "dateModified": None,
+            },
+            "assets": [],
+        }
+    )
+
+
+def _stub_html_pipeline(monkeypatch, *, bookmark, document_title: str | None):
+    """Wire a Karakeep HTML bookmark through resolver -> UrlFetcher -> convert_html with stubs."""
+    monkeypatch.setattr("aizk.conversion.adapters.fetchers.karakeep.fetch_karakeep_bookmark", lambda _id: bookmark)
+    monkeypatch.setattr("aizk.conversion.adapters.fetchers.karakeep.detect_source_type", lambda _url: "other")
+
+    async def _fake_egress_fetch(url, **kwargs):
+        return b"<html><body>hello</body></html>", {"content-type": "text/html"}
+
+    monkeypatch.setattr("aizk.conversion.adapters.fetchers.url.egress_fetch_bytes", _fake_egress_fetch)
+
+    def _fake_convert_html(html_bytes, *, temp_dir, config, source_url=None, prefetch_policy=None):
+        return "# converted html\n", [], document_title
+
+    monkeypatch.setattr("aizk.conversion.adapters.converters.docling.convert_html", _fake_convert_html)
+
+
+def test_conversion_flow_enriches_source_and_manifest_end_to_end(monkeypatch, db_session) -> None:
+    """Karakeep HTML bookmark flows resolver-observed metadata into Source row, manifest, and ConversionOutput."""
+    from aizk.utilities.url_utils import normalize_url
+
+    monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
+    storage = _install_memory_s3(monkeypatch)
+
+    bookmark = _make_html_link_bookmark(
+        bookmark_id="bm_enrich_e2e",
+        title=_ENRICH_BOOKMARK_TITLE,
+        url=_ENRICH_BOOKMARK_URL,
+    )
+    # Document title is None so source_title falls back to the resolver-supplied bookmark title.
+    _stub_html_pipeline(monkeypatch, bookmark=bookmark, document_title=None)
+
+    ref = KarakeepBookmarkRef(bookmark_id="bm_enrich_e2e")
+    job_id = _create_job_for_ref(db_session, ref, idempotency_key="e" * 64)
+    config = ConversionConfig(_env_file=None)
+
+    orchestrator.process_job_supervised(job_id, config, _make_fake_runtime())
+
+    engine = get_engine(config.database_url)
+    with Session(engine) as session:
+        job_record = session.get(ConversionJob, job_id)
+        assert job_record.status == ConversionJobStatus.SUCCEEDED
+
+        source = session.exec(select(Source).where(Source.aizk_uuid == job_record.aizk_uuid)).one()
+        assert source.url == _ENRICH_BOOKMARK_URL
+        assert source.normalized_url == normalize_url(_ENRICH_BOOKMARK_URL)
+        assert source.title == _ENRICH_BOOKMARK_TITLE
+
+        output = session.exec(select(ConversionOutput).where(ConversionOutput.job_id == job_id)).one()
+        assert output.title == _ENRICH_BOOKMARK_TITLE
+
+        manifest_bytes = storage[output.manifest_key]
+        manifest = json.loads(manifest_bytes)
+        assert manifest["source"]["url"] == _ENRICH_BOOKMARK_URL
+        assert manifest["source"]["normalized_url"] == normalize_url(_ENRICH_BOOKMARK_URL)
+        assert manifest["source"]["title"] == _ENRICH_BOOKMARK_TITLE
+
+
+_TITLE_BRANCHES = [
+    pytest.param("Real Document Title", _ENRICH_BOOKMARK_TITLE, "Real Document Title", id="document-title-wins"),
+    pytest.param(None, _ENRICH_BOOKMARK_TITLE, _ENRICH_BOOKMARK_TITLE, id="resolver-fallback"),
+    pytest.param(None, None, None, id="both-none"),
+]
+
+
+@pytest.mark.parametrize(("document_title", "bookmark_title", "expected_source_title"), _TITLE_BRANCHES)
+def test_conversion_flow_source_title_branches_end_to_end(
+    monkeypatch, db_session, document_title, bookmark_title, expected_source_title
+) -> None:
+    """Subprocess select_source_title runs through the IPC bridge to produce the manifest title for each branch."""
+    monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
+    storage = _install_memory_s3(monkeypatch)
+
+    bookmark_id = f"bm_title_branch_{abs(hash((document_title, bookmark_title))) % 10_000}"
+    bookmark = _make_html_link_bookmark(bookmark_id=bookmark_id, title=bookmark_title, url=_ENRICH_BOOKMARK_URL)
+    _stub_html_pipeline(monkeypatch, bookmark=bookmark, document_title=document_title)
+
+    ref = KarakeepBookmarkRef(bookmark_id=bookmark_id)
+    job_id = _create_job_for_ref(
+        db_session,
+        ref,
+        idempotency_key=f"branch-{document_title}-{bookmark_title}".ljust(64, "x")[:64],
+    )
+    config = ConversionConfig(_env_file=None)
+
+    orchestrator.process_job_supervised(job_id, config, _make_fake_runtime())
+
+    engine = get_engine(config.database_url)
+    with Session(engine) as session:
+        job_record = session.get(ConversionJob, job_id)
+        assert job_record.status == ConversionJobStatus.SUCCEEDED
+
+        source = session.exec(select(Source).where(Source.aizk_uuid == job_record.aizk_uuid)).one()
+        assert source.title == expected_source_title
+
+        output = session.exec(select(ConversionOutput).where(ConversionOutput.job_id == job_id)).one()
+        # ConversionOutput.title falls back to job.title (NOT NULL contract) when subprocess selected None.
+        if expected_source_title is None:
+            assert output.title == job_record.title
+        else:
+            assert output.title == expected_source_title
+
+        manifest = json.loads(storage[output.manifest_key])
+        # save_manifest uses exclude_none=True, so a None title is omitted from JSON;
+        # .get() yields None for both "absent" and "explicit null" shapes.
+        assert manifest["source"].get("title") == expected_source_title
 
 
 def test_arxiv_precedence_uses_karakeep_pdf_asset_end_to_end(monkeypatch, db_session) -> None:

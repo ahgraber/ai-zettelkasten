@@ -29,7 +29,7 @@ from aizk.conversion.core.source_ref import (
     SourceRef,
     UrlRef,
 )
-from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput
+from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput, SourceMetadata
 
 # --- Fake adapters -----------------------------------------------------------
 
@@ -40,10 +40,12 @@ class _FakePdfFetcher:
     def __init__(self, payload: bytes = b"pdf-bytes") -> None:
         self._payload = payload
         self.calls: list[SourceRef] = []
+        self.received_meta: list[SourceMetadata] = []
 
-    def fetch(self, ref: SourceRef) -> ConversionInput:
+    def fetch(self, ref: SourceRef, source_meta: SourceMetadata) -> ConversionInput:
         self.calls.append(ref)
-        return ConversionInput(content=self._payload, content_type=ContentType.PDF)
+        self.received_meta.append(source_meta)
+        return ConversionInput(content=self._payload, content_type=ContentType.PDF, source_meta=source_meta)
 
 
 class _FakeHtmlFetcher:
@@ -52,22 +54,25 @@ class _FakeHtmlFetcher:
     def __init__(self, payload: bytes = b"<html></html>") -> None:
         self._payload = payload
         self.calls: list[SourceRef] = []
+        self.received_meta: list[SourceMetadata] = []
 
-    def fetch(self, ref: SourceRef) -> ConversionInput:
+    def fetch(self, ref: SourceRef, source_meta: SourceMetadata) -> ConversionInput:
         self.calls.append(ref)
-        return ConversionInput(content=self._payload, content_type=ContentType.HTML)
+        self.received_meta.append(source_meta)
+        return ConversionInput(content=self._payload, content_type=ContentType.HTML, source_meta=source_meta)
 
 
 class _FakeKarakeepResolver:
     resolves_to: ClassVar[frozenset[str]] = frozenset({"arxiv"})
 
-    def __init__(self, target: SourceRef) -> None:
+    def __init__(self, target: SourceRef, meta: SourceMetadata | None = None) -> None:
         self._target = target
+        self._meta = meta or SourceMetadata()
         self.calls: list[SourceRef] = []
 
-    def resolve(self, ref: SourceRef) -> SourceRef:
+    def resolve(self, ref: SourceRef) -> tuple[SourceRef, SourceMetadata]:
         self.calls.append(ref)
-        return self._target
+        return self._target, self._meta
 
 
 class _FakeChainingResolver:
@@ -75,11 +80,12 @@ class _FakeChainingResolver:
 
     resolves_to: ClassVar[frozenset[str]] = frozenset({"karakeep_bookmark"})
 
-    def __init__(self, target: SourceRef) -> None:
+    def __init__(self, target: SourceRef, meta: SourceMetadata | None = None) -> None:
         self._target = target
+        self._meta = meta or SourceMetadata()
 
-    def resolve(self, ref: SourceRef) -> SourceRef:
-        return self._target
+    def resolve(self, ref: SourceRef) -> tuple[SourceRef, SourceMetadata]:
+        return self._target, self._meta
 
 
 class _FakeConverter:
@@ -123,7 +129,7 @@ def test_single_hop_fetch_returns_conversion_input():
     )
 
     ref = ArxivRef(arxiv_id="2301.12345")
-    result = orch._fetch(ref)
+    result, _ = orch._fetch_with_terminal_ref(ref, SourceMetadata())
 
     assert isinstance(result, ConversionInput)
     assert result.content == b"hello-pdf"
@@ -158,6 +164,50 @@ def test_two_hop_resolution_succeeds_through_process():
     assert converter.received[0].content_type is ContentType.PDF
 
 
+def test_orchestrator_threads_metadata_through_resolver_chain():
+    """Two-hop resolver chain accumulates SourceMetadata via merge() with earlier-non-None-wins.
+
+    Outer resolver supplies source_url; inner resolver supplies resolver_title.
+    The terminal fetcher SHALL receive a SourceMetadata with both fields populated,
+    and the converter SHALL observe the same merged metadata on its ConversionInput.
+    """
+    inner_target = ArxivRef(arxiv_id="2301.12345")
+    outer_resolver = _FakeChainingResolver(
+        target=KarakeepBookmarkRef(bookmark_id="b-inner"),
+        meta=SourceMetadata(source_url="https://outer.example/post", document_base_url="https://outer.example/post"),
+    )
+    inner_resolver = _FakeKarakeepResolver(
+        target=inner_target,
+        meta=SourceMetadata(resolver_title="Inner Title"),
+    )
+    fetcher = _FakePdfFetcher(payload=b"pdf-bytes")
+    converter = _FakeConverter()
+
+    orch = Orchestrator(
+        resolve_fetcher=_make_fetcher_resolver(
+            {
+                "url": outer_resolver,
+                "karakeep_bookmark": inner_resolver,
+                "arxiv": fetcher,
+            },
+        ),
+        resolve_converter=_make_converter_resolver({(ContentType.PDF, "docling"): converter}),
+        depth_cap=2,
+    )
+
+    orch.process(UrlRef(url="https://outer.example/post"), "docling")
+
+    assert len(fetcher.received_meta) == 1
+    received = fetcher.received_meta[0]
+    # Earlier non-None wins: outer resolver's source_url is preserved.
+    assert received.source_url == "https://outer.example/post"
+    assert received.document_base_url == "https://outer.example/post"
+    # Later resolver fills the gap the outer left as None.
+    assert received.resolver_title == "Inner Title"
+    # Converter sees the same merged metadata via ConversionInput.source_meta.
+    assert converter.received[0].source_meta == received
+
+
 def test_depth_limit_exceeded_raises_fetcher_depth_exceeded():
     # Build a chain of resolvers longer than the cap: cap=1 means a single
     # resolver hop is allowed, a second resolver hop must fail.
@@ -181,7 +231,7 @@ def test_depth_limit_exceeded_raises_fetcher_depth_exceeded():
     )
 
     with pytest.raises(FetcherDepthExceeded) as excinfo:
-        orch._fetch(UrlRef(url="https://example.com/x"))
+        orch._fetch_with_terminal_ref(UrlRef(url="https://example.com/x"), SourceMetadata())
 
     exc = excinfo.value
     assert exc.cap == 1
@@ -304,7 +354,7 @@ def test_default_depth_cap_of_2_allows_one_hop_chain():
     )
 
     # No exception — the one-hop chain is within cap=2.
-    result = orch._fetch(KarakeepBookmarkRef(bookmark_id="b1"))
+    result, _ = orch._fetch_with_terminal_ref(KarakeepBookmarkRef(bookmark_id="b1"), SourceMetadata())
     assert result.content_type is ContentType.PDF
 
 
@@ -385,7 +435,7 @@ def test_fetch_raises_with_correctly_ordered_kinds_trail_from_top():
     )
 
     with pytest.raises(FetcherDepthExceeded) as excinfo:
-        orch._fetch(UrlRef(url="https://example.com/"))
+        orch._fetch_with_terminal_ref(UrlRef(url="https://example.com/"), SourceMetadata())
 
     # Must include the original top-of-chain kind first, then the offending
     # kind that triggered the cap violation.

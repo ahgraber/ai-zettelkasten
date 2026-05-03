@@ -13,12 +13,11 @@ Covers:
 from __future__ import annotations
 
 from typing import ClassVar
-from unittest.mock import patch
 
 import pytest
 
 from aizk.conversion.core.errors import ChainNotTerminated
-from aizk.conversion.core.protocols import ContentFetcher, RefResolver
+from aizk.conversion.core.protocols import RefResolver
 from aizk.conversion.core.registry import ConverterRegistry, FetcherRegistry
 from aizk.conversion.core.source_ref import SourceRef, UrlRef
 from aizk.conversion.core.types import ContentType, ConversionInput
