@@ -22,7 +22,7 @@ from typing import Any
 from aizk.conversion.core.errors import FetcherDepthExceeded, MissingContentError
 from aizk.conversion.core.protocols import ContentFetcher, Converter, RefResolver
 from aizk.conversion.core.source_ref import SourceRef
-from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput
+from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput, SourceMetadata
 
 
 @_dataclass(frozen=True)
@@ -56,52 +56,17 @@ class Orchestrator:
         self._depth_cap = depth_cap
         self._depth_cap_config_key = depth_cap_config_key
 
-    def _fetch(self, ref: SourceRef, depth: int = 0) -> ConversionInput:
-        """Dispatch ``ref`` through the fetcher chain, recursing on resolvers.
-
-        Role is determined structurally: a ``RefResolver`` refines the ref and
-        the orchestrator recurses with ``depth + 1``; a ``ContentFetcher`` is
-        terminal and returns a ``ConversionInput``.
-        """
-        return self._fetch_with_trail(ref, depth, [])
-
-    def _fetch_with_trail(
-        self,
-        ref: SourceRef,
-        depth: int,
-        kinds_seen: list[str],
-    ) -> ConversionInput:
-        # Record the kind at this dispatch attempt BEFORE resolving, so the
-        # depth-cap error message names the kind that triggered the violation.
-        trail = [*kinds_seen, ref.kind]
-        impl = self._resolve_fetcher(ref.kind)
-
-        if isinstance(impl, RefResolver):
-            # Depth-cap check fires ONLY when we would recurse. A terminal
-            # ContentFetcher at any depth is allowed to return.
-            if depth >= self._depth_cap:
-                raise FetcherDepthExceeded(
-                    cap=self._depth_cap,
-                    kinds_traversed=trail,
-                    config_key=self._depth_cap_config_key,
-                )
-            refined = impl.resolve(ref)
-            return self._fetch_with_trail(refined, depth + 1, trail)
-
-        # Structural fallthrough: not a RefResolver, so it must be a
-        # ContentFetcher (the registry guarantees exactly these two roles).
-        return impl.fetch(ref)
-
     def _fetch_with_terminal_ref(
         self,
         ref: SourceRef,
+        source_meta: SourceMetadata,
         depth: int = 0,
         kinds_seen: list[str] | None = None,
     ) -> tuple[ConversionInput, SourceRef]:
-        """Like ``_fetch_with_trail`` but also returns the terminal ref.
+        """Dispatch ``ref`` through the fetch chain, threading ``source_meta`` across hops.
 
-        The terminal ref is the ``SourceRef`` that was dispatched to a
-        ``ContentFetcher`` (as opposed to a ``RefResolver``).
+        Returns the ``ConversionInput`` (which carries the final merged ``source_meta``)
+        and the terminal ``SourceRef`` (the ref dispatched to a ``ContentFetcher``).
         """
         if kinds_seen is None:
             kinds_seen = []
@@ -115,23 +80,24 @@ class Orchestrator:
                     kinds_traversed=trail,
                     config_key=self._depth_cap_config_key,
                 )
-            refined = impl.resolve(ref)
-            return self._fetch_with_terminal_ref(refined, depth + 1, trail)
+            refined, meta_new = impl.resolve(ref)
+            merged = source_meta.merge(meta_new)
+            return self._fetch_with_terminal_ref(refined, merged, depth + 1, trail)
 
-        # ContentFetcher: this ref is the terminal ref.
-        return impl.fetch(ref), ref
+        # ContentFetcher: pass the accumulated source_meta and get back merged input.
+        return impl.fetch(ref, source_meta), ref
 
     def process(self, ref: SourceRef, converter_name: str) -> ConversionArtifacts:
         """Run the full fetch -> convert cycle for ``ref`` using ``converter_name``."""
-        conversion_input = self._fetch(ref)
+        conversion_input, _ = self._fetch_with_terminal_ref(ref, SourceMetadata())
         if not conversion_input.content:
             raise MissingContentError(f"Fetcher returned zero-length content for {ref!r}")
         converter = self._resolve_converter(conversion_input.content_type, converter_name)
         return converter.convert(conversion_input)
 
     def process_with_provenance(self, ref: SourceRef, converter_name: str) -> ProcessResult:
-        """Like ``process`` but also returns fetch provenance (terminal ref and conversion input)."""
-        conversion_input, terminal_ref = self._fetch_with_terminal_ref(ref)
+        """Run the full fetch -> convert cycle and return provenance alongside artifacts."""
+        conversion_input, terminal_ref = self._fetch_with_terminal_ref(ref, SourceMetadata())
         if not conversion_input.content:
             raise MissingContentError(f"Fetcher returned zero-length content for {ref!r}")
         converter = self._resolve_converter(conversion_input.content_type, converter_name)

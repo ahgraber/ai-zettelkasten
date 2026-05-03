@@ -11,7 +11,6 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
-import threading
 import time
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -40,7 +39,7 @@ from aizk.conversion.workers.errors import (
 )
 from aizk.conversion.workers.shutdown import is_shutdown_requested
 from aizk.conversion.workers.supervision import _supervise_conversion_process
-from aizk.conversion.workers.types import SupervisionResult, _utcnow
+from aizk.conversion.workers.types import SubprocessMetadata, SupervisionResult, _utcnow, select_source_title
 from aizk.conversion.workers.uploader import _execute_upload, _prepare_upload
 
 if TYPE_CHECKING:
@@ -117,29 +116,45 @@ def _get_source_ref(job_id: int, engine: Engine):
         return TypeAdapter(SourceRef).validate_python(json.loads(job.source_ref))
 
 
-def _enrich_source_metadata(
+def _write_source_enrichment(
+    subprocess_meta: SubprocessMetadata,
     aizk_uuid: str,
-    terminal_ref,  # SourceRef
-    content_type_str: str | None,
     engine,
 ) -> None:
-    """Best-effort update of mutable Source metadata. Logs on failure, never raises."""
+    """Best-effort update of Source row from SubprocessMetadata. Logs on failure, never raises.
+
+    Writes url, normalized_url, title, source_type, and content_type from the
+    subprocess IPC payload. Failure here does not affect manifest, ConversionOutput,
+    or job completion — Source is an advisory cache only.
+    """
+    from pydantic import TypeAdapter
+
+    from aizk.conversion.core.source_ref import SourceRef as _SourceRef
     from aizk.conversion.core.types import SOURCE_TYPE_BY_KIND
 
     try:
+        terminal_ref: _SourceRef = TypeAdapter(_SourceRef).validate_python(subprocess_meta.terminal_ref)
         source_type = SOURCE_TYPE_BY_KIND.get(terminal_ref.kind, "other")
+        source_meta = subprocess_meta.source_meta.to_source_metadata()
+
+        from uuid import UUID as _UUID
+
+        uuid_obj = aizk_uuid if isinstance(aizk_uuid, _UUID) else _UUID(aizk_uuid)
         with Session(engine) as session:
-            source = session.exec(select(SourceRecord).where(SourceRecord.aizk_uuid == aizk_uuid)).one_or_none()
+            source = session.exec(select(SourceRecord).where(SourceRecord.aizk_uuid == uuid_obj)).one_or_none()
             if source is None:
                 logger.warning(
                     "Source row not found for aizk_uuid=%s during enrichment",
                     aizk_uuid,
                 )
                 return
-            # ONLY write mutable metadata columns — never write identity columns
+            # Only write mutable metadata columns — never write identity columns.
+            source.url = source_meta.source_url
+            source.normalized_url = source_meta.normalized_url
+            source.title = subprocess_meta.source_title
             source.source_type = source_type
-            if content_type_str:
-                source.content_type = content_type_str
+            if subprocess_meta.content_type:
+                source.content_type = subprocess_meta.content_type
             source.updated_at = _utcnow()
             session.add(source)
             session.commit()
@@ -220,26 +235,35 @@ def _process_job_subprocess(
         pipeline_name = result.conversion_input.content_type.value  # "pdf" or "html"
         docling_ver = result.artifacts.metadata.get("docling_version", _docling_version())
 
-        # fetched_at: use now() as fallback
         fetched_at = dt.datetime.now(dt.timezone.utc)
 
-        metadata = {
-            "pipeline_name": pipeline_name,
-            "fetched_at": fetched_at.isoformat(),
-            "markdown_filename": OUTPUT_MARKDOWN_FILENAME,
-            "figure_files": figure_file_names,
-            "markdown_hash_xx64": markdown_hash,
-            "docling_version": docling_ver,
-            "config_snapshot": {
+        final_source_meta = result.conversion_input.source_meta
+        source_title = select_source_title(
+            result.artifacts.document_title,
+            final_source_meta.resolver_title,
+        )
+
+        from aizk.conversion.workers.types import _SourceMetaFields
+
+        subprocess_meta = SubprocessMetadata(
+            pipeline_name=pipeline_name,
+            terminal_ref=result.terminal_ref.model_dump(mode="json"),
+            content_type=pipeline_name,
+            markdown_filename=OUTPUT_MARKDOWN_FILENAME,
+            figure_files=figure_file_names,
+            markdown_hash_xx64=markdown_hash,
+            docling_version=docling_ver,
+            config_snapshot={
                 "converter_name": result.converter_name,
                 **result.config_snapshot,
             },
-            # Extra fields for parent enrichment and v2 manifest
-            "terminal_ref": result.terminal_ref.model_dump(mode="json"),
-            "content_type": pipeline_name,
-        }
+            fetched_at=fetched_at.isoformat(),
+            source_meta=_SourceMetaFields.from_source_metadata(final_source_meta),
+            document_title=result.artifacts.document_title,
+            source_title=source_title,
+        )
         metadata_file = metadata_path(workspace)
-        metadata_file.write_text(json.dumps(metadata, indent=2, sort_keys=False))
+        metadata_file.write_text(subprocess_meta.model_dump_json(indent=2))
 
         _report_status(status_queue, event="completed", message="conversion completed")
 
@@ -332,7 +356,7 @@ def process_job_supervised(  # noqa: C901
 
     The parent process handles preflight, cancellation, timeout, and uploads.
     """
-    from aizk.conversion.wiring.worker import WorkerRuntime, build_worker_runtime
+    from aizk.conversion.wiring.worker import build_worker_runtime
 
     if runtime is None:
         runtime = build_worker_runtime(config)
@@ -443,27 +467,30 @@ def process_job_supervised(  # noqa: C901
             )
             return
 
-        # Best-effort Source enrichment from metadata written by subprocess
+        # Best-effort Source enrichment from metadata written by subprocess.
+        # Uses typed SubprocessMetadata so schema drift fails loudly rather than
+        # silently dropping fields. Failure here does not affect manifest or output.
         metadata_file = metadata_path(workspace)
         if metadata_file.exists():
             try:
-                metadata = json.loads(read_text_nofollow(metadata_file))
-                terminal_ref_data = metadata.get("terminal_ref")
-                content_type_str = metadata.get("content_type")
-                if terminal_ref_data:
-                    from pydantic import TypeAdapter
+                from pydantic import ValidationError
 
-                    from aizk.conversion.core.source_ref import SourceRef as _SourceRef
+                from aizk.conversion.workers.errors import SubprocessMetadataInvalid
 
-                    terminal_ref = TypeAdapter(_SourceRef).validate_python(terminal_ref_data)
+                raw = read_text_nofollow(metadata_file)
+                try:
+                    subprocess_meta = SubprocessMetadata.model_validate_json(raw)
+                except ValidationError as exc:
+                    raise SubprocessMetadataInvalid(
+                        f"metadata.json failed SubprocessMetadata validation: {exc}"
+                    ) from exc
 
-                    with Session(engine) as session:
-                        job_rec = session.get(ConversionJob, job_id)
-                        if job_rec:
-                            aizk_uuid = job_rec.aizk_uuid
-                            _enrich_source_metadata(aizk_uuid, terminal_ref, content_type_str, engine)
+                with Session(engine) as session:
+                    job_rec = session.get(ConversionJob, job_id)
+                    if job_rec:
+                        _write_source_enrichment(subprocess_meta, str(job_rec.aizk_uuid), engine)
             except Exception:
-                logger.exception("Failed to read terminal_ref for enrichment; job proceeds")
+                logger.exception("Failed to read SubprocessMetadata for enrichment; job proceeds")
 
         with Session(engine) as session:
             job_record = session.get(ConversionJob, job_id)
