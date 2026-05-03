@@ -12,6 +12,7 @@ from pathlib import Path
 import tempfile
 from typing import Any, ClassVar, Optional
 
+from aizk.conversion.core.protocols import Converter
 from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput
 from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig
 from aizk.conversion.utilities.hashing import build_output_config_snapshot
@@ -28,7 +29,7 @@ def _get_docling_version() -> str:
         return "unknown"
 
 
-class DoclingConverter:
+class DoclingConverter(Converter):
     """Converter adapter backed by Docling for PDF and HTML inputs."""
 
     supported_formats: ClassVar[frozenset[ContentType]] = frozenset({ContentType.PDF, ContentType.HTML})
@@ -47,32 +48,48 @@ class DoclingConverter:
         self._conversion_config = conversion_config
 
     def convert(self, input: ConversionInput) -> ConversionArtifacts:  # noqa: A002 — protocol argument name
-        """Dispatch ``input`` to the appropriate Docling conversion function."""
+        """Dispatch ``input`` to the appropriate Docling conversion function.
+
+        Extracts the first TitleItem from the Docling result as ``document_title``
+        (raw observation — no heuristic filtering applied here) and passes
+        ``source_meta.document_base_url`` (or ``source_url``) to Docling as the
+        ``source=`` parameter so relative links resolve correctly.
+        """
         metadata = {"docling_version": _get_docling_version()}
+        source_url = input.source_meta.document_base_url or input.source_meta.source_url
 
         if input.content_type is ContentType.PDF:
             temp_dir = Path(tempfile.mkdtemp(prefix="docling-pdf-"))
-            markdown, figures = convert_pdf(
+            markdown, figures, document_title = convert_pdf(
                 input.content,
                 temp_dir=temp_dir,
                 config=self._config,
             )
-            return ConversionArtifacts(markdown=markdown, figures=list(figures), metadata=metadata)
+            return ConversionArtifacts(
+                markdown=markdown,
+                figures=list(figures),
+                metadata=metadata,
+                document_title=document_title,
+            )
 
         if input.content_type is ContentType.HTML:
-            source_url = input.metadata.get("source_url") if input.metadata else None
             temp_dir = Path(tempfile.mkdtemp(prefix="docling-html-"))
             prefetch_policy = (
                 self._conversion_config.prefetch_policy() if self._conversion_config is not None else None
             )
-            markdown, figures = convert_html(
+            markdown, figures, document_title = convert_html(
                 input.content,
                 temp_dir=temp_dir,
                 config=self._config,
                 source_url=source_url,
                 prefetch_policy=prefetch_policy,
             )
-            return ConversionArtifacts(markdown=markdown, figures=list(figures), metadata=metadata)
+            return ConversionArtifacts(
+                markdown=markdown,
+                figures=list(figures),
+                metadata=metadata,
+                document_title=document_title,
+            )
 
         raise ValueError(
             f"DoclingConverter does not support content_type={input.content_type!r}; "

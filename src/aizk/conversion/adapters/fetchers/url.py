@@ -9,18 +9,22 @@ pinning, and per-hop redirect validation).
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import ClassVar
 from urllib.parse import urlparse
 
 from aizk.conversion.core.errors import EgressPolicyError, FetchError
+from aizk.conversion.core.protocols import ContentFetcher
 from aizk.conversion.core.source_ref import SourceRef, UrlRef
-from aizk.conversion.core.types import ContentType, ConversionInput
+from aizk.conversion.core.types import ContentType, ConversionInput, SourceMetadata
 from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
 from aizk.conversion.utilities.egress_fetch import egress_fetch_bytes
 from aizk.conversion.utilities.fetch_helpers import fetch_karakeep_asset, is_karakeep_trusted_asset_url
 
+_logger = logging.getLogger(__name__)
 
-class UrlFetcher:
+
+class UrlFetcher(ContentFetcher):
     """ContentFetcher that retrieves bytes for a UrlRef.
 
     Dispatches to the KaraKeep asset API for KaraKeep asset URLs and falls
@@ -30,26 +34,55 @@ class UrlFetcher:
     produces: ClassVar[frozenset[ContentType]] = frozenset({ContentType.PDF, ContentType.HTML})
 
     def __init__(self, config: ConversionConfig, karakeep_cfg: KarakeepFetcherConfig) -> None:
+        """Initialize with conversion and KaraKeep configs."""
         self._config = config
         self._karakeep_cfg = karakeep_cfg
 
-    def fetch(self, ref: SourceRef) -> ConversionInput:
-        """Fetch bytes for ``ref``.
+    def fetch(self, ref: SourceRef, source_meta: SourceMetadata) -> ConversionInput:
+        """Fetch bytes for ``ref`` and merge observed URL fields into ``source_meta``.
+
+        For direct (non-resolver-hop) submissions, populates ``source_url``,
+        ``document_base_url``, and ``normalized_url`` from ``ref.url``.
+        For resolved invocations the resolver has already set those fields;
+        ``merge()`` keeps the resolver-supplied values.
 
         Args:
             ref: A UrlRef to fetch.
+            source_meta: Accumulated source metadata from any resolver hops.
 
         Returns:
-            ConversionInput with content bytes and detected ContentType.
+            ConversionInput with content bytes, detected ContentType, and merged source_meta.
 
         Raises:
             FetchError: On network or fetch failure.
         """
+        from aizk.utilities.url_utils import normalize_url
+
         if not isinstance(ref, UrlRef):
             raise TypeError(f"Expected UrlRef, got {type(ref).__name__}")
 
         url = ref.url
         karakeep_base_url = self._karakeep_cfg.base_url
+
+        # Only contribute the source-URL trio when upstream did not supply source_url.
+        # Backfilling individual fields would risk producing normalized_url derived from
+        # the asset URL while source_url remains the canonical resolver-supplied page —
+        # violating the conversion-worker spec invariant that
+        # `normalized_url == normalize_url(source_url)`.
+        if source_meta.source_url is None:
+            observed_normalized: str | None = None
+            try:
+                observed_normalized = normalize_url(url)
+            except Exception:
+                _logger.debug("normalize_url failed for UrlFetcher url=%r; normalized_url=None", url)
+            observed = SourceMetadata(
+                source_url=url,
+                normalized_url=observed_normalized,
+                document_base_url=url,
+            )
+            merged = source_meta.merge(observed)
+        else:
+            merged = source_meta
 
         # KaraKeep asset URL: extract asset_id from last path segment.
         # Trust is matched by parsed origin + asset path, never string prefix,
@@ -63,13 +96,12 @@ class UrlFetcher:
                 raise
             except Exception as exc:
                 raise FetchError(f"Failed to fetch KaraKeep asset for URL {url!r}: {exc}") from exc
-            # Detect content type from URL path
             # Use content_type hint from resolver when available; fall back to path-suffix inference.
             if ref.content_type_hint is not None:
                 content_type = ref.content_type_hint
             else:
                 content_type = ContentType.PDF if parsed.path.lower().endswith(".pdf") else ContentType.HTML
-            return ConversionInput(content=content, content_type=content_type)
+            return ConversionInput(content=content, content_type=content_type, source_meta=merged)
 
         # Generic HTTP URL — EgressPolicyError must propagate unwrapped so
         # job retry classification sees the non-retryable signal.
@@ -79,7 +111,7 @@ class UrlFetcher:
             raise
         except Exception as exc:
             raise FetchError(f"Failed to fetch URL {url!r}: {exc}") from exc
-        return ConversionInput(content=content, content_type=content_type)
+        return ConversionInput(content=content, content_type=content_type, source_meta=merged)
 
     async def _fetch_http(self, url: str) -> tuple[bytes, ContentType]:
         """Fetch ``url`` via the egress-validated helper and detect content type.
