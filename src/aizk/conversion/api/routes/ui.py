@@ -95,6 +95,7 @@ def _apply_filters(
         query = query.where(
             or_(
                 func.lower(ConversionJob.title).like(pattern),
+                func.lower(Source.title).like(pattern),
                 func.lower(Source.karakeep_id).like(pattern),
                 func.lower(cast(ConversionJob.aizk_uuid, String)).like(pattern),
                 cast(ConversionJob.id, String).like(f"%{search}%"),
@@ -135,7 +136,7 @@ def _load_jobs_page(
                 "id": job.id,
                 "aizk_uuid": str(job.aizk_uuid),
                 "karakeep_id": source.karakeep_id,
-                "title": job.title or source.title or "",
+                "title": source.title or job.title or "",
                 "status": job.status.value,
                 "attempts": job.attempts,
                 "queued_at": _format_dt(job.queued_at),

@@ -30,8 +30,8 @@ from aizk.conversion.utilities.paths import (
     metadata_path,
     read_text_nofollow,
 )
-from aizk.conversion.workers.errors import ConversionArtifactsMissingError
-from aizk.conversion.workers.types import _utcnow
+from aizk.conversion.workers.errors import ConversionArtifactsMissingError, SubprocessMetadataInvalid
+from aizk.conversion.workers.types import SubprocessMetadata, _utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,11 @@ class _UploadPlan:
     Built once per job by ``_prepare_upload``; re-executed on retry by
     ``_execute_upload``. S3 PUTs against the same key are idempotent, so
     re-running the plan against S3 on a transient failure is safe.
+
+    On the content-hash dedup shortcut, ``markdown_local`` is ``None`` and
+    ``figure_uploads`` is empty: the bytes are already in S3 at
+    ``markdown_key`` and the figure prefix from a prior conversion. Only the
+    manifest is uploaded, reflecting THIS job's source metadata.
     """
 
     aizk_uuid: UUID
@@ -82,7 +87,7 @@ class _UploadPlan:
     title: str
     payload_version: int
     s3_prefix_uri: str
-    markdown_local: Path
+    markdown_local: Path | None
     markdown_key: str
     figure_uploads: tuple[tuple[Path, str], ...]
     manifest_local: Path
@@ -93,6 +98,27 @@ class _UploadPlan:
     pipeline_name: str
 
 
+def _load_subprocess_metadata(workspace: Path, job_id: int) -> SubprocessMetadata:
+    """Read and validate metadata.json from workspace as SubprocessMetadata.
+
+    Raises:
+        ConversionArtifactsMissingError: If metadata.json does not exist.
+        SubprocessMetadataInvalid: If the JSON does not validate against SubprocessMetadata.
+    """
+    from pydantic import ValidationError
+
+    metadata_file = metadata_path(workspace)
+    if not metadata_file.exists():
+        raise ConversionArtifactsMissingError(f"Missing metadata for job {job_id}")
+    raw = read_text_nofollow(metadata_file)
+    try:
+        return SubprocessMetadata.model_validate_json(raw)
+    except ValidationError as exc:
+        raise SubprocessMetadataInvalid(
+            f"metadata.json failed SubprocessMetadata validation for job {job_id}: {exc}"
+        ) from exc
+
+
 def _prepare_upload(job_id: int, workspace: Path, config: ConversionConfig) -> _UploadPlan | None:
     """Build the upload plan; runs exactly once per job, before the retry loop.
 
@@ -100,21 +126,29 @@ def _prepare_upload(job_id: int, workspace: Path, config: ConversionConfig) -> _
     hit, job row missing, or job cancelled) and the retry loop should be skipped.
     """
     engine = get_engine(config.database_url)
-    metadata_file = metadata_path(workspace)
-    if not metadata_file.exists():
-        raise ConversionArtifactsMissingError(f"Missing metadata for job {job_id}")
+    subprocess_meta = _load_subprocess_metadata(workspace, job_id)
 
-    metadata = json.loads(read_text_nofollow(metadata_file))
-    markdown_filename = metadata["markdown_filename"]
+    markdown_filename = subprocess_meta.markdown_filename
     markdown_file = markdown_path(workspace, markdown_filename)
-    figure_files = metadata.get("figure_files", [])
-    figure_file_paths = figure_paths(workspace, figure_files)
+    figure_file_paths = figure_paths(workspace, subprocess_meta.figure_files)
 
     if not markdown_file.exists():
         raise ConversionArtifactsMissingError(f"Missing markdown for job {job_id}")
 
     if not config.s3_bucket_name:
         raise S3Error("S3 bucket is not configured", "s3_upload_failed")
+
+    from pydantic import TypeAdapter, ValidationError
+
+    from aizk.conversion.core.source_ref import SourceRef as _SourceRef
+    from aizk.conversion.core.types import SOURCE_TYPE_BY_KIND
+
+    try:
+        terminal_ref: _SourceRef = TypeAdapter(_SourceRef).validate_python(subprocess_meta.terminal_ref)
+    except ValidationError as exc:
+        raise SubprocessMetadataInvalid(f"Invalid terminal_ref in metadata.json for job {job_id}: {exc}") from exc
+    source_type = SOURCE_TYPE_BY_KIND.get(terminal_ref.kind, "other")
+    source_meta = subprocess_meta.source_meta.to_source_metadata()
 
     with Session(engine) as session:
         job = session.get(ConversionJob, job_id)
@@ -126,7 +160,7 @@ def _prepare_upload(job_id: int, workspace: Path, config: ConversionConfig) -> _
 
         # Reuse existing S3 artifacts when the content hash matches a prior output for
         # the same bookmark, avoiding redundant uploads of identical content.
-        new_hash = metadata["markdown_hash_xx64"]
+        new_hash = subprocess_meta.markdown_hash_xx64
         prior_output = session.exec(
             select(ConversionOutput)
             .where(ConversionOutput.aizk_uuid == source.aizk_uuid)
@@ -134,7 +168,32 @@ def _prepare_upload(job_id: int, workspace: Path, config: ConversionConfig) -> _
             .order_by(ConversionOutput.created_at.desc())
         ).first()
 
+        output_title = subprocess_meta.source_title or job.title
+
+        bucket = config.s3_bucket_name
+        prefix = str(source.aizk_uuid)
+        manifest_local_path = workspace / "manifest.json"
+
+        submitted_ref_raw = json.loads(job.source_ref) if job.source_ref else None
+        submitted_ref = (
+            TypeAdapter(_SourceRef).validate_python(submitted_ref_raw) if submitted_ref_raw else terminal_ref
+        )
+        converter_name = subprocess_meta.config_snapshot.get("converter_name", "docling")
+        adapter_snapshot = {k: v for k, v in subprocess_meta.config_snapshot.items() if k != "converter_name"}
+
         if prior_output is not None:
+            # Content-hash dedup shortcut. Markdown + figure bytes are reused from
+            # the prior conversion (already in S3 at content-addressed keys). Only
+            # the manifest is regenerated and uploaded so the source block reflects
+            # THIS job's SubprocessMetadata — serving the prior manifest would
+            # publish stale source values for the current job (violates
+            # conversion-worker spec § "Persist conversion config and source
+            # provenance" and the universal scenario "Manifest values independent
+            # of Source-row state").
+            #
+            # The manifest PUT is routed through ``_execute_upload`` so it inherits
+            # the worker's upload retry policy; ``_prepare_upload`` is one-shot and
+            # not retried.
             logger.info(
                 "Job %s: content hash matches prior output %s; reusing S3 artifacts at %s",
                 job_id,
@@ -143,32 +202,46 @@ def _prepare_upload(job_id: int, workspace: Path, config: ConversionConfig) -> _
             )
             if not job.owner_id:
                 raise MissingOwnerOnJob(f"Job {job_id} has no owner_id; refusing to create Output row")
-            output = ConversionOutput(
-                job_id=job.id,
+
+            figure_uris = [
+                f"s3://{bucket}/{prefix}/figures/{Path(name).name}" for name in subprocess_meta.figure_files
+            ]
+            manifest = generate_manifest_v2(
+                submitted_ref=submitted_ref,
+                terminal_ref=terminal_ref,
+                job=job,
+                fetched_at=dt.datetime.fromisoformat(subprocess_meta.fetched_at),
+                markdown_s3_uri=f"s3://{bucket}/{prior_output.markdown_key}",
+                markdown_hash=subprocess_meta.markdown_hash_xx64,
+                figure_s3_uris=figure_uris,
+                docling_version=subprocess_meta.docling_version,
+                pipeline_name=subprocess_meta.pipeline_name,
+                converter_name=converter_name,
+                adapter_snapshot=adapter_snapshot,
+                source_url=source_meta.source_url,
+                source_normalized_url=source_meta.normalized_url,
+                source_title=subprocess_meta.source_title,
+                source_type=source_type,
+            )
+            save_manifest(manifest, manifest_local_path)
+
+            return _UploadPlan(
                 aizk_uuid=source.aizk_uuid,
                 owner_id=job.owner_id,
-                title=source.title or job.title,
+                title=output_title,
                 payload_version=job.payload_version,
-                s3_prefix=prior_output.s3_prefix,
+                s3_prefix_uri=prior_output.s3_prefix,
+                markdown_local=None,
                 markdown_key=prior_output.markdown_key,
+                figure_uploads=(),
+                manifest_local=manifest_local_path,
                 manifest_key=prior_output.manifest_key,
                 markdown_hash_xx64=new_hash,
                 figure_count=prior_output.figure_count,
-                docling_version=metadata["docling_version"],
-                pipeline_name=metadata["pipeline_name"],
+                docling_version=subprocess_meta.docling_version,
+                pipeline_name=subprocess_meta.pipeline_name,
             )
-            session.add(output)
-            job.finished_at = _utcnow()
-            job.status = ConversionJobStatus.SUCCEEDED
-            job.error_code = None
-            job.error_message = None
-            job.updated_at = _utcnow()
-            session.add(job)
-            session.commit()
-            return None
 
-        bucket = config.s3_bucket_name
-        prefix = str(source.aizk_uuid)
         s3_prefix_uri = f"s3://{bucket}/{prefix}/"
         markdown_key = f"{prefix}/{markdown_filename}"
         markdown_uri = f"s3://{bucket}/{markdown_key}"
@@ -182,38 +255,24 @@ def _prepare_upload(job_id: int, workspace: Path, config: ConversionConfig) -> _
             figure_uploads.append((fig_path, fig_key))
             figure_uris.append(f"s3://{bucket}/{fig_key}")
 
-        manifest_local_path = workspace / "manifest.json"
         manifest_key = f"{prefix}/manifest.json"
-
-        from pydantic import TypeAdapter
-
-        from aizk.conversion.core.source_ref import SourceRef as _SourceRef
-
-        terminal_ref = TypeAdapter(_SourceRef).validate_python(metadata["terminal_ref"])
-        submitted_ref_raw = json.loads(job.source_ref) if job.source_ref else None
-        submitted_ref = (
-            TypeAdapter(_SourceRef).validate_python(submitted_ref_raw) if submitted_ref_raw else terminal_ref
-        )
-
-        converter_name = metadata.get("config_snapshot", {}).get("converter_name", "docling")
-        adapter_snapshot = {k: v for k, v in metadata.get("config_snapshot", {}).items() if k != "converter_name"}
 
         manifest = generate_manifest_v2(
             submitted_ref=submitted_ref,
             terminal_ref=terminal_ref,
             job=job,
-            fetched_at=dt.datetime.fromisoformat(metadata["fetched_at"]),
+            fetched_at=dt.datetime.fromisoformat(subprocess_meta.fetched_at),
             markdown_s3_uri=markdown_uri,
-            markdown_hash=metadata["markdown_hash_xx64"],
+            markdown_hash=subprocess_meta.markdown_hash_xx64,
             figure_s3_uris=figure_uris,
-            docling_version=metadata.get("docling_version", "unknown"),
-            pipeline_name=metadata["pipeline_name"],
+            docling_version=subprocess_meta.docling_version,
+            pipeline_name=subprocess_meta.pipeline_name,
             converter_name=converter_name,
             adapter_snapshot=adapter_snapshot,
-            source_url=source.url,
-            source_normalized_url=source.normalized_url,
-            source_title=source.title or job.title,
-            source_type=source.source_type,
+            source_url=source_meta.source_url,
+            source_normalized_url=source_meta.normalized_url,
+            source_title=subprocess_meta.source_title,
+            source_type=source_type,
         )
         save_manifest(manifest, manifest_local_path)
 
@@ -222,7 +281,7 @@ def _prepare_upload(job_id: int, workspace: Path, config: ConversionConfig) -> _
         return _UploadPlan(
             aizk_uuid=source.aizk_uuid,
             owner_id=job.owner_id,
-            title=source.title or job.title,
+            title=output_title,
             payload_version=job.payload_version,
             s3_prefix_uri=s3_prefix_uri,
             markdown_local=markdown_file,
@@ -232,17 +291,23 @@ def _prepare_upload(job_id: int, workspace: Path, config: ConversionConfig) -> _
             manifest_key=manifest_key,
             markdown_hash_xx64=new_hash,
             figure_count=len(figure_uploads),
-            docling_version=metadata["docling_version"],
-            pipeline_name=metadata["pipeline_name"],
+            docling_version=subprocess_meta.docling_version,
+            pipeline_name=subprocess_meta.pipeline_name,
         )
 
 
 def _execute_upload(plan: _UploadPlan, job_id: int, config: ConversionConfig) -> None:
-    """Run the S3 PUTs and finalize the job. Safe to retry: PUTs are key-idempotent."""
+    """Run the S3 PUTs and finalize the job. Safe to retry: PUTs are key-idempotent.
+
+    On the content-hash dedup shortcut, ``plan.markdown_local`` is ``None`` and
+    ``plan.figure_uploads`` is empty — those bytes are already in S3 from a
+    prior conversion. Only the manifest is uploaded.
+    """
     engine = get_engine(config.database_url)
     s3_client = S3Client(config)
 
-    _upload_nofollow(plan.markdown_local, plan.markdown_key, s3_client)
+    if plan.markdown_local is not None:
+        _upload_nofollow(plan.markdown_local, plan.markdown_key, s3_client)
     for fig_local, fig_key in plan.figure_uploads:
         _upload_nofollow(fig_local, fig_key, s3_client)
     # Upload via _upload_nofollow so a post-write symlink swap can't

@@ -7,8 +7,7 @@ import base64
 from io import BytesIO
 import logging
 from pathlib import Path
-from typing import Optional
-from urllib.parse import urlparse
+from typing import Any, Optional
 
 import httpx
 from PIL import Image
@@ -18,7 +17,6 @@ from docling.backend.html_backend import HTMLDocumentBackend
 from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
 from docling.datamodel.backend_options import HTMLBackendOptions
 from docling.datamodel.base_models import InputFormat
-from docling.datamodel.document import ConversionResult
 from docling.datamodel.pipeline_options import (
     ConvertPipelineOptions,
     EasyOcrOptions,
@@ -28,11 +26,10 @@ from docling.datamodel.pipeline_options import (
 from docling.document_converter import (
     DocumentConverter,
     HTMLFormatOption,
-    MarkdownFormatOption,
     PdfFormatOption,
 )
 from docling_core.transforms.serializer.base import BaseDocSerializer, SerializationResult
-from docling_core.transforms.serializer.common import _should_use_legacy_annotations, create_ser_result
+from docling_core.transforms.serializer.common import create_ser_result
 from docling_core.transforms.serializer.html import HTMLTableSerializer
 from docling_core.transforms.serializer.markdown import (
     MarkdownDocSerializer,
@@ -356,7 +353,6 @@ def _enrich_picture_descriptions(doc: DoclingDocument, config: DoclingConverterC
 
 def _docling_to_markdown(doc: DoclingDocument) -> str:
     """Serialize DoclingDocument to Markdown with annotations."""
-    from typing import Any
 
     class AnnotationPictureSerializer(MarkdownPictureSerializer):
         def serialize(
@@ -459,6 +455,25 @@ def _extract_figures(doc: DoclingDocument, output_dir: Path) -> list[Path]:
     return saved_paths
 
 
+def _extract_document_title_from_doc(doc: Any) -> str | None:
+    """Return the text of the first TitleItem in ``doc.texts``, or ``None``.
+
+    Catches all exceptions so a missing Docling attribute or an unusual
+    document structure never propagates outside the converter.
+    """
+    try:
+        from docling.datamodel.document import DocItemLabel
+
+        for item in doc.texts:
+            if item.label == DocItemLabel.TITLE:
+                text = item.text.strip()
+                if text:
+                    return text
+    except Exception:  # noqa: S110
+        pass
+    return None
+
+
 def convert_html(
     html_bytes: bytes,
     temp_dir: Path,
@@ -466,7 +481,7 @@ def convert_html(
     source_url: Optional[str] = None,
     *,
     prefetch_policy: Optional[PrefetchPolicy] = None,
-) -> tuple[str, list[Path]]:
+) -> tuple[str, list[Path], str | None]:
     """Convert HTML to Markdown using Docling.
 
     Args:
@@ -478,7 +493,9 @@ def convert_html(
             phase. ``None`` uses :class:`PrefetchPolicy` defaults.
 
     Returns:
-        Tuple of (markdown_text, list_of_figure_paths).
+        Tuple of (markdown_text, list_of_figure_paths, document_title).
+        ``document_title`` is the first TitleItem text extracted from the
+        Docling document, or ``None`` when absent.
 
     Raises:
         DoclingError: If conversion fails.
@@ -530,14 +547,15 @@ def convert_html(
         raise DoclingError(str(e)) from e
     else:
         figures = _extract_figures(doc, figure_dir(temp_dir))
-        return markdown, figures
+        document_title = _extract_document_title_from_doc(doc)
+        return markdown, figures, document_title
 
 
 def convert_pdf(
     pdf_bytes: bytes,
     temp_dir: Path,
     config: DoclingConverterConfig,
-) -> tuple[str, list[Path]]:
+) -> tuple[str, list[Path], str | None]:
     """Convert PDF to Markdown using Docling.
 
     Args:
@@ -546,7 +564,9 @@ def convert_pdf(
         config: Conversion configuration.
 
     Returns:
-        Tuple of (markdown_text, list_of_figure_paths).
+        Tuple of (markdown_text, list_of_figure_paths, document_title).
+        ``document_title`` is the first TitleItem text extracted from the
+        Docling document, or ``None`` when absent.
 
     Raises:
         DoclingError: If conversion fails.
@@ -582,4 +602,5 @@ def convert_pdf(
         raise DoclingError(str(e)) from e
     else:
         figures = _extract_figures(doc, figure_dir(temp_dir))
-        return markdown, figures
+        document_title = _extract_document_title_from_doc(doc)
+        return markdown, figures, document_title
