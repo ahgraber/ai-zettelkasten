@@ -6,7 +6,6 @@ from concurrent.futures import Future, ThreadPoolExecutor, wait
 import datetime as dt
 import logging
 import time
-from typing import TYPE_CHECKING
 
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, OperationalError

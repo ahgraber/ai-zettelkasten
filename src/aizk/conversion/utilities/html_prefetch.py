@@ -28,7 +28,7 @@ from urllib.parse import urlparse
 
 import lxml.html
 
-from aizk.conversion.core.errors import EgressPolicyError, FetchError, FetchTooLargeError
+from aizk.conversion.core.errors import EgressPolicyError, FetchTooLargeError
 from aizk.conversion.utilities.egress_fetch import egress_fetch_bytes
 from aizk.utilities.url_utils import sanitize_url_for_log
 

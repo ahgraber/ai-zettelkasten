@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, List, Self
 from uuid import UUID, uuid4
 
 from pydantic import model_validator
-from sqlalchemy import Column, Text, UniqueConstraint
+from sqlalchemy import Column, Text
 from sqlmodel import Field, Relationship, SQLModel
 
 
