@@ -24,7 +24,9 @@ Objective: surface ambiguity and tradeoffs before writing any code.
 
 ## 2. Simplicity First
 
-Objective: write the minimum change that meets the request.
+Objective: write the _minimum change_ that meets the request.
+
+IMPORTANT: Preserve the original code and the logic of the original code as much as possible.
 
 - No features, abstractions, or configurability beyond what was asked.
 - No "flexibility" or "configurability" that wasn't requested.
