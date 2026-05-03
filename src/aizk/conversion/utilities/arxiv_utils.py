@@ -12,8 +12,6 @@ from xml.etree.ElementTree import Element
 from defusedxml import ElementTree
 import httpx
 
-import requests
-
 from aizk.utilities.limiters import LeakyBucketRateLimiter
 from aizk.utilities.url_utils import validate_url
 

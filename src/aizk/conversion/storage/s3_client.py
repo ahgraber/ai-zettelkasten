@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from pathlib import Path
-from typing import IO, ClassVar, NoReturn, Optional
+from typing import IO, ClassVar, Optional
 
 import boto3
 from botocore.exceptions import ClientError
