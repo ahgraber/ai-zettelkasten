@@ -1501,7 +1501,7 @@ def _create_source_for_enrichment(db_session: Session, *, bookmark_id: str) -> B
 
 def _make_subprocess_meta(terminal_ref, content_type: str = "html"):
     """Build a minimal SubprocessMetadata for enrichment tests."""
-    from aizk.conversion.workers.types import SubprocessMetadata, _SourceMetaFields
+    from aizk.conversion.workers.types import SourceMetaFields, SubprocessMetadata
 
     return SubprocessMetadata(
         pipeline_name="html",
@@ -1513,7 +1513,7 @@ def _make_subprocess_meta(terminal_ref, content_type: str = "html"):
         docling_version="test",
         config_snapshot={"converter_name": "docling"},
         fetched_at="2026-01-01T00:00:00+00:00",
-        source_meta=_SourceMetaFields(),
+        source_meta=SourceMetaFields(),
         document_title=None,
         source_title=None,
     )

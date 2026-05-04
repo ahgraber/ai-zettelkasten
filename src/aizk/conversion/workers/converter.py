@@ -459,7 +459,8 @@ def _extract_document_title_from_doc(doc: Any) -> str | None:
     """Return the text of the first TitleItem in ``doc.texts``, or ``None``.
 
     Catches all exceptions so a missing Docling attribute or an unusual
-    document structure never propagates outside the converter.
+    document structure never propagates outside the converter; a DEBUG log
+    line is emitted so operators triaging "title always empty" have a signal.
     """
     try:
         from docling.datamodel.document import DocItemLabel
@@ -469,8 +470,8 @@ def _extract_document_title_from_doc(doc: Any) -> str | None:
                 text = item.text.strip()
                 if text:
                     return text
-    except Exception:  # noqa: S110
-        pass
+    except Exception:
+        logger.debug("document title extraction failed", exc_info=True)
     return None
 
 

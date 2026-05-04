@@ -67,23 +67,30 @@ class ArxivFetcher(ContentFetcher):
 
         karakeep_base_url = self._karakeep_cfg.base_url
 
-        # Construct the ArXiv abstract page URL as our authoritative source URL.
-        arxiv_source_url = f"https://arxiv.org/abs/{ref.arxiv_id}"
-        observed_normalized: str | None = None
-        try:
-            observed_normalized = normalize_url(arxiv_source_url)
-        except Exception:
-            _logger.debug(
-                "normalize_url failed for ArxivFetcher source_url=%r; normalized_url=None",
-                arxiv_source_url,
-            )
+        # Only contribute the source-URL trio when upstream did not supply source_url.
+        # Backfilling individual fields would risk producing normalized_url derived from
+        # the arXiv abstract URL while source_url remains the canonical resolver-supplied
+        # page — violating the conversion-worker spec invariant that
+        # `normalized_url == normalize_url(source_url)`.
+        if source_meta.source_url is None:
+            arxiv_source_url = f"https://arxiv.org/abs/{ref.arxiv_id}"
+            observed_normalized: str | None = None
+            try:
+                observed_normalized = normalize_url(arxiv_source_url)
+            except Exception:
+                _logger.debug(
+                    "normalize_url failed for ArxivFetcher source_url=%r; normalized_url=None",
+                    arxiv_source_url,
+                )
 
-        observed = SourceMetadata(
-            source_url=arxiv_source_url,
-            normalized_url=observed_normalized,
-            document_base_url=arxiv_source_url,
-        )
-        merged = source_meta.merge(observed)
+            observed = SourceMetadata(
+                source_url=arxiv_source_url,
+                normalized_url=observed_normalized,
+                document_base_url=arxiv_source_url,
+            )
+            merged = source_meta.merge(observed)
+        else:
+            merged = source_meta
 
         # Step 1 — KaraKeep asset URL (parsed-origin exact match, not string prefix)
         if ref.arxiv_pdf_url and is_karakeep_trusted_asset_url(ref.arxiv_pdf_url, karakeep_base_url):
