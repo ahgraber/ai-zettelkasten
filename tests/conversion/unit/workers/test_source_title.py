@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-
 from pydantic import ValidationError
 import pytest
 
-from aizk.conversion.workers.types import SubprocessMetadata, _SourceMetaFields, select_source_title
+from aizk.conversion.workers.types import SourceMetaFields, SubprocessMetadata, select_source_title
 
 # ---------------------------------------------------------------------------
 # select_source_title
@@ -68,6 +67,24 @@ class TestSelectSourceTitle:
         """A 10-char hex string is not UUID-shaped and should be accepted."""
         result = select_source_title("abcdef1234", None)
         assert result == "abcdef1234"
+
+    def test_document_title_truncated_to_max_length(self):
+        """Selected title is capped at MAX_SOURCE_TITLE_LEN to match the Source.title column."""
+        from aizk.conversion.workers.types import MAX_SOURCE_TITLE_LEN
+
+        long_title = "x" * (MAX_SOURCE_TITLE_LEN + 100)
+        result = select_source_title(long_title, None)
+        assert result is not None
+        assert len(result) == MAX_SOURCE_TITLE_LEN
+
+    def test_resolver_title_truncated_to_max_length(self):
+        """Resolver-fallback title also gets truncated at the column boundary."""
+        from aizk.conversion.workers.types import MAX_SOURCE_TITLE_LEN
+
+        long_title = "y" * (MAX_SOURCE_TITLE_LEN + 50)
+        result = select_source_title(None, long_title)
+        assert result is not None
+        assert len(result) == MAX_SOURCE_TITLE_LEN
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +151,6 @@ class TestSubprocessMetadata:
             document_base_url="https://example.com",
             resolver_title="My Title",
         )
-        fields = _SourceMetaFields.from_source_metadata(original)
+        fields = SourceMetaFields.from_source_metadata(original)
         restored = fields.to_source_metadata()
         assert restored == original

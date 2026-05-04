@@ -46,7 +46,7 @@ class SupervisionResult:
     shutdown_terminated: bool = False
 
 
-class _SourceMetaFields(BaseModel):
+class SourceMetaFields(BaseModel):
     """Serializable representation of SourceMetadata for IPC across the process boundary."""
 
     model_config = ConfigDict(extra="forbid")
@@ -68,7 +68,7 @@ class _SourceMetaFields(BaseModel):
         )
 
     @classmethod
-    def from_source_metadata(cls, meta: SourceMetadata) -> _SourceMetaFields:
+    def from_source_metadata(cls, meta: SourceMetadata) -> SourceMetaFields:
         """Construct from the in-process SourceMetadata dataclass."""
         return cls(
             source_url=meta.source_url,
@@ -88,6 +88,10 @@ class SubprocessMetadata(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # pipeline_name is coupled to the current converter set (DoclingConverter only emits
+    # html/pdf). When a future converter emits a different ContentType (image, docx, etc.),
+    # widen this Literal alongside the converter change — otherwise validation will reject
+    # those payloads as SubprocessMetadataInvalid (retryable=False, permanent failure).
     pipeline_name: Literal["html", "pdf"]
     terminal_ref: dict[str, Any]
     content_type: str
@@ -97,12 +101,17 @@ class SubprocessMetadata(BaseModel):
     docling_version: str
     config_snapshot: dict[str, Any]
     fetched_at: str
-    source_meta: _SourceMetaFields
+    source_meta: SourceMetaFields
     document_title: str | None
     source_title: str | None
 
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$|^[0-9a-f\-]{32,36}$", re.IGNORECASE)
+
+# Aligns with `Source.title` column max_length=500 so the manifest, ConversionOutput,
+# and Source row all carry the same value (Postgres would reject longer strings on
+# the row write; SQLite stores them silently — keep the contract uniform).
+MAX_SOURCE_TITLE_LEN = 500
 
 
 def select_source_title(document_title: str | None, resolver_title: str | None) -> str | None:
@@ -115,6 +124,10 @@ def select_source_title(document_title: str | None, resolver_title: str | None) 
 
     UUID-shaped strings (32-36 hex/dash characters) and strings starting with
     ``http://`` or ``https://`` are rejected as low-confidence Docling extractions.
+
+    The selected title is truncated to ``MAX_SOURCE_TITLE_LEN`` characters so the
+    manifest, ``ConversionOutput.title``, and ``Source.title`` row all carry the
+    same value within the column's length contract.
     """
 
     def _is_usable(title: str | None) -> bool:
@@ -126,9 +139,9 @@ def select_source_title(document_title: str | None, resolver_title: str | None) 
         return not _UUID_RE.match(t)
 
     if _is_usable(document_title):
-        return document_title.strip()  # type: ignore[union-attr]
+        return document_title.strip()[:MAX_SOURCE_TITLE_LEN]  # type: ignore[union-attr]
     if _is_usable(resolver_title):
-        return resolver_title.strip()  # type: ignore[union-attr]
+        return resolver_title.strip()[:MAX_SOURCE_TITLE_LEN]  # type: ignore[union-attr]
     return None
 
 

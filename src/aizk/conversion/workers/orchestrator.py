@@ -48,13 +48,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _docling_version() -> str:
-    """Return the installed docling version for conversion metadata."""
-    from importlib.metadata import version
-
-    return version("docling")
-
-
 def _raise_if_cancelled(job_id: int, engine: Engine) -> None:
     """Raise if the job status has been marked as cancelled."""
     with Session(engine) as session:
@@ -233,7 +226,9 @@ def _process_job_subprocess(
                 figure_file_names.append(fig.name)
 
         pipeline_name = result.conversion_input.content_type.value  # "pdf" or "html"
-        docling_ver = result.artifacts.metadata.get("docling_version", _docling_version())
+        # DoclingConverter populates `docling_version` on every artifacts.metadata; the
+        # default protects unknown future converters from KeyError without a runtime probe.
+        docling_ver = result.artifacts.metadata.get("docling_version", "unknown")
 
         fetched_at = dt.datetime.now(dt.timezone.utc)
 
@@ -243,7 +238,7 @@ def _process_job_subprocess(
             final_source_meta.resolver_title,
         )
 
-        from aizk.conversion.workers.types import _SourceMetaFields
+        from aizk.conversion.workers.types import SourceMetaFields
 
         subprocess_meta = SubprocessMetadata(
             pipeline_name=pipeline_name,
@@ -258,7 +253,7 @@ def _process_job_subprocess(
                 **result.config_snapshot,
             },
             fetched_at=fetched_at.isoformat(),
-            source_meta=_SourceMetaFields.from_source_metadata(final_source_meta),
+            source_meta=SourceMetaFields.from_source_metadata(final_source_meta),
             document_title=result.artifacts.document_title,
             source_title=source_title,
         )

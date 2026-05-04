@@ -5,7 +5,6 @@ All tests are hermetic: no .env, no real network calls.
 
 from __future__ import annotations
 
-
 from aizk.conversion.adapters.fetchers.arxiv import ArxivFetcher
 from aizk.conversion.core.source_ref import ArxivRef
 from aizk.conversion.core.types import ContentType, ConversionInput, SourceMetadata
@@ -133,3 +132,94 @@ def test_arxiv_fetcher_constructs_url_from_arxiv_id_when_no_pdf_url(monkeypatch)
 
     assert result.content == pdf_bytes
     assert result.content_type == ContentType.PDF
+
+
+# ---------------------------------------------------------------------------
+# Source-meta merge invariants
+# ---------------------------------------------------------------------------
+
+
+def test_arxiv_fetcher_direct_path_populates_source_meta(monkeypatch):
+    """Direct fetch (no resolver hop) populates source_url, document_base_url, normalized_url
+    from the arXiv abstract URL."""
+    pdf_bytes = b"%PDF-1.4 abstract-page"
+
+    async def _fake_fetch_arxiv_pdf(arxiv_id: str, config):
+        return pdf_bytes
+
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.arxiv.fetch_arxiv_pdf",
+        _fake_fetch_arxiv_pdf,
+    )
+
+    fetcher = ArxivFetcher(_config(), _karakeep_cfg())
+    result = fetcher.fetch(ArxivRef(arxiv_id="2301.12345"), _EMPTY_META)
+
+    expected_url = "https://arxiv.org/abs/2301.12345"
+    assert result.source_meta.source_url == expected_url
+    assert result.source_meta.document_base_url == expected_url
+    assert result.source_meta.normalized_url is not None
+    assert "arxiv.org" in result.source_meta.normalized_url
+
+
+def test_arxiv_fetcher_resolved_path_preserves_resolver_source_url(monkeypatch):
+    """Resolver-supplied source_url wins over the constructed abstract URL."""
+    pdf_bytes = b"%PDF-1.4 abstract-page"
+
+    async def _fake_fetch_arxiv_pdf(arxiv_id: str, config):
+        return pdf_bytes
+
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.arxiv.fetch_arxiv_pdf",
+        _fake_fetch_arxiv_pdf,
+    )
+
+    fetcher = ArxivFetcher(_config(), _karakeep_cfg())
+    resolver_meta = SourceMetadata(
+        source_url="https://arxiv.org/pdf/2301.12345v2",
+        document_base_url="https://arxiv.org/pdf/2301.12345v2",
+        resolver_title="My Paper",
+    )
+
+    result = fetcher.fetch(ArxivRef(arxiv_id="2301.12345"), resolver_meta)
+
+    # Resolver-supplied URL fields win (merge: earlier non-None wins).
+    assert result.source_meta.source_url == "https://arxiv.org/pdf/2301.12345v2"
+    assert result.source_meta.document_base_url == "https://arxiv.org/pdf/2301.12345v2"
+    assert result.source_meta.resolver_title == "My Paper"
+
+
+def test_arxiv_fetcher_does_not_backfill_normalized_url_when_resolver_supplied_source_url(monkeypatch):
+    """When resolver supplied source_url but left normalized_url None, fetcher MUST NOT
+    backfill normalized_url from the constructed abstract URL.
+
+    Conversion-worker spec invariant:
+    ``normalized_url == normalize_url(source_url)``.
+    Backfilling from a different URL (the abstract page URL) when the resolver took
+    ownership of the canonical source_url (e.g. a versioned or PDF arXiv URL) would
+    publish a normalized form that does not correspond to source_url, breaking dedup
+    and leaking the abstract URL into Source.normalized_url / manifest.normalized_url.
+    """
+    pdf_bytes = b"%PDF-1.4 abstract-page"
+
+    async def _fake_fetch_arxiv_pdf(arxiv_id: str, config):
+        return pdf_bytes
+
+    monkeypatch.setattr(
+        "aizk.conversion.adapters.fetchers.arxiv.fetch_arxiv_pdf",
+        _fake_fetch_arxiv_pdf,
+    )
+
+    fetcher = ArxivFetcher(_config(), _karakeep_cfg())
+    resolver_meta = SourceMetadata(
+        source_url="https://arxiv.org/pdf/2301.12345v2",
+        # normalized_url intentionally left None (e.g. resolver's normalize_url raised)
+    )
+
+    result = fetcher.fetch(ArxivRef(arxiv_id="2301.12345"), resolver_meta)
+
+    assert result.source_meta.source_url == "https://arxiv.org/pdf/2301.12345v2"
+    # normalized_url stays None — fetcher does not derive it from a different URL.
+    assert result.source_meta.normalized_url is None
+    # document_base_url also not backfilled when resolver owns source_url.
+    assert result.source_meta.document_base_url is None
