@@ -278,3 +278,15 @@ Loses some forensic value (original URL is still in `Source.url` and `manifest.u
 
 **Mitigation:** the worker spec change explicitly allows `normalized_url = NULL` with a log line; no failure mode introduced.
 If the strict behaviour is too aggressive in practice, wrap the call to capture the exception and store `NULL` plus a typed log field.
+
+## Verification Overrides
+
+| Field              | Value                                                                                                                                                                                  |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Finding**        | `tests/test_pypi_security_audit.py::test_pip_audit_no_vulnerabilities` fails — `litellm 1.83.0` has known vulnerability `GHSA-xqmj-j6mv-4862`; fix is published in `litellm 1.83.7`    |
+| **Stage**          | verify                                                                                                                                                                                 |
+| **Reason**         | The fixed version (`litellm ≥ 1.83.7`) is not yet installable within the current `uv`-managed dependency solution space; no compatible version exists in the lockfile as of 2026-05-04 |
+| **Constraints**    | Do NOT add a `pip audit` ignore entry; this must be remediated once a compatible fixed version becomes installable                                                                     |
+| **Follow-up task** | Upgrade `litellm` to ≥ 1.83.7 and re-run `pip audit` once dependency constraints permit                                                                                                |
+| **Approved by**    | User (explicit approval recorded in `tasks.md` final verification item)                                                                                                                |
+| **Recorded**       | 2026-05-04                                                                                                                                                                             |
