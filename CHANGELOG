@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.1.2] - 2026-05-04
+
+### Breaking Changes
+
+- Replace the freeform `metadata.json` worker IPC payload with typed `SubprocessMetadata` (`extra="forbid"`); schema drift now raises a permanent `SubprocessMetadataInvalid` failure rather than re-queuing
+- Change `ContentFetcher.fetch` and `RefResolver.resolve` signatures to thread `SourceMetadata` alongside `SourceRef`; replace `ConversionInput.metadata` (`dict[str, Any]`) with `source_meta: SourceMetadata` — out-of-tree adapters must adopt the new protocol
+
+### Added
+
+- Add `SourceMetadata` typed contract that flows through the resolver/fetcher chain with field-wise "earlier non-None wins" merge semantics, preserving resolver-supplied identity through later stages
+- Extract `document_title` from converter output (first Docling `TitleItem`) and propagate it to the manifest, `ConversionOutput.title`, and the `Source` row
+- Resolve relative links in converter output against the original `document_base_url` / `source_url` rather than the asset URL
+- Surface enriched `Source.title` on the `/ui/jobs` view (preferred over `ConversionJob.title`) and include it in search-filter coverage
+
+### Changed
+
+- Make `KarakeepBookmarkResolver` the authoritative emitter of source identity (`source_url`, `document_base_url`, `normalized_url`, `resolver_title`) for every branch; fetchers only fill in URL fields the resolver did not supply
+- Run `Source` row enrichment outside the manifest transaction so enrichment failures cannot block manifest writes or job output
+
+### Fixed
+
+- Truncate selected `source_title` to the `Source.title` column maximum (500 characters)
+- Reject UUID-shaped and bare-URL strings as document titles; fall back to resolver-supplied title
+- Guard `ArxivFetcher` URL backfill on resolver-supplied `source_url`, matching `UrlFetcher` and `GithubReadmeFetcher`
+- Guard alembic against a missing `alembic_version` table during startup
+- Update the conversion backfill notebook to use `source_ref` after the bookmark → source rename
+
+---
+
 ## [0.1.1] - 2026-05-02
 
 ### Breaking Changes
@@ -71,5 +100,6 @@
 
 ---
 
-[0.1.1]: https://github.com/ahgraber/ai-zettelkasten/compare/v0.1.0...HEAD
+[0.1.2]: https://github.com/ahgraber/ai-zettelkasten/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/ahgraber/ai-zettelkasten/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ahgraber/ai-zettelkasten/compare/pre-karakeep...v0.1.0

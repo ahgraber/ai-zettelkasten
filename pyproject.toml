@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 name = "aizk"
 description = "AI-driven zettelkasten mindmap"
-version = "0.1.1"
+version = "0.1.2"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11,<3.15"
