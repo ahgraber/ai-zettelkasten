@@ -15,6 +15,7 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [Karpathy Just Described the Product I've Been Building — LLM Knowledge Bases and YARNNN | yarnnn](https://www.yarnnn.com/blog/karpathy-just-described-the-product-ive-been-building)
 - [Your File System Is Already a Graph Database](https://rumproarious.com/2026/04/04/your-file-system-is-already-a-graph-database/)
 - [safishamsi/graphify: AI coding assistant skill (Claude Code, Codex, OpenCode, Cursor, Gemini CLI, OpenClaw, Factory Droid, Trae). Turn any folder of code, docs, papers, images, videos, or YouTube links into a queryable knowledge graph](https://github.com/safishamsi/graphify)
+- [sentrux/sentrux: Real-time architectural sensor that helps AI agents close the feedback loop, enabling recursive self-improvement of code quality](https://github.com/sentrux/sentrux) — tree-sitter-based structural graph with MCP server
 - [codemix/graph: A type-safe, realtime, collaborative Graph Database which runs inside a CRDT](https://github.com/codemix/graph)
 - [Zotero | Your personal research assistant](https://www.zotero.org/)
   - [urschrei/pyzotero: Pyzotero: a Python client for the Zotero API](https://github.com/urschrei/pyzotero)
@@ -36,6 +37,7 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [cyclotruc/gitingest: Replace 'hub' with 'ingest' in any github url to get a prompt-friendly extract of a codebase](https://github.com/cyclotruc/gitingest/tree/main)
 - [List of Chromium Command Line Switches](https://peter.sh/experiments/chromium-command-line-switches/)
 - [cyclotruc/gitdigest: Web interface to turn codebases into prompt-friendly text](https://github.com/cyclotruc/gitdigest?tab=readme-ov-file)
+- [juyterman1000/entroly: Open-source daemon that compresses codebases into compact context windows for AI coding tools](https://github.com/juyterman1000/entroly)
 - [[2408.15836] Knowledge Navigator: LLM-guided Browsing Framework for Exploratory Search in Scientific Literature](https://arxiv.org/abs/2408.15836)
 - [Index - Documentation | Lightpanda](https://lightpanda.io/docs/)
 - [justrach/kuri: Browser automation and web crawling for AI agents. Zig-native, token-efficient CDP snapshots, HAR recording, and a standalone fetcher.](https://github.com/justrach/kuri)
@@ -147,7 +149,7 @@ If building a concept graph, it would be useful to be able to use it as a human 
 
 ## UX
 
-- [Obsidian - Sharpen your thinking](https://obsidian.md/)
+- [Obsidian - Sharpen your thinking](https://obsidian.md/) and [kepano/obsidian-skills: Agent skills for Obsidian. Teach your agent to use Markdown, Bases, JSON Canvas, and use the CLI.](https://github.com/kepano/obsidian-skills)
 - [Logseq: A privacy-first, open-source knowledge base](https://logseq.com/)
 - [Octarine - Take back control of your writing](https://octarine.app/)
 - [refactoringhq/tolaria](https://github.com/refactoringhq/tolaria)
@@ -160,6 +162,7 @@ If building a concept graph, it would be useful to be able to use it as a human 
 - [inception-project/inception: INCEpTION provides a semantic annotation platform offering intelligent annotation assistance and knowledge management.](https://github.com/inception-project/inception)
 - [Termboard - Knowledge Graphs Made Simple](https://termboard.com/) - ontology designer
 - [microsoft/Ontology-Playground: Free, open-source web app for learning about ontologies and Microsoft Fabric IQ. Explore a catalogue of pre-built ontologies, design your own visually, export as RDF/XML, and share interactive diagrams. Zero backend, fully st](https://github.com/microsoft/Ontology-Playground)
+- [ThHanke/ontosphere: Browser-based RDF/ontology knowledge graph editor with OWL-RL reasoning, multi-algorithm layout, and MCP integration](https://github.com/ThHanke/ontosphere)
 
 ## graphrag
 
@@ -169,3 +172,5 @@ If building a concept graph, it would be useful to be able to use it as a human 
 - [1st1/lat.md: Agent Lattice: a knowledge graph for your codebase, written in markdown.](https://github.com/1st1/lat.md)
 - [neo4j-labs/create-context-graph: AI agents with graph based reasoning memory, scaffolded in seconds](https://github.com/neo4j-labs/create-context-graph)
 - [VectifyAI/PageIndex: 📑 PageIndex: Document Index for Vectorless, Reasoning-based RAG](https://github.com/VectifyAI/PageIndex)
+- [FalkorDB/GraphRAG-SDK: The simplest, most accurate GraphRAG framework built on FalkorDB](https://github.com/FalkorDB/GraphRAG-SDK)
+- [OWL 2 Web Ontology Language Profiles — OWL 2 RL](https://www.w3.org/TR/owl2-profiles/#OWL_2_RL) — W3C profile for rule-based reasoning over ontologies, scalable via standard rule engines
