@@ -41,6 +41,7 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [[2408.15836] Knowledge Navigator: LLM-guided Browsing Framework for Exploratory Search in Scientific Literature](https://arxiv.org/abs/2408.15836)
 - [Index - Documentation | Lightpanda](https://lightpanda.io/docs/)
 - [justrach/kuri: Browser automation and web crawling for AI agents. Zig-native, token-efficient CDP snapshots, HAR recording, and a standalone fetcher.](https://github.com/justrach/kuri)
+- [D4Vinci/Scrapling: 🕷️ An adaptive Web Scraping framework that handles everything from a single request to a full-scale crawl!](https://github.com/D4Vinci/Scrapling)
 
 ### Doc Extraction
 
@@ -147,19 +148,19 @@ If building a concept graph, it would be useful to be able to use it as a human 
 - [lightonai/pylate: Late Interaction Models Training & Retrieval](https://github.com/lightonai/pylate)
 - [theJayTea/WritingTools - system-wide grammar assistant](https://github.com/theJayTea/WritingTools)
 
-## UX
+## Entity recognition & linking
 
-- [Obsidian - Sharpen your thinking](https://obsidian.md/) and [kepano/obsidian-skills: Agent skills for Obsidian. Teach your agent to use Markdown, Bases, JSON Canvas, and use the CLI.](https://github.com/kepano/obsidian-skills)
-- [Logseq: A privacy-first, open-source knowledge base](https://logseq.com/)
-- [Octarine - Take back control of your writing](https://octarine.app/)
-- [refactoringhq/tolaria](https://github.com/refactoringhq/tolaria)
-- [Atomic — Everything You Know, Connected](https://atomicapp.ai/)
+- [urchade/GLiNER: Generalist and Lightweight Model for Named Entity Recognition](https://github.com/urchade/GLiNER)
+- [Knowledgator/GLinker: Generalist entity Linker](https://github.com/Knowledgator/GLinker)
+- [informagi/REL: Radboud Entity Linker](https://github.com/informagi/REL)
+- [amazon-science/ReFinED: An efficient and accurate entity linking system](https://github.com/amazon-science/ReFinED)
 
-## annotation tools
+## knowledge graphs & ontologies
 
-- [HumanSignal/label-studio: Label Studio is a multi-type data labeling and annotation tool with standardized output format](https://github.com/HumanSignal/label-studio)
-- [doccano/doccano: Open source annotation tool for machine learning practitioners.](https://github.com/doccano/doccano)
-- [inception-project/inception: INCEpTION provides a semantic annotation platform offering intelligent annotation assistance and knowledge management.](https://github.com/inception-project/inception)
+- [OWL 2 Web Ontology Language Profiles — OWL 2 RL](https://www.w3.org/TR/owl2-profiles/#OWL_2_RL) — W3C profile for rule-based reasoning over ontologies, scalable via standard rule engines
+- [INCATools/ontology-development-kit: Ontology lifecycle management](https://github.com/INCATools/ontology-development-kit)
+- [ontio/ontology: Official Go implementation of the Ontology protocol. https://dev-docs.ont.io/#/](https://github.com/ontio/ontology)
+- [protegeproject/protege: Protege Desktop](https://github.com/protegeproject/protege)
 - [Termboard - Knowledge Graphs Made Simple](https://termboard.com/) - ontology designer
 - [microsoft/Ontology-Playground: Free, open-source web app for learning about ontologies and Microsoft Fabric IQ. Explore a catalogue of pre-built ontologies, design your own visually, export as RDF/XML, and share interactive diagrams. Zero backend, fully st](https://github.com/microsoft/Ontology-Playground)
 - [ThHanke/ontosphere: Browser-based RDF/ontology knowledge graph editor with OWL-RL reasoning, multi-algorithm layout, and MCP integration](https://github.com/ThHanke/ontosphere)
@@ -173,4 +174,18 @@ If building a concept graph, it would be useful to be able to use it as a human 
 - [neo4j-labs/create-context-graph: AI agents with graph based reasoning memory, scaffolded in seconds](https://github.com/neo4j-labs/create-context-graph)
 - [VectifyAI/PageIndex: 📑 PageIndex: Document Index for Vectorless, Reasoning-based RAG](https://github.com/VectifyAI/PageIndex)
 - [FalkorDB/GraphRAG-SDK: The simplest, most accurate GraphRAG framework built on FalkorDB](https://github.com/FalkorDB/GraphRAG-SDK)
-- [OWL 2 Web Ontology Language Profiles — OWL 2 RL](https://www.w3.org/TR/owl2-profiles/#OWL_2_RL) — W3C profile for rule-based reasoning over ontologies, scalable via standard rule engines
+- [trustgraph-ai/trustgraph: The agent runtime platform with context graphs, memory, retrieval, orchestration, and inference for precision-critical agent workloads.](https://github.com/trustgraph-ai/trustgraph)
+
+## UX
+
+- [Obsidian - Sharpen your thinking](https://obsidian.md/) and [kepano/obsidian-skills: Agent skills for Obsidian. Teach your agent to use Markdown, Bases, JSON Canvas, and use the CLI.](https://github.com/kepano/obsidian-skills)
+- [Logseq: A privacy-first, open-source knowledge base](https://logseq.com/)
+- [Octarine - Take back control of your writing](https://octarine.app/)
+- [refactoringhq/tolaria](https://github.com/refactoringhq/tolaria)
+- [Atomic — Everything You Know, Connected](https://atomicapp.ai/)
+
+## annotation tools
+
+- [HumanSignal/label-studio: Label Studio is a multi-type data labeling and annotation tool with standardized output format](https://github.com/HumanSignal/label-studio)
+- [doccano/doccano: Open source annotation tool for machine learning practitioners.](https://github.com/doccano/doccano)
+- [inception-project/inception: INCEpTION provides a semantic annotation platform offering intelligent annotation assistance and knowledge management.](https://github.com/inception-project/inception)
