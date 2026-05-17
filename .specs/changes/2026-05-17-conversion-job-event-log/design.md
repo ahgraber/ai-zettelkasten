@@ -100,18 +100,21 @@ An explicit parameter forces each call site to think about which attempt the eve
 
 **Per-site `attempt` values** (documented for implementers):
 
-| Caller                                            | `attempt` value                                                                                 |
-| ------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| API submit (`NEW → QUEUED`)                       | `0` (the QUEUED event precedes any attempt)                                                     |
-| API retry (`FAILED_* → QUEUED`)                   | `job.attempts` after increment (the new pending attempt)                                        |
-| API cancel                                        | `job.attempts` (the cancellation belongs to the in-flight attempt if any, else the most recent) |
-| Worker claim (`QUEUED → RUNNING`)                 | `job.attempts` after increment (the new attempt about to run)                                   |
-| Worker stale recovery                             | `job.attempts` (the failed attempt the sweep is recovering)                                     |
-| Orchestrator `_initialize_running_job` re-entrant | `job.attempts` after increment if a new attempt started, else the current value                 |
-| Orchestrator UPLOAD_PENDING                       | `job.attempts` (same attempt as the just-completed RUNNING)                                     |
-| Orchestrator failure handler                      | `job.attempts` (the attempt that failed)                                                        |
-| Uploader SUCCEEDED                                | `job.attempts` (same attempt as UPLOAD_PENDING)                                                 |
-| Source enrichment                                 | `job.attempts` (the attempt that produced the metadata)                                         |
+| Caller                                            | `attempt` value                                                                                 | `from_status` override                                 |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| API submit (origin event → QUEUED)                | `0` (the QUEUED event precedes any attempt)                                                     | **`None` explicit** (origin event has no prior status) |
+| API retry (`FAILED_* → QUEUED`)                   | `job.attempts` after increment (the new pending attempt)                                        | default (read from `job.status`)                       |
+| API cancel                                        | `job.attempts` (the cancellation belongs to the in-flight attempt if any, else the most recent) | default                                                |
+| Worker claim (`QUEUED → RUNNING`)                 | `job.attempts` after increment (the new attempt about to run)                                   | default                                                |
+| Worker stale recovery                             | `job.attempts` (the failed attempt the sweep is recovering)                                     | default                                                |
+| Orchestrator `_initialize_running_job` re-entrant | `job.attempts` after increment if a new attempt started, else the current value                 | default                                                |
+| Orchestrator UPLOAD_PENDING                       | `job.attempts` (same attempt as the just-completed RUNNING)                                     | default                                                |
+| Orchestrator failure handler                      | `job.attempts` (the attempt that failed)                                                        | default                                                |
+| Uploader SUCCEEDED                                | `job.attempts` (same attempt as UPLOAD_PENDING)                                                 | default                                                |
+| Source enrichment                                 | `job.attempts` (the attempt that produced the metadata)                                         | N/A (`record_source_event`, not `record_transition`)   |
+
+API submit constructs the `ConversionJob` with `status=QUEUED` directly (it does not pass through a NEW state in any committed row), so calling `record_transition` with default `from_status` would derive QUEUED from the just-constructed row.
+The spec scenario "Initial submission event has no prior status" requires the origin event to carry NULL `from_status`; the override parameter is the mechanism that achieves it without re-routing the API submit through a NEW state that no reader would ever observe.
 
 **Alternatives considered:**
 

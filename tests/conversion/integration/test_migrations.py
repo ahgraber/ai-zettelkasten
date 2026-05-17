@@ -1042,3 +1042,152 @@ def test_owner_id_post_migration_schema_matches_create_all(tmp_path):
         b_idx = {idx["name"] for idx in baseline_inspector.get_indexes(table)}
         assert f"ix_{table}_owner_id" in m_idx
         assert f"ix_{table}_owner_id" in b_idx
+
+
+# ---------------------------------------------------------------------------
+# a8c9d0e1f2b3 add_conversion_job_events
+# ---------------------------------------------------------------------------
+
+_EVENTS_REVISION = "a8c9d0e1f2b3"
+_EVENTS_PREV_REVISION = "f7a8b9c0d1e2"
+
+
+def test_conversion_job_events_table_created(tmp_path):
+    """After upgrade, the event-log table exists with all declared indexes."""
+    db_url = _db_url(tmp_path, "events_create.db")
+    cfg = _alembic_cfg(db_url)
+    command.upgrade(cfg, _EVENTS_REVISION)
+
+    inspector = inspect(create_engine(db_url))
+    assert "conversion_job_events" in inspector.get_table_names()
+
+    col_names = {c["name"] for c in inspector.get_columns("conversion_job_events")}
+    assert col_names == {
+        "id",
+        "job_id",
+        "aizk_uuid",
+        "attempt",
+        "occurred_at",
+        "kind",
+        "from_status",
+        "to_status",
+        "payload_json",
+    }
+
+    index_names = {idx["name"] for idx in inspector.get_indexes("conversion_job_events")}
+    assert "ix_conversion_job_events_job_id_occurred_at" in index_names
+    assert "ix_conversion_job_events_aizk_uuid_occurred_at" in index_names
+    assert "ix_conversion_job_events_kind_occurred_at" in index_names
+
+
+def test_conversion_job_events_job_id_fk_set_null_on_delete(tmp_path):
+    """Deleting a referenced ConversionJob row sets job_id to NULL on its events.
+
+    ``aizk_uuid`` remains populated so the audit trail survives operator
+    deletion via the API delete endpoint (terminal-state jobs).
+    """
+    db_url = _db_url(tmp_path, "events_fk.db")
+    cfg = _alembic_cfg(db_url)
+    command.upgrade(cfg, _EVENTS_REVISION)
+
+    aizk_uuid_value = str(uuid4())
+    karakeep_id = f"k_{uuid4().hex[:8]}"
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    source_ref = '{"kind":"karakeep_bookmark","bookmark_id":"x"}'
+    source_ref_hash = _sha256_hex(source_ref)
+
+    engine = create_engine(db_url)
+    with engine.begin() as conn:
+        # SQLite needs PRAGMA foreign_keys=ON per-connection to enforce
+        # ON DELETE SET NULL; without it the cascade is silently skipped.
+        conn.execute(text("PRAGMA foreign_keys = ON"))
+
+        conn.execute(
+            text(
+                "INSERT INTO sources "
+                "(karakeep_id, aizk_uuid, source_ref, source_ref_hash, owner_id, "
+                "created_at, updated_at) "
+                "VALUES (:kid, :uuid, :ref, :hash, 'self', :now, :now)"
+            ),
+            {
+                "kid": karakeep_id,
+                "uuid": aizk_uuid_value,
+                "ref": source_ref,
+                "hash": source_ref_hash,
+                "now": now,
+            },
+        )
+        result = conn.execute(
+            text(
+                "INSERT INTO conversion_jobs "
+                "(aizk_uuid, owner_id, title, payload_version, status, attempts, "
+                "idempotency_key, created_at, updated_at) "
+                "VALUES (:uuid, 'self', 't', 1, 'CANCELLED', 0, :key, :now, :now)"
+            ),
+            {"uuid": aizk_uuid_value, "key": uuid4().hex, "now": now},
+        )
+        job_id = result.lastrowid
+        conn.execute(
+            text(
+                "INSERT INTO conversion_job_events "
+                "(job_id, aizk_uuid, attempt, occurred_at, kind, "
+                "from_status, to_status, payload_json) "
+                "VALUES (:jid, :uuid, 0, :now, 'cancelled', "
+                "'RUNNING', 'CANCELLED', :payload)"
+            ),
+            {
+                "jid": job_id,
+                "uuid": aizk_uuid_value,
+                "now": now,
+                "payload": '{"kind":"cancelled","cancelled_by":"user","cancellation_reason":null}',
+            },
+        )
+
+    # Re-open connection with foreign keys ON and delete the job row.
+    with engine.begin() as conn:
+        conn.execute(text("PRAGMA foreign_keys = ON"))
+        conn.execute(text("DELETE FROM conversion_jobs WHERE id = :jid"), {"jid": job_id})
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT job_id, aizk_uuid FROM conversion_job_events WHERE aizk_uuid = :uuid"),
+            {"uuid": aizk_uuid_value},
+        ).fetchone()
+
+    assert row is not None, "Event row must survive job deletion (ON DELETE SET NULL)"
+    assert row[0] is None, f"Expected job_id NULL after parent deletion, got {row[0]!r}"
+    assert row[1] == aizk_uuid_value, "aizk_uuid must remain populated for post-deletion audit"
+
+
+def test_conversion_job_events_downgrade_drops_table(tmp_path):
+    """Downgrade by one revision drops the conversion_job_events table cleanly."""
+    db_url = _db_url(tmp_path, "events_down.db")
+    cfg = _alembic_cfg(db_url)
+
+    command.upgrade(cfg, _EVENTS_REVISION)
+    inspector = inspect(create_engine(db_url))
+    assert "conversion_job_events" in inspector.get_table_names()
+
+    command.downgrade(cfg, _EVENTS_PREV_REVISION)
+    inspector = inspect(create_engine(db_url))
+    assert "conversion_job_events" not in inspector.get_table_names()
+
+
+def test_conversion_job_events_migration_kind_enum_matches_model():
+    """Migration's enum value list MUST stay in sync with ConversionEventKind.
+
+    If a future contributor adds a new kind to ``ConversionEventKind``
+    without updating the migration's hard-coded enum tuple, this test fires
+    so the drift is caught at PR time rather than at first insertion.
+    """
+    import importlib
+
+    from aizk.conversion.datamodel.events import ConversionEventKind
+
+    mod = importlib.import_module("aizk.conversion.migrations.versions.a8c9d0e1f2b3_add_conversion_job_events")
+    migration_kinds = set(mod._CONVERSION_EVENT_KIND_NAMES)
+    model_kinds = {k.value for k in ConversionEventKind}
+    assert migration_kinds == model_kinds, (
+        f"Migration enum drift: only-in-migration={migration_kinds - model_kinds}, "
+        f"only-in-model={model_kinds - migration_kinds}"
+    )
