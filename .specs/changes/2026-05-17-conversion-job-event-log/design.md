@@ -190,7 +190,7 @@ PhasePayload(phase: Literal["preparing_input", "converting", "uploading"], repor
 CancelledPayload(cancelled_by: str | None, cancellation_reason: str | None)
 FailedPayload(error_code: str, error_message: str, error_detail: str | None, retryable: bool, last_phase: str | None)
 SucceededPayload(output_id: int, content_hash: str)
-UploadPendingPayload(content_hash: str)
+UploadPendingPayload(content_hash: str | None)
 RecoveredStalePayload(stale_after_minutes: int, last_started_at: datetime)
 SourceEnrichedPayload(aizk_uuid: UUID, columns_written: list[str], update_succeeded: bool, failure_reason: str | None)
 ```

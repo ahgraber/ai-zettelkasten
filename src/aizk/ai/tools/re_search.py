@@ -1,9 +1,12 @@
 """A tool that performs a regex search over text."""
 
-import re
-from typing import Any, List, Pattern, TypeVar, Union
+from __future__ import annotations
 
-from pydantic_ai import Agent, RunContext
+import re
+from typing import TYPE_CHECKING, Any, List, Pattern, TypeVar, Union
+
+if TYPE_CHECKING:
+    from pydantic_ai import RunContext
 
 T = TypeVar("T")
 

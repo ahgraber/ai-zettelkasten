@@ -5,12 +5,19 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 import datetime as dt
 import logging
+import os
 import time
 
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlmodel import Session, select
 
+from aizk.conversion.datamodel.events import (
+    ClaimedPayload,
+    ConversionEventKind,
+    RecoveredStalePayload,
+    record_transition,
+)
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.db import get_engine
 from aizk.conversion.utilities.config import ConversionConfig
@@ -48,13 +55,23 @@ def recover_stale_running_jobs(config: ConversionConfig) -> int:
             return 0
 
         for job in jobs:
-            job.status = ConversionJobStatus.FAILED_RETRYABLE
+            last_started_at = job.started_at
             job.earliest_next_attempt_at = now
             job.error_code = "worker_stale_running"
             job.error_message = f"Marked stale after {config.worker_stale_job_minutes} minutes without completion."
             job.last_error_at = now
             job.updated_at = now
-            session.add(job)
+            record_transition(
+                session,
+                job,
+                to_status=ConversionJobStatus.FAILED_RETRYABLE,
+                kind=ConversionEventKind.RECOVERED_STALE,
+                attempt=job.attempts,
+                payload=RecoveredStalePayload(
+                    stale_after_minutes=config.worker_stale_job_minutes,
+                    last_started_at=last_started_at,
+                ),
+            )
 
         session.commit()
 
@@ -97,11 +114,17 @@ def claim_next_job(config: ConversionConfig) -> int | None:
             return None
 
         job_id = job.id
-        job.status = ConversionJobStatus.RUNNING
         job.started_at = now
         job.attempts += 1
         job.updated_at = now
-        session.add(job)
+        record_transition(
+            session,
+            job,
+            to_status=ConversionJobStatus.RUNNING,
+            kind=ConversionEventKind.CLAIMED,
+            attempt=job.attempts,
+            payload=ClaimedPayload(claimed_at=now, worker_pid=os.getpid()),
+        )
         session.commit()
 
     if job_id is None:

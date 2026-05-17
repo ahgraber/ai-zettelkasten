@@ -1533,7 +1533,13 @@ class TestEnrichSourceMetadata:
         terminal_ref = KarakeepBookmarkRef(kind="karakeep_bookmark", bookmark_id="bm_identity_imm")
         subprocess_meta = _make_subprocess_meta(terminal_ref, "html")
 
-        orchestrator._write_source_enrichment(subprocess_meta, str(source.aizk_uuid), db_session.get_bind())
+        orchestrator._write_source_enrichment(
+            subprocess_meta,
+            str(source.aizk_uuid),
+            db_session.get_bind(),
+            job_id=0,  # synthetic — these tests don't have a job; FK is not enforced.
+            attempt=1,
+        )
 
         db_session.refresh(source)
         assert source.aizk_uuid == pre["aizk_uuid"]
@@ -1546,7 +1552,13 @@ class TestEnrichSourceMetadata:
         terminal_ref = ArxivRef(kind="arxiv", arxiv_id="2401.00001")
         subprocess_meta = _make_subprocess_meta(terminal_ref, "pdf")
 
-        orchestrator._write_source_enrichment(subprocess_meta, str(source.aizk_uuid), db_session.get_bind())
+        orchestrator._write_source_enrichment(
+            subprocess_meta,
+            str(source.aizk_uuid),
+            db_session.get_bind(),
+            job_id=0,
+            attempt=1,
+        )
 
         db_session.refresh(source)
         assert source.source_type == SOURCE_TYPE_BY_KIND["arxiv"]
@@ -1560,7 +1572,13 @@ class TestEnrichSourceMetadata:
         subprocess_meta = _make_subprocess_meta(terminal_ref, "html")
 
         with caplog.at_level(logging.WARNING, logger="aizk.conversion.workers.orchestrator"):
-            orchestrator._write_source_enrichment(subprocess_meta, str(missing_uuid), db_session.get_bind())
+            orchestrator._write_source_enrichment(
+                subprocess_meta,
+                str(missing_uuid),
+                db_session.get_bind(),
+                job_id=0,
+                attempt=1,
+            )
 
         assert any("not found" in r.message.lower() or "enrichment" in r.message.lower() for r in caplog.records)
 
@@ -1569,7 +1587,11 @@ class TestEnrichSourceMetadata:
         subprocess_meta = _make_subprocess_meta(terminal_ref, "html")
         with patch("aizk.conversion.workers.orchestrator.Session", side_effect=RuntimeError("boom")):
             orchestrator._write_source_enrichment(
-                subprocess_meta, str(uuid.UUID("00000000-0000-0000-0000-000000000001")), MagicMock()
+                subprocess_meta,
+                str(uuid.UUID("00000000-0000-0000-0000-000000000001")),
+                MagicMock(),
+                job_id=0,
+                attempt=1,
             )
 
 
@@ -1589,7 +1611,13 @@ def test_source_type_set_from_terminal_ref_kind(terminal_ref, expected_source_ty
     source = _create_source_for_enrichment(db_session, bookmark_id=bookmark_id)
     subprocess_meta = _make_subprocess_meta(terminal_ref, "html")
 
-    orchestrator._write_source_enrichment(subprocess_meta, str(source.aizk_uuid), db_session.get_bind())
+    orchestrator._write_source_enrichment(
+        subprocess_meta,
+        str(source.aizk_uuid),
+        db_session.get_bind(),
+        job_id=0,
+        attempt=1,
+    )
 
     db_session.refresh(source)
     assert source.source_type == expected_source_type

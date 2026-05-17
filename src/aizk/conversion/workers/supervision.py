@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import datetime as dt
 import logging
 import multiprocessing as mp
 import os
@@ -13,6 +14,11 @@ import time
 from aizk.conversion.workers.types import SupervisionResult
 
 logger = logging.getLogger(__name__)
+
+# Signature: (phase_name, reported_at) -> None. Called once per phase event
+# drained from the subprocess status queue. The orchestrator wires this to
+# `record_phase_event` so each phase report becomes a row in the event log.
+PhaseEventCallback = Callable[[str, dt.datetime], None]
 
 
 def _get_parent_pgid() -> int | None:
@@ -43,14 +49,33 @@ def _collect_status_messages(
     status_queue: mp.Queue,
     last_phase: str,
     reported_error: dict[str, str] | None,
+    on_phase_event: PhaseEventCallback | None = None,
 ) -> tuple[str, dict[str, str] | None]:
-    """Drain the status queue, updating phase and error state."""
+    """Drain the status queue, updating phase and error state.
+
+    When ``on_phase_event`` is supplied, it is invoked once for every phase
+    report drained (regardless of whether the reported phase changed from
+    ``last_phase``), so each subprocess phase report becomes its own event-log
+    row. The callback receives ``(phase, reported_at)`` and is expected to
+    record best-effort — exceptions raised by it are logged and swallowed so
+    supervision continues.
+    """
     try:
         while True:
             message = status_queue.get_nowait()
             event = message.get("event")
             if event == "phase":
                 new_phase = message.get("message", last_phase)
+                if on_phase_event is not None:
+                    try:
+                        on_phase_event(new_phase, dt.datetime.now(dt.timezone.utc))
+                    except Exception:
+                        logger.warning(
+                            "Phase-event callback raised for job %s phase %r",
+                            job_id,
+                            new_phase,
+                            exc_info=True,
+                        )
                 if new_phase != last_phase:
                     last_phase = new_phase
                     logger.info("Job %s entered phase %s", job_id, last_phase)
@@ -84,6 +109,7 @@ def _supervise_conversion_process(
     is_cancelled_fn: Callable[[], bool],
     shutdown_requested_fn: Callable[[], bool] | None = None,
     drain_timeout_seconds: float = 300.0,
+    on_phase_event: PhaseEventCallback | None = None,
 ) -> SupervisionResult:
     """Monitor the subprocess for cancellation, timeout, or shutdown.
 
@@ -102,6 +128,7 @@ def _supervise_conversion_process(
             status_queue=status_queue,
             last_phase=last_phase,
             reported_error=reported_error,
+            on_phase_event=on_phase_event,
         )
 
         if is_cancelled_fn():
