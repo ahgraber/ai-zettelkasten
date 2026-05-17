@@ -20,9 +20,14 @@ Calling conventions:
    answer part of code review rather than a hidden invariant.
 3. **Write-strict, read-lenient pydantic posture.** Each per-kind payload
    model uses ``extra="forbid"`` so a typo or stale field surfaces as
-   ``ValidationError`` at insertion. Reads use a lenient parser that strips
-   unrecognized fields, so an older row written before an additive payload
-   change can still be deserialized by current code.
+   ``ValidationError`` at insertion. Reads go through
+   ``parse_payload_lenient``, which pre-filters unrecognized keys against
+   the variant's declared field set before constructing the model — so an
+   older row whose payload carries an additive field that current code does
+   not yet recognize still deserializes cleanly. (The lenience is
+   implemented as field-name filtering rather than as a separate
+   ``extra="ignore"`` model_config, but the behavioral guarantee is the
+   same.)
 4. **Versioning via new ``kind`` variants.** Incompatible payload changes
    (renamed field, removed field, changed type) SHALL be expressed by
    introducing a new ``kind`` to ``ConversionEventKind`` (e.g.,
@@ -45,7 +50,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, Union
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field as PydField, TypeAdapter, ValidationError
-from sqlalchemy import Column, ForeignKey, Index, Integer, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, Text, func
 from sqlmodel import Field, SQLModel
 
 from aizk.conversion.datamodel.job import ConversionJobStatus
@@ -61,6 +66,16 @@ logger = logging.getLogger(__name__)
 def _utcnow() -> datetime.datetime:
     """Return timezone-aware UTC timestamp."""
     return datetime.datetime.now(datetime.timezone.utc)
+
+
+class _UnsetType:
+    """Sentinel type for distinguishing default vs explicit None on optional args."""
+
+    def __repr__(self) -> str:
+        return "<UNSET>"
+
+
+_UNSET: _UnsetType = _UnsetType()
 
 
 class ConversionEventKind(str, Enum):
@@ -226,10 +241,14 @@ _payload_adapter: TypeAdapter[JobEventPayload] = TypeAdapter(JobEventPayload)
 def parse_payload_lenient(raw: str | dict[str, Any]) -> BaseModel:
     """Deserialize a persisted event payload tolerating unrecognized fields.
 
-    Strips any field not declared on the payload model for the row's ``kind``
-    before validation, so a row persisted with an additive field that current
-    code does not yet recognize still parses cleanly. An unknown ``kind``
-    raises ``ValueError`` — the closed enumeration is the audit trail.
+    Pre-filters ``raw`` to keep only keys declared on the variant model for
+    the row's ``kind`` before invoking ``model_validate``. This is the
+    forward-compatible read path described in the module docstring (item 3):
+    a row written by a future code version that added an optional field to
+    a known kind still parses cleanly under current code.
+
+    An unknown ``kind`` raises ``ValueError`` — the closed enumeration is
+    the audit trail and is never forward-tolerant.
     """
     raw_dict: dict[str, Any] = json.loads(raw) if isinstance(raw, str) else dict(raw)
     kind_value = raw_dict.get("kind")
@@ -256,6 +275,16 @@ class ConversionJobEvent(SQLModel, table=True):
     ``ON DELETE SET NULL`` so operator deletion of a terminal-state job
     preserves the audit trail (``aizk_uuid`` remains populated and serves
     as the post-deletion lookup key).
+
+    Column nullability conventions:
+
+    - ``from_status`` is NULL only on origin events (the first event for a
+      job, where there is no prior committed state); transition and phase
+      events both carry a non-null value.
+    - ``to_status`` is NULL only on non-transition events (kind
+      ``source_enriched``), which describe writes to other entities and do
+      not assert a target ``ConversionJob.status``. Transition and phase
+      events both populate it.
     """
 
     __tablename__ = "conversion_job_events"
@@ -286,11 +315,18 @@ class ConversionJobEvent(SQLModel, table=True):
             nullable=True,
         ),
     )
-    aizk_uuid: UUID = Field(nullable=False, index=True)
+    # No single-column index on ``aizk_uuid``: the ``(aizk_uuid, occurred_at)``
+    # composite serves prefix lookups equivalently and avoids redundant write
+    # cost on every insert.
+    aizk_uuid: UUID = Field(nullable=False)
     attempt: int = Field(nullable=False)
     occurred_at: datetime.datetime = Field(
         default_factory=_utcnow,
-        nullable=False,
+        sa_column=Column(
+            DateTime(),
+            nullable=False,
+            server_default=func.current_timestamp(),
+        ),
     )
     kind: ConversionEventKind = Field(nullable=False)
     from_status: ConversionJobStatus | None = Field(default=None, nullable=True)
@@ -304,18 +340,20 @@ class ConversionJobEvent(SQLModel, table=True):
 
 
 def _serialize_payload(payload: BaseModel, expected_kind: ConversionEventKind) -> str:
-    """Validate and serialize a payload, asserting kind agreement.
+    """Validate kind agreement and serialize a payload to JSON.
 
-    Re-runs validation through the discriminated-union adapter so a stray
-    BaseModel that happens to share field names cannot bypass the closed-set
-    contract. Returns the canonical JSON string for the ``payload_json``
-    column.
+    The strict ``extra="forbid"`` and per-field validation already fired at
+    the caller's ``Payload(...)`` constructor call — pydantic v2's
+    ``TypeAdapter.validate_python`` on an already-built variant is a
+    short-circuit pass-through and would not catch attributes set after
+    construction. This function therefore checks only the kind-vs-discriminator
+    agreement (catching e.g. ``kind=succeeded`` paired with a
+    ``FailedPayload``); strict field validation is the constructor's job.
     """
-    validated = _payload_adapter.validate_python(payload)
-    payload_kind = getattr(validated, "kind", None)
+    payload_kind = getattr(payload, "kind", None)
     if payload_kind != expected_kind:
         raise ValueError(f"Payload kind {payload_kind!r} does not match transition kind {expected_kind!r}")
-    return validated.model_dump_json()
+    return payload.model_dump_json()
 
 
 def record_transition(
@@ -326,16 +364,29 @@ def record_transition(
     kind: ConversionEventKind,
     attempt: int,
     payload: BaseModel,
+    from_status: ConversionJobStatus | None | _UnsetType = _UNSET,
 ) -> ConversionJobEvent:
     """Record a status transition and the matching event row in one transaction.
 
-    Reads ``job.status`` as ``from_status`` *before* mutation, mutates the
-    job to ``to_status``, and appends one ``ConversionJobEvent`` row carrying
-    the typed ``payload`` (validated via ``JobEventPayload``).
+    Default behavior reads ``job.status`` as ``from_status`` *before*
+    mutation, mutates the job to ``to_status``, and appends one
+    ``ConversionJobEvent`` row carrying the typed ``payload``.
 
-    Does NOT call ``session.commit()`` — the caller's surrounding transaction
-    determines commit boundaries. See module docstring (item 1) for the
-    rationale.
+    For origin events (the first event for a brand-new job), pass
+    ``from_status=None`` explicitly. This is required because the API
+    submit path constructs the ``ConversionJob`` with ``status=QUEUED``
+    already and the spec requires the origin event to carry no prior
+    status.
+
+    Does NOT call ``session.commit()`` — the caller's surrounding
+    transaction determines commit boundaries. See module docstring (item 1)
+    for the rationale.
+
+    Transient jobs: if ``job.id`` is ``None`` (i.e., the job was just
+    constructed and not yet flushed), the caller MUST call
+    ``session.flush()`` before invoking this helper so the event row can
+    capture a non-null ``job_id``. Calling without a flush will persist
+    the event with ``job_id=None`` and the FK link to the job is lost.
 
     Args:
         session: Active SQLModel session. The caller owns commit/rollback.
@@ -345,20 +396,22 @@ def record_transition(
         attempt: Attempt number the event belongs to. REQUIRED.
             See ``design.md § HelperCallingConventions`` for per-site values.
         payload: Typed payload model for the kind.
+        from_status: Optional override for the event's prior-status column.
+            When omitted, derived from ``job.status`` before mutation.
+            Pass ``None`` explicitly to write NULL (origin events).
 
     Returns:
         The constructed (and ``session.add``-staged) event row.
 
     Raises:
-        pydantic.ValidationError: If ``payload`` fails validation against
-            ``JobEventPayload`` (unknown kind, missing required field, extra
-            field on the kind's strict variant, etc.). When this raises,
-            ``job.status`` has NOT been mutated.
         ValueError: If ``payload.kind`` does not match ``kind``.
     """
     payload_json = _serialize_payload(payload, kind)
 
-    from_status = job.status
+    if isinstance(from_status, _UnsetType):
+        prior_status: ConversionJobStatus | None = job.status
+    else:
+        prior_status = from_status
     job.status = to_status
 
     event = ConversionJobEvent(
@@ -366,7 +419,7 @@ def record_transition(
         aizk_uuid=job.aizk_uuid,
         attempt=attempt,
         kind=kind,
-        from_status=from_status,
+        from_status=prior_status,
         to_status=to_status,
         payload_json=payload_json,
     )

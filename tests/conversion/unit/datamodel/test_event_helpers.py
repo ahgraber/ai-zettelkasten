@@ -360,12 +360,20 @@ def test_record_source_event_failure_indicator(engine, queued_job):
 
 
 # ---------------------------------------------------------------------------
-# Initial-submission shape: from_status absent (NULL)
+# Initial-submission shape: from_status NULL via explicit override
 # ---------------------------------------------------------------------------
 
 
-def test_initial_submission_event_has_no_from_status(engine, source):
-    """An initial QUEUED submission has from_status NULL (no prior state)."""
+def test_initial_submission_event_writes_null_from_status(engine, source):
+    """Origin events written with from_status=None persist NULL prior status.
+
+    Spec R1 scenario "Initial submission event has no prior status"
+    requires the first event for a brand-new job to carry NULL
+    from_status. The API submit path constructs the ConversionJob with
+    status=QUEUED already, so without the override the helper would
+    record from_status=QUEUED. Passing from_status=None explicitly is
+    how the origin-event shape is achieved.
+    """
     with Session(engine) as session:
         job = ConversionJob(
             aizk_uuid=source.aizk_uuid,
@@ -386,17 +394,37 @@ def test_initial_submission_event_has_no_from_status(engine, source):
             kind=ConversionEventKind.QUEUED,
             attempt=0,
             payload=QueuedPayload(submitted_by="user-1", requeue_reason="initial"),
+            from_status=None,
         )
         session.commit()
 
     with Session(engine) as verify:
         events = verify.exec(select(ConversionJobEvent)).all()
         assert len(events) == 1
-        # Note: from_status equals the value read off job.status BEFORE the
-        # helper's mutation. Because the caller constructed the job with
-        # status=QUEUED, from_status is also QUEUED, not None. Initial-
-        # submission "no prior state" semantics are about the absence of
-        # an event row for the pre-QUEUED state, not about NULL from_status.
         assert events[0].kind == ConversionEventKind.QUEUED
+        assert events[0].from_status is None, (
+            "Origin event must persist NULL from_status when from_status=None is passed"
+        )
         assert events[0].to_status == ConversionJobStatus.QUEUED
         assert events[0].attempt == 0
+
+
+def test_record_transition_from_status_defaults_to_job_status(engine, queued_job):
+    """Without an override, from_status is read from job.status before mutation."""
+    with Session(engine) as session:
+        job = session.get(ConversionJob, queued_job.id)
+        record_transition(
+            session,
+            job,
+            to_status=ConversionJobStatus.RUNNING,
+            kind=ConversionEventKind.CLAIMED,
+            attempt=1,
+            payload=ClaimedPayload(claimed_at=_NOW),
+        )
+        session.commit()
+
+    with Session(engine) as verify:
+        events = verify.exec(select(ConversionJobEvent)).all()
+        assert events[0].from_status == ConversionJobStatus.QUEUED, (
+            "Default behavior must read from_status from job.status before mutation"
+        )

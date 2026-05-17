@@ -45,11 +45,11 @@
 
 ## 3. Database Migration
 
-- [ ] Generate new Alembic migration `src/aizk/conversion/migrations/versions/<rev>_add_conversion_job_events.py` creating the `conversion_job_events` table with all columns and indexes from task group 1, including the FK `job_id REFERENCES conversion_jobs(id) ON DELETE SET NULL`.
-- [ ] Verify the migration is reversible (`downgrade()` drops the table).
-- [ ] Add integration test `tests/conversion/integration/test_migrations.py::test_conversion_job_events_table_created` asserting the table and indexes exist after `alembic upgrade head` against a fresh SQLite database.
-- [ ] Add integration test `test_conversion_job_events_job_id_fk_set_null_on_delete` that inserts a job + event row, deletes the job, and asserts the event row's `job_id` is NULL and `aizk_uuid` remains populated.
-- [ ] Add integration test for migration downgrade — assert table is dropped after `alembic downgrade -1`.
+- [x] Generate new Alembic migration `src/aizk/conversion/migrations/versions/<rev>_add_conversion_job_events.py` creating the `conversion_job_events` table with all columns and indexes from task group 1, including the FK `job_id REFERENCES conversion_jobs(id) ON DELETE SET NULL`.
+- [x] Verify the migration is reversible (`downgrade()` drops the table).
+- [x] Add integration test `tests/conversion/integration/test_migrations.py::test_conversion_job_events_table_created` asserting the table and indexes exist after `alembic upgrade head` against a fresh SQLite database.
+- [x] Add integration test `test_conversion_job_events_job_id_fk_set_null_on_delete` that inserts a job + event row, deletes the job, and asserts the event row's `job_id` is NULL and `aizk_uuid` remains populated.
+- [x] Add integration test for migration downgrade — assert table is dropped after `alembic downgrade -1`.
 
 ## 4. Worker Write-Site Migration
 
@@ -83,8 +83,9 @@ Integration tests under `tests/conversion/integration/test_job_event_log.py`:
 
 ## 5. API Write-Site Migration
 
-- [ ] Rewrite [jobs.py:264](src/aizk/conversion/api/routes/jobs.py#L264) (job submission) to construct the ConversionJob with `status=QUEUED` AND call `record_transition(session, job, to_status=QUEUED, kind="queued", attempt=0, payload=QueuedPayload(submitted_by=principal.subject, requeue_reason="initial"))`.
-  Note: the helper still mutates `job.status` to QUEUED, but since the constructor already set it, the mutation is a no-op; the event row is what matters.
+- [ ] Rewrite [jobs.py:264](src/aizk/conversion/api/routes/jobs.py#L264) (job submission) to construct the ConversionJob with `status=QUEUED`, call `session.add(job); session.flush()` so the event row can capture `job_id`, then call `record_transition(session, job, to_status=QUEUED, kind="queued", attempt=0, payload=QueuedPayload(submitted_by=principal.subject, requeue_reason="initial"), from_status=None)`.
+  The explicit `from_status=None` produces the origin event's NULL prior status per spec R1 "Initial submission event has no prior status"; without it the helper would derive QUEUED from the just-constructed row.
+  See `design.md § HelperCallingConventions` for the per-site table.
 - [ ] Rewrite [jobs.py:117](src/aizk/conversion/api/routes/jobs.py#L117) (`_apply_job_retry`) to call `record_transition` with `kind="queued"`, `attempt=job.attempts` AFTER the increment at `job.attempts += 1`, and `QueuedPayload(requeue_reason="retry_endpoint", submitted_by=principal.subject)`.
   The current direct status mutation in `_apply_job_retry` becomes the helper call.
 - [ ] Rewrite [jobs.py:136](src/aizk/conversion/api/routes/jobs.py#L136) (`_apply_job_cancel`) to call `record_transition` with `kind="cancelled"`, `attempt=job.attempts`, and `CancelledPayload(cancelled_by=principal.subject, cancellation_reason=...)`.
