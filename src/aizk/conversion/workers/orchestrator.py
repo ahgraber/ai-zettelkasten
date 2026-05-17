@@ -18,6 +18,15 @@ from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
 from aizk.conversion.core.errors import EgressPolicyError
+from aizk.conversion.datamodel.events import (
+    ClaimedPayload,
+    ConversionEventKind,
+    FailedPayload,
+    UploadPendingPayload,
+    record_phase_event,
+    record_source_event,
+    record_transition,
+)
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as SourceRecord
 from aizk.conversion.db import get_engine
@@ -113,24 +122,39 @@ def _write_source_enrichment(
     subprocess_meta: SubprocessMetadata,
     aizk_uuid: str,
     engine,
+    *,
+    job_id: int,
+    attempt: int,
 ) -> None:
     """Best-effort update of Source row from SubprocessMetadata. Logs on failure, never raises.
 
     Writes url, normalized_url, title, source_type, and content_type from the
     subprocess IPC payload. Failure here does not affect manifest, ConversionOutput,
     or job completion — Source is an advisory cache only.
+
+    A ``source_enriched`` event is appended to the event log regardless of
+    whether the Source UPDATE succeeded or failed, scoped to the originating
+    ``(job_id, attempt)``. The audit captures what the worker attempted and
+    the outcome; the Source mutation itself remains advisory.
     """
+    from uuid import UUID as _UUID
+
     from pydantic import TypeAdapter
 
     from aizk.conversion.core.source_ref import SourceRef as _SourceRef
     from aizk.conversion.core.types import SOURCE_TYPE_BY_KIND
 
+    columns_attempted: list[str] = ["url", "normalized_url", "title", "source_type"]
+    if subprocess_meta.content_type:
+        columns_attempted.append("content_type")
+
+    update_succeeded = False
+    failure_reason: str | None = None
+
     try:
         terminal_ref: _SourceRef = TypeAdapter(_SourceRef).validate_python(subprocess_meta.terminal_ref)
         source_type = SOURCE_TYPE_BY_KIND.get(terminal_ref.kind, "other")
         source_meta = subprocess_meta.source_meta.to_source_metadata()
-
-        from uuid import UUID as _UUID
 
         uuid_obj = aizk_uuid if isinstance(aizk_uuid, _UUID) else _UUID(aizk_uuid)
         with Session(engine) as session:
@@ -140,26 +164,59 @@ def _write_source_enrichment(
                     "Source row not found for aizk_uuid=%s during enrichment",
                     aizk_uuid,
                 )
-                return
-            # Only write mutable metadata columns — never write identity columns.
-            source.url = source_meta.source_url
-            source.normalized_url = source_meta.normalized_url
-            source.title = subprocess_meta.source_title
-            source.source_type = source_type
-            if subprocess_meta.content_type:
-                source.content_type = subprocess_meta.content_type
-            source.updated_at = _utcnow()
-            session.add(source)
-            session.commit()
-    except Exception:
+                failure_reason = "source_row_not_found"
+            else:
+                # Only write mutable metadata columns — never write identity columns.
+                source.url = source_meta.source_url
+                source.normalized_url = source_meta.normalized_url
+                source.title = subprocess_meta.source_title
+                source.source_type = source_type
+                if subprocess_meta.content_type:
+                    source.content_type = subprocess_meta.content_type
+                source.updated_at = _utcnow()
+                session.add(source)
+                session.commit()
+                update_succeeded = True
+    except Exception as exc:
         logger.exception(
             "Source enrichment failed for aizk_uuid=%s (best-effort; job proceeds)",
+            aizk_uuid,
+        )
+        failure_reason = str(exc)
+
+    # Audit the attempt regardless of outcome. The event is best-effort: a
+    # failure here is logged but does not propagate (Source enrichment is
+    # advisory).
+    try:
+        uuid_for_event = aizk_uuid if isinstance(aizk_uuid, _UUID) else _UUID(aizk_uuid)
+        with Session(engine) as event_session:
+            record_source_event(
+                event_session,
+                job_id=job_id,
+                aizk_uuid=uuid_for_event,
+                attempt=attempt,
+                columns_written=columns_attempted,
+                update_succeeded=update_succeeded,
+                failure_reason=failure_reason,
+            )
+            event_session.commit()
+    except Exception:
+        logger.exception(
+            "Failed to record source_enriched event for aizk_uuid=%s (best-effort)",
             aizk_uuid,
         )
 
 
 def _initialize_running_job(job_id: int, engine: Engine) -> bool:
-    """Ensure the job is in RUNNING state before processing."""
+    """Ensure the job is in RUNNING state before processing.
+
+    Re-entrant claim path: in the normal worker flow ``claim_next_job`` has
+    already transitioned the job to RUNNING and emitted its ``claimed``
+    event, so this function is a no-op. For direct callers (tests, CLI) or
+    recovery cases where the job arrives in a non-RUNNING state, this
+    function transitions it to RUNNING, increments the attempt counter,
+    and emits a ``claimed`` event distinct from the ``claim_next_job`` path.
+    """
     with Session(engine) as session:
         job = session.get(ConversionJob, job_id)
         if not job:
@@ -167,11 +224,18 @@ def _initialize_running_job(job_id: int, engine: Engine) -> bool:
         if job.status in {ConversionJobStatus.SUCCEEDED, ConversionJobStatus.CANCELLED}:
             return False
         if job.status != ConversionJobStatus.RUNNING:
-            job.status = ConversionJobStatus.RUNNING
-            job.started_at = _utcnow()
+            now = _utcnow()
+            job.started_at = now
             job.attempts += 1
-            job.updated_at = _utcnow()
-            session.add(job)
+            job.updated_at = now
+            record_transition(
+                session,
+                job,
+                to_status=ConversionJobStatus.RUNNING,
+                kind=ConversionEventKind.CLAIMED,
+                attempt=job.attempts,
+                payload=ClaimedPayload(claimed_at=now, worker_pid=os.getpid()),
+            )
             session.commit()
     return True
 
@@ -309,6 +373,7 @@ def _spawn_and_supervise(
     config: ConversionConfig,
     resource_guard,
     requires_gpu: bool,
+    on_phase_event=None,
 ) -> tuple[mp.Process, SupervisionResult, float | None]:
     """Spawn and supervise; acquire resource_guard only if requires_gpu."""
     from contextlib import nullcontext
@@ -336,6 +401,7 @@ def _spawn_and_supervise(
             is_cancelled_fn=is_cancelled_fn,
             shutdown_requested_fn=is_shutdown_requested,
             drain_timeout_seconds=float(config.worker_drain_timeout_seconds),
+            on_phase_event=on_phase_event,
         )
     return process, result, deadline
 
@@ -371,6 +437,38 @@ def process_job_supervised(  # noqa: C901
     converter_name = config.worker_converter_name
     requires_gpu = runtime.capabilities.converter_requires_gpu(converter_name)
 
+    # Snapshot (aizk_uuid, attempt) once at supervision entry. The subprocess
+    # does not see the job's attempt counter, so the parent must capture it
+    # before phase events start arriving on the queue.
+    with Session(engine) as snap_session:
+        snap_job = snap_session.get(ConversionJob, job_id)
+        if snap_job is None:
+            return
+        attempt_snapshot = snap_job.attempts
+        aizk_uuid_snapshot = snap_job.aizk_uuid
+
+    def _on_phase_event(phase: str, reported_at: dt.datetime) -> None:
+        """Persist one phase event per subprocess report; best-effort."""
+        try:
+            with Session(engine) as phase_session:
+                record_phase_event(
+                    phase_session,
+                    job_id=job_id,
+                    aizk_uuid=aizk_uuid_snapshot,
+                    attempt=attempt_snapshot,
+                    current_status=ConversionJobStatus.RUNNING,
+                    phase=phase,
+                    reported_at=reported_at,
+                )
+                phase_session.commit()
+        except Exception:
+            logger.warning(
+                "Failed to commit phase event for job %s phase %r (best-effort)",
+                job_id,
+                phase,
+                exc_info=True,
+            )
+
     with tempfile.TemporaryDirectory() as tmpdirname:
         workspace = Path(tmpdirname)
         source_ref_json = source_ref.model_dump_json()
@@ -385,6 +483,7 @@ def process_job_supervised(  # noqa: C901
             config=config,
             resource_guard=runtime.resource_guard,
             requires_gpu=requires_gpu,
+            on_phase_event=_on_phase_event,
         )
 
         if result.timed_out:
@@ -465,6 +564,9 @@ def process_job_supervised(  # noqa: C901
         # Best-effort Source enrichment from metadata written by subprocess.
         # Uses typed SubprocessMetadata so schema drift fails loudly rather than
         # silently dropping fields. Failure here does not affect manifest or output.
+        # We also pull subprocess_meta into outer scope so the UPLOAD_PENDING
+        # transition's payload can carry the content_hash when available.
+        subprocess_meta: SubprocessMetadata | None = None
         metadata_file = metadata_path(workspace)
         if metadata_file.exists():
             try:
@@ -483,16 +585,29 @@ def process_job_supervised(  # noqa: C901
                 with Session(engine) as session:
                     job_rec = session.get(ConversionJob, job_id)
                     if job_rec:
-                        _write_source_enrichment(subprocess_meta, str(job_rec.aizk_uuid), engine)
+                        _write_source_enrichment(
+                            subprocess_meta,
+                            str(job_rec.aizk_uuid),
+                            engine,
+                            job_id=job_id,
+                            attempt=job_rec.attempts,
+                        )
             except Exception:
                 logger.exception("Failed to read SubprocessMetadata for enrichment; job proceeds")
 
+        content_hash = subprocess_meta.markdown_hash_xx64 if subprocess_meta else None
         with Session(engine) as session:
             job_record = session.get(ConversionJob, job_id)
             if job_record:
-                job_record.status = ConversionJobStatus.UPLOAD_PENDING
                 job_record.updated_at = _utcnow()
-                session.add(job_record)
+                record_transition(
+                    session,
+                    job_record,
+                    to_status=ConversionJobStatus.UPLOAD_PENDING,
+                    kind=ConversionEventKind.UPLOAD_PENDING,
+                    attempt=job_record.attempts,
+                    payload=UploadPendingPayload(content_hash=content_hash),
+                )
                 session.commit()
 
         # Local prep (read metadata, generate + write manifest) runs exactly
@@ -600,6 +715,8 @@ def handle_job_error(job_id: int, error: Exception, config: ConversionConfig) ->
         extra={"job_id": job_id, "error_code": error_code, "error_detail": error_detail},
     )
 
+    last_phase = getattr(error, "last_phase", None)
+
     with Session(engine) as session:
         job = session.get(ConversionJob, job_id)
         if not job:
@@ -608,16 +725,29 @@ def handle_job_error(job_id: int, error: Exception, config: ConversionConfig) ->
             return
         if retryable:
             delay = config.retry_base_delay_seconds * (2**job.attempts)
-            job.status = ConversionJobStatus.FAILED_RETRYABLE
             job.earliest_next_attempt_at = now + dt.timedelta(seconds=delay)
+            to_status = ConversionJobStatus.FAILED_RETRYABLE
         else:
-            job.status = ConversionJobStatus.FAILED_PERM
             job.earliest_next_attempt_at = None
             job.finished_at = now
+            to_status = ConversionJobStatus.FAILED_PERM
         job.error_code = error_code
         job.error_message = message
         job.error_detail = error_detail
         job.last_error_at = now
         job.updated_at = now
-        session.add(job)
+        record_transition(
+            session,
+            job,
+            to_status=to_status,
+            kind=ConversionEventKind.FAILED,
+            attempt=job.attempts,
+            payload=FailedPayload(
+                error_code=error_code,
+                error_message=message,
+                error_detail=error_detail,
+                retryable=retryable,
+                last_phase=last_phase,
+            ),
+        )
         session.commit()

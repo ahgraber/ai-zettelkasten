@@ -14,6 +14,11 @@ from uuid import UUID
 from sqlmodel import Session, select
 
 from aizk.conversion.core.errors import MissingOwnerOnJob, WorkspaceEscape
+from aizk.conversion.datamodel.events import (
+    ConversionEventKind,
+    SucceededPayload,
+    record_transition,
+)
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
@@ -336,13 +341,26 @@ def _execute_upload(plan: _UploadPlan, job_id: int, config: ConversionConfig) ->
             pipeline_name=plan.pipeline_name,
         )
         session.add(output)
+        # Flush so the succeeded event's payload can carry the output_id;
+        # without this, output.id is None until commit and the audit
+        # record loses the link to the artifact row.
+        session.flush()
 
         job.finished_at = _utcnow()
-        job.status = ConversionJobStatus.SUCCEEDED
         job.error_code = None
         job.error_message = None
         job.updated_at = _utcnow()
-        session.add(job)
+        record_transition(
+            session,
+            job,
+            to_status=ConversionJobStatus.SUCCEEDED,
+            kind=ConversionEventKind.SUCCEEDED,
+            attempt=job.attempts,
+            payload=SucceededPayload(
+                output_id=output.id,
+                content_hash=plan.markdown_hash_xx64,
+            ),
+        )
         session.commit()
 
 

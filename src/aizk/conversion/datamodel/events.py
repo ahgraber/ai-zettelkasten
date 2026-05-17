@@ -175,12 +175,18 @@ class SucceededPayload(BaseModel):
 
 
 class UploadPendingPayload(BaseModel):
-    """Payload for a transition into UPLOAD_PENDING."""
+    """Payload for a transition into UPLOAD_PENDING.
+
+    ``content_hash`` is optional because the transition is recorded even
+    when ``SubprocessMetadata`` failed to load — the subsequent upload
+    will then fail at ``_prepare_upload`` and surface its own ``failed``
+    event, but the audit log still captures the attempted phase entry.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["upload_pending"] = "upload_pending"
-    content_hash: str
+    content_hash: str | None = None
 
 
 class RecoveredStalePayload(BaseModel):
