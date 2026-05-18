@@ -22,7 +22,7 @@ import logging
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlmodel import Session, SQLModel, select
 
 import aizk.conversion.datamodel  # noqa: F401  (registers SQLModel metadata)
@@ -146,6 +146,25 @@ def test_record_transition_writes_both_rows_in_one_commit(engine, queued_job):
         assert events[0].to_status == ConversionJobStatus.RUNNING
 
 
+def test_record_transition_persists_event_kind_value(engine, queued_job):
+    """Raw database rows store ``ConversionEventKind.value``, not enum member names."""
+    with Session(engine) as session:
+        job = session.get(ConversionJob, queued_job.id)
+        record_transition(
+            session,
+            job,
+            to_status=ConversionJobStatus.RUNNING,
+            kind=ConversionEventKind.CLAIMED,
+            attempt=1,
+            payload=ClaimedPayload(claimed_at=_NOW),
+        )
+        session.commit()
+
+    with Session(engine) as verify:
+        row = verify.execute(text("SELECT kind FROM conversion_job_events")).one()
+        assert row[0] == ConversionEventKind.CLAIMED.value
+
+
 def test_record_transition_rolled_back_transaction_discards_both(engine, queued_job):
     """Rollback discards both the job mutation and the event row."""
     with Session(engine) as session:
@@ -223,6 +242,31 @@ def test_record_transition_unknown_kind_payload_raises(engine, queued_job):
                 ),
             )
         assert job.status == ConversionJobStatus.QUEUED
+
+
+def test_record_transition_revalidates_payload_model_shape(engine, queued_job):
+    """A foreign BaseModel with matching kind still must satisfy the typed union."""
+    from pydantic import ValidationError, create_model
+
+    malformed_failed_payload = create_model(
+        "MalformedFailedPayload",
+        kind=(str, "failed"),
+        bogus=(str, "nope"),
+    )
+
+    with Session(engine) as session:
+        job = session.get(ConversionJob, queued_job.id)
+        with pytest.raises(ValidationError):
+            record_transition(
+                session,
+                job,
+                to_status=ConversionJobStatus.FAILED_PERM,
+                kind=ConversionEventKind.FAILED,
+                attempt=1,
+                payload=malformed_failed_payload(),
+            )
+        assert job.status == ConversionJobStatus.QUEUED
+        assert session.exec(select(ConversionJobEvent)).all() == []
 
 
 # ---------------------------------------------------------------------------

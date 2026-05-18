@@ -181,6 +181,36 @@ class TestSupervisionShutdownDrain:
 
         assert result.shutdown_terminated is False
 
+    def test_phase_callback_runs_for_messages_drained_after_process_exit(self):
+        """Phase reports left in the queue at subprocess exit are still event-log candidates."""
+        import queue as queue_module
+
+        class _ExitedProcess:
+            pid = 99999
+            exitcode = 0
+
+            def is_alive(self) -> bool:
+                return False
+
+        process = _ExitedProcess()
+        status_queue = queue_module.Queue()
+        status_queue.put_nowait({"event": "phase", "message": "converting"})
+        recorded_phases = []
+
+        result = _supervise_conversion_process(
+            job_id=1,
+            process=process,
+            status_queue=status_queue,
+            poll_interval_seconds=0.005,
+            deadline=None,
+            timeout_seconds=0,
+            is_cancelled_fn=lambda: False,
+            on_phase_event=lambda phase, _reported_at: recorded_phases.append(phase),
+        )
+
+        assert result.last_phase == "converting"
+        assert recorded_phases == ["converting"]
+
     def test_job_timeout_takes_precedence_over_drain(self, monkeypatch):
         """Job timeout fires before drain timeout."""
         import queue as queue_module
