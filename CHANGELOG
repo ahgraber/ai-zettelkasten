@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.3] - 2026-05-18
+
+### Added
+
+- Add append-only `conversion_job_events` audit table that records every conversion-job state transition, phase report, and source-enrichment outcome — run `alembic upgrade head` before starting the service
+- Route every conversion-job status write (API submit, worker claim/recover/fail/succeed, UI bulk retry/cancel) through `record_transition`, co-committing one typed event row alongside each projection update
+- Capture actor attribution on UI-initiated retry and cancel events by resolving the request `Principal` in the bulk-action route
+
+---
+
 ## [0.1.2] - 2026-05-04
 
 ### Breaking Changes
@@ -100,6 +110,7 @@
 
 ---
 
-[0.1.2]: https://github.com/ahgraber/ai-zettelkasten/compare/v0.1.1...HEAD
+[0.1.3]: https://github.com/ahgraber/ai-zettelkasten/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/ahgraber/ai-zettelkasten/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/ahgraber/ai-zettelkasten/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ahgraber/ai-zettelkasten/compare/pre-karakeep...v0.1.0
