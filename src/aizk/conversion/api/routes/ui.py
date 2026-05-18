@@ -13,8 +13,9 @@ from sqlmodel import Session, select
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.templating import Jinja2Templates
 
-from aizk.conversion.api.dependencies import get_db_session
+from aizk.conversion.api.dependencies import get_db_session, get_principal
 from aizk.conversion.api.routes.jobs import _apply_job_cancel, _apply_job_delete, _apply_job_retry
+from aizk.conversion.auth import Principal
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source
 
@@ -215,6 +216,7 @@ def _format_bulk_notice(
 def ui_job_actions(
     request: Request,
     session: Annotated[Session, Depends(get_db_session)],
+    principal: Annotated[Principal, Depends(get_principal)],
     action: Annotated[str, Form()],
     job_ids: Annotated[list[int] | None, Form()] = None,
     status_filter: Annotated[str | None, Form(alias="status")] = None,
@@ -241,11 +243,9 @@ def ui_job_actions(
             continue
         try:
             if action == "retry":
-                _apply_job_retry(job, now)
-                session.add(job)
+                _apply_job_retry(session, job, now, submitted_by=principal.subject)
             elif action == "cancel":
-                _apply_job_cancel(job, now)
-                session.add(job)
+                _apply_job_cancel(session, job, now, cancelled_by=principal.subject)
             else:
                 _apply_job_delete(session, job)
             applied += 1

@@ -83,31 +83,31 @@ Integration tests under `tests/conversion/integration/test_job_event_log.py`:
 
 ## 5. API Write-Site Migration
 
-- [ ] Rewrite [jobs.py:264](src/aizk/conversion/api/routes/jobs.py#L264) (job submission) to construct the ConversionJob with `status=QUEUED`, call `session.add(job); session.flush()` so the event row can capture `job_id`, then call `record_transition(session, job, to_status=QUEUED, kind="queued", attempt=0, payload=QueuedPayload(submitted_by=principal.subject, requeue_reason="initial"), from_status=None)`.
+- [x] Rewrite [jobs.py:264](src/aizk/conversion/api/routes/jobs.py#L264) (job submission) to construct the ConversionJob with `status=QUEUED`, call `session.add(job); session.flush()` so the event row can capture `job_id`, then call `record_transition(session, job, to_status=QUEUED, kind="queued", attempt=0, payload=QueuedPayload(submitted_by=principal.subject, requeue_reason="initial"), from_status=None)`.
   The explicit `from_status=None` produces the origin event's NULL prior status per spec R1 "Initial submission event has no prior status"; without it the helper would derive QUEUED from the just-constructed row.
   See `design.md § HelperCallingConventions` for the per-site table.
-- [ ] Rewrite [jobs.py:117](src/aizk/conversion/api/routes/jobs.py#L117) (`_apply_job_retry`) to call `record_transition` with `kind="queued"`, `attempt=job.attempts` AFTER the increment at `job.attempts += 1`, and `QueuedPayload(requeue_reason="retry_endpoint", submitted_by=principal.subject)`.
+- [x] Rewrite [jobs.py:117](src/aizk/conversion/api/routes/jobs.py#L117) (`_apply_job_retry`) to call `record_transition` with `kind="queued"`, `attempt=job.attempts` AFTER the increment at `job.attempts += 1`, and `QueuedPayload(requeue_reason="retry_endpoint", submitted_by=principal.subject)`.
   The current direct status mutation in `_apply_job_retry` becomes the helper call.
-- [ ] Rewrite [jobs.py:136](src/aizk/conversion/api/routes/jobs.py#L136) (`_apply_job_cancel`) to call `record_transition` with `kind="cancelled"`, `attempt=job.attempts`, and `CancelledPayload(cancelled_by=principal.subject, cancellation_reason=...)`.
-- [ ] Add contract test `tests/conversion/contract/test_jobs_api.py::test_job_submission_emits_queued_event` asserting POST /jobs commits both the job row and exactly one `queued` event (`from_status = NULL`, `attempt = 0`) in one transaction.
-- [ ] Add contract test `test_retry_endpoint_emits_queued_event_with_retry_reason` asserting POST /jobs/{id}/retry produces a `queued` event whose payload `requeue_reason = "retry_endpoint"` and `attempt` equals the incremented attempt value.
-- [ ] Add contract test `test_cancel_endpoint_emits_cancelled_event` asserting POST /jobs/{id}/cancel produces a `cancelled` event with the API user as `cancelled_by`.
-- [ ] Add contract test `test_bulk_retry_emits_one_queued_event_per_job` asserting POST /jobs/bulk-actions with retry action across N jobs produces N `queued` events in one transaction (or N transactions, whatever the route's implementation), one per affected job.
-- [ ] Add contract test `test_bulk_cancel_emits_one_cancelled_event_per_job` asserting the parallel for cancel.
+- [x] Rewrite [jobs.py:136](src/aizk/conversion/api/routes/jobs.py#L136) (`_apply_job_cancel`) to call `record_transition` with `kind="cancelled"`, `attempt=job.attempts`, and `CancelledPayload(cancelled_by=principal.subject, cancellation_reason=...)`.
+- [x] Add contract test `tests/conversion/contract/test_jobs_event_log.py::test_job_submission_emits_queued_event` asserting POST /jobs commits both the job row and exactly one `queued` event (`from_status = NULL`, `attempt = 0`) in one transaction.
+- [x] Add contract test `test_retry_endpoint_emits_queued_event_with_retry_reason` asserting POST /jobs/{id}/retry produces a `queued` event whose payload `requeue_reason = "retry_endpoint"` and `attempt` equals the incremented attempt value.
+- [x] Add contract test `test_cancel_endpoint_emits_cancelled_event` asserting POST /jobs/{id}/cancel produces a `cancelled` event with the API user as `cancelled_by`.
+- [x] Add contract test `test_bulk_retry_emits_one_queued_event_per_job` asserting POST /jobs/actions with retry action across N jobs produces N `queued` events in one transaction (or N transactions, whatever the route's implementation), one per affected job.
+- [x] Add contract test `test_bulk_cancel_emits_one_cancelled_event_per_job` asserting the parallel for cancel.
 
 ## 6. Append-Only Enforcement and Direct-Status-Write Lint Guard
 
-- [ ] Add regression test `tests/conversion/unit/test_no_direct_status_writes.py` that scans `src/aizk/conversion/` for occurrences of the pattern `\.status\s*=\s*ConversionJobStatus\.` (regex), and asserts every match lives inside `src/aizk/conversion/datamodel/events.py`.
+- [x] Add regression test `tests/conversion/unit/test_no_direct_status_writes.py` that scans `src/aizk/conversion/` for occurrences of the pattern `\.status\s*=\s*ConversionJobStatus\.` (regex), and asserts every match lives inside `src/aizk/conversion/datamodel/events.py`.
   Use `pathlib` glob + `re` against text — no shell, no `ast`.
-- [ ] Add regression test `tests/conversion/unit/test_event_log_is_append_only.py` that scans `src/aizk/conversion/` for occurrences of patterns that would UPDATE or DELETE the event log table: `session.delete(\w*event)`, `UPDATE\s+conversion_job_events`, `DELETE\s+FROM\s+conversion_job_events`.
+- [x] Add regression test `tests/conversion/unit/test_event_log_is_append_only.py` that scans `src/aizk/conversion/` for occurrences of patterns that would UPDATE or DELETE the event log table: `session.delete(\w*event)`, `UPDATE\s+conversion_job_events`, `DELETE\s+FROM\s+conversion_job_events`.
   Assert no matches outside of test fixtures and the Alembic migration's `downgrade()` function.
-- [ ] Verify both lint guards fail when a fake direct-status assignment or event UPDATE is added in another file (manual sanity check during PR review).
+- [x] Verify both lint guards fail when a fake direct-status assignment or event UPDATE is added in another file (manual sanity check during PR review).
 
 ## 7. Documentation and Sync
 
-- [ ] Update `src/aizk/conversion/datamodel/events.py` module docstring to cover: (1) helper-calling conventions (caller commits, explicit `attempt`), (2) write-vs-read pydantic stance (`extra="forbid"` on write, `extra="ignore"` on read), (3) versioning rule (incompatible changes → new `kind` variant; additive changes → tolerated by read leniency).
+- [x] Update `src/aizk/conversion/datamodel/events.py` module docstring to cover: (1) helper-calling conventions (caller commits, explicit `attempt`), (2) write-vs-read pydantic stance (`extra="forbid"` on write, `extra="ignore"` on read), (3) versioning rule (incompatible changes → new `kind` variant; additive changes → tolerated by read leniency).
   Reference the relevant sections of `.specs/changes/2026-05-17-conversion-job-event-log/design.md`.
-- [ ] Run `sdd-sync` after implementation completes to merge the delta into the baseline `.specs/specs/conversion-worker/spec.md`.
+- [x] Run `sdd-sync` after implementation completes to merge the delta into the baseline `.specs/specs/conversion-worker/spec.md`.
 
 ## 8. Follow-Up (out of scope, tracked here so they don't fall off)
 
