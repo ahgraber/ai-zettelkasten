@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, Union
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field as PydField, TypeAdapter, ValidationError
-from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, Text, func
+from sqlalchemy import Column, DateTime, Enum as SAEnum, ForeignKey, Index, Integer, Text, func
 from sqlmodel import Field, SQLModel
 
 from aizk.conversion.datamodel.job import ConversionJobStatus
@@ -334,7 +334,16 @@ class ConversionJobEvent(SQLModel, table=True):
             server_default=func.current_timestamp(),
         ),
     )
-    kind: ConversionEventKind = Field(nullable=False)
+    kind: ConversionEventKind = Field(
+        sa_column=Column(
+            SAEnum(
+                ConversionEventKind,
+                name="conversioneventkind",
+                values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            ),
+            nullable=False,
+        )
+    )
     from_status: ConversionJobStatus | None = Field(default=None, nullable=True)
     to_status: ConversionJobStatus | None = Field(default=None, nullable=True)
     payload_json: str = Field(sa_column=Column(Text, nullable=False))
@@ -348,18 +357,22 @@ class ConversionJobEvent(SQLModel, table=True):
 def _serialize_payload(payload: BaseModel, expected_kind: ConversionEventKind) -> str:
     """Validate kind agreement and serialize a payload to JSON.
 
-    The strict ``extra="forbid"`` and per-field validation already fired at
-    the caller's ``Payload(...)`` constructor call — pydantic v2's
-    ``TypeAdapter.validate_python`` on an already-built variant is a
-    short-circuit pass-through and would not catch attributes set after
-    construction. This function therefore checks only the kind-vs-discriminator
-    agreement (catching e.g. ``kind=succeeded`` paired with a
-    ``FailedPayload``); strict field validation is the constructor's job.
+    Dump first, then validate through the discriminated union. That keeps
+    helper callers from smuggling an arbitrary ``BaseModel`` with a matching
+    ``kind`` past the strict per-kind payload contract.
     """
-    payload_kind = getattr(payload, "kind", None)
-    if payload_kind != expected_kind:
+    payload_data = payload.model_dump(mode="python")
+    payload_kind = payload_data.get("kind")
+    try:
+        payload_kind_enum = ConversionEventKind(payload_kind)
+    except ValueError as exc:
+        raise ValueError(f"Unknown payload kind {payload_kind!r}") from exc
+
+    if payload_kind_enum is not expected_kind:
         raise ValueError(f"Payload kind {payload_kind!r} does not match transition kind {expected_kind!r}")
-    return payload.model_dump_json()
+
+    validated_payload = _payload_adapter.validate_python(payload_data)
+    return validated_payload.model_dump_json()
 
 
 def record_transition(
@@ -411,6 +424,8 @@ def record_transition(
 
     Raises:
         ValueError: If ``payload.kind`` does not match ``kind``.
+        ValidationError: If ``payload`` does not satisfy the typed payload
+            model for its ``kind``.
     """
     payload_json = _serialize_payload(payload, kind)
 

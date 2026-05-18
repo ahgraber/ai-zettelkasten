@@ -179,5 +179,6 @@ def _supervise_conversion_process(
         status_queue=status_queue,
         last_phase=last_phase,
         reported_error=reported_error,
+        on_phase_event=on_phase_event,
     )
     return SupervisionResult(last_phase, reported_error, False, False)
