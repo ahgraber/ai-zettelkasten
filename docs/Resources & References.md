@@ -13,6 +13,7 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [Karpathy shares 'LLM Knowledge Base' architecture that bypasses RAG with an evolving markdown library maintained by AI | VentureBeat](https://venturebeat.com/data/karpathy-shares-llm-knowledge-base-architecture-that-bypasses-rag-with-an)
 - [Lex Fridman on X: similar setup — Obsidian + Cursor + vibe-coded web terminals](https://x.com/lexfridman/status/2039841897066414291)
 - [Karpathy Just Described the Product I've Been Building — LLM Knowledge Bases and YARNNN | yarnnn](https://www.yarnnn.com/blog/karpathy-just-described-the-product-ive-been-building)
+- [The PARA Method: The Simple System for Organizing Your Digital Life in Seconds](https://fortelabs.com/blog/para/)
 - [Your File System Is Already a Graph Database](https://rumproarious.com/2026/04/04/your-file-system-is-already-a-graph-database/)
 - [safishamsi/graphify: AI coding assistant skill (Claude Code, Codex, OpenCode, Cursor, Gemini CLI, OpenClaw, Factory Droid, Trae). Turn any folder of code, docs, papers, images, videos, or YouTube links into a queryable knowledge graph](https://github.com/safishamsi/graphify)
 - [sentrux/sentrux: Real-time architectural sensor that helps AI agents close the feedback loop, enabling recursive self-improvement of code quality](https://github.com/sentrux/sentrux) — tree-sitter-based structural graph with MCP server
@@ -93,7 +94,9 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [[2312.06648] Dense X Retrieval: What Retrieval Granularity Should We Use?](https://arxiv.org/abs/2312.06648) — deconstruct text blobs into propositions (complete factoids)
 - [PyLate - Late Interaction Models](https://lightonai.github.io/pylate/)
   - [lightonai/pylate (GitHub)](https://github.com/lightonai/pylate)
-  - [lightonai/fast-plaid](https://github.com/lightonai/fast-plaid)
+  - [lightonai/fast-plaid](https://github.com/lightonai/fast-plaid), [lightonai/next-plaid](https://github.com/lightonai/next-plaid): FastPlaid is a GPU batch indexer built for large-scale, single-pass workloads.
+    NextPlaid wraps the same FastPlaid algorithm into a production API that handles documents as they arrive: incremental updates, concurrent reads/writes, deletions, and built-in encoding.
+    Use FastPlaid for bulk offline indexing and experiments, NextPlaid for serving and streaming ingestion.
   - [DenseOn with the LateOn: Open State-of-the-Art Single and Multi-Vector Models](https://huggingface.co/blog/lightonai/denseon-lateon)
 - [LlamaIndex](https://docs.llamaindex.ai/en/stable/)
 - [Late Interaction: Efficient Multi-Modal Retrievers (LanceDB)](https://lancedb.com/blog/late-interaction-efficient-multi-modal-retrievers-need-more-than-just-a-vector-index/)
@@ -164,6 +167,7 @@ If building a concept graph, it would be useful to be able to use it as a human 
 - [Termboard - Knowledge Graphs Made Simple](https://termboard.com/) - ontology designer
 - [microsoft/Ontology-Playground: Free, open-source web app for learning about ontologies and Microsoft Fabric IQ. Explore a catalogue of pre-built ontologies, design your own visually, export as RDF/XML, and share interactive diagrams. Zero backend, fully st](https://github.com/microsoft/Ontology-Playground)
 - [ThHanke/ontosphere: Browser-based RDF/ontology knowledge graph editor with OWL-RL reasoning, multi-algorithm layout, and MCP integration](https://github.com/ThHanke/ontosphere)
+- [Hawksight-AI/semantica: Semantica 🧠 — AI-native knowledge graph intelligence framework for semantic retrieval, ontology reasoning, context graphs, and explainable AI systems.](https://github.com/Hawksight-AI/semantica)
 
 ## graphrag
 

@@ -30,6 +30,12 @@ from aizk.conversion.api.schemas import (
 )
 from aizk.conversion.auth import Principal
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, SourceRef, compute_source_ref_hash
+from aizk.conversion.datamodel.events import (
+    CancelledPayload,
+    ConversionEventKind,
+    QueuedPayload,
+    record_transition,
+)
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
@@ -105,8 +111,14 @@ def _get_output_summary(session: Session, job_id: int) -> ConversionOutput | Non
     return session.exec(select(ConversionOutput).where(ConversionOutput.job_id == job_id)).first()
 
 
-def _apply_job_retry(job: ConversionJob, now: dt.datetime) -> None:
-    """Apply retry transition to a conversion job."""
+def _apply_job_retry(
+    session: Session,
+    job: ConversionJob,
+    now: dt.datetime,
+    *,
+    submitted_by: str | None,
+) -> None:
+    """Apply retry transition to a conversion job and record the queued event."""
     if job.status not in {
         ConversionJobStatus.FAILED_RETRYABLE,
         ConversionJobStatus.FAILED_PERM,
@@ -114,7 +126,17 @@ def _apply_job_retry(job: ConversionJob, now: dt.datetime) -> None:
     }:
         raise ValueError("job_not_retryable")
     job.attempts += 1
-    job.status = ConversionJobStatus.QUEUED
+    record_transition(
+        session,
+        job,
+        to_status=ConversionJobStatus.QUEUED,
+        kind=ConversionEventKind.QUEUED,
+        attempt=job.attempts,
+        payload=QueuedPayload(
+            submitted_by=submitted_by,
+            requeue_reason="retry_endpoint",
+        ),
+    )
     job.earliest_next_attempt_at = None
     job.last_error_at = None
     job.error_code = None
@@ -125,15 +147,31 @@ def _apply_job_retry(job: ConversionJob, now: dt.datetime) -> None:
     job.updated_at = now
 
 
-def _apply_job_cancel(job: ConversionJob, now: dt.datetime) -> None:
-    """Apply cancel transition to a conversion job."""
+def _apply_job_cancel(
+    session: Session,
+    job: ConversionJob,
+    now: dt.datetime,
+    *,
+    cancelled_by: str | None,
+) -> None:
+    """Apply cancel transition to a conversion job and record the cancelled event."""
     if job.status not in {
         ConversionJobStatus.QUEUED,
         ConversionJobStatus.RUNNING,
         ConversionJobStatus.FAILED_RETRYABLE,
     }:
         raise ValueError("job_not_cancellable")
-    job.status = ConversionJobStatus.CANCELLED
+    record_transition(
+        session,
+        job,
+        to_status=ConversionJobStatus.CANCELLED,
+        kind=ConversionEventKind.CANCELLED,
+        attempt=job.attempts,
+        payload=CancelledPayload(
+            cancelled_by=cancelled_by,
+            cancellation_reason=None,
+        ),
+    )
     job.finished_at = now
     job.earliest_next_attempt_at = None
     job.updated_at = now
@@ -270,6 +308,20 @@ def submit_job(
         updated_at=now,
     )
     session.add(job)
+    # Flush so job.id is assigned before the origin event captures it.
+    session.flush()
+    record_transition(
+        session,
+        job,
+        to_status=ConversionJobStatus.QUEUED,
+        kind=ConversionEventKind.QUEUED,
+        attempt=0,
+        payload=QueuedPayload(
+            submitted_by=principal.subject,
+            requeue_reason="initial",
+        ),
+        from_status=None,
+    )
     session.commit()
     session.refresh(job)
     session.refresh(source)
@@ -378,13 +430,12 @@ def retry_job(
         raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
     now = _utcnow()
     try:
-        _apply_job_retry(job, now)
+        _apply_job_retry(session, job, now, submitted_by=principal.subject)
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
             detail={"error": str(exc), "message": "Job cannot be retried"},
         ) from exc
-    session.add(job)
     session.commit()
     session.refresh(job)
     source = session.exec(select(Source).where(Source.aizk_uuid == job.aizk_uuid)).one()
@@ -405,13 +456,12 @@ def cancel_job(
         raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
     now = _utcnow()
     try:
-        _apply_job_cancel(job, now)
+        _apply_job_cancel(session, job, now, cancelled_by=principal.subject)
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
             detail={"error": str(exc), "message": "Job cannot be cancelled"},
         ) from exc
-    session.add(job)
     session.commit()
     session.refresh(job)
     source = session.exec(select(Source).where(Source.aizk_uuid == job.aizk_uuid)).one()
@@ -442,10 +492,9 @@ def bulk_job_actions(
             continue
         try:
             if payload.action == "retry":
-                _apply_job_retry(job, now)
+                _apply_job_retry(session, job, now, submitted_by=principal.subject)
             else:
-                _apply_job_cancel(job, now)
-            session.add(job)
+                _apply_job_cancel(session, job, now, cancelled_by=principal.subject)
             results.append(BulkActionResult(job_id=job_id, status="success", error=None))
             success += 1
         except ValueError as exc:

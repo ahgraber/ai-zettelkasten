@@ -549,6 +549,12 @@ def test_arxiv_precedence_uses_karakeep_pdf_asset_end_to_end(monkeypatch, db_ses
     async def _should_not_fetch_arxiv_pdf(arxiv_id: str, config) -> bytes:
         raise AssertionError("fetch_arxiv_pdf must not be used when KaraKeep asset URL is present")
 
+    # The KaraKeep-trusted-asset carve-out requires the resolver-built asset URL's
+    # origin to match the operator-configured base URL. The base URL must be set
+    # in the test environment so that both the resolver (karakeep.py builds
+    # `f"{base_url}/api/v1/assets/{asset_id}"`) and the trusted-URL check
+    # (arxiv.py's `is_karakeep_trusted_asset_url(...)`) agree on the origin.
+    monkeypatch.setenv("AIZK_FETCHER__KARAKEEP__BASE_URL", "http://karakeep.local")
     monkeypatch.setattr("aizk.conversion.adapters.fetchers.karakeep.fetch_karakeep_bookmark", lambda _id: bookmark)
     monkeypatch.setattr("aizk.conversion.adapters.fetchers.karakeep.detect_source_type", lambda _url: "arxiv")
     monkeypatch.setattr("aizk.conversion.adapters.fetchers.arxiv.fetch_karakeep_asset", _fake_karakeep_asset)
