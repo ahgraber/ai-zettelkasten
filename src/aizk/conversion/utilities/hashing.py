@@ -5,9 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 
-import xxhash
-
 from aizk.conversion.utilities.config import DoclingConverterConfig
+from aizk.utilities.hashing import compute_markdown_hash
+
+__all__ = [
+    "build_output_config_snapshot",
+    "compute_config_hash",
+    "compute_idempotency_key",
+    "compute_markdown_hash",
+]
 
 
 def _docling_config_payload(config: DoclingConverterConfig) -> dict[str, object]:
@@ -57,19 +63,6 @@ def compute_idempotency_key(
     config_json = json.dumps(config_snapshot, sort_keys=True, separators=(",", ":"))
     raw = f"{source_ref_hash}:{converter_name}:{config_json}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
-def compute_markdown_hash(markdown_text: str) -> str:
-    """Compute xxHash64 for normalized markdown content.
-
-    Args:
-        markdown_text: Raw markdown content.
-
-    Returns:
-        Hex-encoded xxHash64 digest.
-    """
-    normalized = markdown_text.replace("\r\n", "\n").replace("\r", "\n").strip()
-    return xxhash.xxh64(normalized.encode("utf-8")).hexdigest()
 
 
 def compute_config_hash(config_payload: dict[str, object]) -> str:
