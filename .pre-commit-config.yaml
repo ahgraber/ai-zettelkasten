@@ -21,6 +21,11 @@ exclude: |
     ^.*\.rej$
   )$
 
+# Chunking test fixtures are byte-significant: formatters/whitespace-fixers would
+# mutate them and desync the splitter snapshot, and the regression fixture is raw
+# Docling output. Excluded from formatters only; security hooks still scan them.
+
+
 repos:
   - repo: local
     hooks:
@@ -62,17 +67,21 @@ repos:
         stages: [pre-commit]
         args: [--allow-multiple-documents]
       - id: end-of-file-fixer
+        exclude: "^tests/chunking/fixtures/"
         stages: [pre-commit]
       - id: mixed-line-ending
+        exclude: "^tests/chunking/fixtures/"
         stages: [pre-commit]
       - id: trailing-whitespace
         args: [--markdown-linebreak-ext=md]
+        exclude: "^tests/chunking/fixtures/"
         stages: [pre-commit]
   # renovate: datasource=github-tags depName=Lucas-C/pre-commit-hooks
   - repo: https://github.com/Lucas-C/pre-commit-hooks
     rev: "v1.5.6"
     hooks:
       - id: remove-crlf
+        exclude: "^tests/chunking/fixtures/"
         stages: [pre-commit]
       # - id: remove-tabs
       #   stages: [pre-commit]
@@ -81,8 +90,10 @@ repos:
     rev: "0.7.1"
     hooks:
       - id: fix-smartquotes
+        exclude: "^tests/chunking/fixtures/"
         stages: [pre-commit]
       - id: fix-ligatures
+        exclude: "^tests/chunking/fixtures/"
         stages: [pre-commit]
   # renovate: datasource=github-tags depName=gitleaks/gitleaks
   - repo: https://github.com/gitleaks/gitleaks
@@ -123,6 +134,7 @@ repos:
     rev: 1.0.0
     hooks:
       - id: mdformat
+        exclude: "^tests/chunking/fixtures/"
         additional_dependencies:
           - mdformat-gfm
           - mdformat-front-matters

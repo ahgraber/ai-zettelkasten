@@ -1,0 +1,706 @@
+[
+  {
+    "fixture": "code_block_among_paragraphs.md",
+    "chunks": [
+      {
+        "chunk_id": "ba3567d59dda2e26",
+        "content_hash": "7b41ab3284316862",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Mixed"
+        ],
+        "ordinal": 0,
+        "text": "First paragraph before the code block with some words.\n\n```text\nCODE LINE ONE\nCODE LINE TWO\nCODE LINE THREE\n```\n\nSecond paragraph after the code block with some words.\n",
+        "char_count": 168,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          9,
+          177
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "empty_heading_body.md",
+    "chunks": [
+      {
+        "chunk_id": "35d2f1cda427d75b",
+        "content_hash": "ac1c57ee3064be14",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "A",
+          "B"
+        ],
+        "ordinal": 0,
+        "text": "Body under B only.\n",
+        "char_count": 19,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          10,
+          29
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "frontmatter.md",
+    "chunks": [
+      {
+        "chunk_id": "fbb44d961e399072",
+        "content_hash": "816ffd71da13c16b",
+        "doc_id": "doc-1",
+        "heading_path": [],
+        "ordinal": 0,
+        "text": "---\ntitle: Sample\ntags: [a, b]\n# a yaml comment, not a heading\n---\n",
+        "char_count": 67,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          0,
+          67
+        ],
+        "splitter_version": 1
+      },
+      {
+        "chunk_id": "6f0f9dbbedce38ec",
+        "content_hash": "9c96fc44fe7761c4",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Heading One"
+        ],
+        "ordinal": 0,
+        "text": "Body under heading one.\n",
+        "char_count": 24,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          83,
+          107
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "frontmatter_toml.md",
+    "chunks": [
+      {
+        "chunk_id": "36b4be1447461679",
+        "content_hash": "bfb76d796ff5dd6b",
+        "doc_id": "doc-1",
+        "heading_path": [],
+        "ordinal": 0,
+        "text": "+++\ntitle = \"Sample\"\ntags = [\"a\", \"b\"]\n# a toml comment, not a heading\n+++\n",
+        "char_count": 75,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          0,
+          75
+        ],
+        "splitter_version": 1
+      },
+      {
+        "chunk_id": "6f0f9dbbedce38ec",
+        "content_hash": "9c96fc44fe7761c4",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Heading One"
+        ],
+        "ordinal": 0,
+        "text": "Body under heading one.\n",
+        "char_count": 24,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          91,
+          115
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "heading_in_blockquote.md",
+    "chunks": [
+      {
+        "chunk_id": "2805701e8d5bd0e6",
+        "content_hash": "bbc763c0b4c619fd",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Outer"
+        ],
+        "ordinal": 0,
+        "text": "> # quoted heading-shaped text\n> still inside the blockquote\n",
+        "char_count": 61,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          9,
+          70
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "heading_in_fenced_code.md",
+    "chunks": [
+      {
+        "chunk_id": "7fc4a802498cecb0",
+        "content_hash": "8779ecc659060833",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Outer"
+        ],
+        "ordinal": 0,
+        "text": "Some intro text before the code.\n\n```python\n# this is a comment, not a heading\ndef f():\n    return 1\n```\n\nTrailing paragraph after the code.\n",
+        "char_count": 141,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          9,
+          150
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "heading_in_list.md",
+    "chunks": [
+      {
+        "chunk_id": "6e49f15491cad19a",
+        "content_hash": "16aed4dd3e1ecd34",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Outer"
+        ],
+        "ordinal": 0,
+        "text": "- ## list-item heading-shaped text\n- second item in the list\n",
+        "char_count": 61,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          9,
+          70
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "heading_less.md",
+    "chunks": [
+      {
+        "chunk_id": "3d539ecd42d9484d",
+        "content_hash": "756bf7c2f8063383",
+        "doc_id": "doc-1",
+        "heading_path": [],
+        "ordinal": 0,
+        "text": "First paragraph with no heading.\n\nSecond paragraph also headingless.\n",
+        "char_count": 69,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          0,
+          69
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "list_among_paragraphs.md",
+    "chunks": [
+      {
+        "chunk_id": "5ac41b9334a85143",
+        "content_hash": "d5bacb7f674438cf",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Mixed List"
+        ],
+        "ordinal": 0,
+        "text": "First paragraph before the list with words.\n\n- alpha list item\n- bravo list item\n- charlie list item\n\nSecond paragraph after the list with words.\n",
+        "char_count": 146,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          14,
+          160
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "math_block.md",
+    "chunks": [
+      {
+        "chunk_id": "45af566a5b954dca",
+        "content_hash": "22a0ebfbdd3c5c0a",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Math Section"
+        ],
+        "ordinal": 0,
+        "text": "$$\nf(x) = a*x^2 + b*x + c + d*x^3 + e*x^4\nf(x) = a*x^2 + b*x + c + d*x^3 + e*x^4\nf(x) = a*x^2 + b*x + c + d*x^3 + e*x^4\nf(x) = a*x^2 + b*x + c + d*x^3 + e*x^4\n$$\n",
+        "char_count": 162,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          16,
+          178
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "multi_section.md",
+    "chunks": [
+      {
+        "chunk_id": "77fc4c567b7d4162",
+        "content_hash": "4e72d4266f8e4d6f",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Alpha"
+        ],
+        "ordinal": 0,
+        "text": "Alpha first paragraph sentinel.\n\nAlpha second paragraph sentinel.\n",
+        "char_count": 66,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          9,
+          75
+        ],
+        "splitter_version": 1
+      },
+      {
+        "chunk_id": "44118b0384230f0d",
+        "content_hash": "be930e1e8e8d8892",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Beta"
+        ],
+        "ordinal": 0,
+        "text": "Beta first paragraph sentinel.\n",
+        "char_count": 31,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          84,
+          115
+        ],
+        "splitter_version": 1
+      },
+      {
+        "chunk_id": "c469422d2dbb19ed",
+        "content_hash": "3696dd9b1c533d4c",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Beta",
+          "Beta Child"
+        ],
+        "ordinal": 0,
+        "text": "Beta child paragraph sentinel.\n",
+        "char_count": 31,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          131,
+          162
+        ],
+        "splitter_version": 1
+      },
+      {
+        "chunk_id": "9b882aaeea37e4ee",
+        "content_hash": "1ddbd66d43672f55",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Gamma"
+        ],
+        "ordinal": 0,
+        "text": "Gamma only paragraph sentinel.\n",
+        "char_count": 31,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          172,
+          203
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "over_budget_paragraphs.md",
+    "chunks": [
+      {
+        "chunk_id": "0c5850be5899c0c9",
+        "content_hash": "47155b994c1197e5",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Multi Para"
+        ],
+        "ordinal": 0,
+        "text": "Paragraph one has enough words to be moderately sized right here today.\n\nParagraph two also carries a similar moderate length of textual content.\n\nParagraph three rounds out the section with a comparable length of words.\n",
+        "char_count": 221,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          14,
+          235
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "oversize_code_block.md",
+    "chunks": [
+      {
+        "chunk_id": "e58f6a13d0cd1720",
+        "content_hash": "01b349a1e2fb4eca",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Code Section"
+        ],
+        "ordinal": 0,
+        "text": "```text\nLINE 01 the quick brown fox jumps over lazy dog\nLINE 02 the quick brown fox jumps over lazy dog\nLINE 03 the quick brown fox jumps over lazy dog\nLINE 04 the quick brown fox jumps over lazy dog\nLINE 05 the quick brown fox jumps over lazy dog\nLINE 06 the quick brown fox jumps over lazy dog\nLINE 07 the quick brown fox jumps over lazy dog\nLINE 08 the quick brown fox jumps over lazy dog\nLINE 09 the quick brown fox jumps over lazy dog\nLINE 10 the quick brown fox jumps over lazy dog\nLINE 11 the quick brown fox jumps over lazy dog\nLINE 12 the quick brown fox jumps over lazy dog\n```\n",
+        "char_count": 588,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          16,
+          604
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "oversize_link_paragraph.md",
+    "chunks": [
+      {
+        "chunk_id": "9a9cdd3de4adc298",
+        "content_hash": "d28b6a8fa5accb6e",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Links"
+        ],
+        "ordinal": 0,
+        "text": "[This is the first sentence. And here is a second sentence inside the link text.](https://example.com/very/long/path/segment/that/keeps/going/onward)\n",
+        "char_count": 150,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          9,
+          159
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "oversize_paragraph.md",
+    "chunks": [
+      {
+        "chunk_id": "f4cb00dd01fa82f6",
+        "content_hash": "cb7f1e8627624526",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Section"
+        ],
+        "ordinal": 0,
+        "text": "Sentence one is here and it is reasonably long indeed. Sentence two continues the very same thought with more words. Sentence three adds even further detail to exceed the budget. Sentence four then wraps it all up quite nicely at the end.\n",
+        "char_count": 239,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          11,
+          250
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "oversize_table_among_paragraphs.md",
+    "chunks": [
+      {
+        "chunk_id": "93b54bab72c42440",
+        "content_hash": "5427414d59e9a0ab",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Report"
+        ],
+        "ordinal": 0,
+        "text": "Intro paragraph appearing before the data table.\n\n| name | role | team |\n| ---- | ---- | ---- |\n| alice | engineer | platform |\n| bob | designer | product |\n| carol | manager | platform |\n| dave | analyst | finance |\n\nClosing paragraph appearing after the data table.\n",
+        "char_count": 268,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          10,
+          278
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "pathological_sentence.md",
+    "chunks": [
+      {
+        "chunk_id": "b32ffc3c238ba993",
+        "content_hash": "3acb3de8c0d0b696",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Pathological"
+        ],
+        "ordinal": 0,
+        "text": "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango\n",
+        "char_count": 124,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          16,
+          140
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "pre_heading_content.md",
+    "chunks": [
+      {
+        "chunk_id": "0db47b2dc3fb540d",
+        "content_hash": "a0684eb152c37573",
+        "doc_id": "doc-1",
+        "heading_path": [],
+        "ordinal": 0,
+        "text": "Intro paragraph before any heading.\n",
+        "char_count": 36,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          0,
+          36
+        ],
+        "splitter_version": 1
+      },
+      {
+        "chunk_id": "5b4311ea04434d15",
+        "content_hash": "bab4d68a78a4e980",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "First Heading"
+        ],
+        "ordinal": 0,
+        "text": "Body under the first heading.\n",
+        "char_count": 30,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          54,
+          84
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "regression/openai_responses_api.md",
+    "chunks": [
+      {
+        "chunk_id": "fae83dd3bf9e4ef3",
+        "content_hash": "9d1fd10b41aa2278",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Polling background responses"
+        ],
+        "ordinal": 0,
+        "text": "To check the status of background requests, use the GET endpoint for Responses. Keep polling while the request is in the queued or in\\_progress state. When it leaves these states, it has reached a final (terminal) state.\n\nRetrieve a response executing in the background\n\npython\n\n```\n1 2 3 curl https://api.openai.com/v1/responses/resp_123 \\ -H \"Content-Type: application/json\" \\ -H \"Authorization: Bearer $OPENAI_API_KEY \"\n```\n\n```\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 import OpenAI from \"openai\" ; const client = new OpenAI();\nlet resp = await client.responses.create({ model : \"o3\" , input : \"Write a very long novel about otters in space.\" , background : true , });\nwhile (resp.status === \"queued\" || resp.status === \"in_progress\" ) { console .log( \"Current status: \" + resp.status); await new Promise ( resolve => setTimeout (resolve, 2000 )); // wait 2 seconds\nresp = await client.responses.retrieve(resp.id); }\nconsole .log( \"Final status: \" + resp.status + \"\\nOutput:\\n\" + resp.output_text);\n```\n\n```\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 from openai import OpenAI from time import sleep\nclient = OpenAI()\nresp = client.responses.create( model= \"o3\" , input = \"Write a very long novel about otters in space.\" , background= True , )\nwhile resp.status in { \"queued\" , \"in_progress\" }: print ( f\"Current status: {resp.status} \" ) sleep( 2 ) resp = client.responses.retrieve(resp. id )\nprint ( f\"Final status: {resp.status} \\nOutput:\\n {resp.output_text} \" )\n```\n",
+        "char_count": 1472,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          33,
+          1505
+        ],
+        "splitter_version": 1
+      },
+      {
+        "chunk_id": "5a5654dd414fe3d6",
+        "content_hash": "043d52dbd68be39e",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Cancelling a background response"
+        ],
+        "ordinal": 0,
+        "text": "You can also cancel an in-flight response like this:\n\nCancel an ongoing response\n\npython\n\n```\n1 2 3 curl -X POST https://api.openai.com/v1/responses/resp_123/cancel \\ -H \"Content-Type: application/json\" \\ -H \"Authorization: Bearer $OPENAI_API_KEY \"\n```\n\n```\n1 2 3 4 5 6 import OpenAI from \"openai\" ; const client = new OpenAI();\nconst resp = await client.responses.cancel( \"resp_123\" );\nconsole .log(resp.status);\n```\n\n```\n1 2 3 4 5 6 from openai import OpenAI client = OpenAI()\nresp = client.responses.cancel( \"resp_123\" )\nprint (resp.status)\n```\n\nCancelling twice is idempotent - subsequent calls simply return the final `Response` object.\n",
+        "char_count": 642,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          1543,
+          2185
+        ],
+        "splitter_version": 1
+      },
+      {
+        "chunk_id": "23790a47d6c78f91",
+        "content_hash": "b3c76f3a52df9dae",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Streaming a background response"
+        ],
+        "ordinal": 0,
+        "text": "You can create a background Response and start streaming events from it right away. This may be helpful if you expect the client to drop the stream and want the option of picking it back up later. To do this, create a Response with both `background` and `stream` set to `true` . You will want to keep track of a \"cursor\" corresponding to the `sequence_number` you receive in each streaming event.\n\nCurrently, the time to first token you receive from a background response is higher than what you receive from a synchronous one. We are working to reduce this latency gap in the coming weeks.\n\nGenerate and stream a background response\n\npython\n\n```\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 curl https://api.openai.com/v1/responses \\ -H \"Content-Type: application/json\" \\ -H \"Authorization: Bearer $OPENAI_API_KEY \" \\ -d '{ \"model\": \"o3\", \"input\": \"Write a very long novel about otters in space.\", \"background\": true, \"stream\": true }'\n\n// To resume: curl \"https://api.openai.com/v1/responses/resp_123?stream=true&starting_after=42\" \\ -H \"Content-Type: application/json\" \\ -H \"Authorization: Bearer $OPENAI_API_KEY \"\n```\n\n```\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 import OpenAI from \"openai\" ; const client = new OpenAI();\nconst stream = await client.responses.create({ model : \"o3\" , input : \"Write a very long novel about otters in space.\" , background : true , stream : true , });\nlet cursor = null ; for await ( const event of stream) { console .log(event); cursor = event.sequence_number; }\n// If the connection drops, you can resume streaming from the last cursor (SDK support coming soon):\n// const resumedStream = await client.responses.stream(resp.id, { starting_after: cursor });\n// for await (const event of resumedStream) { ... }\n```\n\n```\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 from openai import OpenAI\nclient = OpenAI()\n# Fire off an async response but also start streaming immediately\nstream = client.responses.create( model= \"o3\" , input = \"Write a very long novel about otters in space.\" , background= True , stream= True , )\ncursor = None\nfor event in stream: print (event) cursor = event.sequence_number\n# If your connection drops, the response continues running and you can reconnect:\n# SDK support for resuming the stream is coming soon.\n# for event in client.responses.stream(resp.id, starting_after=cursor):\n#     print(event)\n```\n",
+        "char_count": 2368,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          2222,
+          4590
+        ],
+        "splitter_version": 1
+      },
+      {
+        "chunk_id": "4d23ca5521059ca0",
+        "content_hash": "3f6f0e851f467cdd",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Limits"
+        ],
+        "ordinal": 0,
+        "text": "1. Background sampling requires `store=true` ; stateless requests are rejected.\n2. To cancel a synchronous response, terminate the connection\n3. You can only start a new stream from a background response if you created it with `stream=true` .",
+        "char_count": 242,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          4602,
+          4844
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "skipped_levels.md",
+    "chunks": [
+      {
+        "chunk_id": "db42a0dc487c40ac",
+        "content_hash": "959b4dd88ecd16bf",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "A"
+        ],
+        "ordinal": 0,
+        "text": "Body under A.\n",
+        "char_count": 14,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          5,
+          19
+        ],
+        "splitter_version": 1
+      },
+      {
+        "chunk_id": "d0edb05da30ee615",
+        "content_hash": "94176dd30f88d438",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "A",
+          "C"
+        ],
+        "ordinal": 0,
+        "text": "Body under C.\n",
+        "char_count": 14,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          27,
+          41
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "table.md",
+    "chunks": [
+      {
+        "chunk_id": "612f0b0a097084d5",
+        "content_hash": "fa3c49be9fa08d9b",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Table Section"
+        ],
+        "ordinal": 0,
+        "text": "| name | role | team |\n| ---- | ---- | ---- |\n| alice | engineer | platform |\n| bob | designer | product |\n| carol | manager | platform |\n| dave | analyst | finance |\n",
+        "char_count": 167,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          17,
+          184
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "thematic_break.md",
+    "chunks": [
+      {
+        "chunk_id": "ad5e98160d726af2",
+        "content_hash": "67fcd58822a01376",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Section"
+        ],
+        "ordinal": 0,
+        "text": "Paragraph before the thematic break here.\n\n---\n\nParagraph after the thematic break here.\n",
+        "char_count": 89,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          11,
+          100
+        ],
+        "splitter_version": 1
+      }
+    ]
+  },
+  {
+    "fixture": "under_budget.md",
+    "chunks": [
+      {
+        "chunk_id": "b0138841ea48064a",
+        "content_hash": "3ebd56f2bdfa5fc2",
+        "doc_id": "doc-1",
+        "heading_path": [
+          "Small Section"
+        ],
+        "ordinal": 0,
+        "text": "A short body well under any reasonable budget.\n",
+        "char_count": 47,
+        "converted_artifact_id": "artifact-1",
+        "markdown_hash_xx64": "0123456789abcdef",
+        "span": [
+          17,
+          64
+        ],
+        "splitter_version": 1
+      }
+    ]
+  }
+]

@@ -76,6 +76,8 @@ The total ordering of chunks SHALL reflect the order of their body regions in th
 Every chunk's `char_count` SHALL be at most the configured size budget, except when the chunk contains a single non-splittable block (fenced code block, table, list, blockquote, or math block) that itself exceeds the budget.
 In the exception case, the chunk SHALL contain that non-splittable block in its entirety and `char_count` MAY exceed the budget.
 
+A paragraph that exceeds the budget but cannot be divided without splitting an inline construct (link, image, inline code span, or inline math) SHALL be treated as non-splittable: it SHALL be emitted as one chunk that preserves the construct intact, and that chunk's `char_count` MAY exceed the budget.
+
 No chunk SHALL contain a partial non-splittable block; non-splittable blocks SHALL appear in exactly one chunk in their entirety.
 
 #### Scenario: Body within budget produces a single chunk
@@ -95,6 +97,12 @@ No chunk SHALL contain a partial non-splittable block; non-splittable blocks SHA
 - **GIVEN** a heading whose body contains a non-splittable block (e.g., a fenced code block) whose own character count exceeds the size budget
 - **WHEN** the splitter processes the heading's body
 - **THEN** the non-splittable block appears in exactly one chunk in its entirety, that chunk's `char_count` MAY exceed the size budget, and no other chunk contains any portion of that block
+
+#### Scenario: Over-budget paragraph with an inline construct is kept whole
+
+- **GIVEN** a heading whose body is a single paragraph that exceeds the size budget and contains an inline link, image, code span, or math span
+- **WHEN** the splitter processes the heading's body
+- **THEN** the splitter emits one chunk preserving the inline construct intact, that chunk's `char_count` MAY exceed the size budget, and the construct is not split across chunks
 
 ### Requirement: Defined behavior for heading-path edge cases
 

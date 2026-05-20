@@ -1,0 +1,27 @@
+"""Document-structure chunking for converted Markdown artifacts.
+
+This package implements the foundational splitter described by the chunking spec
+(``.specs/specs/chunking/spec.md``). It turns an already-normalized Markdown
+artifact into ordered, deterministically-identified structural chunks suitable
+for downstream embedding and retrieval.
+
+Public surface:
+
+- :func:`split` — the deterministic, pure splitter entry point.
+- :class:`Chunk` — the immutable chunk data model.
+- :data:`SPLITTER_VERSION` — the splitter's behavior version.
+- :data:`DEFAULT_SIZE_BUDGET` — the calibrated default per-chunk character budget.
+"""
+
+from __future__ import annotations
+
+from aizk.chunking._version import DEFAULT_SIZE_BUDGET, SPLITTER_VERSION
+from aizk.chunking.datamodel import Chunk
+from aizk.chunking.splitter import split
+
+__all__ = [
+    "DEFAULT_SIZE_BUDGET",
+    "SPLITTER_VERSION",
+    "Chunk",
+    "split",
+]

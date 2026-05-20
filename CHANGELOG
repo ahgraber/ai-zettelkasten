@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Chunking splitter foundation (`aizk.chunking`): document-structure splitter, chunk data model, deterministic identity
+
+---
+
 ## [0.1.3] - 2026-05-18
 
 ### Added

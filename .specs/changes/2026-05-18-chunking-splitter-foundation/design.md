@@ -20,25 +20,38 @@ Constraints shaping the design:
 
 ### Decision: Markdown parser
 
-**Chosen:** [`markdown-it-py`](https://github.com/executablebooks/markdown-it-py) with the frontmatter plugin.
+**Chosen:** [`markdown-it-py`](https://github.com/executablebooks/markdown-it-py) on the CommonMark preset, with the GFM `table` rule enabled, the `dollarmath` plugin (`$$` math blocks), and the YAML frontmatter plugin.
+TOML (`+++`) frontmatter is detected by a small leading-fence check in the splitter (the frontmatter plugin recognizes only `---`).
 
 **Rationale:**
+
+- **The non-splittable block contract requires the parser to recognize those blocks.**
+  The spec keeps tables and math blocks whole; under bare CommonMark a pipe table tokenizes as a paragraph and `$$` math as a paragraph, so the over-budget paragraph path would split them across chunks.
+  Enabling the `table` rule and `dollarmath` makes them emit `table_open` / `math_block` tokens, which the block classifier maps to non-splittable — the only way to honor the contract without hand-rolling block detection.
+
+- **TOML frontmatter is part of the contract.**
+  The spec admits YAML _or_ TOML frontmatter; the frontmatter plugin only handles `---`, so a leading `+++ … +++` block is detected directly and emitted as a frontmatter chunk, preventing heading-shaped lines inside it from being read as section boundaries.
 
 - **Code-block false positives are a real bug class, not a rare edge case.**
   Any fenced code block containing a `#`-prefixed line at column 0 (Python comments, shell scripts, C preprocessor, Markdown about Markdown) reads as a level-1 heading to a naïve `#{1,6}\s+` regex.
   Pre-masking fenced code regions before scanning is the first step of writing a Markdown block parser; doing so honestly (also handling blockquote continuation, list continuation, indented code, setext headings, math blocks, HTML blocks, frontmatter ambiguity) reproduces `markdown-it-py` poorly.
+
 - **Source maps come for free.**
   Each token carries `.map = [line_start, line_end]`; the splitter resolves these to character offsets directly.
   A regex approach must track positions through mask/unmask round-trips and across multiple passes, which is silently wrong until a test pins it.
+
 - **Pure-Python with negligible transitive surface.**
   Dependency is ~200 KB, transitive surface = `mdurl`, no build tooling.
   The proposal's "no third-party splitter" intent is directed at LangChain / LlamaIndex (framework gravity); a small CommonMark parser is not in the same category.
+
 - **The frontmatter plugin removes a real ambiguity.**
   YAML frontmatter contains `#` (YAML comment syntax) that the splitter must not confuse with headings.
   A typed frontmatter token eliminates the hand-rolled detection.
+
 - **Picking once is cheaper than swapping later.**
   If the splitter ships with regex and later swaps to a parser, `splitter_version` bumps and every `chunk_id` changes — embeddings, contextualizations, and graph all re-run from scratch.
   The whole point of the chunk-identity design is to make content changes cheap, not mechanism changes.
+
 - **Docling output is heuristic.**
   Docling makes its own decisions about heading detection, table structure, and code-vs-text discrimination from PDF/HTML inputs.
   "Clean Markdown out" is a bet, not a guarantee; the parser is what makes the splitter robust to that bet being wrong.
@@ -182,18 +195,24 @@ Chunks under different `heading_path` values restart their `ordinal` at 0.
 **Chosen:** When a single paragraph exceeds the size budget, the splitter applies sentence-level fallback using `chonkie`'s `SentenceChunker` configured to the same character budget.
 If a single sentence still exceeds the budget, the sentence is emitted as one chunk that exceeds the budget; this is logged as a structured warning but is not a hard error.
 
+A paragraph that carries an inline construct (`link_open`, `image`, `code_inline`, or `math_inline`) is exempted from sentence fallback and emitted whole (over budget, with a structured warning).
+`SentenceChunker` splits on sentence punctuation with no awareness of Markdown, and markdown-it exposes no source offsets for inline children, so a split point can land inside a link/image/code/math span and produce a dangling `](url)` or half a code span.
+The presence of such a construct is detectable by inline token type (no offsets needed), so the paragraph is treated as non-splittable rather than risk emitting broken Markdown.
+
 **Rationale:**
 
 - The spec contract permits over-budget chunks only for non-splittable blocks.
   Sentence fallback closes the gap for splittable paragraphs that paragraph-level splitting cannot satisfy on its own.
 - `chonkie` is already permitted as an internal primitive and avoids hand-rolling sentence boundary detection.
 - The single-sentence overflow case is a known degenerate input (e.g., a 5000-character sentence with no internal punctuation); accepting graceful degradation here is preferable to mid-word splitting, which would produce non-meaningful chunks.
+- Bare URLs and autolinks survive sentence fallback already (no period-space inside them); the inline-construct guard covers the cases that do not — links, images, code spans, and inline math whose visible text contains sentence punctuation.
 
 **Alternatives considered:**
 
 - Word-level fallback: produces semantically poor chunks; rejected.
 - Reject documents with oversize sentences: too aggressive for a personal-corpus tool.
 - Hand-rolled sentence splitter: reinvents `chonkie`'s primitive.
+- Inline-construct-aware boundary snapping: would require regex-scanning paragraphs for Markdown inline syntax (markdown-it gives no inline offsets) — the same hand-rolled inline parsing rejected for block detection; the token-type guard achieves safety without it, at the cost of leaving those rare paragraphs over budget.
 
 ### Decision: `splitter_version` as monotonic integer
 
