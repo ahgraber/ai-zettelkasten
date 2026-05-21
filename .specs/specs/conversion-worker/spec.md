@@ -231,6 +231,20 @@ The `KarakeepBookmarkResolver` SHALL preserve the existing resolution precedence
 (Unchanged in behavior.
 Relocated: this behavior is now provided by the `GithubReadmeFetcher` content-fetcher adapter, invoked when the resolver chain produces a `GithubReadmeRef`.)
 
+The `GithubReadmeFetcher` SHALL extract the repository owner and name from a GitHub URL and fetch the README from the default branch, preferring Markdown over reStructuredText over plain text.
+
+#### Scenario: GitHub README fetched and converted
+
+- **GIVEN** a `GithubReadmeRef` for a bookmark with a valid repository URL
+- **WHEN** the `GithubReadmeFetcher` fetches the README
+- **THEN** the README content is fetched from the default branch and converted to Markdown
+
+#### Scenario: GitHub repository with no README fails permanently
+
+- **GIVEN** a `GithubReadmeRef` whose repository has no README file
+- **WHEN** the `GithubReadmeFetcher` attempts to fetch the README
+- **THEN** the job is marked permanently failed
+
 ### Requirement: Convert documents to Markdown and extract figures
 
 The system SHALL convert each source document to Markdown and extract figures by invoking the converter resolved for the job's content type and the deployment's configured converter name.
@@ -247,6 +261,33 @@ Converter-specific behavior (picture classification, figure enrichment, serializ
 - **GIVEN** the `DoclingConverter` is invoked for a PDF with picture classification enabled
 - **WHEN** conversion completes
 - **THEN** figure descriptions and classification annotations are present in the output, as before, without the orchestrator having knowledge of these adapter-specific behaviors
+
+### Requirement: Route figure-description prompts by classification label
+
+When picture classification is enabled and a picture-description endpoint is configured, the `DoclingConverter`'s post-conversion enrichment pass SHALL select each figure's description by its classification label: chart-type figures receive chart summaries, table-type figures receive tabular-form descriptions, and all other or unclassified figures receive generic alt-text.
+Each resulting description SHALL be injected as a `PictureDescriptionData` annotation.
+Whether this routing runs at all is governed by the configuration in "Load picture classification configuration from environment".
+
+#### Scenario: Chart figure described with chart2summary prompt
+
+- **GIVEN** a PDF figure is classified as a chart type by `DocumentFigureClassifier`
+- **WHEN** the post-conversion enrichment pass runs
+- **THEN** the enrichment loop calls the VLM with a `<chart2summary>` prompt for that figure
+- **AND** the resulting description is injected as a `PictureDescriptionData` annotation
+
+#### Scenario: Table-image figure described with tables_html prompt
+
+- **GIVEN** a PDF figure is classified as a table type by `DocumentFigureClassifier`
+- **WHEN** the post-conversion enrichment pass runs
+- **THEN** the enrichment loop calls the VLM with a `<tables_html>` prompt for that figure
+- **AND** the resulting description is injected as a `PictureDescriptionData` annotation
+
+#### Scenario: Unclassified or photo figure uses generic prompt
+
+- **GIVEN** a PDF figure has no classification label, or is classified as photograph/logo/other
+- **WHEN** the post-conversion enrichment pass runs
+- **THEN** the enrichment loop calls the VLM with the existing generic alt-text prompt
+- **AND** the resulting description is injected as a `PictureDescriptionData` annotation
 
 ### Requirement: Serialize Markdown output with figure annotations
 
