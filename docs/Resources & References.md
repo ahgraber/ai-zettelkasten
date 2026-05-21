@@ -168,6 +168,7 @@ If building a concept graph, it would be useful to be able to use it as a human 
 - [microsoft/Ontology-Playground: Free, open-source web app for learning about ontologies and Microsoft Fabric IQ. Explore a catalogue of pre-built ontologies, design your own visually, export as RDF/XML, and share interactive diagrams. Zero backend, fully st](https://github.com/microsoft/Ontology-Playground)
 - [ThHanke/ontosphere: Browser-based RDF/ontology knowledge graph editor with OWL-RL reasoning, multi-algorithm layout, and MCP integration](https://github.com/ThHanke/ontosphere)
 - [Hawksight-AI/semantica: Semantica 🧠 — AI-native knowledge graph intelligence framework for semantic retrieval, ontology reasoning, context graphs, and explainable AI systems.](https://github.com/Hawksight-AI/semantica)
+- [Do You Need An Upper Ontology?](https://ontologist.substack.com/p/do-you-need-an-upper-ontology) and [What a Modern Ontology Stack Actually Looks Like](https://ontologist.substack.com/p/what-a-modern-ontology-stack-actually)
 
 ## graphrag
 
