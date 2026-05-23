@@ -17,7 +17,7 @@ Under sustained load, the job queue grows without bound — clients receive no s
 **Out of scope:**
 
 - Litestream write topology documentation (separate concern)
-- Replacing SQLite-as-queue with a dedicated queue system (ADR-008 scope)
+- Replacing SQLite-as-queue with a dedicated queue system (ADR-009 scope)
 - Worker-side concurrency changes (already implemented)
 - Rate limiting or per-client throttling
 

@@ -1,4 +1,4 @@
-# 007 - Indexing, Search, and Retrieval
+# 008 - Indexing, Search, and Retrieval
 
 ## Status
 
@@ -18,7 +18,8 @@ Accepted
 
 ### Selected Approach
 
-Adopt ColBERT-style late-interaction retrieval using PyLate, defaulting to the Voyager (HNSW) index and optionally FastPLAID for compressed multi-vector storage. Documents will be chunked, encoded into token-level embeddings, indexed with multi-vector support, and queried via MaxSim scoring.
+Adopt ColBERT-style late-interaction retrieval using PyLate, defaulting to the Voyager (HNSW) index and optionally FastPLAID for compressed multi-vector storage.
+Documents will be chunked, encoded into token-level embeddings, indexed with multi-vector support, and queried via MaxSim scoring.
 
 ### Rationale
 
@@ -91,6 +92,8 @@ Adopt ColBERT-style late-interaction retrieval using PyLate, defaulting to the V
 - [003 - Database](./003-database.md)
 - [004 - Model Provider (Framework)](./004-model-provider.md)
 - [005 - Chunking](./005-chunking.md)
+- [006 - Graph Construction and Entity Canonicalization](./006-graph-construction-entity-canonicalization.md)
+- [007 - Embedding](./007-embedding.md)
 
 <!-- Reference numbers of related decisions
 Links to dependent or impacted architectural decisions -->
