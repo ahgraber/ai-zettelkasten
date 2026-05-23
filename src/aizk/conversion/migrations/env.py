@@ -8,6 +8,7 @@ from sqlmodel import SQLModel, create_engine
 
 import aizk.conversion.datamodel  # noqa: F401 — registers models on SQLModel.metadata
 from aizk.conversion.utilities.config import ConversionConfig
+import aizk.pipeline  # noqa: F401 — registers pipeline_runs / pipeline_events on the shared metadata
 
 target_metadata = SQLModel.metadata
 
