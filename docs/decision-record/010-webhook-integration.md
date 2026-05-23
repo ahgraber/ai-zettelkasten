@@ -1,4 +1,4 @@
-# 009 - Karakeep Webhook Integration
+# 010 - Karakeep Webhook Integration
 
 ## Status
 
@@ -6,15 +6,20 @@ December 29, 2025 - Proposed
 
 ## Context
 
-Karakeep provides user-configurable outbound webhooks that fire on bookmark lifecycle events (created, changed, crawled). Webhook payloads include `jobId`, `type` (e.g., `link`), `bookmarkId`, `userId`, `url`, and `operation`, and are delivered as JSON over HTTP POST. Authentication uses `Authorization: Bearer <WEBHOOK_TOKEN>`. Delivery behavior is governed by `WEBHOOK_TIMEOUT_SEC`, `WEBHOOK_RETRY_TIMES`, and `WEBHOOK_NUM_WORKERS`.
+Karakeep provides user-configurable outbound webhooks that fire on bookmark lifecycle events (created, changed, crawled).
+Webhook payloads include `jobId`, `type` (e.g., `link`), `bookmarkId`, `userId`, `url`, and `operation`, and are delivered as JSON over HTTP POST.
+Authentication uses `Authorization: Bearer <WEBHOOK_TOKEN>`.
+Delivery behavior is governed by `WEBHOOK_TIMEOUT_SEC`, `WEBHOOK_RETRY_TIMES`, and `WEBHOOK_NUM_WORKERS`.
 
-AI Zettelkasten needs to submit ingestion/conversion jobs when new or updated bookmarks arrive. Polling Karakeep's API would add latency and load, while webhooks provide near-real-time triggers with minimal traffic.
+AI Zettelkasten needs to submit ingestion/conversion jobs when new or updated bookmarks arrive.
+Polling Karakeep's API would add latency and load, while webhooks provide near-real-time triggers with minimal traffic.
 
 ## Decision
 
 ### Selected Approach
 
-Accept Karakeep webhook callbacks and translate them into internal job submissions. Expose a dedicated HTTP endpoint that validates the bearer token, enforces idempotency using `jobId` + `operation`, and enqueues a downstream conversion/ingestion job for bookmark URLs.
+Accept Karakeep webhook callbacks and translate them into internal job submissions.
+Expose a dedicated HTTP endpoint that validates the bearer token, enforces idempotency using `jobId` + `operation`, and enqueues a downstream conversion/ingestion job for bookmark URLs.
 
 ### Rationale
 
@@ -80,10 +85,10 @@ Accept Karakeep webhook callbacks and translate them into internal job submissio
 
 ## Related ADRs
 
-- [008-orchestration.md](008-orchestration.md): Webhook handler hands off to Prefect-managed ingestion flows.
+- [009-orchestration.md](009-orchestration.md): Webhook handler hands off to the SQLite-backed ingestion queue.
 - [001-content-archiving.md](001-content-archiving.md): Ingestion triggers downstream archiving and conversion pipelines.
 
 ## Additional Notes
 
-- Karakeep webhook docs: https://docs.karakeep.app/configuration/#webhook-configs
+- Karakeep webhook docs: <https://docs.karakeep.app/configuration/#webhook-configs>
 - Environment toggles: `WEBHOOK_TIMEOUT_SEC`, `WEBHOOK_RETRY_TIMES`, `WEBHOOK_NUM_WORKERS`, `WEBHOOK_TOKEN`.

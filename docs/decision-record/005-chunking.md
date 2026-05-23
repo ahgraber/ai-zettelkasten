@@ -239,5 +239,6 @@ Where contextualization, coreference, and graph enrichment slot in is left to th
 
 - [002 - Content Parsing](./002-content-parsing.md)
 - [004 - Model Provider (Framework)](./004-model-provider.md)
-- [006 - Embedding](./006-embedding.md)
-- [007 - Indexing, Search, Retrieval](./007-index-search-retrieval.md)
+- [006 - Graph Construction and Entity Canonicalization](./006-graph-construction-entity-canonicalization.md)
+- [007 - Embedding](./007-embedding.md)
+- [008 - Indexing, Search, Retrieval](./008-index-search-retrieval.md)

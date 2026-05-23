@@ -1,4 +1,4 @@
-# 006 - Embedding
+# 007 - Embedding
 
 ## Status
 
@@ -93,7 +93,8 @@ Links to dependent or impacted architectural decisions -->
 
 - [004 - Model Provider (Framework)](./004-model-provider.md)
 - [005 - Chunking](./005-chunking.md)
-- [007- Indexing, Search, Retrieval](./007-index-search-retrieval.md)
+- [006 - Graph Construction and Entity Canonicalization](./006-graph-construction-entity-canonicalization.md)
+- [008 - Indexing, Search, Retrieval](./008-index-search-retrieval.md)
 
 ## Additional Notes
 

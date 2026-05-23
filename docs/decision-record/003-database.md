@@ -303,4 +303,4 @@ The migration path is straightforward: SQLModel/SQLAlchemy schemas map to Postgr
 ## Related ADRs
 
 - [005 - Chunking](./005-chunking.md)
-- [007 - Indexing, Search, Retrieval](./007-index-search-retrieval.md)
+- [008 - Indexing, Search, Retrieval](./008-index-search-retrieval.md)
