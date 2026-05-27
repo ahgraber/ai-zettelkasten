@@ -60,6 +60,7 @@ class PipelineRun(SQLModel, table=True):
             "scope_key",
             unique=True,
             sqlite_where=text("status = 'active'"),
+            postgresql_where=text("status = 'active'"),
         ),
         Index("ix_pipeline_runs_stage_scope_key", "stage", "scope_key"),
     )
