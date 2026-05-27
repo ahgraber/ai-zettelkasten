@@ -24,6 +24,7 @@ from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.run import PipelineRun
 
 _MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "src" / "aizk" / "conversion" / "migrations"
+_PIPELINE_MIGRATION = _MIGRATIONS_DIR / "versions" / "d0e1f2a3b4c5_add_pipeline_runs_and_events.py"
 
 _PIPELINE_REVISION = "d0e1f2a3b4c5"
 _PREV_REVISION = "a8c9d0e1f2b3"
@@ -96,6 +97,17 @@ def test_pipeline_active_run_partial_unique_index_present(tmp_path: Path) -> Non
     assert active_idx is not None, "partial unique index missing"
     assert bool(active_idx["unique"]) is True
     assert sorted(active_idx["column_names"]) == ["scope_key", "stage"]
+
+
+def test_pipeline_active_run_index_keeps_postgres_predicate() -> None:
+    """The active-run index predicate is declared for SQLite and Postgres."""
+    active_idx = next(i for i in PipelineRun.__table__.indexes if i.name == "uq_pipeline_runs_active_scope")
+    assert str(active_idx.dialect_options["sqlite"]["where"]) == "status = 'active'"
+    assert str(active_idx.dialect_options["postgresql"]["where"]) == "status = 'active'"
+
+    migration_text = _PIPELINE_MIGRATION.read_text()
+    assert "sqlite_where=sa.text(\"status = 'active'\")" in migration_text
+    assert "postgresql_where=sa.text(\"status = 'active'\")" in migration_text
 
 
 def _insert_run(conn, *, status: str, fingerprint: str) -> None:

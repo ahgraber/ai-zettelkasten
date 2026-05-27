@@ -68,6 +68,7 @@ def upgrade() -> None:
         ["stage", "scope_key"],
         unique=True,
         sqlite_where=sa.text("status = 'active'"),
+        postgresql_where=sa.text("status = 'active'"),
     )
 
     op.create_table(
