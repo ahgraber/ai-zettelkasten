@@ -26,7 +26,7 @@ Expose a dedicated HTTP endpoint that validates the bearer token, enforces idemp
 - Push model eliminates polling and reduces latency between bookmark creation and ingestion.
 - `jobId` supplied by Karakeep enables idempotent processing and safe retries.
 - Simple bearer validation aligns with Karakeep's webhook contract; no custom signing required.
-- Fits existing Prefect-based orchestration by handing off to a background queue quickly, keeping the webhook response path fast (< timeout).
+- Fits the existing SQLite-backed job queue by handing off to it quickly, keeping the webhook response path fast (< timeout).
 
 ### Consequences
 
@@ -46,7 +46,7 @@ Expose a dedicated HTTP endpoint that validates the bearer token, enforces idemp
 
 - Store `WEBHOOK_TOKEN` securely; validate `Authorization` header on every request.
 - Persist processed (`jobId`, `operation`) pairs to ignore duplicates; design handlers to be idempotent.
-- Acknowledge quickly (HTTP 200) and offload work to a queue/Prefect task; return 503 on persistent enqueue failures to allow Karakeep retries.
+- Acknowledge quickly (HTTP 200) and offload work by enqueuing a job; return 503 on persistent enqueue failures to allow Karakeep retries.
 - Optional IP allowlist or proxy isolation if deployed publicly.
 
 ### Alternatives Considered
@@ -79,7 +79,7 @@ Expose a dedicated HTTP endpoint that validates the bearer token, enforces idemp
   - On `operation` in {`created`, `crawled`}: enqueue ingestion/conversion job for `url` (and associate `bookmarkId`, `userId`).
   - On other operations: log and optionally no-op until mapped.
 - **Response policy**: Return 200 once the enqueue succeeds; return 401 on auth failure; 400 on bad payload; 503 on enqueue/storage failure to trigger Karakeep retry.
-- **Timeout**: Keep handler under `WEBHOOK_TIMEOUT_SEC` by offloading to background queue/Prefect.
+- **Timeout**: Keep handler under `WEBHOOK_TIMEOUT_SEC` by enqueuing the job to the background queue.
 - **Observability**: Log receipt and outcome (including `jobId`, `bookmarkId`, `operation`); add metrics for success/failure/latency.
 - **Security**: Run behind TLS; optionally restrict source IPs; avoid logging secrets.
 
