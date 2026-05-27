@@ -80,21 +80,22 @@ The operator-UI scaffold and the adapter-composition / resolver-chain generaliza
 
 ## ADR
 
-The architectural decision (a shared pipeline-stage runtime/framework) is captured as an ADR, treated here as a design/brainstorming pass rather than a separate gate: extend `docs/decision-record/009-orchestration.md` (orchestration is the runtime's nearest neighbor) or add a dedicated stage-runtime ADR that 009 references.
-Draft the ADR as part of this change's `design.md` work.
+The architectural decision is recorded as an addendum to `docs/decision-record/009-orchestration.md` (orchestration is the runtime's nearest neighbor).
+The ADR keeps the current decision unchanged — no external orchestrator now — and narrows the migration trigger to named missing primitives rather than general workflow complexity.
 
-## Open Questions
+## Resolved Questions
 
-Decided: **scope** is the core primitives (UI and resolver-chain generalization deferred, above); **spec approach** is additive + a final reconcile task (above); **package home** is `aizk.pipeline` (above).
+Decided: **scope** is the core primitives (UI and resolver-chain generalization deferred, above); **spec approach** is additive + a final reconcile task (above); **package home** is `aizk.pipeline` (above); **ADR home** is an ADR-009 addendum.
 Settled in `design.md`:
 
 - **Repository protocol responsibilities.**
-  What the stage-supplied adapter/repository owns vs. what the harness owns: dependency validation, work-unit discovery/claim shape, result→terminal-outcome mapping, retryability classification, cancellation hooks, resource cleanup, timeout config, and run `scope_key`.
-  The seam must be pinned before implementation.
+  The harness is the current embedded engine implementation, not a universal engine-neutral seam.
+  Engine-owned responsibilities are work discovery, claim/lease, eligibility ordering, retry scheduling, timeout/cancel/drain, and stale recovery.
+  Stage-owned responsibilities are dependency validation, unit-of-work execution, result→terminal-outcome mapping, retryability classification, transient cleanup, declared timeout/concurrency needs, status/event projection writes, and run `scope_key`.
 - **Stage-run primitive shape — determinism asymmetry.**
-  Whether the primitive offers both a run-membership mode (content-addressed rows, e.g. chunking) and a run-scoped-id mode (model-dependent rows, e.g. mentions), or leaves row-identity scoping to the adapter.
+  Row-identity scoping is left to the adapter: deterministic artifacts may use content-addressed IDs + membership rows; model/config-dependent artifacts use generation-scoped IDs.
 - **Transition events: shared table vs per-stage + union view.**
-  Cross-stage progress must be resolvable by source identity; whether that is one `pipeline_events` table or per-stage event tables behind a union view affects schema/migrations.
+  Cross-stage progress uses one shared `pipeline_events` table keyed by source identity.
 - **Migration-tree placement.**
   The runtime's run/event tables relative to the conversion migration tree and the graph tables `chunk-persistence-contextualization` added (which chose the shared conversion DB).
-  Design decision.
+  The conversion Alembic tree owns all tables in one linear migration history because ADR-003 keeps one SQLite database and one metadata/parity surface.

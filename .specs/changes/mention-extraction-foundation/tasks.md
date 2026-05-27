@@ -32,6 +32,7 @@
 - [ ] Test `::test_cooccurrence_pair_mutual`, `::test_singleton_no_cooccurrence`, `::test_cross_chunk_no_cooccurrence`. **[EE3 — pair / singleton / cross-chunk partition]**
 - [ ] Test `::test_equal_surface_equal_blocking_keys` and `::test_blocking_keys_reproducible`. **[EE4]**
 - [ ] Test `::test_extracts_from_variant_when_available` and `::test_falls_back_to_raw`. **[EE5 — available / absent partition]**
+- [ ] Test `::test_substitute_extractor_drives_run_unchanged` and `::test_all_extractor_calls_through_single_access_point`: a deterministic substitute extractor supplied through the injected interface produces the run's mentions and co-occurrences with no change to stage logic or to record shape/spans/provenance; a recording stub observes every extractor invocation and the stage makes none outside the access point. **[EE7 — substitutable extractor]**
 
 ## Run-mode entry points
 

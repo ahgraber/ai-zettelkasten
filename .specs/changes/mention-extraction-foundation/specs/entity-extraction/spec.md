@@ -102,3 +102,21 @@ Run mode SHALL affect only batching and scheduling, never which mentions or co-o
 - **GIVEN** a chunk extracted in bulk/backfill mode and the same chunk extracted in incremental mode within runs of the same versions and inputs
 - **WHEN** the persisted mentions and their co-occurrences are compared
 - **THEN** both yield the same mentions (equal `source_occurrence_key`s) and the same co-occurrence links
+
+### Requirement: The entity extractor is a substitutable dependency
+
+Extraction SHALL access the extractor that identifies entity mentions as a substitutable dependency reached through a single access point.
+A substitute extractor — for example, a deterministic test double returning known spans — SHALL be usable in place of the production extractor without changing extraction's logic or any other requirement in this spec.
+Every extractor invocation the stage makes SHALL pass through that single access point.
+
+#### Scenario: A substitute extractor is used without changing stage logic
+
+- **GIVEN** a deterministic substitute extractor supplied in place of the production extractor
+- **WHEN** extraction processes a chunk
+- **THEN** the mentions and co-occurrences are produced using the substitute, with no change to extraction logic and with the record shape, spans, and provenance the other requirements specify
+
+#### Scenario: Every extractor invocation passes through the single access point
+
+- **GIVEN** extraction configured with an extractor that records each invocation it receives
+- **WHEN** a set of chunks is processed
+- **THEN** every extractor invocation the stage makes is observed at that access point, and the stage performs none outside it

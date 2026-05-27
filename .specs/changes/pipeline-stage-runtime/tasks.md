@@ -15,6 +15,10 @@
 - [x] Test `tests/pipeline/test_transitions.py::test_events_resolvable_by_source_across_stages`. **[R: cross-stage source identity]**
 - [x] Test `tests/pipeline/test_lifecycle.py::test_single_terminal_outcome_classified` and `::test_only_retryable_eligible`. **[R: generic lifecycle + retry classification]**
 - [x] Test `tests/pipeline/test_migrations.py`: migrated schema structurally equivalent to the ORM baseline. **[schema fidelity]**
+- [x] **(portability correction — W1)** The active-run partial unique index is declared with `sqlite_where` only ([run.py:62](../../../src/aizk/pipeline/run.py#L62) and `migrations/versions/d0e1f2a3b4c5_*.py`), so on any non-SQLite dialect SQLAlchemy silently drops the `status='active'` predicate and the index degrades to a **full** unique on `(stage, scope_key)` — which forbids a superseded row coexisting with a new active one, breaking supersession on the Postgres engines ADR-009 names as cheapest next steps (procrastinate/absurd).
+  Add `postgresql_where=text("status = 'active'")` alongside `sqlite_where` in both `run.py` and the Alembic migration so the "≤1 active per `(stage, scope_key)`" invariant is dialect-agnostic (defensive zero-risk fix; full Postgres test deferred under ADR-003's SQLite-only target).
+  Re-run `tests/pipeline/test_run_primitive.py` + `test_migrations.py` to confirm SQLite behavior is unchanged.
+  See [orchestration-flex-exploration.md](orchestration-flex-exploration.md) (W1).
 
 ## Harness over the repository protocol
 
@@ -36,9 +40,9 @@
 > This group is surgery, not file moves. The harness logic in `workers/` is interleaved with the conversion unit-of-work; carve the unit-of-work into the adapter **before** moving the loop. Sub-steps below capture the known hazards from the implementability review.
 
 - [ ] **(carve-out, do first)** Extract the conversion unit-of-work from `orchestrator.py` (`process_job_supervised`, the upload phases / `UPLOAD_PENDING` transition, source-enrichment, `SubprocessMetadata` parsing) into `ConversionStageRepository.execute`/`finalize`, so the generic loop has a clean adapter to call.
-      The orchestrator today is shell + unit-of-work fused; this is the substantial step.
+  The orchestrator today is shell + unit-of-work fused; this is the substantial step.
 - [ ] Implement `ConversionStageRepository` over `ConversionJob`, mapping conversion statuses onto the generic lifecycle: `UPLOAD_PENDING` stays a conversion-private status mapped to generic `running` (the harness never sees a "running sub-state"); conversion's timeout maps to generic `failed`/retryable (preserving today's `FAILED_RETRYABLE`-on-timeout behavior — conversion exercises only a subset of the generic terminal set); `NEW` remains never-committed.
-      Keep owner-scoped idempotency, source-ref, upload phases, and output links in `aizk.conversion`.
+  Keep owner-scoped idempotency, source-ref, upload phases, and output links in `aizk.conversion`.
 - [ ] **(hazard F5)** Preserve the per-site `attempt` semantics and the `(aizk_uuid, attempt)` snapshot taken at supervision entry (API submit `attempt=0` with `from_status=None`; claim = post-increment; cancel = no-increment) when routing transitions through the generic helper, so retry-history scenarios stay green.
 - [ ] Route conversion status transitions through the shared `record_transition` helper and relocate `conversion_job_events` into `pipeline_events` (Alembic migration), genericizing the typed columns per `design.md` § PipelineEventsGenericSchema.
 - [ ] **(hazard F3)** Convert the module-global shutdown state (`workers/shutdown.py` `_shutdown_event`/`_signal_count`) into per-harness-instance state, preserving the `os._exit` force-exit-bypasses-pool-join behavior; signals stay process-wide but drain bookkeeping is per-instance (so two stages can share a process).
@@ -55,4 +59,4 @@
 ## Documentation / decision record
 
 - [ ] Add `src/aizk/pipeline/README.md` documenting the primitives (harness, repository protocol, run primitive, transition helper, lifecycle/state machine) and how a stage consumes them.
-- [ ] Record the primitives decision as an addendum to `docs/decision-record/009-orchestration.md` (brainstorming/design pass; may lag the specs).
+- [x] Record the primitives decision as an addendum to `docs/decision-record/009-orchestration.md` (brainstorming/design pass; may lag the specs).

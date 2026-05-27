@@ -87,3 +87,21 @@ Run mode SHALL affect only batching and scheduling, never which records are prod
 - **GIVEN** a single document ingested incrementally
 - **WHEN** its summary and variant records are inspected
 - **THEN** they carry the same record shape, provenance, and input fingerprint that bulk processing of that document would produce
+
+### Requirement: The contextualization model is a substitutable dependency
+
+Contextualization SHALL access the model that produces the document summary and the contextualized variants as a substitutable dependency reached through a single access point.
+A substitute model — for example, a deterministic test double — SHALL be usable in place of the production model without changing contextualization's logic or any other requirement in this spec.
+Every model invocation the stage makes SHALL pass through that single access point.
+
+#### Scenario: A substitute model is used without changing stage logic
+
+- **GIVEN** a deterministic substitute model supplied in place of the production model
+- **WHEN** contextualization processes a document and its chunks
+- **THEN** the run's summary and contextualized variants are produced using the substitute, with no change to contextualization logic and with the record shape and provenance the other requirements specify
+
+#### Scenario: Every model invocation passes through the single access point
+
+- **GIVEN** contextualization configured with a model that records each invocation it receives
+- **WHEN** a document and its chunks are processed
+- **THEN** every model invocation the stage makes is observed at that access point, and the stage performs none outside it

@@ -77,7 +77,7 @@ For multi-step tasks, state a brief plan defining the step task and associated v
 ## Defaults
 
 - Review available skills for relevance before writing code.
-- If intermediate, user-aligned work is needed before final output, surface in ._scratch/.
+- If intermediate, user-aligned work is needed before final output, surface in `._scratch/`.
 - If worktrees are warranted use a local .worktrees/ directory.
 - Use descriptive, consistent naming conventions.
 - Write docstrings or comments for public contracts and non-obvious behavior.
@@ -102,6 +102,48 @@ For multi-step tasks, state a brief plan defining the step task and associated v
 - Code review checks for reproducibility (pinned deps, seeded operations), privacy adherence, and observability hooks (structured logs + metrics).
 - Techstack/tooling choices for external services or internal frameworks MUST reference an ADR in `docs/decision-record/` or be manually overridden with references to other documents.
 - Significant architectural decisions MUST have an ADR.
+
+## Architecture Patterns
+
+Apply these patterns when designing or changing asynchronous jobs, processing stages, ingestion flows, derived artifacts, external-service integrations, or operator-facing runtime behavior.
+Keep them general: name the role a component plays, not the current stage that happens to use it.
+
+- Separate the **domain core** from the **orchestration engine**.
+  Domain code owns the unit of work, input/output contracts, validation, provenance, artifact writes, and outcome classification.
+  The engine owns work discovery, claim/lease, eligibility ordering, retry scheduling, concurrency, cancellation, timeout, draining, and stale-work recovery.
+- Treat the current in-process or database-backed runner as one engine implementation, not as a permanent framework.
+  Do not build an engine-neutral meta-framework.
+  If an outside orchestrator is adopted later, replace the engine layer and keep the domain contracts narrow enough to survive.
+- Prefer task-oriented units with explicit inputs and outputs.
+  A task should be a self-contained verb that does not assume a specific upstream caller, downstream consumer, execution order, or failure policy beyond its declared contract.
+- Keep orchestration state small and replayable.
+  Pass durable IDs, cursors, page references, and blob/object locations across boundaries; keep large payloads in the project-owned store and record their locations with metadata.
+- Version model-dependent or configuration-dependent derived state.
+  Record input fingerprints, producing versions, and generation/run identifiers; make produced rows immutable except for explicit lifecycle transitions; activate a new generation and retire the prior one atomically; plan compaction/retention before unbounded history becomes a storage problem.
+- Match identity to determinism.
+  Deterministic artifacts may use content-derived identities where ID churn is the invalidation signal.
+  Non-deterministic, model-dependent, or configuration-dependent artifacts should use generation-scoped identities or explicit membership rows.
+- Keep lifecycle, generation, provenance, and lineage as distinct mechanisms.
+  An active/superseded generation pointer is not a substitute for append-only lineage when identities can split, merge, or remain resolvable after retirement.
+- When an ADR names a future datastore, orchestrator, or runtime target, preserve invariants in that target's dialect or document the gap explicitly.
+  Do not let a current-backend implementation silently weaken a claimed migration path.
+- Co-commit state changes with the events that describe them when they are in the same datastore.
+  Treat event tables and status projections as product read models, not as a substitute for business state.
+  Operator surfaces should query project-owned projections, not an orchestrator's internal history.
+- Under an external workflow engine, assume at-least-once activity execution across the engine/application boundary.
+  Projection writes, artifact writes, and cleanup must be idempotent; do not rely on cross-store atomicity between the engine's progress marker and the application database.
+- Classify failures at the boundary where the stage understands them.
+  Retry at exactly one layer, prefer the cheapest safe retry layer, and map outcomes into a small generic lifecycle before the engine reasons about scheduling.
+- Bound fan-out with explicit concurrency/rate controls.
+  Execution concurrency is not write concurrency: keep commits short, batch writes by logical unit, and preserve the single-writer SQLite/Litestream assumption until an ADR changes it.
+- External provider clients must be injectable.
+  When more than one consumer can hit the same provider, share rate limits, budgets, caching, backoff, and observability through the injected client layer rather than constructing isolated clients inside tasks.
+- Use durable polling or pull-based repair by default.
+  Do not add pub/sub, global write-admission controllers, LLM gateways, or new orchestration services without a measured need, a named missing primitive, and an ADR.
+- Adopt new orchestration technology for a missing capability primitive, not for abstraction neatness.
+  Examples of valid triggers include durable signals, human approval waits, long sleeps, schedules with overlap policy, step checkpointing, or scale limits demonstrated by measurement.
+- Preserve a correlation spine across logs, events, metrics, and artifacts.
+  Include stable source identity, generation/run identity, component/task name, work-unit reference, attempt, and process identity where applicable.
 
 ## Governance Practices
 

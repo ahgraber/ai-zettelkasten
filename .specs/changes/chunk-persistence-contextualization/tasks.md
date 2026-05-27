@@ -30,6 +30,7 @@
 - [ ] Test `::test_variant_with_provenance_and_fingerprint`, `::test_changed_neighbor_supersedes_variant`, `::test_unchanged_inputs_no_duplicate_variant`. **[variant run — unchanged / changed-input partition]**
 - [ ] Test `::test_source_chunk_unchanged_after_contextualization`: chunk `text`/`content_hash`/`chunk_id` equal before and after; variant stored apart. **[source chunk never modified]**
 - [ ] Test `::test_variant_resolves_cross_chunk_reference`: a stub returning a reference-resolved variant is persisted and provenance-linked. **[self-contained — structural; quality dimension waived to offline eval, see design.md § Verification Waivers]**
+- [ ] Test `::test_substitute_model_drives_run_unchanged` and `::test_all_model_calls_through_single_access_point`: a deterministic substitute model supplied through the injected interface produces the run's summary and variants with no change to stage logic or to record shape/provenance; a recording stub observes every model invocation and the stage makes none outside the access point. **[model is a substitutable dependency]**
 
 ## Run-mode entry points
 
