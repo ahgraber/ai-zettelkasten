@@ -11,11 +11,14 @@ conversion migration suite.
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect
-from sqlmodel import SQLModel
+import pytest
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
+from sqlmodel import Session, SQLModel, select
 
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.run import PipelineRun
@@ -93,6 +96,70 @@ def test_pipeline_active_run_partial_unique_index_present(tmp_path: Path) -> Non
     assert active_idx is not None, "partial unique index missing"
     assert bool(active_idx["unique"]) is True
     assert sorted(active_idx["column_names"]) == ["scope_key", "stage"]
+
+
+def _insert_run(conn, *, status: str, fingerprint: str) -> None:
+    """Insert a pipeline_runs row for the fixed scope directly (bypassing record_run)."""
+    conn.execute(
+        text(
+            "INSERT INTO pipeline_runs (stage, scope_key, status, input_fingerprint,"
+            " version_stamps_json, created_at)"
+            " VALUES ('teststage', 'scope', :status, :fp, '{}', '2026-01-01T00:00:00')"
+        ),
+        {"status": status, "fp": fingerprint},
+    )
+
+
+def test_migrated_index_is_partial_not_full(tmp_path: Path) -> None:
+    """The migrated index admits many superseded runs but only one active run per scope.
+
+    A full unique index on (stage, scope_key) would pass the structural check
+    above yet reject a second superseded run — breaking the supersession model.
+    Exercising the predicate is the only way to tell a partial index from a full
+    one through the inspector, which reports both as ``unique``.
+    """
+    url = f"sqlite:///{tmp_path / 'predicate.db'}"
+    command.upgrade(_alembic_cfg(url), "head")
+    engine = create_engine(url)
+
+    # Multiple superseded runs for one scope coexist — the predicate exempts them.
+    with engine.connect() as conn:
+        _insert_run(conn, status="superseded", fingerprint="fp-1")
+        _insert_run(conn, status="superseded", fingerprint="fp-2")
+        _insert_run(conn, status="active", fingerprint="fp-3")
+        conn.commit()
+
+    # A second active run for the same scope violates the partial unique index.
+    with pytest.raises(IntegrityError), engine.connect() as conn:
+        _insert_run(conn, status="active", fingerprint="fp-4")
+        conn.commit()
+
+
+def test_migrated_schema_supports_event_orm_round_trip(tmp_path: Path) -> None:
+    """A PipelineEvent inserts and is queryable by aizk_uuid against the migrated schema."""
+    url = f"sqlite:///{tmp_path / 'events.db'}"
+    command.upgrade(_alembic_cfg(url), "head")
+    engine = create_engine(url)
+
+    source = uuid4()
+    with Session(engine) as session:
+        session.add(
+            PipelineEvent(
+                stage="conversion",
+                work_unit_ref="job:1",
+                aizk_uuid=source,
+                from_status=None,
+                to_status="running",
+                kind="origin",
+                payload_json="{}",
+            )
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        rows = list(session.exec(select(PipelineEvent).where(PipelineEvent.aizk_uuid == source)))
+        assert len(rows) == 1, "event is queryable by its source identity"
+        assert rows[0].aizk_uuid == source
 
 
 def test_pipeline_revision_downgrade_drops_only_pipeline_tables(tmp_path: Path) -> None:
