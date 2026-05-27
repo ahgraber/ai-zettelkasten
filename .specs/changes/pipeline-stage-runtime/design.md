@@ -50,13 +50,16 @@ This is the Rule-of-Three discipline: extract the proven seam (the harness), not
 
 ### Decision: StageRepositoryAndAdapterResponsibilities
 
-**Chosen:** The seam splits cleanly.
-The **harness owns**: the claim/lease loop, concurrency bound, eligibility/submission ordering, signal handling + graceful drain, wall-clock timeout enforcement, graceful-before-forceful termination, stale-unit recovery scheduling, transition co-commit, and observability.
-The **stage adapter/`StageRepository` owns**: startup dependency validation, work-unit discovery + claim shape over its store, the unit-of-work execution, mapping its execution result to a generic terminal outcome + retryable/permanent classification, cancellation hooks, transient-resource cleanup, timeout configuration, and the run `scope_key`.
+**Chosen:** The seam is narrow, but not engine-neutral method-by-method.
+The **harness is the current orchestration engine implementation**: it owns work discovery, claim/lease, concurrency, eligibility/submission ordering, retry-wait scheduling, signal handling + graceful drain, wall-clock timeout enforcement, graceful-before-forceful termination, stale-unit recovery scheduling, and observability.
+The **stage adapter/`StageRepository` owns**: startup dependency validation, the stage-specific query/transition shape over its own store, the unit-of-work execution, mapping its execution result to a generic terminal outcome + retryable/permanent classification, cancellation hooks, transient-resource cleanup, timeout/concurrency declarations, status-transition writes through the shared event helper, and the run `scope_key`.
 Optional per-stage subprocess isolation is a capability the adapter opts into.
 
 **Rationale:** Pinning the seam now (rather than discovering it during implementation) is what keeps the harness generic and the abstraction honest — it was the review's explicit ask.
-The split follows functional-core/imperative-shell: the adapter is the (testable) unit-of-work + mapping logic; the harness is the I/O shell.
+The durable portability line is not "every `StageRepository` method survives an engine swap."
+Discovery/claim/lease/eligibility/stale-recovery are engine-owned and would be replaced by honker, procrastinate, absurd, Restate, Temporal, or a similar tool.
+The pieces intended to survive are the functional core (execute + classify), the stage-owned transactional state writes, the run/dataset-version primitive, and the event projection.
+The split follows functional-core/imperative-shell: the adapter is the testable unit-of-work + mapping logic; the harness is one I/O shell.
 
 **Alternatives considered:**
 
@@ -119,8 +122,10 @@ Doing the spec reconcile last keeps the risky structural move separate from the 
 
 - `validate_dependencies() -> None` — raise on missing required dependencies (startup gate).
 - `claim_next(session) -> WorkUnitHandle | None` — within a caller-opened `BEGIN IMMEDIATE` transaction, select the next eligible work-unit in the stage's submission order, transition it to `running` via the helper, and return an opaque handle (or `None` if none eligible).
-  The **harness owns** the session and transaction boundary; the repository runs its claim query and transition inside it.
+  The **harness owns** the session and transaction boundary; the repository runs its stage-specific eligibility query and transition inside it.
+  If an outside engine is adopted, this eligibility/claim portion is replaced by the engine, while the transition/event projection remains a stage-owned write.
 - `recover_stale(session) -> list[WorkUnitHandle]` — batch-transition units stranded in `running` back to eligible, recording the recovery cause.
+  This is part of the current SQLite harness, not a domain contract future engines must expose.
 - `execute(handle) -> StageResult` — run the stage's unit-of-work (no DB writes to the unit's status; pure-ish work + side effects the adapter owns).
 - `map_result(result | exception) -> (TerminalOutcome, retry_class)` — map success/exception to the generic terminal outcome + `retryable | permanent`.
 - `finalize(session, handle, outcome) -> None` — transition the work-unit to its terminal status via the helper.
@@ -131,6 +136,7 @@ Doing the spec reconcile last keeps the risky structural move separate from the 
 **Rationale:** The review's blocking question was that the seam was described by responsibility, not signature.
 Pinning it now lets task group 1 produce a codeable protocol.
 The harness owning the session/transaction (and passing it into `claim_next`/`finalize`) preserves conversion's existing "caller owns `BEGIN IMMEDIATE`, helper does not commit" convention, so the co-commit guarantee holds across the extraction.
+This protocol is the contract for the current embedded engine; it is deliberately not a universal adapter API for every possible orchestrator.
 
 **Alternatives considered:**
 
