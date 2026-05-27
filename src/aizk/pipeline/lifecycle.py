@@ -68,13 +68,23 @@ class TerminalOutcome:
     retry_class: RetryClass | None = None
 
     def __post_init__(self) -> None:
-        """Validate the outcome is terminal and its classification matches.
+        """Coerce inputs to their enums, then validate terminality and classification.
+
+        Coercion first: ``WorkUnitStatus`` is a ``str`` enum, so a raw string
+        like ``"failed"`` is a member of :data:`TERMINAL_STATUSES` yet is not
+        identical to ``WorkUnitStatus.FAILED``. Without normalizing, the
+        identity checks below would silently skip the failed-classification
+        rule. Coercion also rejects unknown strings.
 
         Raises:
-            ValueError: If ``status`` is not terminal, if a ``FAILED`` outcome
+            ValueError: If ``status`` (or ``retry_class``) is not a valid enum
+                value, if ``status`` is not terminal, if a ``FAILED`` outcome
                 carries no ``retry_class``, or if a non-failed outcome carries
                 one.
         """
+        object.__setattr__(self, "status", WorkUnitStatus(self.status))
+        if self.retry_class is not None:
+            object.__setattr__(self, "retry_class", RetryClass(self.retry_class))
         if not is_terminal(self.status):
             raise ValueError(f"{self.status!r} is not a terminal outcome")
         if self.status is WorkUnitStatus.FAILED and self.retry_class is None:

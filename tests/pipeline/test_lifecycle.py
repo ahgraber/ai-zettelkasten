@@ -88,3 +88,29 @@ def test_only_retryable_eligible() -> None:
 def test_non_failed_terminal_outcomes_are_not_retryable(status: WorkUnitStatus) -> None:
     """Succeeded, cancelled, and timed-out outcomes are never retry-eligible."""
     assert TerminalOutcome(status).is_retryable is False
+
+
+def test_raw_string_failed_still_requires_classification() -> None:
+    """A raw-string ``"failed"`` is coerced and still requires a retry class.
+
+    Because ``WorkUnitStatus`` is a ``str`` enum, ``"failed"`` would pass the
+    terminal-membership check yet bypass the identity-based classification rule
+    if inputs were not coerced; this guards that bypass.
+    """
+    with pytest.raises(ValueError, match="classified retryable or permanent"):
+        TerminalOutcome("failed")
+
+
+def test_raw_string_inputs_are_coerced_to_enums() -> None:
+    """Raw-string status and retry_class are normalized to enum members."""
+    outcome = TerminalOutcome("failed", "retryable")
+
+    assert outcome.status is WorkUnitStatus.FAILED
+    assert outcome.retry_class is RetryClass.RETRYABLE
+    assert outcome.is_retryable is True
+
+
+def test_unknown_status_string_is_rejected() -> None:
+    """A string that is not a valid lifecycle status is rejected."""
+    with pytest.raises(ValueError, match="not a valid WorkUnitStatus"):
+        TerminalOutcome("bogus")
