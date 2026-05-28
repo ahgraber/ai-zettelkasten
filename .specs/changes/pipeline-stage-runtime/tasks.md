@@ -22,18 +22,31 @@
 
 ## Harness over the repository protocol
 
-- [ ] Implement the harness loop driving a `StageRepository`: claim eligible work-units, bounded concurrency, eligible-in-submission-order, retry-wait gating.
-- [ ] Implement graceful drain on termination signal (stop claiming, bounded drain timeout, none left running), cancellation (running ≤ bounded interval; queued-cancelled skipped), wall-clock timeout (→ `timed_out`, graceful-before-forceful, no orphan descendants), transient-resource cleanup on every outcome, and stale-unit recovery recording its cause.
-- [ ] Implement startup dependency validation gating work acceptance, structured logs with trace context, operational metrics, and `setproctitle` stage-role identification.
-- [ ] Build a stub `StageRepository` (in-memory) for harness tests.
-- [ ] Test `tests/pipeline/test_harness_adapter.py::test_new_stage_runs_via_adapter` and `::test_two_stores_share_harness`. **[R: harness over repository protocol]**
-- [ ] Test `tests/pipeline/test_harness_scheduling.py::test_concurrency_within_limit_in_order` and `::test_retry_wait_gates_eligibility` (wrap act with `no_task_leaks`). **[R: eligible-in-submission-order + bounded concurrency]**
-- [ ] Test `tests/pipeline/test_harness_drain.py::test_inflight_finishes_during_drain` and `::test_drain_timeout_enforced` (wrap with `no_task_leaks`/`no_thread_leaks`). **[R: graceful drain]**
-- [ ] Test `tests/pipeline/test_harness_cancel.py::test_running_cancelled_promptly` and `::test_queued_cancel_skipped`. **[R: cancellation]**
-- [ ] Test `tests/pipeline/test_harness_exec.py::test_timeout_recorded_no_orphans` and `::test_cleanup_on_every_outcome` (wrap with `no_thread_leaks`). **[R: bounded execution + cleanup]**
-- [ ] Test `tests/pipeline/test_harness_recovery.py::test_stale_unit_recovered_with_cause`. **[R: stale-unit recovery]**
-- [ ] Test `tests/pipeline/test_harness_startup.py::test_missing_dependency_blocks_acceptance`. **[R: startup validation gates acceptance]**
-- [ ] Test `tests/pipeline/test_harness_observability.py::test_lifecycle_logs_metrics_and_role`. **[R: lifecycle observability + stage-role]**
+- [x] Implement the harness loop driving a `StageRepository`: claim eligible work-units, bounded concurrency, eligible-in-submission-order, retry-wait gating.
+- [x] Implement graceful drain on termination signal (stop claiming, bounded drain timeout, none left running), cancellation (running ≤ bounded interval; queued-cancelled skipped), wall-clock timeout (→ `timed_out`, graceful-before-forceful, no orphan descendants), transient-resource cleanup on every outcome, and stale-unit recovery recording its cause.
+- [x] Implement startup dependency validation gating work acceptance, structured logs with trace context, operational metrics, and `setproctitle` stage-role identification.
+- [x] Build a stub `StageRepository` (in-memory) for harness tests.
+- [x] Test `tests/pipeline/test_harness_adapter.py::test_new_stage_runs_via_adapter` and `::test_two_stores_share_harness`. **[R: harness over repository protocol]**
+- [x] Test `tests/pipeline/test_harness_scheduling.py::test_concurrency_within_limit_in_order` and `::test_retry_wait_gates_eligibility` (wrap act with `no_task_leaks`). **[R: eligible-in-submission-order + bounded concurrency]**
+- [x] Test `tests/pipeline/test_harness_drain.py::test_inflight_finishes_during_drain` and `::test_drain_timeout_enforced` (wrap with `no_task_leaks`/`no_thread_leaks`). **[R: graceful drain]**
+- [x] Test `tests/pipeline/test_harness_cancel.py::test_running_cancelled_promptly` and `::test_queued_cancel_skipped`. **[R: cancellation]**
+- [x] Test `tests/pipeline/test_harness_exec.py::test_timeout_recorded_no_orphans` and `::test_cleanup_on_every_outcome` (wrap with `no_thread_leaks`). **[R: bounded execution + cleanup]**
+- [x] Test `tests/pipeline/test_harness_recovery.py::test_stale_unit_recovered_with_cause`. **[R: stale-unit recovery]**
+- [x] Test `tests/pipeline/test_harness_startup.py::test_missing_dependency_blocks_acceptance`. **[R: startup validation gates acceptance]**
+- [x] Test `tests/pipeline/test_harness_observability.py::test_lifecycle_logs_metrics_and_role`. **[R: lifecycle observability + stage-role]**
+
+## Harness hardening (review round 2)
+
+> Findings from a runtime-boundary review: process-global side effects, concurrency-guarantee wording, and partial-failure handling. Additive to the harness group; no `aizk.conversion` changes.
+
+- [x] **(F1, blocking)** Signals reach only one harness: `install_signal_handlers` binds a process-wide handler to a single `ShutdownController` (and no-ops off the main thread), so two harnesses sharing a process cannot both observe SIGTERM/SIGINT — contradicting "two stages share a process."
+  Add a process-level signal dispatcher that broadcasts shutdown to all registered controllers; test two controllers both observe one signal.
+- [x] **(F1, doc)** Name the multi-harness semantics of the other process-global effects: `force_exit`/`os._exit` terminates the whole process (all harnesses); `setproctitle` is last-write in a shared process.
+- [x] **(F2)** `test_concurrency_within_limit_in_order` asserts scheduler-dependent worker start order; assert the durable guarantee instead — claim/selection order (the first `limit` claimed are the first `limit` submitted) — and clarify in the harness docstring that "begin in submission order" means claim/dispatch order, not serialized thread starts (no start handshake).
+- [x] **(F3, blocking)** Finalize DB failure strands completed work: on `OperationalError`/`DBAPIError` in `finalize` the harness pops the slot + cleans up while the unit stays `running` in the DB (delayed recovery + duplicate execution).
+  Keep the slot (do not pop/cleanup) until the durable terminal transition lands so the reap loop retries it; regression test — finalize fails once then succeeds → the unit reaches its terminal status, not stranded.
+- [x] **(F4)** Stub repo re-claims permanent failures: `finalize` clears `earliest_next_attempt_at` for permanent failures and `_ELIGIBLE_STATUSES` treats any FAILED as eligible.
+  Persist retry class (or a distinct permanent-failed status) so only retryable-failed is eligible; test that a permanent failure is not re-claimed.
 
 ## Port conversion onto the primitives (behavior-preserving)
 
