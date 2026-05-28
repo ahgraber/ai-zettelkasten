@@ -5,6 +5,10 @@ This package holds the stage-agnostic primitives a processing stage builds on:
 - the generic work-unit lifecycle and retry classification (:mod:`lifecycle`),
 - the :class:`~aizk.pipeline.repository.StageRepository` protocol the harness
   drives over a stage's own store (:mod:`repository`),
+- the :class:`~aizk.pipeline.harness.StageHarness` — the current embedded
+  orchestration engine — with its per-instance
+  :class:`~aizk.pipeline.shutdown.ShutdownController` (:mod:`harness`,
+  :mod:`shutdown`),
 - the stage-run / dataset-version primitive (:mod:`run`), and
 - the shared append-only transition-event log and ``record_transition`` helper
   (:mod:`events`).
@@ -18,6 +22,7 @@ repository protocol. ``aizk.pipeline`` stays import-independent of
 from __future__ import annotations
 
 from aizk.pipeline.events import PipelineEvent, record_transition
+from aizk.pipeline.harness import InMemoryMetrics, StageHarness, StageMetrics
 from aizk.pipeline.lifecycle import (
     TERMINAL_STATUSES,
     RetryClass,
@@ -30,11 +35,14 @@ from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 
 __all__ = [
     "TERMINAL_STATUSES",
+    "InMemoryMetrics",
     "Isolation",
     "PipelineEvent",
     "PipelineRun",
     "RetryClass",
     "RunStatus",
+    "StageHarness",
+    "StageMetrics",
     "StageRepository",
     "StageResult",
     "TerminalOutcome",
