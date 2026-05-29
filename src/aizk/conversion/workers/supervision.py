@@ -9,6 +9,7 @@ import multiprocessing as mp
 import os
 import queue as queue_module
 import signal
+import threading
 import time
 
 from aizk.conversion.workers.types import SupervisionResult
@@ -110,12 +111,21 @@ def _supervise_conversion_process(
     shutdown_requested_fn: Callable[[], bool] | None = None,
     drain_timeout_seconds: float = 300.0,
     on_phase_event: PhaseEventCallback | None = None,
+    terminate_event: threading.Event | None = None,
 ) -> SupervisionResult:
     """Monitor the subprocess for cancellation, timeout, or shutdown.
 
     Returns a ``SupervisionResult`` describing how the subprocess ended.
     The caller is responsible for acting on ``timed_out``, ``cancelled``,
     or ``shutdown_terminated``.
+
+    ``terminate_event``, when supplied, is polled once per loop iteration
+    alongside the cooperative DB-status poll. When it is set, the supervision
+    loop — which is the single owner of the ``mp.Process`` — terminates the
+    process group itself (graceful-before-forceful) and returns a cancelled
+    result. This lets an out-of-band owner (e.g. the pipeline runner's driver
+    thread) *signal* termination without joining the Process concurrently. A
+    caller that does not need out-of-band termination passes ``None``.
     """
     last_phase = "starting"
     reported_error: dict[str, str] | None = None
@@ -130,6 +140,11 @@ def _supervise_conversion_process(
             reported_error=reported_error,
             on_phase_event=on_phase_event,
         )
+
+        if terminate_event is not None and terminate_event.is_set():
+            _terminate_and_wait(process, parent_pgid)
+            logger.info("Job %s terminated on external request during %s", job_id, last_phase)
+            return SupervisionResult(last_phase, reported_error, True, False)
 
         if is_cancelled_fn():
             _terminate_and_wait(process, parent_pgid)

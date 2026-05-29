@@ -1,4 +1,4 @@
-"""Unit tests for the typed payload contract on ConversionJobEvent.
+"""Unit tests for the typed payload contract on conversion events.
 
 The payload contract guarantees:
 
@@ -43,38 +43,37 @@ from aizk.conversion.datamodel.events import (
 _NOW = datetime.datetime(2026, 5, 17, 12, 0, 0, tzinfo=datetime.timezone.utc)
 
 
+_VALID_FIELDS_BY_KIND: dict[ConversionEventKind, dict] = {
+    ConversionEventKind.QUEUED: {"submitted_by": "user-1", "requeue_reason": "initial"},
+    ConversionEventKind.CLAIMED: {"claimed_at": _NOW, "worker_pid": 1234},
+    ConversionEventKind.PHASE: {"phase": "preparing_input", "reported_at": _NOW},
+    ConversionEventKind.CANCELLED: {"cancelled_by": "user-1", "cancellation_reason": "user_request"},
+    ConversionEventKind.FAILED: {
+        "error_code": "fetch_failed",
+        "error_message": "transient timeout",
+        "error_detail": "traceback...",
+        "retryable": True,
+        "last_phase": "preparing_input",
+    },
+    ConversionEventKind.SUCCEEDED: {"output_id": 42, "content_hash": "deadbeef"},
+    ConversionEventKind.UPLOAD_PENDING: {"content_hash": "deadbeef"},
+    ConversionEventKind.RECOVERED_STALE: {"stale_after_minutes": 30, "last_started_at": _NOW},
+    ConversionEventKind.SOURCE_ENRICHED: {
+        "aizk_uuid": uuid4(),
+        "columns_written": ["url", "title"],
+        "update_succeeded": True,
+        "failure_reason": None,
+    },
+}
+
+
 def _valid_fields(kind: ConversionEventKind) -> dict:
-    """Return a valid field dict for the given kind."""
-    if kind is ConversionEventKind.QUEUED:
-        return {"submitted_by": "user-1", "requeue_reason": "initial"}
-    if kind is ConversionEventKind.CLAIMED:
-        return {"claimed_at": _NOW, "worker_pid": 1234}
-    if kind is ConversionEventKind.PHASE:
-        return {"phase": "preparing_input", "reported_at": _NOW}
-    if kind is ConversionEventKind.CANCELLED:
-        return {"cancelled_by": "user-1", "cancellation_reason": "user_request"}
-    if kind is ConversionEventKind.FAILED:
-        return {
-            "error_code": "fetch_failed",
-            "error_message": "transient timeout",
-            "error_detail": "traceback...",
-            "retryable": True,
-            "last_phase": "preparing_input",
-        }
-    if kind is ConversionEventKind.SUCCEEDED:
-        return {"output_id": 42, "content_hash": "deadbeef"}
-    if kind is ConversionEventKind.UPLOAD_PENDING:
-        return {"content_hash": "deadbeef"}
-    if kind is ConversionEventKind.RECOVERED_STALE:
-        return {"stale_after_minutes": 30, "last_started_at": _NOW}
-    if kind is ConversionEventKind.SOURCE_ENRICHED:
-        return {
-            "aizk_uuid": uuid4(),
-            "columns_written": ["url", "title"],
-            "update_succeeded": True,
-            "failure_reason": None,
-        }
-    raise AssertionError(f"Unhandled kind in test fixture: {kind!r}")
+    """Return a fresh valid field dict for the given kind.
+
+    Returns a copy so callers that mutate the result (the extra-field / missing-
+    field cases below) cannot corrupt the shared ``_VALID_FIELDS_BY_KIND`` table.
+    """
+    return dict(_VALID_FIELDS_BY_KIND[kind])
 
 
 _KIND_TO_CLASS: dict[ConversionEventKind, type[BaseModel]] = {

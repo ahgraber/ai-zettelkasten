@@ -3,7 +3,6 @@
 from sqlmodel import SQLModel
 
 
-
 def test_indexed_columns():
     tables = SQLModel.metadata.tables
     source_table = tables["sources"]

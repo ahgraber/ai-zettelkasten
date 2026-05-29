@@ -3,9 +3,9 @@
 Covers the design's "two stages share a process" requirement at the signal
 boundary: because ``signal.signal`` installs one handler per signal for the
 whole process, a single :class:`ShutdownController` cannot own the disposition
-when two harnesses share a process. The module-level dispatcher instead
+when two runners share a process. The module-level dispatcher instead
 broadcasts every received signal to all registered controllers, so every
-harness observes it.
+runner observes it.
 
 These tests exercise the broadcast and registration semantics directly — they
 invoke the dispatcher's handler in-process rather than sending a real OS signal
@@ -67,7 +67,7 @@ def test_one_signal_broadcasts_graceful_to_all_registered_controllers(
 ) -> None:
     """A single signal reaches every registered controller, not just one.
 
-    Two controllers register (mirroring two harnesses sharing a process). A
+    Two controllers register (mirroring two runners sharing a process). A
     single simulated SIGTERM — delivered by invoking the dispatcher's installed
     handler directly, never an OS signal — must flip both controllers into
     graceful shutdown, since ``signal.signal`` could only have bound one handler
@@ -80,13 +80,11 @@ def test_one_signal_broadcasts_graceful_to_all_registered_controllers(
     assert first.is_shutdown_requested() is False
     assert second.is_shutdown_requested() is False
 
-    # Simulate the OS delivering SIGTERM by invoking the handler the dispatcher
-    # installed via signal.signal — no real process signal is sent.
     handler = fake_signal[signal.SIGTERM]
     handler(signal.SIGTERM, None)
 
-    assert first.is_shutdown_requested() is True, "first harness observed the signal"
-    assert second.is_shutdown_requested() is True, "second harness also observed the signal"
+    assert first.is_shutdown_requested() is True, "first runner observed the signal"
+    assert second.is_shutdown_requested() is True, "second runner also observed the signal"
     assert first.is_immediate_shutdown() is False
     assert second.is_immediate_shutdown() is False
 
@@ -105,8 +103,8 @@ def test_second_signal_broadcasts_immediate_to_all_registered_controllers(
     handler(signal.SIGTERM, None)
     handler(signal.SIGINT, None)  # mixed signals both count toward immediate
 
-    assert first.is_immediate_shutdown() is True, "first harness escalated to immediate"
-    assert second.is_immediate_shutdown() is True, "second harness escalated to immediate"
+    assert first.is_immediate_shutdown() is True, "first runner escalated to immediate"
+    assert second.is_immediate_shutdown() is True, "second runner escalated to immediate"
 
 
 def test_dispatcher_installs_process_handlers_once(
@@ -138,7 +136,7 @@ def test_deregister_last_controller_restores_prior_disposition(
 
     A deregistered controller stops receiving broadcasts, and once the last one
     leaves, the signal disposition installed at first-register is rolled back so
-    a harness's signal install leaves no residue.
+    a runner's signal install leaves no residue.
     """
     # Establish a pre-existing disposition the dispatcher must restore to.
     prior = object()

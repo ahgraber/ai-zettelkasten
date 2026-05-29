@@ -1,14 +1,16 @@
-"""Regression scan: the ConversionJobEvent table is append-only.
+"""Regression scan: the conversion transition-event log is append-only.
 
 The event log is the durable audit trail; UPDATE / DELETE statements
-against ``conversion_job_events`` would silently corrupt it. This guard
-scans ``src/aizk/conversion/`` for patterns that mutate or delete rows on
-that table and asserts no matches exist outside the migration's
-``downgrade()`` (table drop) and test fixtures.
+against the event table would silently corrupt it. Conversion's transition
+events now live in the shared ``pipeline_events`` table (relocated from the
+former ``conversion_job_events``), so this guard scans ``src/aizk/conversion/``
+for patterns that mutate or delete rows on either name and asserts no matches
+exist outside the migrations directory (the relocation/teardown migrations carry
+the only legitimate INSERT-back / DELETE / DROP statements) and test fixtures.
 
 The patterns checked match the typical SQLAlchemy / SQLModel write
 shapes: ``session.delete(<event-bound row>)`` and raw SQL forms
-``UPDATE conversion_job_events`` / ``DELETE FROM conversion_job_events``.
+``UPDATE`` / ``DELETE FROM`` against the event tables.
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ _PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"session\.delete\(\s*\w*event\w*"),  # session.delete(event) / session.delete(some_event)
     re.compile(r"UPDATE\s+conversion_job_events", re.IGNORECASE),
     re.compile(r"DELETE\s+FROM\s+conversion_job_events", re.IGNORECASE),
+    re.compile(r"UPDATE\s+pipeline_events", re.IGNORECASE),
+    re.compile(r"DELETE\s+FROM\s+pipeline_events", re.IGNORECASE),
 ]
 
 
@@ -49,7 +53,7 @@ def test_event_log_has_no_update_or_delete_writes() -> None:
                     offenders.append(f"{path}:{lineno}: {line.strip()}")
                     break
     assert not offenders, (
-        "ConversionJobEvent rows must be append-only — no UPDATE / DELETE / session.delete "
-        "writes allowed outside the migration's downgrade(). "
+        "Conversion transition-event rows must be append-only — no UPDATE / DELETE / "
+        "session.delete writes allowed outside the migrations directory. "
         "Offending lines:\n" + "\n".join(offenders)
     )

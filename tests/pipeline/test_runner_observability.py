@@ -1,4 +1,4 @@
-"""Harness lifecycle-observability test.
+"""Runner lifecycle-observability test.
 
 Covers the spec requirement that the runtime emits structured logs carrying
 trace context and operational metrics across the work-unit lifecycle, and that
@@ -12,10 +12,10 @@ import logging
 from pyleak import no_thread_leaks
 import pytest
 
-import aizk.pipeline.harness as harness_module
-from aizk.pipeline.harness import InMemoryMetrics, StageHarness
+import aizk.pipeline.runner as runner_module
+from aizk.pipeline.runner import InMemoryMetrics, StageRunner
 
-from ._stub_repository import StubStageRepository, create_stub_engine
+from ._stub_handler import StubStageHandler, create_stub_engine
 
 
 def test_lifecycle_logs_metrics_and_role(caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -28,18 +28,18 @@ def test_lifecycle_logs_metrics_and_role(caplog: pytest.LogCaptureFixture, monke
     """
     # Capture the stage-role process title without touching the real process.
     titles: list[str] = []
-    monkeypatch.setattr(harness_module, "setproctitle", lambda title: titles.append(title))
+    monkeypatch.setattr(runner_module, "setproctitle", lambda title: titles.append(title))
 
     engine = create_stub_engine()
-    repo = StubStageRepository(engine, stage_name="observable")
-    unit_id = repo.enqueue("watched")
+    handler = StubStageHandler(engine, stage_name="observable")
+    unit_id = handler.enqueue("watched")
 
     metrics = InMemoryMetrics()
-    harness = StageHarness(repo, engine, metrics=metrics, poll_interval=0.01)
+    runner = StageRunner(handler, engine, metrics=metrics, poll_interval=0.01)
 
-    with caplog.at_level(logging.INFO, logger="aizk.pipeline.harness"), no_thread_leaks(action="raise"):
-        harness.set_process_title()
-        harness.run_until_idle()
+    with caplog.at_level(logging.INFO, logger="aizk.pipeline.runner"), no_thread_leaks(action="raise"):
+        runner.set_process_title()
+        runner.run_until_idle()
 
     # Stage role advertised for operator monitoring.
     assert titles == ["aizk-stage-observable"], "process title advertises the stage role"

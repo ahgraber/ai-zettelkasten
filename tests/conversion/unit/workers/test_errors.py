@@ -2,12 +2,14 @@
 
 Covers:
   - Error class taxonomy (error_code, retryable) for every exception type the
-    orchestrator maps onto job status.
-  - Traceback capture and persistence in `_report_status` / `handle_job_error`.
+    adapter maps onto job status.
+  - Traceback capture in `_report_status` and persistence of the terminal
+    failure write through the runner adapter's ``finalize``.
 """
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,15 +18,33 @@ from sqlmodel import Session
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source
+from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.storage.s3_client import S3Error, S3UploadError
 from aizk.conversion.utilities.bookmark_utils import BookmarkContentError
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers import converter, errors as errors_mod, fetcher
 from aizk.conversion.workers.errors import ReportedChildError, SubprocessMetadataInvalid
-from aizk.conversion.workers.orchestrator import (
-    _report_status,
-    handle_job_error,
-)
+from aizk.conversion.workers.orchestrator import _report_status
+
+
+def _finalize_failure(db_session: Session, job_id: int, error: Exception, config: ConversionConfig) -> None:
+    """Persist a terminal FAILED write through the adapter's ``finalize``.
+
+    The adapter's ``execute`` stashes the scrubbed :class:`JobErrorDetails` on
+    failure and ``map_result`` resolves the retry class; this helper reproduces
+    that bridge (stash via ``classify_job_error`` and resolve via
+    ``map_result``) so ``finalize`` writes the terminal status, ``error_*``
+    fields, and ``failed`` event.
+    """
+    handler = ConversionStageHandler(config)
+    outcome = handler.map_result(error)
+    from aizk.conversion.workers.orchestrator import classify_job_error
+
+    handler._error_details[job_id] = classify_job_error(error)
+    with Session(db_session.get_bind()) as session:
+        handler.finalize(session, job_id, outcome)
+        session.commit()
+
 
 # ---------------------------------------------------------------------------
 # Error taxonomy: error_code + retryable
@@ -212,11 +232,11 @@ def test_reported_child_error_traceback_defaults_to_none() -> None:
 
 
 # ---------------------------------------------------------------------------
-# handle_job_error — persists error_detail
+# finalize — persists error_detail (the terminal failure write)
 # ---------------------------------------------------------------------------
 
 
-def test_handle_job_error_stores_traceback_in_error_detail(
+def test_finalize_stores_traceback_in_error_detail(
     db_session: Session,
     job: ConversionJob,
     config: ConversionConfig,
@@ -224,8 +244,7 @@ def test_handle_job_error_stores_traceback_in_error_detail(
     tb = "Traceback (most recent call last):\n  File 'converter.py'\nKeyError: 'content'"
     error = ReportedChildError("conversion failed", "docling_error", traceback=tb)
 
-    with patch("aizk.conversion.workers.orchestrator.get_engine", return_value=db_session.get_bind()):
-        handle_job_error(job.id, error, config)
+    _finalize_failure(db_session, job.id, error, config)
 
     db_session.expire_all()
     updated_job = db_session.get(ConversionJob, job.id)
@@ -235,15 +254,14 @@ def test_handle_job_error_stores_traceback_in_error_detail(
     assert updated_job.error_code == "docling_error"
 
 
-def test_handle_job_error_stores_none_detail_when_no_traceback(
+def test_finalize_stores_none_detail_when_no_traceback(
     db_session: Session,
     job: ConversionJob,
     config: ConversionConfig,
 ) -> None:
     error = ReportedChildError("timeout", "conversion_timeout")
 
-    with patch("aizk.conversion.workers.orchestrator.get_engine", return_value=db_session.get_bind()):
-        handle_job_error(job.id, error, config)
+    _finalize_failure(db_session, job.id, error, config)
 
     db_session.expire_all()
     updated_job = db_session.get(ConversionJob, job.id)
@@ -252,31 +270,15 @@ def test_handle_job_error_stores_none_detail_when_no_traceback(
     assert updated_job.error_message == "timeout"
 
 
-def test_handle_job_error_logs_error_with_detail(
-    db_session: Session,
-    job: ConversionJob,
-    config: ConversionConfig,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    tb = "Traceback ...\nKeyError: 'x'"
-    error = ReportedChildError("bad key", "docling_error", traceback=tb)
-
-    with patch("aizk.conversion.workers.orchestrator.get_engine", return_value=db_session.get_bind()):
-        import logging
-
-        with caplog.at_level(logging.ERROR):
-            handle_job_error(job.id, error, config)
-
-    assert "bad key" in caplog.text
-    assert "docling_error" in caplog.text
-
-
 # ---------------------------------------------------------------------------
-# handle_job_error — error.retryable → status mapping
+# finalize — error.retryable → status mapping (via map_result + finalize)
 #
 # Pins the contract that drives retry behavior: a regression that flips
 # FAILED_RETRYABLE ↔ FAILED_PERM for any error class would silently break
 # the worker's retry loop or eat permanent failures into infinite retries.
+# ``ConversionCancelledError`` is intentionally absent here — under the runner
+# adapter cancellation maps to the CANCELLED lifecycle (not FAILED_PERM); that
+# path is covered by ``test_handler.py``'s map_result + finalize tests.
 # ---------------------------------------------------------------------------
 
 
@@ -334,12 +336,6 @@ def test_handle_job_error_logs_error_with_detail(
             id="ConversionArtifactsMissingError-permanent",
         ),
         pytest.param(
-            lambda: errors_mod.ConversionCancelledError("cancelled"),
-            ConversionJobStatus.FAILED_PERM,
-            True,
-            id="ConversionCancelledError-permanent",
-        ),
-        pytest.param(
             lambda: BookmarkContentError("missing content"),
             ConversionJobStatus.FAILED_PERM,
             True,
@@ -365,7 +361,7 @@ def test_handle_job_error_logs_error_with_detail(
         ),
     ],
 )
-def test_handle_job_error_maps_retryable_to_status(
+def test_finalize_maps_retryable_to_status(
     db_session: Session,
     job: ConversionJob,
     config: ConversionConfig,
@@ -374,8 +370,7 @@ def test_handle_job_error_maps_retryable_to_status(
     expects_finished_at: bool,
 ) -> None:
     error = error_factory()
-    with patch("aizk.conversion.workers.orchestrator.get_engine", return_value=db_session.get_bind()):
-        handle_job_error(job.id, error, config)
+    _finalize_failure(db_session, job.id, error, config)
 
     db_session.expire_all()
     updated = db_session.get(ConversionJob, job.id)
@@ -398,36 +393,35 @@ def test_handle_job_error_maps_retryable_to_status(
         pytest.param(lambda: RuntimeError("unexpected"), id="RuntimeError"),
     ],
 )
-def test_handle_job_error_handles_plain_exception_without_retryable_attr(
+def test_finalize_handles_plain_exception_without_retryable_attr(
     db_session: Session,
     job: ConversionJob,
     config: ConversionConfig,
     error_factory,
 ) -> None:
     # Regression for H6: plain Python exceptions lack the conversion-error
-    # contract (no `retryable` attribute). handle_job_error must default to
-    # retryable=True rather than raise AttributeError, otherwise an unexpected
-    # exception leaking from the upload-retry arm would silently leave the job
-    # stuck in RUNNING state.
+    # contract (no `retryable` attribute). The map_result + finalize path must
+    # default to retryable=True rather than raise AttributeError, otherwise an
+    # unexpected exception leaking from the upload-retry arm would silently leave
+    # the job stuck in RUNNING state.
     error = error_factory()
-    with patch("aizk.conversion.workers.orchestrator.get_engine", return_value=db_session.get_bind()):
-        handle_job_error(job.id, error, config)
+    _finalize_failure(db_session, job.id, error, config)
 
     db_session.expire_all()
     updated = db_session.get(ConversionJob, job.id)
     assert updated is not None
     # Default policy: when in doubt, retry.
     assert updated.status == ConversionJobStatus.FAILED_RETRYABLE
-    # error_code falls back to the existing default in handle_job_error.
+    # error_code falls back to the existing default in classify_job_error.
     assert updated.error_code == "conversion_failed"
 
 
-def test_handle_job_error_skips_cancelled_job(
+def test_finalize_skips_cancelled_job(
     db_session: Session,
     bookmark: Source,
     config: ConversionConfig,
 ) -> None:
-    """A CANCELLED job must not be re-mapped to FAILED_* by handle_job_error."""
+    """A CANCELLED job must not be re-mapped to FAILED_* by finalize."""
     j = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
         owner_id="self",
@@ -440,8 +434,7 @@ def test_handle_job_error_skips_cancelled_job(
     db_session.commit()
     db_session.refresh(j)
 
-    with patch("aizk.conversion.workers.orchestrator.get_engine", return_value=db_session.get_bind()):
-        handle_job_error(j.id, errors_mod.ConversionSubprocessError("late failure"), config)
+    _finalize_failure(db_session, j.id, errors_mod.ConversionSubprocessError("late failure"), config)
 
     db_session.expire_all()
     updated = db_session.get(ConversionJob, j.id)
@@ -476,77 +469,44 @@ def test_error_detail_column_exists_after_migration(db_session: Session, bookmar
 # ---------------------------------------------------------------------------
 
 
-def test_load_subprocess_metadata_raises_on_unknown_extra_field(tmp_path):
-    """metadata.json with an unknown extra field raises SubprocessMetadataInvalid."""
-    import json
+_VALID_SUBPROCESS_METADATA = {
+    "pipeline_name": "html",
+    "terminal_ref": {"kind": "inline_html", "body": "dGVzdA=="},
+    "content_type": "html",
+    "markdown_filename": "output.md",
+    "figure_files": [],
+    "markdown_hash_xx64": "abc123def456789a",
+    "docling_version": "test",
+    "config_snapshot": {"converter_name": "docling"},
+    "fetched_at": "2026-01-01T00:00:00+00:00",
+    "source_meta": {
+        "source_url": None,
+        "normalized_url": None,
+        "document_base_url": None,
+        "resolver_title": None,
+    },
+    "document_title": None,
+    "source_title": None,
+}
 
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        pytest.param({**_VALID_SUBPROCESS_METADATA, "unexpected_field": "oops"}, id="unknown_extra_field"),
+        pytest.param(
+            {k: v for k, v in _VALID_SUBPROCESS_METADATA.items() if k != "pipeline_name"},
+            id="missing_required_field",
+        ),
+    ],
+)
+def test_load_subprocess_metadata_raises_on_invalid(tmp_path, metadata):
+    """metadata.json with an unknown extra field or a missing required field raises SubprocessMetadataInvalid."""
     from aizk.conversion.workers.uploader import _load_subprocess_metadata
 
     ws = tmp_path / "workspace"
     ws.mkdir()
-    (ws / "metadata.json").write_text(
-        json.dumps(
-            {
-                "pipeline_name": "html",
-                "terminal_ref": {"kind": "inline_html", "body": "dGVzdA=="},
-                "content_type": "html",
-                "markdown_filename": "output.md",
-                "figure_files": [],
-                "markdown_hash_xx64": "abc123def456789a",
-                "docling_version": "test",
-                "config_snapshot": {"converter_name": "docling"},
-                "fetched_at": "2026-01-01T00:00:00+00:00",
-                "source_meta": {
-                    "source_url": None,
-                    "normalized_url": None,
-                    "document_base_url": None,
-                    "resolver_title": None,
-                },
-                "document_title": None,
-                "source_title": None,
-                "unexpected_field": "oops",
-            }
-        )
-    )
-
-    with pytest.raises(SubprocessMetadataInvalid) as exc_info:
-        _load_subprocess_metadata(ws, job_id=1)
-
-    assert exc_info.value.error_code == "subprocess_metadata_invalid"
-    assert exc_info.value.retryable is False
-
-
-def test_load_subprocess_metadata_raises_on_missing_required_field(tmp_path):
-    """metadata.json with a missing required field raises SubprocessMetadataInvalid."""
-    import json
-
-    from aizk.conversion.workers.uploader import _load_subprocess_metadata
-
-    ws = tmp_path / "workspace"
-    ws.mkdir()
-    # pipeline_name is required — omit it
-    (ws / "metadata.json").write_text(
-        json.dumps(
-            {
-                "terminal_ref": {"kind": "inline_html", "body": "dGVzdA=="},
-                "content_type": "html",
-                "markdown_filename": "output.md",
-                "figure_files": [],
-                "markdown_hash_xx64": "abc123def456789a",
-                "docling_version": "test",
-                "config_snapshot": {"converter_name": "docling"},
-                "fetched_at": "2026-01-01T00:00:00+00:00",
-                "source_meta": {
-                    "source_url": None,
-                    "normalized_url": None,
-                    "document_base_url": None,
-                    "resolver_title": None,
-                },
-                "document_title": None,
-                "source_title": None,
-            }
-        )
-    )
+    (ws / "metadata.json").write_text(json.dumps(metadata))
 
     with pytest.raises(SubprocessMetadataInvalid) as exc_info:
         _load_subprocess_metadata(ws, job_id=1)
@@ -556,7 +516,7 @@ def test_load_subprocess_metadata_raises_on_missing_required_field(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Integrated — _prepare_upload failure → handle_job_error → FAILED_PERM
+# Integrated — _prepare_upload failure → finalize → FAILED_PERM
 # ---------------------------------------------------------------------------
 
 
@@ -566,9 +526,9 @@ def test_prepare_upload_invalid_metadata_flows_to_failed_perm(
     job: ConversionJob,
     config: ConversionConfig,
 ) -> None:
-    """SubprocessMetadataInvalid from _prepare_upload flows through handle_job_error
-    to FAILED_PERM — mirrors the orchestrator's catch block at lines 509-513."""
-    import json
+    """SubprocessMetadataInvalid from _prepare_upload flows through the adapter's
+    finalize to FAILED_PERM — ``execute`` raises it, ``map_result`` classifies it
+    PERMANENT, and ``finalize`` writes the terminal FAILED_PERM status."""
 
     from aizk.conversion.workers.uploader import _prepare_upload
 
@@ -576,11 +536,10 @@ def test_prepare_upload_invalid_metadata_flows_to_failed_perm(
     ws.mkdir()
     (ws / "metadata.json").write_text(json.dumps({"unexpected_only": "oops"}))
 
-    with patch("aizk.conversion.workers.orchestrator.get_engine", return_value=db_session.get_bind()):
-        try:
-            _prepare_upload(job.id, ws, config)
-        except Exception as exc:
-            handle_job_error(job.id, exc, config)
+    try:
+        _prepare_upload(job.id, ws, config)
+    except Exception as exc:
+        _finalize_failure(db_session, job.id, exc, config)
 
     db_session.expire_all()
     updated = db_session.get(ConversionJob, job.id)

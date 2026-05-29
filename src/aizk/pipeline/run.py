@@ -8,7 +8,7 @@ supersedes the prior one atomically in the caller's transaction, so there is
 never more than one active run nor a window with none.
 
 The primitive is independent of work-unit execution — a stage may record runs
-without using the harness, and vice versa. It does not own a stage's derived
+without using the runner, and vice versa. It does not own a stage's derived
 output rows; superseding is expressed purely as a status transition from
 ``active`` to ``superseded``, leaving prior-run outputs untouched.
 """

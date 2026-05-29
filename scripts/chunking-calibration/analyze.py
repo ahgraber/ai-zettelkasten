@@ -174,6 +174,33 @@ def _flag_outliers(per_doc: pd.DataFrame, regions: pd.DataFrame) -> pd.DataFrame
     return pd.DataFrame(rows)
 
 
+def _budget_str(budget: int | None) -> str:
+    """Return a human-readable budget string, or a fallback when no budget qualifies."""
+    return f"{budget} chars" if budget is not None else "no candidate budget qualifies"
+
+
+def _render_fit_section(
+    buf: "StringIO",
+    regions: "pd.DataFrame",
+    region_kind: str,
+    section_title: str,
+    description: str,
+    threshold_heading: str,
+) -> None:
+    """Write a fit-share section (table + smallest-budget thresholds) into buf."""
+    subset = regions[regions["region_kind"] == region_kind]
+    fit = _fit_share_table(subset)
+    buf.write(f"{section_title}\n\n")
+    buf.write(f"{description}\n\n")
+    buf.write(_format_fit_share(fit))
+    buf.write("\n\n")
+    buf.write(f"{threshold_heading}\n\n")
+    for threshold in FIT_THRESHOLDS:
+        budget = _smallest_budget_at_threshold(fit, threshold)
+        buf.write(f"- ≥ {int(threshold * 100)}% fit: **{_budget_str(budget)}**\n")
+    buf.write("\n")
+
+
 def render_report(
     regions: pd.DataFrame,
     per_doc: pd.DataFrame,
@@ -196,33 +223,22 @@ def render_report(
     buf.write(_format_quantile_table(tok_table))
     buf.write("\n\n")
 
-    heading_bodies = regions[regions["region_kind"] == "heading_body"]
-    heading_fit = _fit_share_table(heading_bodies)
-    buf.write("## Heading-body fit-share by char budget\n\n")
-    buf.write("How often a heading body fits whole (no paragraph split needed).\n\n")
-    buf.write(_format_fit_share(heading_fit))
-    buf.write("\n\n")
-
-    buf.write("### Smallest budget meeting heading-body fit threshold\n\n")
-    for threshold in FIT_THRESHOLDS:
-        budget = _smallest_budget_at_threshold(heading_fit, threshold)
-        budget_str = f"{budget} chars" if budget is not None else "no candidate budget qualifies"
-        buf.write(f"- ≥ {int(threshold * 100)}% fit: **{budget_str}**\n")
-    buf.write("\n")
-
-    paragraphs = regions[regions["region_kind"] == "paragraph"]
-    paragraph_fit = _fit_share_table(paragraphs)
-    buf.write("## Paragraph (block) fit-share by char budget\n\n")
-    buf.write("How often a single top-level block fits whole (sentence fallback fires when it does not).\n\n")
-    buf.write(_format_fit_share(paragraph_fit))
-    buf.write("\n\n")
-
-    buf.write("### Smallest budget meeting paragraph fit threshold\n\n")
-    for threshold in FIT_THRESHOLDS:
-        budget = _smallest_budget_at_threshold(paragraph_fit, threshold)
-        budget_str = f"{budget} chars" if budget is not None else "no candidate budget qualifies"
-        buf.write(f"- ≥ {int(threshold * 100)}% fit: **{budget_str}**\n")
-    buf.write("\n")
+    _render_fit_section(
+        buf,
+        regions,
+        region_kind="heading_body",
+        section_title="## Heading-body fit-share by char budget",
+        description="How often a heading body fits whole (no paragraph split needed).",
+        threshold_heading="### Smallest budget meeting heading-body fit threshold",
+    )
+    _render_fit_section(
+        buf,
+        regions,
+        region_kind="paragraph",
+        section_title="## Paragraph (block) fit-share by char budget",
+        description="How often a single top-level block fits whole (sentence fallback fires when it does not).",
+        threshold_heading="### Smallest budget meeting paragraph fit threshold",
+    )
 
     buf.write("## Parse latency\n\n")
     successful = per_doc[per_doc["error"] == ""]

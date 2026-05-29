@@ -33,7 +33,6 @@ def test_two_invocations_field_equal(
     second = do_split("multi_section.md")
 
     assert first == second
-    assert [c.model_dump() for c in first] == [c.model_dump() for c in second]
 
 
 # Runs in a fresh interpreter: reads markdown on stdin, prints chunk_ids one per line.
@@ -42,7 +41,7 @@ _SUBPROCESS_RUNNER = (
     "from aizk.chunking import split\n"
     "text = sys.stdin.read()\n"
     "chunks = split(text, doc_id=%r, converted_artifact_id=%r, markdown_hash_xx64=%r)\n"
-    "sys.stdout.write(chr(10).join(c.chunk_id for c in chunks))\n"
+    "sys.stdout.write('\\n'.join(c.chunk_id for c in chunks))\n"
 ) % (DOC_ID, CONVERTED_ARTIFACT_ID, MARKDOWN_HASH_XX64)
 
 

@@ -95,7 +95,7 @@ def test_pipeline_active_run_partial_unique_index_present(tmp_path: Path) -> Non
     indexes = {i["name"]: i for i in inspect(create_engine(url)).get_indexes("pipeline_runs")}
     active_idx = indexes.get("uq_pipeline_runs_active_scope")
     assert active_idx is not None, "partial unique index missing"
-    assert bool(active_idx["unique"]) is True
+    assert bool(active_idx["unique"])
     assert sorted(active_idx["column_names"]) == ["scope_key", "stage"]
 
 

@@ -5,29 +5,29 @@
 
 ## Intent
 
-The conversion stage built a substantial, reliability-critical machine for running queued work: a worker harness, an append-only job/transition event log, a pluggable adapter/composition pattern, and an HTMX operator UI.
+The conversion stage built a substantial, reliability-critical machine for running queued work: a worker runner, an append-only job/transition event log, a pluggable adapter/composition pattern, and an HTMX operator UI.
 The graph stages now coming — chunk **contextualization** (LLM per chunk), **mention extraction** (NER per chunk), and later **entity canonicalization** (re-clustering jobs) — each need the same machine.
 Re-implementing it per stage triples the surface for the very bugs the conversion archive already fixed (graceful shutdown, concurrency, queue backpressure, stale-job recovery, startup validation, health endpoints).
 
-This change extracts that machine into a small **primitives package** (`aizk.pipeline`), not a framework: a claim/drain/cancel/timeout harness over a stage-supplied **repository protocol**, a separable run/dataset-version primitive, and a transition-event helper.
+This change extracts that machine into a small **primitives package** (`aizk.pipeline`), not a framework: a claim/drain/cancel/timeout runner over a stage-supplied **handler protocol**, a separable run/dataset-version primitive, and a transition-event helper.
 Each stage keeps its own tables and unit identities; conversion is re-pointed to consume the primitives as the first adapter.
-It is a **behavior-preserving extraction of conversion's machinery plus additive runtime primitives** for the future stages — the conversion behavior is preserved (its test suite is the regression net), while the run primitive, the repository-protocol seam, and shared event/run tables are genuinely new (additive) surface that future stages will use.
+It is a **behavior-preserving extraction of conversion's machinery plus additive runtime primitives** for the future stages — the conversion behavior is preserved (its test suite is the regression net), while the run primitive, the handler-protocol seam, and shared event/run tables are genuinely new (additive) surface that future stages will use.
 
 The code already leans this way: the conversion job event log **denormalized `aizk_uuid` specifically so "future processing-stage event tables that share the same Source identity can be queried alongside"**, and `pluggable-pipeline` already separates adapters from the orchestrator via protocols + a wiring composition root.
 This change finishes that generalization rather than inventing it.
 
 ## Scope
 
-Scope is the **core primitives** (decided): the harness over a repository protocol, the run/dataset-version primitive, the transition-event helper, the process-management lifecycle, and observability/startup.
+Scope is the **core primitives** (decided): the runner over a handler protocol, the run/dataset-version primitive, the transition-event helper, the process-management lifecycle, and observability/startup.
 The operator-UI scaffold and the adapter-composition / resolver-chain generalization are both **deferred** — see Out of scope.
 
 **In scope (new `pipeline-stage-runtime` capability):**
 
-- **Harness over a stage-supplied repository protocol.**
+- **Runner over a stage-supplied handler protocol.**
   Claim/lease loop, bounded concurrency, eligible-in-submission-order processing, queue backpressure, graceful drain on termination signals (bounded drain timeout; none left running), cancellation within a bounded interval, wall-clock timeout, graceful-before-forceful termination, no orphan descendants, optional per-stage subprocess isolation, stale-unit recovery recording its cause, and cleanup after any outcome — all driven through a protocol each stage implements over its **own** tables.
   No universal work-unit table.
 - **Generic work-unit lifecycle + state machine.**
-  A generic lifecycle (`queued → running → {succeeded, failed, cancelled, timed-out}`) with retryable/permanent classification of failures; stage statuses map onto it so the harness reasons about progress and retry uniformly.
+  A generic lifecycle (`queued → running → {succeeded, failed, cancelled, timed-out}`) with retryable/permanent classification of failures; stage statuses map onto it so the runner reasons about progress and retry uniformly.
 - **Stage-run / dataset-version primitive (CONFIRMED), independent of execution.**
   A `run` record keyed by `(stage, scope_key)` carrying version stamps, `input_fingerprint`, `supersedes_run_id`, and `status` (active|superseded); immutable run-produced rows; **atomic run-level invalidation** (recording a new run and superseding the prior happen in one transaction; ≤1 active per `(stage, scope_key)`, never a gap).
   The stage defines its own `scope_key` (per-document, per-chunk, corpus-wide).
@@ -64,9 +64,9 @@ The operator-UI scaffold and the adapter-composition / resolver-chain generaliza
 
 - **Target package:** a new `aizk.pipeline` top-level package holds the primitives; `aizk.core` stays low-level shared (e.g. `database.py`).
   Conversion-specific code (docling subprocess, egress/SSRF policy, S3 upload, `ConversionJob` and its semantics) stays in `aizk.conversion` as the first adapter.
-- **Functional-core / imperative-shell:** keep the unit-of-work logic (adapter) separable from the I/O shell (claim/commit/transition), so stages are testable without the harness.
+- **Functional-core / imperative-shell:** keep the unit-of-work logic (adapter) separable from the I/O shell (claim/commit/transition), so stages are testable without the runner.
 - **Composition over inheritance:** stages compose the primitives by supplying an adapter + repository implementation, not by subclassing a base worker — avoid a deep worker hierarchy.
-- **Strangler sequencing:** introduce the primitives, port conversion onto them behind the repository protocol, delete the conversion-local duplicates, all under the existing conversion tests.
+- **Strangler sequencing:** introduce the primitives, port conversion onto them behind the handler protocol, delete the conversion-local duplicates, all under the existing conversion tests.
   Structural commit(s) separate from any later behavior work (modularity-skill hard rule: never mix behavior and structure).
 
 ### Source material to extract from (for a cold pickup)
@@ -89,7 +89,7 @@ Decided: **scope** is the core primitives (UI and resolver-chain generalization 
 Settled in `design.md`:
 
 - **Repository protocol responsibilities.**
-  The harness is the current embedded engine implementation, not a universal engine-neutral seam.
+  The runner is the current embedded engine implementation, not a universal engine-neutral seam.
   Engine-owned responsibilities are work discovery, claim/lease, eligibility ordering, retry scheduling, timeout/cancel/drain, and stale recovery.
   Stage-owned responsibilities are dependency validation, unit-of-work execution, result→terminal-outcome mapping, retryability classification, transient cleanup, declared timeout/concurrency needs, status/event projection writes, and run `scope_key`.
 - **Stage-run primitive shape — determinism asymmetry.**

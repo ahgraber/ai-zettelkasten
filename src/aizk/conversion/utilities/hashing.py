@@ -16,6 +16,11 @@ __all__ = [
 ]
 
 
+def _canonical_json(payload) -> str:
+    """Return a compact, key-sorted JSON string for deterministic hashing."""
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
 def _docling_config_payload(config: DoclingConverterConfig) -> dict[str, object]:
     """Return the subset of DoclingConverterConfig fields that affect Docling output.
 
@@ -60,7 +65,7 @@ def compute_idempotency_key(
     Returns:
         Hex-encoded SHA256 digest.
     """
-    config_json = json.dumps(config_snapshot, sort_keys=True, separators=(",", ":"))
+    config_json = _canonical_json(config_snapshot)
     raw = f"{source_ref_hash}:{converter_name}:{config_json}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -74,5 +79,5 @@ def compute_config_hash(config_payload: dict[str, object]) -> str:
     Returns:
         Hex-encoded SHA256 digest truncated to 16 characters.
     """
-    serialized = json.dumps(config_payload, sort_keys=True, separators=(",", ":"))
+    serialized = _canonical_json(config_payload)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]

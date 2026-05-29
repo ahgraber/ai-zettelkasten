@@ -7,7 +7,7 @@
 > **The fact that reframes everything:** the app is today **~100% ingest/derivation, 0% query** (grep confirms: no index/embedding/retrieval code exists). So the useful question is not "what read-side architecture to build" (premature) but "which write-side decisions being made _now_ will the eventual read side depend on."
 > **Honest framing (after the second pressure-test):** this note is **largely confirmation** of ADR-003/005/006, plus **three genuinely additive findings**: (a) an unreconciled **ADR-003↔008 vector-index conflict** the ADRs themselves don't resolve; (b) an **ADR-006↔`PipelineRun` coordination gap** (independent reinvention of supersession); (c) one **unmeasured question** — cross-stage write overlap. The four "shifts" below are demoted accordingly; treat them as decisions/seams, not discoveries. An earlier draft also mis-anchored the model-provider point on `claimify` (an abandoned cost experiment, recorded in ADR-005: _"~$30 to process 5 documents… does not scale"_); §3 is recalibrated.
 
-On what already works: `StageRepository` + adapter-over-protocol, content-addressed chunks, and `aizk_uuid` relating stages instead of coupling them are **genuinely task-oriented** (Calcado Pt II) — confirmed, not belabored.
+On what already works: `StageHandler` + adapter-over-protocol, content-addressed chunks, and `aizk_uuid` relating stages instead of coupling them are **genuinely task-oriented** (Calcado Pt II) — confirmed, not belabored.
 
 ## 1. The versioned-derived-state spine, and a real ADR-003↔008 conflict beneath it
 
@@ -36,19 +36,19 @@ If the read side is an off-the-shelf index, it owns its own IDs and lifecycle, a
 What survives regardless of read-side tech is the narrow ask: **reproducible, versioned derived data** so a rebuild is deterministic.
 Don't design the index; keep the producer reproducible.
 
-## 2. Cross-stage concurrency is a present-tense harness decision (but don't build a controller)
+## 2. Cross-stage concurrency is a present-tense runner decision (but don't build a controller)
 
 ADR-003 forbids write fan-out: one SQLite file, one serialized writer, Litestream sensitive to concurrent writes between syncs.
 Conversion already runs two writers (API + worker).
-As stages are added (chunking exists; contextualization/extraction/canonicalization are ADR-only), each harness is another writer.
+As stages are added (chunking exists; contextualization/extraction/canonicalization are ADR-only), each runner is another writer.
 
 **Correction to an earlier draft:** `BEGIN IMMEDIATE` + `busy_timeout=5000` makes contenders **wait**, not fail — so the consequence of many concurrent writers is **latency + Litestream checkpoint churn**, not `SQLITE_BUSY` (that only fires after 5 s of sustained contention).
 ADR-006 confirms the real pressure point independently: extraction _"inverts the write profile… two orders of magnitude more rows, written in bursts during ingest and backfill,"_ and _"sustained write throughput from corpus-wide entity backfill is the first trigger likely to hit, well before multi-node deployment."_
 
-**The present-tense decision (real):** the harness is the next build group, so the harness must choose now whether stage workers run concurrently or sequentially/pipelined.
+**The present-tense decision (real):** the runner is the next build group, so the runner must choose now whether stage workers run concurrently or sequentially/pipelined.
 **The likely-right answer is the cheap one** — stages pipelined per-document with ADR-006's per-stage batched writes — **not** a global write-admission controller.
 A controller is cross-cutting machinery justified by an **unmeasured** race; estimate cross-stage write overlap before building it (additive finding c).
-The per-stage `concurrency_limit` on `StageRepository` bounds in-flight execution, which is fine for I/O-bound LLM/NER work; only the _commits_ serialize, and short `BEGIN IMMEDIATE` blocks keep that cheap until backfill volume says otherwise.
+The per-stage `concurrency_limit` on `StageHandler` bounds in-flight execution, which is fine for I/O-bound LLM/NER work; only the _commits_ serialize, and short `BEGIN IMMEDIATE` blocks keep that cheap until backfill volume says otherwise.
 
 ## 3. No shared model-provider client/budget — and embedding may be external after all
 
@@ -71,7 +71,7 @@ ADR-006 **already** mandates the validation gate verbatim — gold set, span-lev
 That is a per-stage quality gate ADR-006 owns, not a new app-wide discovery.
 
 The one genuinely architectural note: **eval infra should be shared, not per-stage.**
-`aizk.metrics` is OCR-only today (alignment / rouge / kendalltau — no clustering metric); it is the natural seed for a shared gold-set + eval-harness component that extraction, canonicalization, and retrieval will each need.
+`aizk.metrics` is OCR-only today (alignment / rouge / kendalltau — no clustering metric); it is the natural seed for a shared gold-set + eval-runner component that extraction, canonicalization, and retrieval will each need.
 Separately, runtime observability wants a consistent **`(run_id, aizk_uuid, stage, work_unit_ref)`** correlation spine (Rapidflare's three-level IDs) before five stages each instrument differently.
 
 ## Non-shift: polling stays; background repair is just another stage (a credit, not a gap)
@@ -80,7 +80,7 @@ Cross-stage triggering should stay **polling, not pub/sub** — at single-writer
 Keep `pipeline_events` as audit/read-model, not a bus.
 
 ADR-006 adds deferred propagation — _"dependent edge repair, embedding invalidation, cache invalidation… tracked by dirty sets and background repair."_
-This is **pull-based background work**, and crucially the `StageRepository` protocol **already accommodates it**: a repair stage is just another `StageRepository` whose eligibility query targets a dirty-set table.
+This is **pull-based background work**, and crucially the `StageHandler` protocol **already accommodates it**: a repair stage is just another `StageHandler` whose eligibility query targets a dirty-set table.
 No protocol generalization is needed — which is a point in the design's favor.
 `pipeline_events` + `chunk_id` churn + `canon_version` bumps are the **invalidation-signal source** that populates the dirty sets a repair worker polls — the signal source, not a push bus.
 
@@ -135,7 +135,7 @@ Tagged by where they live today: **[locked]** already a requirement in the pipel
 Most of this note **confirms** ADR-003/005/006.
 The durable, additive content is three items: the **ADR-003↔008 index conflict** (known drift, not a gate), the **ADR-006↔`PipelineRun` coordination gap** (cross-reference, don't unify — and don't conflate version supersession with entity lineage), and the **cross-stage write-overlap question** (decide the concurrency model; measure before building a controller). §3 stands and broadens (embedding may be external); §4 collapses into "ADR-006 already says it; make eval infra shared."
 
-Watch the **accretion**: a versioned spine + compaction + an admission knob + a provider budget + an eval harness + a repair work-unit type is, in aggregate, the skeleton of the framework the companion note's discipline warns against.
+Watch the **accretion**: a versioned spine + compaction + an admission knob + a provider budget + an eval runner + a repair work-unit type is, in aggregate, the skeleton of the framework the companion note's discipline warns against.
 Each is individually defensible as a _seam_ or a _decision_; none should be built as standalone machinery now.
 **What explicitly NOT to do:** build read-side architecture, an LLM gateway, a write-admission controller, or pub/sub.
 The leverage is in keeping the **producer** reproducible and versioned, and in resolving the two ADR gaps before the graph stage forks them.

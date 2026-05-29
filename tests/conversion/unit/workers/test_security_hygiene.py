@@ -25,14 +25,32 @@ from aizk.conversion.core.errors import (
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source
+from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.egress import assert_egress_allowed
 from aizk.conversion.utilities.html_prefetch import prefetch_images
-from aizk.conversion.workers.orchestrator import handle_job_error
+from aizk.conversion.workers.orchestrator import classify_job_error
+from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
+
+
+def _finalize_failure(db_session: Session, job_id: int, error: Exception, config: ConversionConfig) -> None:
+    """Persist a terminal FAILED write through the adapter's ``finalize``.
+
+    Stashes the scrubbed :class:`JobErrorDetails` (via ``classify_job_error``,
+    which applies the egress scrub) and calls ``finalize`` with the matching
+    FAILED outcome inside a committing session. The scrub is what these security
+    tests pin: the rejected destination must never reach the row.
+    """
+    handler = ConversionStageHandler(config)
+    handler._error_details[job_id] = classify_job_error(error)
+    retry_class = RetryClass.RETRYABLE if bool(getattr(error, "retryable", True)) else RetryClass.PERMANENT
+    with Session(db_session.get_bind()) as session:
+        handler.finalize(session, job_id, TerminalOutcome(WorkUnitStatus.FAILED, retry_class))
+        session.commit()
 
 
 @pytest.fixture()
@@ -85,7 +103,7 @@ def running_job(db_session: Session, source: Source) -> ConversionJob:
 # ---------------------------------------------------------------------------
 
 
-def test_handle_job_error_sanitizes_egress_policy_error_message(
+def test_classify_job_error_sanitizes_egress_policy_error_message(
     db_session: Session,
     running_job: ConversionJob,
     config: ConversionConfig,
@@ -100,8 +118,7 @@ def test_handle_job_error_sanitizes_egress_policy_error_message(
     rejected_host = "internal.corp.example"
     exc = DenyListDestination(f"Resolved address for host {rejected_host!r} is in the egress deny set")
 
-    with patch("aizk.conversion.workers.orchestrator.get_engine", return_value=db_session.get_bind()):
-        handle_job_error(running_job.id, exc, config)
+    _finalize_failure(db_session, running_job.id, exc, config)
 
     db_session.expire_all()
     updated = db_session.get(ConversionJob, running_job.id)
@@ -124,7 +141,7 @@ def test_job_response_schema_excludes_error_detail() -> None:
     Defence-in-depth pin: even if the persisted ``ConversionJob.error_detail``
     were ever populated with a traceback that contained a rejected destination
     (e.g., a future regression of the egress sanitization in
-    ``handle_job_error``), the API surface must not surface it.
+    ``classify_job_error`` / ``finalize``), the API surface must not surface it.
 
     Adding ``error_detail`` to ``JobResponse`` is a deliberate change that
     requires removing this test; failing this test on a routine change is the
@@ -139,7 +156,7 @@ def test_job_response_schema_excludes_error_detail() -> None:
     )
 
 
-def test_handle_job_error_strips_traceback_for_subprocess_egress_error(
+def test_classify_job_error_strips_traceback_for_subprocess_egress_error(
     db_session: Session,
     running_job: ConversionJob,
     config: ConversionConfig,
@@ -169,8 +186,7 @@ def test_handle_job_error_strips_traceback_for_subprocess_egress_error(
         traceback=leaked_traceback,
     )
 
-    with patch("aizk.conversion.workers.orchestrator.get_engine", return_value=db_session.get_bind()):
-        handle_job_error(running_job.id, exc, config)
+    _finalize_failure(db_session, running_job.id, exc, config)
 
     db_session.expire_all()
     updated = db_session.get(ConversionJob, running_job.id)
@@ -300,11 +316,7 @@ def test_prefetch_images_emits_summary_once_with_correct_counts(
     # Pre-create the images dir so file writes don't fail.
     (tmp_path / "prefetched-images").mkdir()
 
-    call_count = 0
-
     async def _side_effect(url, **kwargs):
-        nonlocal call_count
-        call_count += 1
         if "deny" in url:
             raise _EgressPolicyError("denied")
         if "huge" in url:

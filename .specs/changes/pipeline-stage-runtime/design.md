@@ -2,17 +2,17 @@
 
 ## Context
 
-The conversion stage built reliability-critical machinery for running queued work — a worker harness (loop, orchestrator, shutdown, supervision), a same-transaction transition event log (`record_transition`), and an HTMX operator UI.
-Chunk contextualization, mention extraction, and later canonicalization each need the harness and the run/dataset-version model.
+The conversion stage built reliability-critical machinery for running queued work — a worker runner (loop, orchestrator, shutdown, supervision), a same-transaction transition event log (`record_transition`), and an HTMX operator UI.
+Chunk contextualization, mention extraction, and later canonicalization each need the runner and the run/dataset-version model.
 Re-implementing them per stage would triple the surface for bugs the conversion archive already fixed (graceful shutdown, concurrency, backpressure, stale recovery, startup validation).
 
 This change extracts the **primitives** into a new `aizk.pipeline` package and re-points conversion as the first consumer.
 It is deliberately **not** a framework: the three concerns being generalized have very different maturity.
-The harness is mature in conversion; the run/dataset-version primitive comes mostly from graph-stage needs and has one real consumer so far; the operator UI is the least-proven (one instance).
+The runner is mature in conversion; the run/dataset-version primitive comes mostly from graph-stage needs and has one real consumer so far; the operator UI is the least-proven (one instance).
 Fusing all three into a single framework would freeze a leaky abstraction before a second consumer proves the seam.
 So:
 
-- the **harness** generalizes over a stage-supplied **repository protocol** rather than a universal work-unit table;
+- the **runner** generalizes over a stage-supplied **handler protocol** rather than a universal work-unit table;
 - the **run/dataset-version primitive** is separable from work-unit execution;
 - the **operator UI is out of scope** (deferred until a second consumer proves the shape — see proposal).
 
@@ -23,55 +23,55 @@ Constraints:
   The serialized writer makes the run-supersession transaction naturally atomic.
 - **Conversion's job model is rich and stage-specific.**
   `ConversionJob` carries owner-scoped idempotency, source-ref submission semantics, upload phases, output links, and legacy API compatibility.
-  None of that generalizes; it stays in `aizk.conversion` behind the repository protocol.
+  None of that generalizes; it stays in `aizk.conversion` behind the handler protocol.
 - **Behavior-preserving for conversion.**
   Conversion's observable behavior and its test suite are the regression net; the move is structural.
-  New primitives (run record, repository-protocol seam, shared event table) are additive surface for future stages.
+  New primitives (run record, handler-protocol seam, shared event table) are additive surface for future stages.
 
 ## Decisions
 
 ### Decision: PrimitivesPackageOverRepositoryProtocol
 
-**Chosen:** `aizk.pipeline` exposes (a) a harness that drives discovery/claim/transition/cleanup through a `StageRepository` protocol each stage implements over its own tables, (b) a run/dataset-version primitive, and (c) a `record_transition` helper.
+**Chosen:** `aizk.pipeline` exposes (a) a runner that drives discovery/claim/transition/cleanup through a `StageHandler` protocol each stage implements over its own tables, (b) a run/dataset-version primitive, and (c) a `record_transition` helper.
 There is **no universal `work_units` table**; each stage owns its work-unit tables and identities.
 
 **Rationale:** Conversion's `ConversionJob` semantics (owner idempotency, source-ref, upload phases, output links, legacy API) do not generalize, and contextualization/extraction need different unit identities and retry surfaces.
-A protocol-backed harness over stage-owned tables lets each stage keep its schema while sharing the loop, draining, cancellation, timeout, and recovery logic.
-This is the Rule-of-Three discipline: extract the proven seam (the harness), not a speculative central model.
+A protocol-backed runner over stage-owned tables lets each stage keep its schema while sharing the loop, draining, cancellation, timeout, and recovery logic.
+This is the Rule-of-Three discipline: extract the proven seam (the runner), not a speculative central model.
 
 **Alternatives considered:**
 
 - **Universal `work_units` table the stages conform to.**
   Forces migrating conversion's rich job semantics into a shared schema now (or building a leaky superset).
   Rejected as premature.
-- **Full runtime framework (harness + run + UI fused).**
+- **Full runtime framework (runner + run + UI fused).**
   Couples three concerns of different maturity; freezes the least-proven (UI) abstraction first.
   Rejected.
 
-### Decision: StageRepositoryAndAdapterResponsibilities
+### Decision: StageHandlerAndAdapterResponsibilities
 
 **Chosen:** The seam is narrow, but not engine-neutral method-by-method.
-The **harness is the current orchestration engine implementation**: it owns work discovery, claim/lease, concurrency, eligibility/submission ordering, retry-wait scheduling, signal handling + graceful drain, wall-clock timeout enforcement, graceful-before-forceful termination, stale-unit recovery scheduling, and observability.
-The **stage adapter/`StageRepository` owns**: startup dependency validation, the stage-specific query/transition shape over its own store, the unit-of-work execution, mapping its execution result to a generic terminal outcome + retryable/permanent classification, cancellation hooks, transient-resource cleanup, timeout/concurrency declarations, status-transition writes through the shared event helper, and the run `scope_key`.
+The **runner is the current orchestration engine implementation**: it owns work discovery, claim/lease, concurrency, eligibility/submission ordering, retry-wait scheduling, signal handling + graceful drain, wall-clock timeout enforcement, graceful-before-forceful termination, stale-unit recovery scheduling, and observability.
+The **stage adapter/`StageHandler` owns**: startup dependency validation, the stage-specific query/transition shape over its own store, the unit-of-work execution, mapping its execution result to a generic terminal outcome + retryable/permanent classification, cancellation hooks, transient-resource cleanup, timeout/concurrency declarations, status-transition writes through the shared event helper, and the run `scope_key`.
 Optional per-stage subprocess isolation is a capability the adapter opts into.
 
-**Rationale:** Pinning the seam now (rather than discovering it during implementation) is what keeps the harness generic and the abstraction honest — it was the review's explicit ask.
-The durable portability line is not "every `StageRepository` method survives an engine swap."
+**Rationale:** Pinning the seam now (rather than discovering it during implementation) is what keeps the runner generic and the abstraction honest — it was the review's explicit ask.
+The durable portability line is not "every `StageHandler` method survives an engine swap."
 Discovery/claim/lease/eligibility/stale-recovery are engine-owned and would be replaced by honker, procrastinate, absurd, Restate, Temporal, or a similar tool.
 The pieces intended to survive are the functional core (execute + classify), the stage-owned transactional state writes, the run/dataset-version primitive, and the event projection.
-The split follows functional-core/imperative-shell: the adapter is the testable unit-of-work + mapping logic; the harness is one I/O shell.
+The split follows functional-core/imperative-shell: the adapter is the testable unit-of-work + mapping logic; the runner is one I/O shell.
 
 **Alternatives considered:**
 
 - **Thin adapter (just a `run()` callable).**
-  Pushes retry/cancel/cleanup/scope back into the harness, which then needs stage-specific knowledge — defeating the protocol.
+  Pushes retry/cancel/cleanup/scope back into the runner, which then needs stage-specific knowledge — defeating the protocol.
 
 ### Decision: RunPrimitiveScopeKeyAndAtomicSupersession
 
 **Chosen:** A `run` record keyed by `(stage, scope_key)` carries version stamps, `input_fingerprint`, `supersedes_run_id`, and `status`.
 The stage defines its own `scope_key` (chunking: per converted-artifact; contextualization: per document; mention extraction: corpus-wide).
 Activating a new run and superseding the prior is one transaction, enforced by a partial unique constraint ("at most one active run per `(stage, scope_key)`"); SQLite's serialized writer makes this atomic without extra locking.
-The primitive is independent of work-unit execution — a stage may record runs without using the harness, and vice versa.
+The primitive is independent of work-unit execution — a stage may record runs without using the runner, and vice versa.
 Row-identity scoping is the adapter's choice: content-deterministic stages use content-addressed ids + an append-only run-membership table; model/input-dependent stages use run-scoped ids.
 
 **Rationale:** Keying on `(stage, scope_key)` resolves the review's "scope is under-specified" point — the invariant is meaningful only per a stage-defined scope.
@@ -88,11 +88,11 @@ Keeping the primitive execution-independent lets chunking (no LLM, fast) and the
 ### Decision: GenericLifecycleAndRetryClassification
 
 **Chosen:** A generic lifecycle — `queued → running → {succeeded, failed, cancelled, timed_out}` — with failed outcomes classified `retryable | permanent`.
-The adapter maps its execution result onto this set; the harness reasons about progress, eligibility, and retry uniformly.
+The adapter maps its execution result onto this set; the runner reasons about progress, eligibility, and retry uniformly.
 Retry eligibility = retryable-failed and past its retry-wait.
 
 **Rationale:** The review noted "cancelled / timeout / failure" weren't mapped to statuses or retry semantics.
-A single generic state machine gives the harness a uniform basis for scheduling and the operator surface, while stage-specific statuses (conversion's `FAILED_RETRYABLE`/`FAILED_PERM`/`UPLOAD_PENDING`, etc.) map onto it.
+A single generic state machine gives the runner a uniform basis for scheduling and the operator surface, while stage-specific statuses (conversion's `FAILED_RETRYABLE`/`FAILED_PERM`/`UPLOAD_PENDING`, etc.) map onto it.
 
 ### Decision: SharedTransitionEventTableKeyedBySourceIdentity
 
@@ -111,21 +111,21 @@ Porting conversion onto it is a structural relocation of `conversion_job_events`
 ### Decision: PackageHomeAndStranglerSequencing
 
 **Chosen:** Primitives live in a new top-level `aizk.pipeline`; `aizk.core` stays low-level shared (`database.py`).
-Sequencing is strangler-style and behavior-preserving: (1) build the primitives + harness with a stub repository under new tests; (2) implement conversion's `StageRepository` over `ConversionJob` and route its transitions through the helper; (3) move the harness logic out of `aizk.conversion.workers` into `aizk.pipeline`, deleting the conversion-local duplicates, keeping conversion's suite green; (4) **last**, reconcile the specs — relocate the now-duplicated generic contracts out of `worker-process-management`/`conversion-worker` into `pipeline-stage-runtime`.
+Sequencing is strangler-style and behavior-preserving: (1) build the primitives + runner with a stub repository under new tests; (2) implement conversion's `StageHandler` over `ConversionJob` and route its transitions through the helper; (3) move the runner logic out of `aizk.conversion.workers` into `aizk.pipeline`, deleting the conversion-local duplicates, keeping conversion's suite green; (4) **last**, reconcile the specs — relocate the now-duplicated generic contracts out of `worker-process-management`/`conversion-worker` into `pipeline-stage-runtime`.
 
 **Rationale:** Consumers import the runtime, not vice versa, so a new top-level package keeps the dependency direction clean.
 Doing the spec reconcile last keeps the risky structural move separate from the spec migration (modularity-skill rule: never mix behavior and structure — here, never mix structural relocation and spec churn).
 
-### Decision: StageRepositoryProtocolSurface
+### Decision: StageHandlerProtocolSurface
 
-**Chosen:** The `StageRepository` protocol a stage implements is, concretely (signatures pinned now so the harness can be coded against them):
+**Chosen:** The `StageHandler` protocol a stage implements is, concretely (signatures pinned now so the runner can be coded against them):
 
 - `validate_dependencies() -> None` — raise on missing required dependencies (startup gate).
 - `claim_next(session) -> WorkUnitHandle | None` — within a caller-opened `BEGIN IMMEDIATE` transaction, select the next eligible work-unit in the stage's submission order, transition it to `running` via the helper, and return an opaque handle (or `None` if none eligible).
-  The **harness owns** the session and transaction boundary; the repository runs its stage-specific eligibility query and transition inside it.
+  The **runner owns** the session and transaction boundary; the handler runs its stage-specific eligibility query and transition inside it.
   If an outside engine is adopted, this eligibility/claim portion is replaced by the engine, while the transition/event projection remains a stage-owned write.
 - `recover_stale(session) -> list[WorkUnitHandle]` — batch-transition units stranded in `running` back to eligible, recording the recovery cause.
-  This is part of the current SQLite harness, not a domain contract future engines must expose.
+  This is part of the current SQLite runner, not a domain contract future engines must expose.
 - `execute(handle) -> StageResult` — run the stage's unit-of-work (no DB writes to the unit's status; pure-ish work + side effects the adapter owns).
 - `map_result(result | exception) -> (TerminalOutcome, retry_class)` — map success/exception to the generic terminal outcome + `retryable | permanent`.
 - `finalize(session, handle, outcome) -> None` — transition the work-unit to its terminal status via the helper.
@@ -135,7 +135,7 @@ Doing the spec reconcile last keeps the risky structural move separate from the 
 
 **Rationale:** The review's blocking question was that the seam was described by responsibility, not signature.
 Pinning it now lets task group 1 produce a codeable protocol.
-The harness owning the session/transaction (and passing it into `claim_next`/`finalize`) preserves conversion's existing "caller owns `BEGIN IMMEDIATE`, helper does not commit" convention, so the co-commit guarantee holds across the extraction.
+The runner owning the session/transaction (and passing it into `claim_next`/`finalize`) preserves conversion's existing "caller owns `BEGIN IMMEDIATE`, helper does not commit" convention, so the co-commit guarantee holds across the extraction.
 This protocol is the contract for the current embedded engine; it is deliberately not a universal adapter API for every possible orchestrator.
 
 **Alternatives considered:**
@@ -145,17 +145,17 @@ This protocol is the contract for the current embedded engine; it is deliberatel
 
 ### Decision: ExecutionModelIsThreadPlusOptionalSubprocess
 
-**Chosen:** The harness preserves conversion's **thread-pool + optional subprocess** execution model rather than rewriting to asyncio.
-In-process units run in the harness thread pool (the graph stages' LLM/NER calls are blocking I/O, fine in threads); a stage may opt into subprocess isolation (conversion's docling path).
+**Chosen:** The runner preserves conversion's **thread-pool + optional subprocess** execution model rather than rewriting to asyncio.
+In-process units run in the runner thread pool (the graph stages' LLM/NER calls are blocking I/O, fine in threads); a stage may opt into subprocess isolation (conversion's docling path).
 The subprocess-shaped guarantees (graceful-before-forceful, no-orphan-descendants) apply only to subprocess-isolated stages (see the spec's bounded-execution requirement); in-process units are terminated by cooperative cancellation + cleanup.
-Harness tests wrap the act phase with `no_thread_leaks`, and with `no_task_leaks` only where a path uses asyncio.
+Runner tests wrap the act phase with `no_thread_leaks`, and with `no_task_leaks` only where a path uses asyncio.
 
 **Rationale:** "Behavior-preserving" for conversion is far cheaper and lower-risk on the existing thread+subprocess model than an async rewrite; the new stages don't need asyncio.
 This resolves the review's "thread vs async, and the spec asserts subprocess-shaped termination for in-process stages" contradiction.
 
 **Alternatives considered:**
 
-- **Async harness.**
+- **Async runner.**
   Would make the conversion port a behavior-changing rewrite (subprocess supervision, `ThreadPoolExecutor`, signal handling all change), violating the regression-net premise.
 
 ### Decision: PipelineEventsGenericSchema
@@ -190,7 +190,7 @@ The three changes' migrations must land as one linear head — sequence them in 
 ### Decision: ConversionIsNotRetrofittedOntoRuns
 
 **Chosen:** The run/dataset-version primitive is **additive** — conversion is **not** retrofitted onto it in this change.
-Conversion keeps its `ConversionJob` model and owner-scoped idempotency as-is; the port relocates only the **harness** and the **transition events** (`conversion_job_events` → `pipeline_events`).
+Conversion keeps its `ConversionJob` model and owner-scoped idempotency as-is; the port relocates only the **runner** and the **transition events** (`conversion_job_events` → `pipeline_events`).
 The run primitive is built and tested against a stub repository and is first consumed by the graph stages.
 Conversion therefore has no `scope_key` and no run record.
 
@@ -203,10 +203,10 @@ Keeping the run primitive additive is what lets the graph stages (the real consu
 ```text
                 aizk.pipeline (primitives)
    ┌───────────────────────────────────────────────┐
-   │  harness: claim/lease · concurrency · drain ·  │
+   │  runner: claim/lease · concurrency · drain ·  │
    │  cancel · timeout · stale-recovery · observ.   │
    │                    │                           │
-   │         StageRepository protocol               │   run primitive            record_transition
+   │         StageHandler protocol               │   run primitive            record_transition
    │   (discover/claim/transition/cleanup/validate) │   (run: (stage,scope_key), │   helper
    └───────────────────│───────────────────────────┘    status, atomic supersede)│
                        │  implemented per stage                                    ▼
@@ -217,20 +217,20 @@ Keeping the run primitive additive is what lets the graph stages (the real consu
     stays here)
 ```
 
-Conversion is the first adapter; its `ConversionJob` table, idempotency, source-ref, upload phases, and output links stay in `aizk.conversion` behind the repository protocol.
+Conversion is the first adapter; its `ConversionJob` table, idempotency, source-ref, upload phases, and output links stay in `aizk.conversion` behind the handler protocol.
 
 ## Risks
 
 - **Premature abstraction.**
-  Mitigation: primitives not framework; harness over a protocol (no central table); UI deferred until a second consumer; the graph stages are the second real consumer validating the run primitive and harness seam before the abstraction is frozen.
+  Mitigation: primitives not framework; runner over a protocol (no central table); UI deferred until a second consumer; the graph stages are the second real consumer validating the run primitive and runner seam before the abstraction is frozen.
 - **Conversion regression during the port.**
   Mitigation: conversion's existing test suite is the regression net; strangler sequencing; structural-only commits separate from any behavior change.
 - **`conversion_job_events` → `pipeline_events` relocation.**
   Mitigation: migration-equivalence test and the existing event-log tests assert the same events are recorded; the relocation is structural.
 - **`scope_key` correctness across stages.**
   Mitigation: stage-defined `scope_key` with the one-active-run invariant enforced by a partial unique constraint, exercised by concurrent-run and failed-supersession tests.
-- **Harness concurrency/lifecycle bugs.**
-  Mitigation: harness tests wrap the act phase with `pyleak` (`no_task_leaks` / `no_thread_leaks`) per the project testing rule, plus drain/cancel/timeout/stale-recovery cases against a stub repository.
+- **Runner concurrency/lifecycle bugs.**
+  Mitigation: runner tests wrap the act phase with `pyleak` (`no_task_leaks` / `no_thread_leaks`) per the project testing rule, plus drain/cancel/timeout/stale-recovery cases against a stub repository.
 
 ## Decision Record
 

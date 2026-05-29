@@ -18,6 +18,7 @@ import httpx
 import pytest
 from sqlmodel import Session
 
+from aizk.conversion import handler as repository_mod
 from aizk.conversion.core.errors import (
     DenyListDestination,
     EgressPolicyError,
@@ -27,6 +28,7 @@ from aizk.conversion.core.errors import (
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, UrlRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source
+from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
 from aizk.conversion.utilities.egress import ValidatedDestination
 from aizk.conversion.utilities.egress_fetch import egress_fetch_bytes
@@ -438,11 +440,13 @@ def test_happy_path_public_url_succeeds(monkeypatch: pytest.MonkeyPatch, db_sess
     db_session.commit()
     db_session.refresh(source)
 
+    # Seed already RUNNING — the adapter's ``execute`` is entered after the claim.
     job = ConversionJob(
         aizk_uuid=source.aizk_uuid,
         owner_id="self",
         title="Happy Path",
-        status=ConversionJobStatus.QUEUED,
+        status=ConversionJobStatus.RUNNING,
+        attempts=1,
         idempotency_key="h" * 64,
         source_ref=ref.model_dump_json(),
     )
@@ -454,11 +458,14 @@ def test_happy_path_public_url_succeeds(monkeypatch: pytest.MonkeyPatch, db_sess
     monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
     monkeypatch.setattr(orchestrator, "_process_job_subprocess", _make_subprocess_stub())
     monkeypatch.setattr(orchestrator, "get_engine", lambda _url=None: db_session.get_bind())
+    monkeypatch.setattr(repository_mod, "get_engine", lambda _url=None: db_session.get_bind())
+    monkeypatch.setattr(repository_mod, "_is_job_cancelled", lambda *_a, **_k: False)
     monkeypatch.setattr(uploader_mod, "get_engine", lambda _url=None: db_session.get_bind())
 
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    orchestrator.process_job_supervised(job.id, config, _make_fake_runtime())
+    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    handler.execute(job.id)
 
     db_session.expire_all()
     updated = db_session.get(ConversionJob, job.id)

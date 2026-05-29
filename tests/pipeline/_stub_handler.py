@@ -1,10 +1,10 @@
-"""In-memory stub :class:`StageRepository` for harness tests.
+"""In-memory stub :class:`StageHandler` for runner tests.
 
 This is **test support, not shipped code**. It implements a minimal stage-owned
 work-unit table over SQLite and drives its claim/transition through the real
-:func:`aizk.pipeline.events.record_transition` co-commit helper, so harness
-tests exercise the genuine "harness owns the session + ``BEGIN IMMEDIATE``,
-repository never commits" seam rather than a mock.
+:func:`aizk.pipeline.events.record_transition` co-commit helper, so runner
+tests exercise the genuine "runner owns the session + ``BEGIN IMMEDIATE``,
+handler never commits" seam rather than a mock.
 
 The stub is deliberately controllable per test:
 
@@ -38,7 +38,7 @@ from sqlmodel import Session, select
 
 from aizk.pipeline.events import record_transition
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
-from aizk.pipeline.repository import Isolation
+from aizk.pipeline.handler import Isolation
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine
@@ -54,11 +54,11 @@ class _StubBase(DeclarativeBase):
 
 
 class StubWorkUnit(_StubBase):
-    """A stage-owned work-unit row with the columns the harness loop needs.
+    """A stage-owned work-unit row with the columns the runner loop needs.
 
     ``status`` carries the stub stage's own status text (the generic lifecycle
-    values are reused for simplicity, but the harness never reads them — it
-    drives everything through the repository). ``queued_at`` defines submission
+    values are reused for simplicity, but the runner never reads them — it
+    drives everything through the handler). ``queued_at`` defines submission
     order; ``earliest_next_attempt_at`` gates retry-wait eligibility;
     ``started_at`` marks running units for stale recovery.
     """
@@ -104,15 +104,17 @@ class _Recorded:
     cancelled: list[str] = field(default_factory=list)
     executed: list[str] = field(default_factory=list)
     execute_started: list[str] = field(default_factory=list)
+    finalize_attempts: list[str] = field(default_factory=list)
+    finalize_committed: list[str] = field(default_factory=list)
 
 
 _ELIGIBLE_STATUSES = (WorkUnitStatus.QUEUED.value, WorkUnitStatus.FAILED.value)
 
 
-class StubStageRepository:
-    """An in-memory :class:`~aizk.pipeline.repository.StageRepository` for tests.
+class StubStageHandler:
+    """An in-memory :class:`~aizk.pipeline.handler.StageHandler` for tests.
 
-    All claim/transition writes run inside the harness-owned transaction via
+    All claim/transition writes run inside the runner-owned transaction via
     ``record_transition`` and never commit, matching the production contract.
     Execution behavior is per-unit and supplied by the test through
     :meth:`enqueue`.
@@ -131,11 +133,11 @@ class StubStageRepository:
         isolation: Isolation = Isolation.IN_PROCESS,
         stage_name: str | None = None,
     ) -> None:
-        """Create a stub repository bound to ``engine``.
+        """Create a stub handler bound to ``engine``.
 
         Args:
             engine: SQLite engine holding the stub work-unit table.
-            timeout: Wall-clock timeout the harness enforces per unit.
+            timeout: Wall-clock timeout the runner enforces per unit.
             concurrency_limit: Maximum simultaneously-executing units.
             stale_after: Age past which a ``running`` unit is treated as stale.
             dependencies_ok: When ``False``, ``validate_dependencies`` raises.
@@ -155,6 +157,14 @@ class StubStageRepository:
         self._cancel_events: dict[int, threading.Event] = {}
         self.recorded = _Recorded()
         self._lock = threading.Lock()
+        # Fault-injection counters (test support): how many leading calls to
+        # finalize / claim_next should raise a simulated DB fault before the call
+        # is allowed to proceed. Default 0 = no injected fault.
+        self._finalize_faults_remaining = 0
+        self._finalize_fault_error: BaseException | None = None
+        self._claim_calls = 0
+        self._claim_fault_on: set[int] = set()
+        self._claim_fault_error: BaseException | None = None
 
     # --- test control surface -------------------------------------------------
 
@@ -193,12 +203,63 @@ class StubStageRepository:
         """Return the cooperative-cancel event a unit's behavior may poll."""
         return self._cancel_events[unit_id]
 
+    def register_behavior(self, unit_id: int, behavior: Behavior = succeed) -> None:
+        """Attach an ``execute`` behavior to an *existing* persisted unit id.
+
+        A fresh handler constructed over an existing store (simulating a
+        process restart) has no per-unit behavior closures — those live only in
+        the original instance's memory. Production ``execute`` is always available
+        after a restart; this re-supplies a behavior so a reclaimed unit can run.
+        """
+        self._behaviors[unit_id] = behavior
+        self._cancel_events.setdefault(unit_id, threading.Event())
+
+    def inject_finalize_fault(self, *, times: int, error: BaseException) -> None:
+        """Make the next ``times`` calls to :meth:`finalize` raise ``error``.
+
+        Simulates a DB error / lock on the terminal-transition commit so a test
+        can assert the runner keeps the slot and retries ``finalize`` on the
+        next reap until the durable transition lands. After ``times`` faults the
+        call proceeds normally. ``error`` should be one the runner classifies as
+        a finalize DB error (``OperationalError`` / ``DBAPIError``).
+        """
+        self._finalize_faults_remaining = times
+        self._finalize_fault_error = error
+
+    def inject_claim_fault(self, *, on_calls: set[int], error: BaseException) -> None:
+        """Raise ``error`` on the 1-indexed claim calls listed in ``on_calls``.
+
+        Simulates a DB lock on specific claim transactions so a test can assert
+        the runner tolerates a contended claim (logs and re-polls) without
+        losing already-running work. Targeting a specific call (e.g. the 2nd,
+        after a first unit is already claimed and in flight) keeps the contention
+        distinct from a "no work" first poll. ``error`` should be an
+        ``OperationalError`` / ``DBAPIError`` the runner classifies as a claim
+        DB error.
+        """
+        self._claim_fault_on = set(on_calls)
+        self._claim_fault_error = error
+
     def get_status(self, unit_id: int) -> str:
         """Return the unit's current persisted status text."""
         with Session(self._engine) as session:
             unit = session.get(StubWorkUnit, unit_id)
             assert unit is not None
             return unit.status
+
+    def mark_retry_class(self, unit_id: int, retry_class: str) -> None:
+        """Persist a unit's ``retry_class`` directly (durable scheduling state).
+
+        Lets a test seed durable terminal scheduling state — e.g. a permanent
+        failure that ``claim_next`` must exclude — without routing through a real
+        ``execute`` + ``finalize`` cycle.
+        """
+        with Session(self._engine) as session:
+            unit = session.get(StubWorkUnit, unit_id)
+            assert unit is not None
+            unit.retry_class = retry_class
+            session.add(unit)
+            session.commit()
 
     def force_running_stale(self, unit_id: int) -> None:
         """Persist a unit as ``running`` with a backdated ``started_at``.
@@ -214,7 +275,7 @@ class StubStageRepository:
             session.add(unit)
             session.commit()
 
-    # --- StageRepository protocol --------------------------------------------
+    # --- StageHandler protocol --------------------------------------------
 
     def validate_dependencies(self) -> None:
         """Raise when configured to simulate a missing dependency."""
@@ -222,13 +283,21 @@ class StubStageRepository:
             raise RuntimeError("stub dependency unavailable")
 
     def claim_next(self, session: Session) -> int | None:
-        """Claim the next eligible unit in submission order, or ``None``.
+        """Claim the next eligible unit in submission (claim) order, or ``None``.
 
-        Runs inside the harness-owned ``BEGIN IMMEDIATE`` transaction: selects
+        Runs inside the runner-owned ``BEGIN IMMEDIATE`` transaction: selects
         the oldest eligible unit (queued or retryable-failed past its
-        retry-wait) and transitions it to ``running`` via ``record_transition``.
-        Does not commit.
+        retry-wait) by ``queued_at`` — the claim/selection-order guarantee, not a
+        worker-thread start-order one — and transitions it to ``running`` via
+        ``record_transition``. Does not commit.
+
+        Honors an injected claim fault (see :meth:`inject_claim_fault`) by
+        raising the configured DB error, simulating a contended claim lock.
         """
+        self._claim_calls += 1
+        if self._claim_calls in self._claim_fault_on:
+            assert self._claim_fault_error is not None
+            raise self._claim_fault_error
         now = _utcnow()
         unit = session.exec(
             select(StubWorkUnit)
@@ -259,7 +328,7 @@ class StubStageRepository:
         """Return ``running`` units older than ``stale_after`` to eligible.
 
         Records the recovery cause in each unit's transition event. Runs inside
-        the harness-owned transaction; does not commit.
+        the runner-owned transaction; does not commit.
         """
         threshold = _utcnow() - self._stale_after
         units = session.exec(
@@ -311,8 +380,18 @@ class StubStageRepository:
         """Transition the unit to its terminal status via ``record_transition``.
 
         For a retryable failure, set a retry-wait so the unit is not immediately
-        re-eligible. Runs inside the harness-owned transaction; does not commit.
+        re-eligible. Runs inside the runner-owned transaction; does not commit.
+
+        Honors an injected finalize fault (see :meth:`inject_finalize_fault`) by
+        raising the configured DB error *before* staging any write, so the
+        runner rolls back, keeps the slot, and retries on the next reap.
         """
+        with self._lock:
+            self.recorded.finalize_attempts.append(str(handle))
+        if self._finalize_faults_remaining > 0:
+            self._finalize_faults_remaining -= 1
+            assert self._finalize_fault_error is not None
+            raise self._finalize_fault_error
         unit = session.get(StubWorkUnit, handle)
         assert unit is not None
         now = _utcnow()
@@ -338,6 +417,8 @@ class StubStageRepository:
             attempt=unit.attempts,
             payload=StubTransitionPayload(note=f"finalize:{outcome.status.value}"),
         )
+        with self._lock:
+            self.recorded.finalize_committed.append(str(handle))
 
     def cleanup(self, handle: int) -> None:
         """Record that transient resources were released for ``handle``."""
@@ -382,7 +463,7 @@ def _child_spawns_grandchild_and_sleeps(ready_path: str) -> None:
 
     Writes the child and grandchild PIDs to ``ready_path`` so the test can
     assert both are reaped after termination. Creating a new process group
-    (``setpgrp``) lets the harness terminate the whole descendant tree with a
+    (``setpgrp``) lets the runner terminate the whole descendant tree with a
     single ``killpg``, which is what the no-orphan guarantee relies on.
     """
     import multiprocessing as mp
@@ -405,10 +486,10 @@ class _SubprocessHandle:
     ready_path: str
 
 
-class SubprocessStubRepository(StubStageRepository):
+class SubprocessStubRepository(StubStageHandler):
     """Subprocess-isolated stub: ``execute`` spawns a real child + grandchild.
 
-    Exercises the harness's graceful-before-forceful termination and the
+    Exercises the runner's graceful-before-forceful termination and the
     no-orphan-descendants guarantee for the subprocess path. ``cancel`` sends
     SIGTERM to the child's process group (graceful), waits briefly, then
     SIGKILL (forceful); ``execute`` blocks until the child exits so a timeout
@@ -449,7 +530,7 @@ class SubprocessStubRepository(StubStageRepository):
         )
         process.start()
         self._processes[handle] = _SubprocessHandle(handle, process, ready_path)
-        # Block until the child is terminated by the harness (timeout/cancel).
+        # Block until the child is terminated by the runner (timeout/cancel).
         process.join()
         return f"subprocess-exit:{handle}"
 
@@ -505,7 +586,7 @@ def create_stub_engine() -> "Engine":
     """Create a fresh SQLite engine with the stub work-unit table.
 
     Uses a shared-cache file-less in-memory database via a static pool so the
-    same schema is visible across the harness's worker threads and claim
+    same schema is visible across the runner's worker threads and claim
     sessions within one engine. Both the stub work-unit table and the shared
     ``pipeline_events`` table are created, since ``record_transition`` co-commits
     an event with every status change.
@@ -522,4 +603,28 @@ def create_stub_engine() -> "Engine":
     )
     _StubBase.metadata.create_all(engine)
     PipelineEvent.__table__.create(engine)
+    return engine
+
+
+def create_stub_file_engine(db_path: str, *, create_schema: bool) -> "Engine":
+    """Create a file-based stub SQLite engine over ``db_path``.
+
+    Unlike :func:`create_stub_engine` (an in-memory DB that vanishes when its
+    engine is disposed), this persists to a file so durable state survives a
+    simulated process restart: dispose the first engine, then construct a fresh
+    engine + handler + runner over the same file. ``create_schema`` creates
+    the stub work-unit and ``pipeline_events`` tables on first construction; pass
+    ``False`` for the "restarted process" engine so it reads the existing rows.
+    """
+    from sqlmodel import create_engine
+
+    from aizk.pipeline.events import PipelineEvent
+
+    engine = create_engine(
+        f"sqlite:///{db_path}",
+        connect_args={"check_same_thread": False, "timeout": 30},
+    )
+    if create_schema:
+        _StubBase.metadata.create_all(engine)
+        PipelineEvent.__table__.create(engine)
     return engine

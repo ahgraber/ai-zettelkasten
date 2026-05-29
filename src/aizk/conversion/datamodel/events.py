@@ -1,9 +1,21 @@
-"""Append-only event log for ConversionJob lifecycle transitions.
+"""Conversion-stage transition events on the shared ``pipeline_events`` log.
 
-This module defines the durable audit/event record for every change to
-``ConversionJob.status`` and every subprocess-reported ``phase`` event, plus
-the ``record_transition`` / ``record_phase_event`` / ``record_source_event``
-helpers that every status-mutating site in the worker and API funnels through.
+This module defines the conversion stage's typed event vocabulary
+(:class:`ConversionEventKind` plus one validated pydantic payload model per
+kind) and the ``record_transition`` / ``record_phase_event`` /
+``record_source_event`` helpers that every status-mutating site in the worker
+and API funnels through.
+
+The durable rows now live in the shared :class:`aizk.pipeline.events.PipelineEvent`
+table (``pipeline_events``), not in a conversion-private table: these helpers
+validate the conversion-specific payload, then delegate to
+:func:`aizk.pipeline.events.record_transition`, recording the row with
+``stage="conversion"``, ``work_unit_ref=str(job.id)``, the denormalized
+``aizk_uuid``, the kind/from-status/to-status rendered to text, the attempt, and
+the validated payload serialized to the generic ``payload_json`` column. The
+conversion event history is therefore queryable both per-job (``stage`` +
+``work_unit_ref``) and cross-stage (``aizk_uuid``); use :func:`events_for_job`
+to read a single job's conversion events back in occurrence order.
 
 Calling conventions:
 
@@ -35,9 +47,9 @@ Calling conventions:
    contract. Additive changes (new optional fields on an existing kind)
    are tolerated by ``extra="ignore"`` on read.
 
-See ``.specs/changes/2026-05-17-conversion-job-event-log/design.md`` for
-the full rationale (sections ``HelperCallingConventions``,
-``TypedDiscriminatedUnionPayload``, ``SharedHelperInDatamodelLayer``).
+See ``.specs/changes/pipeline-stage-runtime/design.md § PipelineEventsGenericSchema``
+for the relocation rationale and ``.specs/changes/archive/2026-05-18-conversion-job-event-log/design.md``
+for the original helper-calling-convention and typed-payload rationale.
 """
 
 from __future__ import annotations
@@ -50,10 +62,10 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, Union
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field as PydField, TypeAdapter, ValidationError
-from sqlalchemy import Column, DateTime, Enum as SAEnum, ForeignKey, Index, Integer, Text, func
-from sqlmodel import Field, SQLModel
+from sqlmodel import select
 
 from aizk.conversion.datamodel.job import ConversionJobStatus
+from aizk.pipeline.events import PipelineEvent
 
 if TYPE_CHECKING:
     from sqlmodel import Session
@@ -62,10 +74,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
-def _utcnow() -> datetime.datetime:
-    """Return timezone-aware UTC timestamp."""
-    return datetime.datetime.now(datetime.timezone.utc)
+#: Stage identifier stamped on every conversion event row in ``pipeline_events``.
+STAGE = "conversion"
 
 
 class _UnsetType:
@@ -270,83 +280,44 @@ def parse_payload_lenient(raw: str | dict[str, Any]) -> BaseModel:
 
 
 # ---------------------------------------------------------------------------
-# Event-log table
+# Work-unit reference + read helper for the shared event log
 # ---------------------------------------------------------------------------
 
 
-class ConversionJobEvent(SQLModel, table=True):
-    """Durable record of a single ConversionJob lifecycle event.
+def _work_unit_ref(job_id: int | None) -> str:
+    """Render a conversion job's id to the generic ``work_unit_ref`` text.
 
-    Rows are append-only after insertion. ``job_id`` uses
-    ``ON DELETE SET NULL`` so operator deletion of a terminal-state job
-    preserves the audit trail (``aizk_uuid`` remains populated and serves
-    as the post-deletion lookup key).
-
-    Column nullability conventions:
-
-    - ``from_status`` is NULL only on origin events (the first event for a
-      job, where there is no prior committed state); transition and phase
-      events both carry a non-null value.
-    - ``to_status`` is NULL only on non-transition events (kind
-      ``source_enriched``), which describe writes to other entities and do
-      not assert a target ``ConversionJob.status``. Transition and phase
-      events both populate it.
+    The shared ``pipeline_events`` table carries each stage's own unit identity
+    as text (no per-stage FK). Conversion's unit is the integer
+    ``ConversionJob.id``, stored verbatim as its string form so a single job's
+    events are retrievable by ``(stage, work_unit_ref)``.
     """
+    return str(job_id)
 
-    __tablename__ = "conversion_job_events"
-    __table_args__ = (
-        Index(
-            "ix_conversion_job_events_job_id_occurred_at",
-            "job_id",
-            "occurred_at",
-        ),
-        Index(
-            "ix_conversion_job_events_aizk_uuid_occurred_at",
-            "aizk_uuid",
-            "occurred_at",
-        ),
-        Index(
-            "ix_conversion_job_events_kind_occurred_at",
-            "kind",
-            "occurred_at",
-        ),
-    )
 
-    id: int | None = Field(default=None, primary_key=True, nullable=False)
-    job_id: int | None = Field(
-        default=None,
-        sa_column=Column(
-            Integer,
-            ForeignKey("conversion_jobs.id", ondelete="SET NULL"),
-            nullable=True,
-        ),
+def events_for_job(session: "Session", job_id: int) -> list[PipelineEvent]:
+    """Return a conversion job's events from ``pipeline_events`` in order.
+
+    Filters the shared event log to ``stage="conversion"`` and the job's
+    ``work_unit_ref`` (its id rendered to text), ordered by primary key so the
+    sequence matches insertion/occurrence order. This is the relocation-aware
+    replacement for the former ``conversion_job_events`` per-job query.
+
+    Args:
+        session: Active session to read through.
+        job_id: The conversion job id whose events to return.
+
+    Returns:
+        The job's :class:`~aizk.pipeline.events.PipelineEvent` rows in order.
+    """
+    return list(
+        session.exec(
+            select(PipelineEvent)
+            .where(PipelineEvent.stage == STAGE)
+            .where(PipelineEvent.work_unit_ref == _work_unit_ref(job_id))
+            .order_by(PipelineEvent.event_id)
+        ).all()
     )
-    # No single-column index on ``aizk_uuid``: the ``(aizk_uuid, occurred_at)``
-    # composite serves prefix lookups equivalently and avoids redundant write
-    # cost on every insert.
-    aizk_uuid: UUID = Field(nullable=False)
-    attempt: int = Field(nullable=False)
-    occurred_at: datetime.datetime = Field(
-        default_factory=_utcnow,
-        sa_column=Column(
-            DateTime(),
-            nullable=False,
-            server_default=func.current_timestamp(),
-        ),
-    )
-    kind: ConversionEventKind = Field(
-        sa_column=Column(
-            SAEnum(
-                ConversionEventKind,
-                name="conversioneventkind",
-                values_callable=lambda enum_cls: [member.value for member in enum_cls],
-            ),
-            nullable=False,
-        )
-    )
-    from_status: ConversionJobStatus | None = Field(default=None, nullable=True)
-    to_status: ConversionJobStatus | None = Field(default=None, nullable=True)
-    payload_json: str = Field(sa_column=Column(Text, nullable=False))
 
 
 # ---------------------------------------------------------------------------
@@ -384,12 +355,20 @@ def record_transition(
     attempt: int,
     payload: BaseModel,
     from_status: ConversionJobStatus | None | _UnsetType = _UNSET,
-) -> ConversionJobEvent:
+) -> PipelineEvent:
     """Record a status transition and the matching event row in one transaction.
 
     Default behavior reads ``job.status`` as ``from_status`` *before*
     mutation, mutates the job to ``to_status``, and appends one
-    ``ConversionJobEvent`` row carrying the typed ``payload``.
+    :class:`~aizk.pipeline.events.PipelineEvent` row (``stage="conversion"``)
+    carrying the typed ``payload`` serialized into the generic ``payload_json``
+    column. The conversion-specific ``kind`` and statuses are rendered to their
+    string values; the denormalized ``aizk_uuid`` keeps the row queryable after
+    operator deletion of the job (there is no DB FK in the shared table).
+
+    The conversion-specific payload is validated against the strict per-kind
+    typed union *before* the job is mutated, so a mismatched or malformed
+    payload leaves ``job.status`` untouched.
 
     For origin events (the first event for a brand-new job), pass
     ``from_status=None`` explicitly. This is required because the API
@@ -403,9 +382,9 @@ def record_transition(
 
     Transient jobs: if ``job.id`` is ``None`` (i.e., the job was just
     constructed and not yet flushed), the caller MUST call
-    ``session.flush()`` before invoking this helper so the event row can
-    capture a non-null ``job_id``. Calling without a flush will persist
-    the event with ``job_id=None`` and the FK link to the job is lost.
+    ``session.flush()`` before invoking this helper so the event row's
+    ``work_unit_ref`` captures a non-null job id. Calling without a flush
+    persists ``work_unit_ref="None"`` and the link to the job is lost.
 
     Args:
         session: Active SQLModel session. The caller owns commit/rollback.
@@ -427,6 +406,8 @@ def record_transition(
         ValidationError: If ``payload`` does not satisfy the typed payload
             model for its ``kind``.
     """
+    # Validate the conversion-specific payload through the strict per-kind union
+    # BEFORE any mutation, so a bad payload never leaves a half-applied status.
     payload_json = _serialize_payload(payload, kind)
 
     if isinstance(from_status, _UnsetType):
@@ -435,13 +416,14 @@ def record_transition(
         prior_status = from_status
     job.status = to_status
 
-    event = ConversionJobEvent(
-        job_id=job.id,
+    event = PipelineEvent(
+        stage=STAGE,
+        work_unit_ref=_work_unit_ref(job.id),
         aizk_uuid=job.aizk_uuid,
         attempt=attempt,
-        kind=kind,
-        from_status=prior_status,
-        to_status=to_status,
+        kind=kind.value,
+        from_status=prior_status.value if prior_status is not None else None,
+        to_status=to_status.value,
         payload_json=payload_json,
     )
 
@@ -459,12 +441,15 @@ def record_phase_event(
     current_status: ConversionJobStatus,
     phase: str,
     reported_at: datetime.datetime,
-) -> ConversionJobEvent | None:
+) -> PipelineEvent | None:
     """Record a subprocess-reported phase report as an event row.
 
     Does NOT mutate any job status — phase reports describe progress within
     the RUNNING state. Both ``from_status`` and ``to_status`` are set to
     ``current_status`` so the row's column shape stays consistent.
+
+    The row lands in the shared ``pipeline_events`` table with
+    ``stage="conversion"`` and the job's ``work_unit_ref``.
 
     Best-effort: validation failure (unrecognized phase, extra field) and
     persistence failure are both logged at WARNING and swallowed. The job's
@@ -486,13 +471,14 @@ def record_phase_event(
         )
         return None
 
-    event = ConversionJobEvent(
-        job_id=job_id,
+    event = PipelineEvent(
+        stage=STAGE,
+        work_unit_ref=_work_unit_ref(job_id),
         aizk_uuid=aizk_uuid,
         attempt=attempt,
-        kind=ConversionEventKind.PHASE,
-        from_status=current_status,
-        to_status=current_status,
+        kind=ConversionEventKind.PHASE.value,
+        from_status=current_status.value,
+        to_status=current_status.value,
         payload_json=payload.model_dump_json(),
     )
 
@@ -520,13 +506,18 @@ def record_source_event(
     columns_written: list[str],
     update_succeeded: bool,
     failure_reason: str | None = None,
-) -> ConversionJobEvent | None:
+) -> PipelineEvent | None:
     """Record a Source-enrichment write attempt as an event row.
 
     Emits regardless of whether the Source UPDATE succeeded — the audit is
     of *what the worker attempted and the outcome*, not of the underlying
     mutation's atomicity. Mirrors ``record_phase_event``'s best-effort
     posture: validation or persistence failures are logged and swallowed.
+
+    The row lands in the shared ``pipeline_events`` table with
+    ``stage="conversion"`` and the job's ``work_unit_ref``. Both status columns
+    are NULL because a source-enrichment write does not assert a target
+    ``ConversionJob.status``.
 
     Returns the event row when persistence is staged, or ``None`` when it
     was dropped.
@@ -548,11 +539,12 @@ def record_source_event(
         )
         return None
 
-    event = ConversionJobEvent(
-        job_id=job_id,
+    event = PipelineEvent(
+        stage=STAGE,
+        work_unit_ref=_work_unit_ref(job_id),
         aizk_uuid=aizk_uuid,
         attempt=attempt,
-        kind=ConversionEventKind.SOURCE_ENRICHED,
+        kind=ConversionEventKind.SOURCE_ENRICHED.value,
         from_status=None,
         to_status=None,
         payload_json=payload.model_dump_json(),

@@ -28,7 +28,7 @@ Adding Prefect would introduce operational overhead — a separate server proces
 
 ### Addendum Context (May 2026)
 
-The `pipeline-stage-runtime` change extracts the current queue machinery into `aizk.pipeline`: a harness over a stage-supplied repository protocol, a run/dataset-version primitive, and a shared transition-event projection.
+The `pipeline-stage-runtime` change extracts the current queue machinery into `aizk.pipeline`: a runner over a stage-supplied handler protocol, a run/dataset-version primitive, and a shared transition-event projection.
 This does not change the selected orchestrator.
 It clarifies the boundary: the current SQLite runner is one embedded engine implementation, while stage domain code, run provenance, artifact writes, outcome classification, and product read-models should remain independent enough to survive an engine replacement.
 
@@ -79,12 +79,12 @@ They should be introduced only when the current engine cannot express a named pr
 - **No step-level checkpointing**: if a job crashes mid-execution, the entire job retries from the start (acceptable for current workloads)
 - **Limited concurrency primitives**: no built-in fan-out, signals, or event-await; these would need to be built ad hoc
 - **Scaling ceiling**: SQLite write throughput limits concurrent workers; at high scale a Postgres-backed queue becomes necessary
-- **Current-engine coupling**: repository methods such as discovery, claim, lease, and stale recovery are part of the embedded engine shape; they are not guaranteed to survive an external orchestrator migration unchanged
+- **Current-engine coupling**: handler methods such as discovery, claim, lease, and stale recovery are part of the embedded engine shape; they are not guaranteed to survive an external orchestrator migration unchanged
 
 #### Mitigation Strategies
 
 - **Design for idempotency**: all tasks are safe to retry from the beginning
-- **Service boundary preservation**: orchestration logic stays in the runner/harness layer, decoupled from business logic
+- **Service boundary preservation**: orchestration logic stays in the runner (engine) layer, decoupled from business logic
 - **Product read-model preservation**: run/generation records and transition events remain application-owned projections, not queries against an orchestrator's private history
 - **Migration path**: job model is intentionally simple — a Postgres migration is straightforward (see Future Considerations)
 
@@ -100,7 +100,7 @@ Adds Postgres-style `NOTIFY`/`LISTEN` semantics by polling `PRAGMA data_version`
 - **Same file as the application database**: enqueue commits atomically with business writes in the same transaction — eliminates the dual-write problem the current `ConversionJob` table already avoids, but with proper queue primitives instead of hand-rolled polling
 - **No additional infrastructure**: just a SQLite extension; works with the existing Litestream replication story
 - **Multi-language bindings**: Python, Node, Rust, Go, Ruby, Bun, Elixir share one on-disk format
-- **Built-in primitives**: durable queues, retries, timeouts, pub/sub, event streams, cron — replaces the bespoke status machine, retry counter, and stale-job recovery in `workers/loop.py` / `workers/orchestrator.py`
+- **Built-in primitives**: durable queues, retries, timeouts, pub/sub, event streams, cron — replaces the bespoke status machine, retry counter, and stale-job recovery now embodied by the `aizk.pipeline` runner (the engine loop) plus `conversion/workers/queries.py` (claim / stale-recovery queries)
 - **Low wake latency**: ~0.7 ms p50 cross-process wake without client polling
 - **Decorator API** available (Huey-style) for ergonomic task definitions
 
@@ -241,15 +241,15 @@ May be revisited for operator-facing dashboards if needed.
 **Current / in-flight setup** (SQLite task queue):
 
 - `ConversionJob` table in the application SQLite database (via SQLModel/SQLAlchemy)
-- `aizk.pipeline` harness: polling/claim loop, stale-work recovery, concurrency, timeout, cancellation, and drain
-- stage repository/adapters: per-job execution lifecycle, status/event projection, and error classification
+- `aizk.pipeline` runner: polling/claim loop, stale-work recovery, concurrency, timeout, cancellation, and drain
+- stage handler/adapters: per-job execution lifecycle, status/event projection, and error classification
 - Litestream provides continuous replication for durability
 
 **If migrating to absurd**:
 
 1. Migrate application database to Postgres
 2. Apply absurd schema: `uvx absurdctl init -d <database>`
-3. Replace `workers/loop.py` polling with an `absurd-sdk` worker (`uv add absurd-sdk`)
+3. Replace the `aizk.pipeline` runner polling with an `absurd-sdk` worker (`uv add absurd-sdk`)
 4. Register existing job handler logic as an Absurd task with explicit step boundaries
 5. Remove `ConversionJob` table and status-machine logic (replaced by Absurd's model)
 

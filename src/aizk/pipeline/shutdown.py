@@ -1,7 +1,7 @@
-"""Per-instance graceful-shutdown control for a pipeline-stage harness.
+"""Per-instance graceful-shutdown control for a pipeline-stage runner.
 
 Generalizes ``aizk.conversion.workers.shutdown`` from module-global state to a
-per-:class:`ShutdownController` instance so two stage harnesses can share one
+per-:class:`ShutdownController` instance so two stage runners can share one
 process without sharing drain bookkeeping. OS signals are inherently
 process-wide; the *state* they set (shutdown requested, force-exit requested) is
 per-instance. A controller's :meth:`ShutdownController._handle_signal` flips its
@@ -10,12 +10,12 @@ immediate termination.
 
 Process-global vs instance-local ownership. ``signal.signal`` installs exactly
 one handler per signal for the whole process, so a single controller cannot own
-the disposition when two harnesses share a process. The genuinely process-global
+the disposition when two runners share a process. The genuinely process-global
 piece — the installed SIGTERM/SIGINT disposition and the set of controllers it
 must reach — is owned by the module-level :data:`_dispatcher`
 (:class:`_SignalDispatcher`). Its handlers **broadcast** every received signal to
 *all* registered controllers (first signal → each controller's graceful request;
-second → each controller's immediate request), so every harness in the process
+second → each controller's immediate request), so every runner in the process
 observes the signal. Drain *bookkeeping* stays per-:class:`ShutdownController`;
 only the signal disposition and registry are module-global.
 """
@@ -36,10 +36,10 @@ class _SignalDispatcher:
 
     There is exactly one module-level instance (:data:`_dispatcher`). It exists
     because ``signal.signal`` is one-handler-per-signal for the whole process:
-    binding the disposition to a single controller would mean a second harness in
+    binding the disposition to a single controller would mean a second runner in
     the same process never observes a signal. Instead the dispatcher installs the
     process handlers **once** and broadcasts each signal to every registered
-    :class:`ShutdownController`, so every harness in the process is shut down.
+    :class:`ShutdownController`, so every runner in the process is shut down.
 
     Registration is thread-safe and idempotent. Installing the actual
     ``signal.signal`` disposition still requires the main thread; a controller
@@ -83,7 +83,7 @@ class _SignalDispatcher:
 
         When the last registered controller deregisters, the process-wide
         handlers installed by :meth:`register` are restored to whatever was in
-        place beforehand, so a harness's signal install leaves no residue.
+        place beforehand, so a runner's signal install leaves no residue.
         """
         with self._lock:
             try:
@@ -119,15 +119,15 @@ class ShutdownController:
     """Per-instance shutdown state plus optional process-wide signal handlers.
 
     Drain bookkeeping (``is_shutdown_requested`` / ``is_immediate_shutdown``) is
-    held on the instance so multiple harnesses in one process keep independent
-    state. :meth:`install_signal_handlers` is optional — a harness driven
+    held on the instance so multiple runners in one process keep independent
+    state. :meth:`install_signal_handlers` is optional — a runner driven
     programmatically (tests, embedding) can call :meth:`request_shutdown`
     directly without touching process signal disposition.
 
     Signal disposition is process-global, so it is owned by the module-level
     :data:`_dispatcher`, not by any single controller: installing handlers
     *registers* this controller with the dispatcher, which broadcasts every
-    signal to all registered controllers. This lets two harnesses sharing a
+    signal to all registered controllers. This lets two runners sharing a
     process both observe the same signal — which a per-instance
     ``signal.signal`` install (one-handler-per-signal) could not provide.
     """
@@ -172,12 +172,12 @@ class ShutdownController:
 
         Process signal disposition is one-handler-per-signal, so it is owned by
         the module-level :data:`_dispatcher`, which broadcasts each signal to
-        every registered controller — letting two harnesses in one process both
+        every registered controller — letting two runners in one process both
         observe a signal. Registration is idempotent. The dispatcher installs
         the OS-level ``signal.signal`` handlers once and only from the main
-        thread; an off-main-thread harness (embedding, test driver) is still
+        thread; an off-main-thread runner (embedding, test driver) is still
         registered for broadcast but the OS-level install is skipped with a log,
-        so the harness still runs and can be shut down via
+        so the runner still runs and can be shut down via
         :meth:`request_shutdown`.
         """
         _dispatcher.register(self)
@@ -198,11 +198,11 @@ def force_exit(code: int = 1) -> None:
     bypasses non-daemon ``ThreadPoolExecutor`` worker joins that would otherwise
     keep a stuck task alive during interpreter shutdown.
 
-    Multi-harness semantics: ``os._exit`` terminates the **whole process**, not a
-    single harness. When two harnesses share a process, one harness's forced exit
+    Multi-runner semantics: ``os._exit`` terminates the **whole process**, not a
+    single runner. When two runners share a process, one runner's forced exit
     tears down both (and every other thread/pool in the process). This is a
     deliberate last-resort escape for a stuck/uncooperative in-process unit; a
-    cooperative per-harness shutdown drains via :class:`ShutdownController`
+    cooperative per-runner shutdown drains via :class:`ShutdownController`
     instead.
     """
     os._exit(code)

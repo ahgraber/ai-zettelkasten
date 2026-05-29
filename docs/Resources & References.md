@@ -52,6 +52,7 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [getomni-ai/zerox: PDF to Markdown with vision models](https://github.com/getomni-ai/zerox)
 - [mindee/doctr: docTR (Document Text Recognition) - a seamless, high-performing & accessible library for OCR-related tasks powered by Deep Learning.](https://github.com/mindee/doctr)
 - [Optimize parsing costs with LlamaParse auto mode — LlamaIndex](https://www.llamaindex.ai/blog/optimize-parsing-costs-with-llamaparse-auto-mode)
+- [LiteParse: Local Document Parsing for AI Agents](https://www.llamaindex.ai/blog/liteparse-local-document-parsing-for-ai-agents) and [Up to 100x Fast Parsing with LiteParse v2.0 and Rust](https://www.llamaindex.ai/blog/liteparse-v2-0-runs-everywhere)
 - [bytedance/Dolphin: Document Image Parsing via Heterogeneous Anchor Prompting](https://github.com/bytedance/Dolphin)
 - [Supercharge your OCR Pipelines with Open Models](https://huggingface.co/blog/ocr-open-models)
 - [opendatalab/MinerU: A high-quality tool to convert PDF to Markdown and JSON](https://github.com/opendatalab/MinerU/tree/master)
@@ -69,6 +70,7 @@ Alternative to RAG: use LLMs to maintain an evolving markdown library as a perso
 - [Intelligent Document Processing Leaderboard](https://idp-leaderboard.org/)
 - [getomni-ai/benchmark: OCR Benchmark](https://github.com/getomni-ai/benchmark)
 - [allenai/olmocr bench](https://github.com/allenai/olmocr/tree/main/olmocr/bench)
+- [ParseBench: The First Document Parsing Benchmark for AI Agents](https://www.llamaindex.ai/blog/parsebench)
 
 ## Retrieval
 
@@ -192,7 +194,15 @@ If building a concept graph, it would be useful to be able to use it as a human 
 - [refactoringhq/tolaria](https://github.com/refactoringhq/tolaria)
 - [Atomic — Everything You Know, Connected](https://atomicapp.ai/)
 
-## annotation tools
+## analysis
+
+### clustering
+
+- [TutteInstitute/evoc: Embedding Vector Oriented Clustering](https://github.com/TutteInstitute/evoc)
+- [MaartenGr/BERTopic: Leveraging BERT and c-TF-IDF to create easily interpretable topics.](https://github.com/maartengr/bertopic)
+- [x-tabdeveloping/turftopic: Robust and fast topic models with sentence-transformers.](https://github.com/x-tabdeveloping/turftopic)
+
+### annotation tools
 
 - [HumanSignal/label-studio: Label Studio is a multi-type data labeling and annotation tool with standardized output format](https://github.com/HumanSignal/label-studio)
 - [doccano/doccano: Open source annotation tool for machine learning practitioners.](https://github.com/doccano/doccano)

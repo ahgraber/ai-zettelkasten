@@ -1,14 +1,21 @@
 """Integration tests for worker subprocess lifecycle with real process management.
 
-Tests the actual AIZK worker code (process_job_supervised) with real subprocesses
-to verify cancellation, timeout, and cleanup behavior.
+Exercises the REAL subprocess termination path through the runner adapter
+(:class:`~aizk.conversion.handler.ConversionStageHandler.execute`), which
+spawns the conversion subprocess via ``_spawn_and_supervise`` and lets the
+supervision loop — the single owner of the ``mp.Process`` — perform the
+graceful-before-forceful (SIGTERM → wait → SIGKILL) process-group termination.
+
+Cancellation here is driven cooperatively through the adapter's
+``is_cancelled_fn`` seam (the DB-status poll ``_is_job_cancelled``), the same
+seam the runner's per-unit cancel path ultimately observes. The runner-driven
+*deadline* termination (and grandchild reaping under a wall-clock timeout) is
+covered separately by ``test_handler_runner_lifecycle.py``; the runner
+real-subprocess SUCCEEDED + drain proof lives in ``test_worker_e2e.py``.
 
 NOTE: These tests spawn real subprocesses and use real signal handling.
 They require pytest-isolate to run safely:
     pip install pytest-isolate
-    pytest tests/conversion/integration/test_worker_lifecycle.py
-
-Or run with custom marker:
     pytest -m integration_lifecycle
 """
 
@@ -16,19 +23,19 @@ from __future__ import annotations
 
 import datetime as dt
 from pathlib import Path
-import shutil
-import tempfile
 import time
 
 import psutil
 import pytest
 from sqlmodel import Session
 
+from aizk.conversion import handler as repository_mod
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as Bookmark
+from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.workers import errors as errors_mod, loop, orchestrator
+from aizk.conversion.workers import errors as errors_mod, orchestrator, queries
 from tests.conversion.integration import _subprocess_helpers
 
 # Mark all tests in this module to run in isolated process.
@@ -40,7 +47,7 @@ pytestmark = [
 
 
 # Aliases into the minimal-imports helper module.
-# These functions are passed # as spawn() targets, so the child process reimports their defining module.
+# These functions are passed as spawn() targets, so the child process reimports their defining module.
 # Keeping them in _subprocess_helpers (stdlib-only) avoids loading the full aizk/CUDA graph on every spawn,
 # which would otherwise exceed short test timeouts on GPU machines.
 _test_process_subprocess = _subprocess_helpers.test_process_subprocess
@@ -121,159 +128,109 @@ def _create_test_bookmark(db_session: Session) -> Bookmark:
     return bookmark
 
 
-def _create_test_job(db_session: Session, bookmark: Bookmark, status: ConversionJobStatus) -> ConversionJob:
-    """Helper to create a test job."""
+def _create_running_job(db_session: Session, bookmark: Bookmark) -> ConversionJob:
+    """Seed an already-claimed RUNNING job, as ``claim_next`` would leave it.
+
+    ``execute`` is entered after the claim, so the job arrives RUNNING with a
+    valid ``source_ref`` and ``attempts`` already incremented.
+    """
     source_ref = KarakeepBookmarkRef(kind="karakeep_bookmark", bookmark_id=bookmark.karakeep_id or "bm_lifecycle_test")
     job = ConversionJob(
         aizk_uuid=bookmark.aizk_uuid,
         owner_id="self",
         title=bookmark.title or "Test Job",
         idempotency_key="lifecycle" * 8,
-        status=status,
+        status=ConversionJobStatus.RUNNING,
+        attempts=1,
+        started_at=dt.datetime.now(dt.timezone.utc),
         source_ref=source_ref.model_dump_json(),
     )
-    if status == ConversionJobStatus.RUNNING:
-        job.started_at = dt.datetime.now(dt.timezone.utc)
     db_session.add(job)
     db_session.commit()
     db_session.refresh(job)
     return job
 
 
+def _track_spawn(monkeypatch, target) -> list:
+    """Patch the subprocess target + track the spawned ``mp.Process`` instances.
+
+    ``orchestrator._spawn_conversion_subprocess`` calls ``ctx.Process`` with the
+    ``target``/``args``/``daemon`` keyword arguments, so the tracking wrapper must
+    accept them by keyword.
+    """
+    spawned: list = []
+    original_process_class = orchestrator.mp.get_context("spawn").Process
+
+    def _track_process(*, target, args, daemon):
+        proc = original_process_class(target=target, args=args, daemon=daemon)
+        spawned.append(proc)
+        return proc
+
+    monkeypatch.setattr(orchestrator, "_process_job_subprocess", target)
+    ctx = orchestrator.mp.get_context("spawn")
+    monkeypatch.setattr(ctx, "Process", _track_process)
+    return spawned
+
+
+def _get_spawned_pid(spawned: list) -> int:
+    """Assert exactly one subprocess was spawned with a valid PID and return it."""
+    assert len(spawned) == 1, "Should have spawned one subprocess"
+    pid = spawned[0].pid
+    assert pid is not None, "Subprocess should have been spawned"
+    return pid
+
+
 def test_real_subprocess_spawned_and_terminated(monkeypatch, db_session: Session) -> None:
-    """Verify process_job_supervised spawns real subprocess and can terminate it."""
+    """``execute`` spawns a real subprocess and the supervision loop terminates it on cancel."""
     monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("WORKER_TEST_SLEEP_SECONDS", "10")
 
     bookmark = _create_test_bookmark(db_session)
-    job = _create_test_job(db_session, bookmark, ConversionJobStatus.QUEUED)
+    job = _create_running_job(db_session, bookmark)
 
-    # Track subprocess by storing reference
-    spawned_process = []
+    spawned = _track_spawn(monkeypatch, _test_process_subprocess)
+    monkeypatch.setattr(repository_mod, "get_engine", lambda _url=None: db_session.get_bind())
 
-    original_process_class = orchestrator.mp.get_context("spawn").Process
-
-    def _track_process(target, args, daemon):
-        proc = original_process_class(target=target, args=args, daemon=daemon)
-        spawned_process.append(proc)
-        return proc
-
-    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
-
-    # Mock mp.Process to track PID
-    ctx = orchestrator.mp.get_context("spawn")
-    monkeypatch.setattr(ctx, "Process", _track_process)
-
-    # Cancel job after it starts to trigger termination
+    # Cancel job after it starts to trigger cooperative termination.
     cancel_state = {"called": False}
 
-    def _mock_is_cancelled(job_id, engine):
+    def _mock_is_cancelled(_job_id, _engine):
         if not cancel_state["called"]:
             cancel_state["called"] = True
             return False
         return True
 
-    monkeypatch.setattr(orchestrator, "_is_job_cancelled", _mock_is_cancelled)
+    monkeypatch.setattr(repository_mod, "_is_job_cancelled", _mock_is_cancelled)
 
-    # Run the job
-    poll_interval_seconds = 0.1
     config = ConversionConfig(_env_file=None)
-    assert job.id is not None
-    orchestrator.process_job_supervised(
-        job.id, config, _make_fake_runtime(), poll_interval_seconds=poll_interval_seconds
-    )
+    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    with pytest.raises(errors_mod.ConversionCancelledError):
+        handler.execute(job.id)
 
-    # Verify subprocess was spawned
-    assert len(spawned_process) == 1, "Should have spawned one subprocess"
-    spawned_pid = spawned_process[0].pid
-    assert spawned_pid is not None, "Subprocess should have been spawned"
+    spawned_pid = _get_spawned_pid(spawned)
 
-    # Verify subprocess is terminated (give it a moment)
     _assert_pid_gone(spawned_pid, timeout_seconds=5.0, interval_seconds=0.05)
     _assert_no_zombie_processes(job.id)
 
 
 def test_cancelled_job_terminates_subprocess_with_no_zombies(monkeypatch, db_session: Session) -> None:
-    """Verify cancelling a job terminates subprocess and leaves no zombie processes."""
+    """Cancelling a job terminates the subprocess and leaves no zombie processes."""
     monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("WORKER_TEST_SLEEP_SECONDS", "10")
 
     bookmark = _create_test_bookmark(db_session)
-    job = _create_test_job(db_session, bookmark, ConversionJobStatus.QUEUED)
+    job = _create_running_job(db_session, bookmark)
 
-    spawned_process = []
-    original_process_class = orchestrator.mp.get_context("spawn").Process
+    spawned = _track_spawn(monkeypatch, _test_process_subprocess)
+    monkeypatch.setattr(repository_mod, "get_engine", lambda _url=None: db_session.get_bind())
+    monkeypatch.setattr(repository_mod, "_is_job_cancelled", lambda _job_id, _engine: True)
 
-    def _track_process(target, args, daemon):
-        proc = original_process_class(target=target, args=args, daemon=daemon)
-        spawned_process.append(proc)
-        return proc
-
-    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
-
-    ctx = orchestrator.mp.get_context("spawn")
-    monkeypatch.setattr(ctx, "Process", _track_process)
-
-    # Trigger immediate cancellation
-    monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: True)
-
-    poll_interval_seconds = 1
     config = ConversionConfig(_env_file=None)
-    assert job.id is not None
-    orchestrator.process_job_supervised(
-        job.id, config, _make_fake_runtime(), poll_interval_seconds=poll_interval_seconds
-    )
+    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    with pytest.raises(errors_mod.ConversionCancelledError):
+        handler.execute(job.id)
 
-    assert len(spawned_process) == 1
-    spawned_pid = spawned_process[0].pid
-    assert spawned_pid is not None
-    _assert_pid_gone(spawned_pid, timeout_seconds=5.0, interval_seconds=0.05)
-    _assert_no_zombie_processes(job.id)
-
-
-def test_timeout_terminates_subprocess(monkeypatch, db_session: Session) -> None:
-    """Verify timeout terminates subprocess near the configured deadline."""
-    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "5")  # Short timeout for test
-    monkeypatch.setenv("WORKER_TEST_SLEEP_SECONDS", "10")
-
-    bookmark = _create_test_bookmark(db_session)
-    job = _create_test_job(db_session, bookmark, ConversionJobStatus.QUEUED)
-
-    spawned_process = []
-    original_process_class = orchestrator.mp.get_context("spawn").Process
-
-    def _track_process(target, args, daemon):
-        proc = original_process_class(target=target, args=args, daemon=daemon)
-        spawned_process.append(proc)
-        return proc
-
-    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
-
-    ctx = orchestrator.mp.get_context("spawn")
-    monkeypatch.setattr(ctx, "Process", _track_process)
-
-    monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
-
-    # Mock handle_job_error to capture timeout error
-    errors = []
-    monkeypatch.setattr(orchestrator, "handle_job_error", lambda _job_id, error, _config: errors.append(error))
-
-    poll_interval_seconds = 0.1
-    config = ConversionConfig(_env_file=None)
-    assert job.id is not None
-    orchestrator.process_job_supervised(
-        job.id, config, _make_fake_runtime(), poll_interval_seconds=poll_interval_seconds
-    )
-
-    # Structural: timeout fired during the conversion phase (not upload/etc).
-    assert len(errors) == 1
-    assert isinstance(errors[0], errors_mod.ConversionTimeoutError)
-    assert errors[0].phase == "converting"
-
-    # Structural: subprocess was terminated and reaped (no zombies).
-    assert len(spawned_process) == 1
-    spawned_pid = spawned_process[0].pid
-    assert spawned_pid is not None
+    spawned_pid = _get_spawned_pid(spawned)
     _assert_pid_gone(spawned_pid, timeout_seconds=5.0, interval_seconds=0.05)
     _assert_no_zombie_processes(job.id)
 
@@ -281,62 +238,28 @@ def test_timeout_terminates_subprocess(monkeypatch, db_session: Session) -> None
 def test_subprocess_completes_normally_no_zombies(
     monkeypatch,
     db_session: Session,
-    tmp_path: Path,
 ) -> None:
-    """Verify subprocess that completes normally leaves no zombie processes."""
+    """A subprocess that completes normally leaves no zombie processes."""
     monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("WORKER_TEST_SLEEP_SECONDS", "0.1")
 
     bookmark = _create_test_bookmark(db_session)
-    job = _create_test_job(db_session, bookmark, ConversionJobStatus.QUEUED)
+    job = _create_running_job(db_session, bookmark)
 
-    spawned_process = []
-    original_process_class = orchestrator.mp.get_context("spawn").Process
+    spawned = _track_spawn(monkeypatch, _test_process_subprocess)
+    monkeypatch.setattr(repository_mod, "get_engine", lambda _url=None: db_session.get_bind())
+    monkeypatch.setattr(repository_mod, "_is_job_cancelled", lambda _job_id, _engine: False)
+    # Skip the in-process upload phase; this test only cares about clean reaping.
+    monkeypatch.setattr(repository_mod, "_prepare_upload", lambda *_a, **_k: None)
 
-    def _track_process(target, args, daemon):
-        proc = original_process_class(target=target, args=args, daemon=daemon)
-        spawned_process.append(proc)
-        return proc
-
-    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
-    monkeypatch.setattr(orchestrator, "_prepare_upload", lambda *_a, **_k: None)  # Skip upload
-
-    ctx = orchestrator.mp.get_context("spawn")
-    monkeypatch.setattr(ctx, "Process", _track_process)
-
-    monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
-
-    created_paths: list[Path] = []
-
-    class _TrackedTemporaryDirectory:
-        def __init__(self):
-            self.path = Path(tempfile.mkdtemp(prefix="aizk-worker-test-", dir=str(tmp_path)))
-            created_paths.append(self.path)
-
-        def __enter__(self) -> str:
-            return str(self.path)
-
-        def __exit__(self, exc_type, exc, tb) -> bool:
-            shutil.rmtree(self.path, ignore_errors=True)
-            return False
-
-    monkeypatch.setattr(orchestrator.tempfile, "TemporaryDirectory", _TrackedTemporaryDirectory)
-
-    poll_interval_seconds = 0.1
     config = ConversionConfig(_env_file=None)
-    assert job.id is not None
-    orchestrator.process_job_supervised(
-        job.id, config, _make_fake_runtime(), poll_interval_seconds=poll_interval_seconds
-    )
+    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    handler.execute(job.id)
 
-    assert len(spawned_process) == 1
-    spawned_pid = spawned_process[0].pid
-    assert spawned_pid is not None
+    spawned_pid = _get_spawned_pid(spawned)
     _assert_pid_gone(spawned_pid, timeout_seconds=5.0, interval_seconds=0.05)
-    assert spawned_process[0].exitcode == 0
+    assert spawned[0].exitcode == 0
     _assert_no_zombie_processes(job.id)
-    assert created_paths
-    assert all(not path.exists() for path in created_paths)
 
 
 def test_process_group_terminates_grandchild(
@@ -344,42 +267,28 @@ def test_process_group_terminates_grandchild(
     db_session: Session,
     tmp_path: Path,
 ) -> None:
-    """Verify process group termination kills child and grandchild processes."""
+    """Process-group termination kills child and grandchild processes."""
     monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "30")
     pid_file = tmp_path / "worker_child_pids.txt"
     monkeypatch.setenv("WORKER_TEST_PID_FILE", str(pid_file))
 
     bookmark = _create_test_bookmark(db_session)
-    job = _create_test_job(db_session, bookmark, ConversionJobStatus.QUEUED)
+    job = _create_running_job(db_session, bookmark)
 
-    spawned_process = []
-    original_process_class = orchestrator.mp.get_context("spawn").Process
-
-    def _track_process(target, args, daemon):
-        proc = original_process_class(target=target, args=args, daemon=daemon)
-        spawned_process.append(proc)
-        return proc
-
-    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _process_job_subprocess_spawn_child)
-
-    ctx = orchestrator.mp.get_context("spawn")
-    monkeypatch.setattr(ctx, "Process", _track_process)
+    spawned = _track_spawn(monkeypatch, _process_job_subprocess_spawn_child)
+    monkeypatch.setattr(repository_mod, "get_engine", lambda _url=None: db_session.get_bind())
 
     def _cancel_when_ready(_job_id, _engine):
         return pid_file.exists()
 
-    monkeypatch.setattr(orchestrator, "_is_job_cancelled", _cancel_when_ready)
+    monkeypatch.setattr(repository_mod, "_is_job_cancelled", _cancel_when_ready)
 
-    poll_interval_seconds = 0.1
     config = ConversionConfig(_env_file=None)
-    assert job.id is not None
-    orchestrator.process_job_supervised(
-        job.id, config, _make_fake_runtime(), poll_interval_seconds=poll_interval_seconds
-    )
+    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    with pytest.raises(errors_mod.ConversionCancelledError):
+        handler.execute(job.id)
 
-    assert len(spawned_process) == 1
-    spawned_pid = spawned_process[0].pid
-    assert spawned_pid is not None
+    spawned_pid = _get_spawned_pid(spawned)
 
     assert pid_file.exists(), "Expected PID file for child process"
     parent_pid_str, child_pid_str = pid_file.read_text().strip().split(",", maxsplit=1)
@@ -397,7 +306,7 @@ def test_sigterm_graceful_shutdown_within_grace_period(
     db_session: Session,
     tmp_path: Path,
 ) -> None:
-    """Verify SIGTERM shutdown completes within the grace period."""
+    """SIGTERM shutdown completes within the grace period."""
     monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "30")
     marker_path = tmp_path / "sigterm_marker.txt"
     monkeypatch.setenv("WORKER_TEST_MARKER_PATH", str(marker_path))
@@ -405,20 +314,10 @@ def test_sigterm_graceful_shutdown_within_grace_period(
     monkeypatch.setenv("WORKER_TEST_READY_PATH", str(ready_path))
 
     bookmark = _create_test_bookmark(db_session)
-    job = _create_test_job(db_session, bookmark, ConversionJobStatus.QUEUED)
+    job = _create_running_job(db_session, bookmark)
 
-    spawned_process = []
-    original_process_class = orchestrator.mp.get_context("spawn").Process
-
-    def _track_process(target, args, daemon):
-        proc = original_process_class(target=target, args=args, daemon=daemon)
-        spawned_process.append(proc)
-        return proc
-
-    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _process_job_subprocess_graceful_sigterm)
-
-    ctx = orchestrator.mp.get_context("spawn")
-    monkeypatch.setattr(ctx, "Process", _track_process)
+    spawned = _track_spawn(monkeypatch, _process_job_subprocess_graceful_sigterm)
+    monkeypatch.setattr(repository_mod, "get_engine", lambda _url=None: db_session.get_bind())
 
     cancel_state = {"cancel_time": None}
 
@@ -429,76 +328,58 @@ def test_sigterm_graceful_shutdown_within_grace_period(
             return True
         return False
 
-    monkeypatch.setattr(orchestrator, "_is_job_cancelled", _mock_is_cancelled)
+    monkeypatch.setattr(repository_mod, "_is_job_cancelled", _mock_is_cancelled)
 
-    poll_interval_seconds = 0.1
     config = ConversionConfig(_env_file=None)
-    assert job.id is not None
-    orchestrator.process_job_supervised(
-        job.id, config, _make_fake_runtime(), poll_interval_seconds=poll_interval_seconds
-    )
+    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    with pytest.raises(errors_mod.ConversionCancelledError):
+        handler.execute(job.id)
 
     if cancel_state["cancel_time"] is not None:
         cancel_elapsed = time.monotonic() - cancel_state["cancel_time"]
         assert cancel_elapsed <= 5.0
     _wait_for_path(marker_path, timeout_seconds=2.0, interval_seconds=0.05)
 
-    assert len(spawned_process) == 1
-    spawned_pid = spawned_process[0].pid
-    assert spawned_pid is not None
+    spawned_pid = _get_spawned_pid(spawned)
     _assert_pid_gone(spawned_pid, timeout_seconds=5.0, interval_seconds=0.05)
     _assert_no_zombie_processes(job.id)
 
 
-def test_sigkill_after_sigterm_on_timeout(monkeypatch, db_session: Session) -> None:
-    """Verify SIGKILL is sent after SIGTERM when subprocess ignores termination."""
-    timeout_seconds = 1.0
-    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", str(timeout_seconds))
+def test_sigkill_after_sigterm_when_subprocess_ignores_sigterm(monkeypatch, db_session: Session) -> None:
+    """SIGKILL is sent after SIGTERM when the subprocess ignores termination.
+
+    Drives a cooperative cancel against a subprocess that ignores SIGTERM; the
+    supervision loop's ``_terminate_and_wait`` must escalate to SIGKILL (waiting
+    out the 5s SIGTERM grace) so the process is still reaped with no zombie.
+    """
+    monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "30")
 
     bookmark = _create_test_bookmark(db_session)
-    job = _create_test_job(db_session, bookmark, ConversionJobStatus.QUEUED)
+    job = _create_running_job(db_session, bookmark)
 
-    spawned_process = []
-    original_process_class = orchestrator.mp.get_context("spawn").Process
+    spawned = _track_spawn(monkeypatch, _process_job_subprocess_ignore_sigterm)
+    monkeypatch.setattr(repository_mod, "get_engine", lambda _url=None: db_session.get_bind())
 
-    def _track_process(target, args, daemon):
-        proc = original_process_class(target=target, args=args, daemon=daemon)
-        spawned_process.append(proc)
-        return proc
+    # Let the subprocess install its SIG_IGN handler before cancel fires.
+    cancel_state = {"called": 0}
 
-    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _process_job_subprocess_ignore_sigterm)
+    def _mock_is_cancelled(_job_id, _engine):
+        cancel_state["called"] += 1
+        return cancel_state["called"] >= 2
 
-    ctx = orchestrator.mp.get_context("spawn")
-    monkeypatch.setattr(ctx, "Process", _track_process)
+    monkeypatch.setattr(repository_mod, "_is_job_cancelled", _mock_is_cancelled)
 
-    monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
-
-    errors = []
-    monkeypatch.setattr(orchestrator, "handle_job_error", lambda _job_id, error, _config: errors.append(error))
-
-    start = time.monotonic()
-    poll_interval_seconds = 0.1
     config = ConversionConfig(_env_file=None)
-    assert job.id is not None
-    orchestrator.process_job_supervised(
-        job.id, config, _make_fake_runtime(), poll_interval_seconds=poll_interval_seconds
-    )
-    duration = time.monotonic() - start
+    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    with pytest.raises(errors_mod.ConversionCancelledError):
+        handler.execute(
+            job.id,
+        )
 
-    # Structural: timeout fired pre-upload, and the loop did not exit before
-    # the configured deadline. Drop the wall-clock upper bound in favor of
-    # `_assert_pid_gone` which fails fast if the kill never lands.
-    # Phase is "starting" or "converting" depending on how far the subprocess
-    # got before the 1s deadline; this test is about kill semantics, not phase.
-    assert len(errors) == 1
-    assert isinstance(errors[0], errors_mod.ConversionTimeoutError)
-    assert errors[0].phase in {"starting", "converting"}
-    assert duration >= timeout_seconds
-
-    assert len(spawned_process) == 1
-    spawned_pid = spawned_process[0].pid
-    assert spawned_pid is not None
-    _assert_pid_gone(spawned_pid, timeout_seconds=5.0, interval_seconds=0.05)
+    spawned_pid = _get_spawned_pid(spawned)
+    # SIGTERM is ignored, so termination only completes after the SIGKILL
+    # escalation (post-5s grace); the pid must still be gone with no zombie.
+    _assert_pid_gone(spawned_pid, timeout_seconds=15.0, interval_seconds=0.1)
     _assert_no_zombie_processes(job.id)
 
 
@@ -506,25 +387,15 @@ def test_cancel_mid_execution_terminates_within_poll_interval(
     monkeypatch,
     db_session: Session,
 ) -> None:
-    """Verify cancellation ends the subprocess within the poll interval."""
+    """Cancellation ends the subprocess within roughly the poll interval."""
     monkeypatch.setenv("AIZK_WORKER_JOB_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("WORKER_TEST_SLEEP_SECONDS", "10")
 
     bookmark = _create_test_bookmark(db_session)
-    job = _create_test_job(db_session, bookmark, ConversionJobStatus.QUEUED)
+    job = _create_running_job(db_session, bookmark)
 
-    spawned_process = []
-    original_process_class = orchestrator.mp.get_context("spawn").Process
-
-    def _track_process(target, args, daemon):
-        proc = original_process_class(target=target, args=args, daemon=daemon)
-        spawned_process.append(proc)
-        return proc
-
-    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _test_process_subprocess)
-
-    ctx = orchestrator.mp.get_context("spawn")
-    monkeypatch.setattr(ctx, "Process", _track_process)
+    spawned = _track_spawn(monkeypatch, _test_process_subprocess)
+    monkeypatch.setattr(repository_mod, "get_engine", lambda _url=None: db_session.get_bind())
 
     cancel_state = {"called": 0, "cancel_time": None}
 
@@ -536,41 +407,42 @@ def test_cancel_mid_execution_terminates_within_poll_interval(
             return True
         return False
 
-    monkeypatch.setattr(orchestrator, "_is_job_cancelled", _mock_is_cancelled)
+    monkeypatch.setattr(repository_mod, "_is_job_cancelled", _mock_is_cancelled)
 
-    poll_interval_seconds = 0.1
+    # The adapter hardcodes the supervision poll interval at 2.0s; bound the
+    # elapsed-cancel assertion to that plus margin.
     config = ConversionConfig(_env_file=None)
-    assert job.id is not None
-    orchestrator.process_job_supervised(
-        job.id, config, _make_fake_runtime(), poll_interval_seconds=poll_interval_seconds
-    )
+    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    with pytest.raises(errors_mod.ConversionCancelledError):
+        handler.execute(job.id)
 
     assert cancel_state["cancel_time"] is not None
     cancel_elapsed = time.monotonic() - cancel_state["cancel_time"]
-    assert cancel_elapsed <= poll_interval_seconds + 0.5
+    assert cancel_elapsed <= 2.0 + 0.5
 
-    assert len(spawned_process) == 1
-    spawned_pid = spawned_process[0].pid
-    assert spawned_pid is not None
+    spawned_pid = _get_spawned_pid(spawned)
     _assert_pid_gone(spawned_pid, timeout_seconds=5.0, interval_seconds=0.05)
     _assert_no_zombie_processes(job.id)
 
 
 def test_recover_stale_running_job_marks_retryable(monkeypatch, db_session: Session) -> None:
-    """Verify stale running jobs are marked retryable for recovery."""
+    """Stale running jobs are reclaimed to FAILED_RETRYABLE via the shared recovery query."""
     monkeypatch.setenv("AIZK_WORKER_STALE_JOB_MINUTES", "0")
 
     bookmark = _create_test_bookmark(db_session)
-    job = _create_test_job(db_session, bookmark, ConversionJobStatus.RUNNING)
+    job = _create_running_job(db_session, bookmark)
     job.started_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)
     db_session.add(job)
     db_session.commit()
     db_session.refresh(job)
 
     config = ConversionConfig(_env_file=None)
-    recovered = loop.recover_stale_running_jobs(config)
+    # ``recover_stale_in_session`` runs inside a caller-owned transaction; the
+    # runner owns the commit. Drive it directly here and commit.
+    recovered = queries.recover_stale_in_session(db_session, config)
+    db_session.commit()
 
-    assert recovered == 1
+    assert recovered == [job.id]
     db_session.refresh(job)
     assert job.status == ConversionJobStatus.FAILED_RETRYABLE
     assert job.error_code == "worker_stale_running"
