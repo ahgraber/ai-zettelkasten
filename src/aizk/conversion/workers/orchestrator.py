@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 import datetime as dt
 import json
 import logging
@@ -10,7 +11,6 @@ import multiprocessing as mp
 import os
 from pathlib import Path
 import shutil
-import tempfile
 import time
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -19,13 +19,7 @@ from sqlmodel import Session, select
 
 from aizk.conversion.core.errors import EgressPolicyError
 from aizk.conversion.datamodel.events import (
-    ClaimedPayload,
-    ConversionEventKind,
-    FailedPayload,
-    UploadPendingPayload,
-    record_phase_event,
     record_source_event,
-    record_transition,
 )
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as SourceRecord
@@ -36,23 +30,18 @@ from aizk.conversion.utilities.hashing import compute_markdown_hash
 from aizk.conversion.utilities.paths import (
     OUTPUT_MARKDOWN_FILENAME,
     metadata_path,
-    read_text_nofollow,
 )
 from aizk.conversion.utilities.whitespace import normalize_whitespace
 from aizk.conversion.workers.errors import (
     ConversionCancelledError,
-    ConversionSubprocessError,
-    ConversionTimeoutError,
     JobDataIntegrityError,
-    ReportedChildError,
 )
-from aizk.conversion.workers.shutdown import is_shutdown_requested
 from aizk.conversion.workers.supervision import _supervise_conversion_process
 from aizk.conversion.workers.types import SubprocessMetadata, SupervisionResult, _utcnow, select_source_title
-from aizk.conversion.workers.uploader import _execute_upload, _prepare_upload
 
 if TYPE_CHECKING:
-    from aizk.conversion.wiring.worker import WorkerRuntime
+    import threading
+
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +133,8 @@ def _write_source_enrichment(
     from aizk.conversion.core.source_ref import SourceRef as _SourceRef
     from aizk.conversion.core.types import SOURCE_TYPE_BY_KIND
 
+    uuid_obj = aizk_uuid if isinstance(aizk_uuid, _UUID) else _UUID(aizk_uuid)
+
     columns_attempted: list[str] = ["url", "normalized_url", "title", "source_type"]
     if subprocess_meta.content_type:
         columns_attempted.append("content_type")
@@ -156,7 +147,6 @@ def _write_source_enrichment(
         source_type = SOURCE_TYPE_BY_KIND.get(terminal_ref.kind, "other")
         source_meta = subprocess_meta.source_meta.to_source_metadata()
 
-        uuid_obj = aizk_uuid if isinstance(aizk_uuid, _UUID) else _UUID(aizk_uuid)
         with Session(engine) as session:
             source = session.exec(select(SourceRecord).where(SourceRecord.aizk_uuid == uuid_obj)).one_or_none()
             if source is None:
@@ -188,12 +178,11 @@ def _write_source_enrichment(
     # failure here is logged but does not propagate (Source enrichment is
     # advisory).
     try:
-        uuid_for_event = aizk_uuid if isinstance(aizk_uuid, _UUID) else _UUID(aizk_uuid)
         with Session(engine) as event_session:
             record_source_event(
                 event_session,
                 job_id=job_id,
-                aizk_uuid=uuid_for_event,
+                aizk_uuid=uuid_obj,
                 attempt=attempt,
                 columns_written=columns_attempted,
                 update_succeeded=update_succeeded,
@@ -205,39 +194,6 @@ def _write_source_enrichment(
             "Failed to record source_enriched event for aizk_uuid=%s (best-effort)",
             aizk_uuid,
         )
-
-
-def _initialize_running_job(job_id: int, engine: Engine) -> bool:
-    """Ensure the job is in RUNNING state before processing.
-
-    Re-entrant claim path: in the normal worker flow ``claim_next_job`` has
-    already transitioned the job to RUNNING and emitted its ``claimed``
-    event, so this function is a no-op. For direct callers (tests, CLI) or
-    recovery cases where the job arrives in a non-RUNNING state, this
-    function transitions it to RUNNING, increments the attempt counter,
-    and emits a ``claimed`` event distinct from the ``claim_next_job`` path.
-    """
-    with Session(engine) as session:
-        job = session.get(ConversionJob, job_id)
-        if not job:
-            return False
-        if job.status in {ConversionJobStatus.SUCCEEDED, ConversionJobStatus.CANCELLED}:
-            return False
-        if job.status != ConversionJobStatus.RUNNING:
-            now = _utcnow()
-            job.started_at = now
-            job.attempts += 1
-            job.updated_at = now
-            record_transition(
-                session,
-                job,
-                to_status=ConversionJobStatus.RUNNING,
-                kind=ConversionEventKind.CLAIMED,
-                attempt=job.attempts,
-                payload=ClaimedPayload(claimed_at=now, worker_pid=os.getpid()),
-            )
-            session.commit()
-    return True
 
 
 def _process_job_subprocess(
@@ -374,8 +330,28 @@ def _spawn_and_supervise(
     resource_guard,
     requires_gpu: bool,
     on_phase_event=None,
+    on_spawn: Callable[[mp.Process], None] | None = None,
+    terminate_event: "threading.Event | None" = None,
+    shutdown_requested_fn: Callable[[], bool] | None = None,
 ) -> tuple[mp.Process, SupervisionResult, float | None]:
-    """Spawn and supervise; acquire resource_guard only if requires_gpu."""
+    """Spawn and supervise; acquire resource_guard only if requires_gpu.
+
+    ``on_spawn``, when supplied, is invoked once with the freshly spawned
+    subprocess immediately before supervision begins blocking. The pipeline
+    runner adapter uses it to register the live process so its cancellation
+    hook can terminate the process group while supervision is still running.
+
+    ``terminate_event``, when supplied, is forwarded to the supervision loop so
+    an out-of-band owner can *signal* termination (the supervision loop, the
+    single owner of the Process, performs the actual terminate/join). The
+    pipeline runner adapter uses this seam to drive drain/cancel.
+
+    ``shutdown_requested_fn`` defaults to ``None``: the runner owns drain (it
+    cancels in-flight units via ``terminate_event`` on shutdown), so the
+    supervision loop's module-global shutdown-drain branch is dead on the
+    runner path and the adapter passes ``None``. The parameter exists so the
+    supervision loop never depends on any module-global shutdown state.
+    """
     from contextlib import nullcontext
 
     guard_ctx = resource_guard if (requires_gpu and resource_guard is not None) else nullcontext()
@@ -386,6 +362,9 @@ def _spawn_and_supervise(
             workspace=workspace,
             source_ref_json=source_ref_json,
         )
+
+        if on_spawn is not None:
+            on_spawn(process)
 
         deadline = None
         if timeout_seconds > 0:
@@ -399,265 +378,12 @@ def _spawn_and_supervise(
             deadline=deadline,
             timeout_seconds=timeout_seconds,
             is_cancelled_fn=is_cancelled_fn,
-            shutdown_requested_fn=is_shutdown_requested,
+            shutdown_requested_fn=shutdown_requested_fn,
             drain_timeout_seconds=float(config.worker_drain_timeout_seconds),
             on_phase_event=on_phase_event,
+            terminate_event=terminate_event,
         )
     return process, result, deadline
-
-
-def process_job_supervised(  # noqa: C901
-    job_id: int,
-    config: ConversionConfig,
-    runtime: "WorkerRuntime | None" = None,
-    *,
-    poll_interval_seconds: float = 2.0,
-) -> None:
-    """Run a supervised conversion attempt and upload artifacts on success.
-
-    The parent process handles preflight, cancellation, timeout, and uploads.
-    """
-    from aizk.conversion.wiring.worker import build_worker_runtime
-
-    if runtime is None:
-        runtime = build_worker_runtime(config)
-
-    engine = get_engine(config.database_url)
-    timeout_seconds = float(config.worker_job_timeout_seconds)
-
-    if not _initialize_running_job(job_id, engine):
-        return
-
-    try:
-        source_ref = _get_source_ref(job_id, engine)
-    except JobDataIntegrityError as exc:
-        handle_job_error(job_id, exc, config)
-        return
-
-    converter_name = config.worker_converter_name
-    requires_gpu = runtime.capabilities.converter_requires_gpu(converter_name)
-
-    # Snapshot (aizk_uuid, attempt) once at supervision entry. The subprocess
-    # does not see the job's attempt counter, so the parent must capture it
-    # before phase events start arriving on the queue.
-    with Session(engine) as snap_session:
-        snap_job = snap_session.get(ConversionJob, job_id)
-        if snap_job is None:
-            return
-        attempt_snapshot = snap_job.attempts
-        aizk_uuid_snapshot = snap_job.aizk_uuid
-
-    def _on_phase_event(phase: str, reported_at: dt.datetime) -> None:
-        """Persist one phase event per subprocess report; best-effort."""
-        try:
-            with Session(engine) as phase_session:
-                record_phase_event(
-                    phase_session,
-                    job_id=job_id,
-                    aizk_uuid=aizk_uuid_snapshot,
-                    attempt=attempt_snapshot,
-                    current_status=ConversionJobStatus.RUNNING,
-                    phase=phase,
-                    reported_at=reported_at,
-                )
-                phase_session.commit()
-        except Exception:
-            logger.warning(
-                "Failed to commit phase event for job %s phase %r (best-effort)",
-                job_id,
-                phase,
-                exc_info=True,
-            )
-
-    with tempfile.TemporaryDirectory() as tmpdirname:
-        workspace = Path(tmpdirname)
-        source_ref_json = source_ref.model_dump_json()
-
-        process, result, deadline = _spawn_and_supervise(
-            job_id=job_id,
-            workspace=workspace,
-            source_ref_json=source_ref_json,
-            poll_interval_seconds=poll_interval_seconds,
-            timeout_seconds=timeout_seconds,
-            is_cancelled_fn=lambda: _is_job_cancelled(job_id, engine),
-            config=config,
-            resource_guard=runtime.resource_guard,
-            requires_gpu=requires_gpu,
-            on_phase_event=_on_phase_event,
-        )
-
-        if result.timed_out:
-            handle_job_error(
-                job_id,
-                ConversionTimeoutError(
-                    f"Job {job_id} exceeded its runtime during {result.last_phase}",
-                    result.last_phase,
-                ),
-                config,
-            )
-            return
-
-        if result.shutdown_terminated:
-            handle_job_error(
-                job_id,
-                ConversionTimeoutError(
-                    f"Job {job_id} terminated during shutdown drain in {result.last_phase}",
-                    result.last_phase,
-                ),
-                config,
-            )
-            return
-
-        if result.cancelled:
-            return
-
-        if result.reported_error:
-            error_code = result.reported_error.get("error_code", "conversion_failed")
-            error_message = result.reported_error.get("message", "conversion_failed")
-            retryable = None
-            retryable_value = result.reported_error.get("retryable")
-            if retryable_value is not None:
-                retryable = str(retryable_value).lower() == "true"
-            handle_job_error(
-                job_id,
-                ReportedChildError(
-                    error_message,
-                    error_code,
-                    retryable=retryable,
-                    traceback=result.reported_error.get("traceback"),
-                ),
-                config,
-            )
-            return
-
-        if process.exitcode and process.exitcode != 0:
-            handle_job_error(
-                job_id,
-                ConversionSubprocessError(f"Job {job_id} subprocess exited with code {process.exitcode}"),
-                config,
-            )
-            return
-
-        if _is_job_cancelled(job_id, engine):
-            logger.info("Job %s cancelled before upload", job_id)
-            return
-
-        last_phase = "uploading"
-        if deadline and time.monotonic() >= deadline:
-            elapsed = time.monotonic() - (deadline - timeout_seconds)
-            logger.info(
-                "Job %s timed out during %s after %s seconds",
-                job_id,
-                last_phase,
-                round(elapsed, 3),
-            )
-            handle_job_error(
-                job_id,
-                ConversionTimeoutError(
-                    f"Job {job_id} exceeded its runtime during {last_phase}",
-                    last_phase,
-                ),
-                config,
-            )
-            return
-
-        # Best-effort Source enrichment from metadata written by subprocess.
-        # Uses typed SubprocessMetadata so schema drift fails loudly rather than
-        # silently dropping fields. Failure here does not affect manifest or output.
-        # We also pull subprocess_meta into outer scope so the UPLOAD_PENDING
-        # transition's payload can carry the content_hash when available.
-        subprocess_meta: SubprocessMetadata | None = None
-        metadata_file = metadata_path(workspace)
-        if metadata_file.exists():
-            try:
-                from pydantic import ValidationError
-
-                from aizk.conversion.workers.errors import SubprocessMetadataInvalid
-
-                raw = read_text_nofollow(metadata_file)
-                try:
-                    subprocess_meta = SubprocessMetadata.model_validate_json(raw)
-                except ValidationError as exc:
-                    raise SubprocessMetadataInvalid(
-                        f"metadata.json failed SubprocessMetadata validation: {exc}"
-                    ) from exc
-
-                with Session(engine) as session:
-                    job_rec = session.get(ConversionJob, job_id)
-                    if job_rec:
-                        _write_source_enrichment(
-                            subprocess_meta,
-                            str(job_rec.aizk_uuid),
-                            engine,
-                            job_id=job_id,
-                            attempt=job_rec.attempts,
-                        )
-            except Exception:
-                logger.exception("Failed to read SubprocessMetadata for enrichment; job proceeds")
-
-        content_hash = subprocess_meta.markdown_hash_xx64 if subprocess_meta else None
-        with Session(engine) as session:
-            job_record = session.get(ConversionJob, job_id)
-            if job_record:
-                job_record.updated_at = _utcnow()
-                record_transition(
-                    session,
-                    job_record,
-                    to_status=ConversionJobStatus.UPLOAD_PENDING,
-                    kind=ConversionEventKind.UPLOAD_PENDING,
-                    attempt=job_record.attempts,
-                    payload=UploadPendingPayload(content_hash=content_hash),
-                )
-                session.commit()
-
-        # Local prep (read metadata, generate + write manifest) runs exactly
-        # once outside the retry loop. It is not idempotent against itself
-        # — save_manifest uses O_EXCL — and re-running it would deterministically
-        # fail attempt 2 with FileExistsError after a transient S3 failure on
-        # attempt 1. The retry loop only wraps the S3 PUTs, which are
-        # idempotent on their key.
-        try:
-            upload_plan = _prepare_upload(job_id, workspace, config)
-        except Exception as exc:
-            handle_job_error(job_id, exc, config)
-            return
-        if upload_plan is None:
-            return
-
-        for attempt in range(1, config.retry_max_attempts + 1):
-            if deadline and time.monotonic() >= deadline:
-                elapsed = time.monotonic() - (deadline - timeout_seconds)
-                logger.info(
-                    "Job %s timed out during %s after %s seconds",
-                    job_id,
-                    last_phase,
-                    round(elapsed, 3),
-                )
-                handle_job_error(
-                    job_id,
-                    ConversionTimeoutError(
-                        f"Job {job_id} exceeded its runtime during {last_phase}",
-                        last_phase,
-                    ),
-                    config,
-                )
-                return
-            try:
-                _execute_upload(upload_plan, job_id, config)
-                break
-            except Exception as exc:
-                if attempt == config.retry_max_attempts:
-                    handle_job_error(job_id, exc, config)
-                    break
-                delay = config.retry_base_delay_seconds * (2 ** (attempt - 1))
-                logger.warning(
-                    "Upload attempt %d failed for job %s; retrying in %s seconds: %s",
-                    attempt,
-                    job_id,
-                    delay,
-                    exc,
-                )
-                time.sleep(delay)
 
 
 _EGRESS_POLICY_ERROR_CODES: Final[frozenset[str]] = frozenset(
@@ -672,14 +398,47 @@ _EGRESS_POLICY_ERROR_CODES: Final[frozenset[str]] = frozenset(
 )
 
 
-def handle_job_error(job_id: int, error: Exception, config: ConversionConfig) -> None:
-    """Persist job failure details and compute retryability.
+@dataclass(frozen=True)
+class JobErrorDetails:
+    """Scrubbed, persistence-ready failure details extracted from an exception.
 
-    Retry decision uses the `retryable` class attribute on every exception class.
+    Carries exactly the values the ``ConversionStageHandler.finalize`` adapter
+    writes to ``ConversionJob.error_*`` and the ``FailedPayload`` event: the
+    ``error_code``, the egress-scrubbed ``error_message`` and ``error_detail``,
+    the retry disposition, and the optional ``last_phase``. Egress-policy errors
+    are already scrubbed here
+    (``error_message`` is the bare code, ``error_detail`` is ``None``) so a
+    rejected URL/IP never reaches the caller, let alone durable storage.
     """
-    engine = get_engine(config.database_url)
-    now = _utcnow()
 
+    error_code: str
+    error_message: str
+    error_detail: str | None
+    retryable: bool
+    last_phase: str | None
+
+
+def classify_job_error(error: Exception) -> JobErrorDetails:
+    """Extract the scrubbed, persistence-ready failure details from ``error``.
+
+    The single source of truth for how a conversion exception maps to the
+    durable failure fields, called by the ``ConversionStageHandler.finalize``
+    adapter so the error_code, retry decision, and the egress scrub stay
+    consistent.
+
+    Egress-policy errors carry rejected destinations (URLs, IPs) in their
+    message/traceback. They are scrubbed here on two paths:
+
+    1. Direct ``isinstance(error, EgressPolicyError)`` — error raised in this
+       process (e.g., from ``_get_source_ref``).
+    2. ``ReportedChildError`` whose ``error_code`` is one of the egress-policy
+       codes — error raised in the conversion subprocess and reported up.
+
+    Both paths set ``error_message`` to the bare ``error_code`` and drop
+    ``error_detail`` (which would otherwise carry the destination via the
+    traceback). The full detail is already captured by the enforcement-site
+    WARNING logs in egress.py / egress_fetch.py / paths.py.
+    """
     error_code = getattr(error, "error_code", "conversion_failed")
     error_detail = getattr(error, "traceback", None)
 
@@ -689,16 +448,6 @@ def handle_job_error(job_id: int, error: Exception, config: ConversionConfig) ->
     # doubt, retry rather than mark permanent.
     retryable: bool = bool(getattr(error, "retryable", True))
 
-    # EgressPolicyError messages carry rejected destinations (URLs, IPs) that
-    # must not be echoed into persisted output. Sanitize on two paths:
-    #   1. Direct `isinstance(error, EgressPolicyError)` — error raised in this
-    #      process (e.g., from `_get_source_ref`).
-    #   2. `ReportedChildError` whose `error_code` is one of the egress-policy
-    #      codes — error raised in the conversion subprocess and reported up.
-    # Both paths set `error_message` to the error_code only AND drop
-    # `error_detail` (which would carry the destination via the traceback
-    # string). The full detail is already captured by the enforcement-site
-    # WARNING logs in egress.py / egress_fetch.py / paths.py.
     is_egress_policy = isinstance(error, EgressPolicyError) or error_code in _EGRESS_POLICY_ERROR_CODES
     if is_egress_policy:
         message = error_code
@@ -706,48 +455,11 @@ def handle_job_error(job_id: int, error: Exception, config: ConversionConfig) ->
     else:
         message = str(error)
 
-    logger.error(
-        "Job %s failed: %s (code=%s, retryable=%s)",
-        job_id,
-        message,
-        error_code,
-        retryable,
-        extra={"job_id": job_id, "error_code": error_code, "error_detail": error_detail},
-    )
-
     last_phase = getattr(error, "last_phase", None)
-
-    with Session(engine) as session:
-        job = session.get(ConversionJob, job_id)
-        if not job:
-            return
-        if job.status == ConversionJobStatus.CANCELLED:
-            return
-        if retryable:
-            delay = config.retry_base_delay_seconds * (2**job.attempts)
-            job.earliest_next_attempt_at = now + dt.timedelta(seconds=delay)
-            to_status = ConversionJobStatus.FAILED_RETRYABLE
-        else:
-            job.earliest_next_attempt_at = None
-            job.finished_at = now
-            to_status = ConversionJobStatus.FAILED_PERM
-        job.error_code = error_code
-        job.error_message = message
-        job.error_detail = error_detail
-        job.last_error_at = now
-        job.updated_at = now
-        record_transition(
-            session,
-            job,
-            to_status=to_status,
-            kind=ConversionEventKind.FAILED,
-            attempt=job.attempts,
-            payload=FailedPayload(
-                error_code=error_code,
-                error_message=message,
-                error_detail=error_detail,
-                retryable=retryable,
-                last_phase=last_phase,
-            ),
-        )
-        session.commit()
+    return JobErrorDetails(
+        error_code=error_code,
+        error_message=message,
+        error_detail=error_detail,
+        retryable=retryable,
+        last_phase=last_phase,
+    )

@@ -1,10 +1,10 @@
 """Generic work-unit lifecycle and retry classification for pipeline stages.
 
-This module defines the stage-agnostic state machine the harness reasons about
+This module defines the stage-agnostic state machine the runner reasons about
 uniformly across stages. A unit is queued, then running, then reaches exactly
 one terminal outcome — succeeded, failed, cancelled, or timed out. Each stage's
 own status enum maps onto this generic lifecycle via
-``StageRepository.map_result``; the harness never needs to know a stage's
+``StageHandler.map_result``; the runner never needs to know a stage's
 private statuses.
 """
 
@@ -57,7 +57,7 @@ class TerminalOutcome:
     """A terminal lifecycle outcome together with its retry classification.
 
     Bundles the ``(terminal outcome, retry class)`` pair a stage's
-    ``StageRepository.map_result`` produces. ``retry_class`` is required when —
+    ``StageHandler.map_result`` produces. ``retry_class`` is required when —
     and only when — ``status`` is ``FAILED``; the other terminal outcomes
     (``SUCCEEDED``, ``CANCELLED``, ``TIMED_OUT``) carry no retry disposition,
     matching the spec rule that only a failed outcome is classified retryable
@@ -96,7 +96,7 @@ class TerminalOutcome:
     def is_retryable(self) -> bool:
         """Return ``True`` for a retryable failed outcome.
 
-        Classification only: the harness layers retry-wait gating on top of
+        Classification only: the runner layers retry-wait gating on top of
         this when selecting work (see the bounded-concurrency requirement).
         """
         return self.status is WorkUnitStatus.FAILED and self.retry_class is RetryClass.RETRYABLE

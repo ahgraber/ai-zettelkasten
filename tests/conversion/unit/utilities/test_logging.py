@@ -266,18 +266,18 @@ def test_cmd_worker_configures_logging_before_running(monkeypatch: pytest.Monkey
     fake_run_worker_calls: list[object] = []
 
     # ``run_worker`` is imported lazily inside _cmd_worker; intercept it.
-    import aizk.conversion.workers.loop as worker_loop
+    import aizk.conversion.workers.worker as worker
 
-    def _fake_run_worker(config: object) -> int:
+    def _fake_run_worker(config: object, *, shutdown: object = None) -> int:
         fake_run_worker_calls.append(config)
         return 0
 
-    monkeypatch.setattr(worker_loop, "run_worker", _fake_run_worker)
+    monkeypatch.setattr(worker, "run_worker", _fake_run_worker)
 
     # Run the worker command.
     rc = cli_module._cmd_worker(argparse.Namespace())
 
     assert rc == 0
     assert len(configure_calls) == 1, "configure_logging must be called exactly once"
-    # configure_logging must run BEFORE run_worker dispatches.
+    # configure_logging must run BEFORE the worker runner dispatches.
     assert len(fake_run_worker_calls) == 1

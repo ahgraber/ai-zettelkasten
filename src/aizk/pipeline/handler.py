@@ -1,18 +1,18 @@
-"""The stage-supplied repository protocol the harness drives.
+"""The stage-supplied handler protocol the runner drives.
 
-The harness owns the loop, concurrency bound, signal handling and graceful
+The runner owns the loop, concurrency bound, signal handling and graceful
 drain, wall-clock timeout enforcement, stale-recovery scheduling, transition
-co-commit, and observability. Each stage supplies a :class:`StageRepository`
+co-commit, and observability. Each stage supplies a :class:`StageHandler`
 over its own work-unit tables that owns: startup dependency validation,
 work-unit discovery + claim, the unit-of-work execution, mapping its execution
 result to a generic terminal outcome, cancellation, transient-resource cleanup,
 the timeout/concurrency configuration, and the run ``scope_key``.
 
-The **harness owns the session and transaction boundary**: it opens a
+The **runner owns the session and transaction boundary**: it opens a
 ``BEGIN IMMEDIATE`` transaction and passes the session into ``claim_next`` /
-``recover_stale`` / ``finalize`` so the repository's status transition (routed
+``recover_stale`` / ``finalize`` so the handler's status transition (routed
 through :func:`aizk.pipeline.events.record_transition`) is co-committed with the
-harness's bookkeeping in one transaction. The repository never commits.
+runner's bookkeeping in one transaction. The handler never commits.
 """
 
 from __future__ import annotations
@@ -27,17 +27,13 @@ if TYPE_CHECKING:
     from aizk.pipeline.lifecycle import TerminalOutcome
 
 WorkUnitHandle = TypeVar("WorkUnitHandle")
-"""Opaque, stage-defined handle to a claimed work-unit.
-
-The harness passes handles through (``execute`` → ``map_result`` → ``finalize``
-→ ``cleanup``) without inspecting them; only the stage's repository understands
-their shape.
-"""
+"""Opaque, stage-defined handle to a claimed work-unit; the runner passes it
+through ``execute`` → ``map_result`` → ``finalize`` → ``cleanup`` uninspected."""
 
 StageResult: TypeAlias = Any
 """Opaque, stage-defined result of a unit-of-work execution.
 
-Flows from ``execute`` straight into ``map_result`` without harness inspection.
+Flows from ``execute`` straight into ``map_result`` without runner inspection.
 """
 
 
@@ -49,12 +45,12 @@ class Isolation(str, Enum):
 
 
 @runtime_checkable
-class StageRepository(Protocol[WorkUnitHandle]):
-    """The seam a stage implements over its own store for the harness to drive.
+class StageHandler(Protocol[WorkUnitHandle]):
+    """The seam a stage implements over its own store for the runner to drive.
 
     Implementations run their claim/transition queries inside the
-    harness-owned transaction and never commit. The methods split the
-    functional core (unit-of-work + result mapping) from the harness's
+    runner-owned transaction and never commit. The methods split the
+    functional core (unit-of-work + result mapping) from the runner's
     imperative shell (claim/commit/transition/cleanup loop).
     """
 
@@ -62,17 +58,19 @@ class StageRepository(Protocol[WorkUnitHandle]):
         """Validate required external dependencies; raise if any are missing.
 
         Called at startup before any work is accepted. Raising blocks the
-        harness from claiming work.
+        runner from claiming work.
         """
         ...
 
     def claim_next(self, session: "Session") -> WorkUnitHandle | None:
-        """Claim the next eligible work-unit in submission order, or ``None``.
+        """Claim the next eligible work-unit in submission (claim) order, or ``None``.
 
-        Runs inside the harness-owned ``BEGIN IMMEDIATE`` transaction: selects
-        the next eligible unit, transitions it to ``running`` via
-        ``record_transition``, and returns an opaque handle (or ``None`` when
-        no unit is eligible). Does not commit.
+        Runs inside the runner-owned ``BEGIN IMMEDIATE`` transaction: selects
+        the oldest eligible unit (the submission/claim-order guarantee — the
+        runner drives one claim per slot, so the first units *claimed* are the
+        earliest submitted; this is not a worker-thread start-order guarantee),
+        transitions it to ``running`` via ``record_transition``, and returns an
+        opaque handle (or ``None`` when no unit is eligible). Does not commit.
         """
         ...
 
@@ -80,7 +78,7 @@ class StageRepository(Protocol[WorkUnitHandle]):
         """Transition units stranded in ``running`` back to eligible.
 
         Records the recovery cause in each unit's transition event. Runs inside
-        the harness-owned transaction and does not commit.
+        the runner-owned transaction and does not commit.
         """
         ...
 
@@ -88,7 +86,7 @@ class StageRepository(Protocol[WorkUnitHandle]):
         """Run the stage's unit-of-work for ``handle``.
 
         Performs the (pure-ish) work plus the side effects the adapter owns; it
-        does not write the unit's status (the harness routes status changes
+        does not write the unit's status (the runner routes status changes
         through ``finalize``).
         """
         ...
@@ -105,7 +103,7 @@ class StageRepository(Protocol[WorkUnitHandle]):
     def finalize(self, session: "Session", handle: WorkUnitHandle, outcome: "TerminalOutcome") -> None:
         """Transition the work-unit to its terminal status via ``record_transition``.
 
-        Runs inside the harness-owned transaction and does not commit.
+        Runs inside the runner-owned transaction and does not commit.
         """
         ...
 
@@ -128,7 +126,7 @@ class StageRepository(Protocol[WorkUnitHandle]):
 
     @property
     def concurrency_limit(self) -> int:
-        """Maximum number of work-units the harness may execute simultaneously."""
+        """Maximum number of work-units the runner may execute simultaneously."""
         ...
 
     @property

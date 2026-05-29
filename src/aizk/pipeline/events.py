@@ -14,7 +14,7 @@ original helper:
 
 1. **Callers own commit boundaries.** The helper calls ``session.add(...)`` only;
    it never commits. Callers run inside a ``BEGIN IMMEDIATE`` transaction (the
-   harness's claim/finalize block) that owns commit semantics.
+   runner's claim/finalize block) that owns commit semantics.
 2. **Stage-owned typed payloads.** Each stage defines its own per-kind pydantic
    payload models (the typed contract for a kind). The helper validates that the
    supplied payload declares a ``kind`` matching the transition ``kind`` and

@@ -20,9 +20,39 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.db import get_engine
+from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig
 from aizk.conversion.utilities.hashing import build_output_config_snapshot, compute_idempotency_key
 from aizk.conversion.workers import orchestrator
+from aizk.conversion.workers.errors import ConversionCancelledError
+
+
+def _run_conversion(job_id: int, config: ConversionConfig, runtime) -> None:
+    """Drive a single conversion attempt through the runner adapter.
+
+    The job arrives QUEUED; this function transitions it to RUNNING (as
+    ``claim_next`` would in production) before invoking the adapter's
+    unit-of-work (:meth:`ConversionStageHandler.execute`) — spawn + supervise
+    + enrich + UPLOAD_PENDING + upload→SUCCEEDED. A cancellation surfaces as
+    ``ConversionCancelledError``, which is caught here so it is observed as a
+    clean short-circuit.
+    """
+    engine = get_engine(config.database_url)
+    with Session(engine) as session:
+        job = session.get(ConversionJob, job_id)
+        if job is not None and job.status == ConversionJobStatus.QUEUED:
+            job.status = ConversionJobStatus.RUNNING
+            job.attempts += 1
+            session.add(job)
+            session.commit()
+    handler = ConversionStageHandler(config, runtime=runtime)
+    try:
+        handler.execute(job_id)
+    except ConversionCancelledError:
+        # The adapter raises on cancel so ``map_result`` classifies it; here it
+        # is observed as a clean return. The terminal CANCELLED write is owned by
+        # the job's API-driven cancel, not by execute.
+        pass
 
 
 class _InlineProcess:
@@ -200,7 +230,7 @@ def _process_and_get_markdown(db_session, monkeypatch, *, ref, idempotency_key: 
 
     job_id = _create_job_for_ref(db_session, ref, idempotency_key=idempotency_key)
     config = ConversionConfig(_env_file=None)
-    orchestrator.process_job_supervised(job_id, config, _make_fake_runtime())
+    _run_conversion(job_id, config, _make_fake_runtime())
 
     engine = get_engine(config.database_url)
     with Session(engine) as session:
@@ -258,7 +288,7 @@ def test_conversion_flow_end_to_end(monkeypatch):
         job_id = response.json()["id"]
 
         config = ConversionConfig(_env_file=None)
-        orchestrator.process_job_supervised(job_id, config, _make_fake_runtime())
+        _run_conversion(job_id, config, _make_fake_runtime())
 
         job_response = client.get(f"/v1/jobs/{job_id}")
         assert job_response.status_code == 200
@@ -272,11 +302,11 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch):
 
     upload_called = []
     monkeypatch.setattr(
-        "aizk.conversion.workers.orchestrator._prepare_upload",
+        "aizk.conversion.handler._prepare_upload",
         lambda *_a, **_k: None,
     )
     monkeypatch.setattr(
-        "aizk.conversion.workers.orchestrator._execute_upload",
+        "aizk.conversion.handler._execute_upload",
         lambda _plan, _job_id, _config: upload_called.append(True),
     )
 
@@ -290,7 +320,7 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch):
         job_id = response.json()["id"]
 
         config = ConversionConfig(_env_file=None)
-        orchestrator.process_job_supervised(job_id, config, _make_fake_runtime())
+        _run_conversion(job_id, config, _make_fake_runtime())
 
     assert not upload_called, "Upload should not run for cancelled jobs"
 
@@ -347,7 +377,7 @@ def test_conversion_flow_proceeds_when_source_enrichment_fails(monkeypatch, db_s
     job_id = _create_job_for_ref(db_session, ref, idempotency_key="4" * 64)
     config = ConversionConfig(_env_file=None)
 
-    orchestrator.process_job_supervised(job_id, config, _make_fake_runtime())
+    _run_conversion(job_id, config, _make_fake_runtime())
 
     engine = get_engine(config.database_url)
     with Session(engine) as session:
@@ -438,7 +468,7 @@ def test_conversion_flow_enriches_source_and_manifest_end_to_end(monkeypatch, db
     job_id = _create_job_for_ref(db_session, ref, idempotency_key="e" * 64)
     config = ConversionConfig(_env_file=None)
 
-    orchestrator.process_job_supervised(job_id, config, _make_fake_runtime())
+    _run_conversion(job_id, config, _make_fake_runtime())
 
     engine = get_engine(config.database_url)
     with Session(engine) as session:
@@ -487,7 +517,7 @@ def test_conversion_flow_source_title_branches_end_to_end(
     )
     config = ConversionConfig(_env_file=None)
 
-    orchestrator.process_job_supervised(job_id, config, _make_fake_runtime())
+    _run_conversion(job_id, config, _make_fake_runtime())
 
     engine = get_engine(config.database_url)
     with Session(engine) as session:

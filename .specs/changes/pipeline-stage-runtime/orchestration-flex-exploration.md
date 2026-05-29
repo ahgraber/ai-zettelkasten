@@ -3,7 +3,7 @@
 > **Status:** Architectural exploration / ideation. **Revised 2026-05-26 after a triple review** — a falsification/pressure-test pass, an adversarial steelman + what-if pass, and an author adjudication of both. No spec changes proposed. One concrete code bug surfaced and routed to [`tasks.md`](tasks.md) (W1, below).
 > **Scope:** Can the `aizk.pipeline` abstractions (current + in-flight `pipeline-stage-runtime`) flex to other orchestrators — roll-our-own, honker, procrastinate, absurd, restate, prefect, windmill — without a rewrite? What do industry Temporal usages teach us?
 > **Relationship to ADR-009:** Refines, not replaces, [009-orchestration](../../../docs/decision-record/009-orchestration.md). Adds procrastinate + restate (not currently in the ADR) and a portability lens over the in-flight runtime.
-> **What the review changed:** the run primitive is portable in _shape_ but **not "untouched"** (W1 — a real dialect bug); the determinism constraint lands on the _discarded_ harness, not on `execute` (which strengthens, not weakens, the thesis); the `StageRepository` "two clean ports" split is a first cut with straddlers; the "3-band gradient" is three real clusters but **not a path you climb**; and the likely migration _trigger_ is **capability primitives, not durability granularity**. Recommendations collapsed from three moves to one (reframed) + one ADR edit.
+> **What the review changed:** the run primitive is portable in _shape_ but **not "untouched"** (W1 — a real dialect bug); the determinism constraint lands on the _discarded_ runner, not on `execute` (which strengthens, not weakens, the thesis); the `StageHandler` "two clean ports" split is a first cut with straddlers; the "3-band gradient" is three real clusters but **not a path you climb**; and the likely migration _trigger_ is **capability primitives, not durability granularity**. Recommendations collapsed from three moves to one (reframed) + one ADR edit.
 
 ## Sources read
 
@@ -13,8 +13,8 @@
 
 ## Reframing the question
 
-The `StageRepository` protocol plus the (still-unbuilt) harness **are a roll-our-own orchestrator.**
-The harness owns exactly the responsibilities an engine takes over: claim/lease, bounded concurrency, drain, cancel, timeout, stale-recovery, retry scheduling.
+The `StageHandler` protocol plus the (still-unbuilt) runner **are a roll-our-own orchestrator.**
+The runner owns exactly the responsibilities an engine takes over: claim/lease, bounded concurrency, drain, cancel, timeout, stale-recovery, retry scheduling.
 So "can our abstractions flex to those tools" really means:
 
 > Which parts of `aizk.pipeline` are **engine** (replaced by adopting one of these) and which are **domain** (survive any engine)?
@@ -43,10 +43,10 @@ Flex verdict per move:
 
 - **A→A** (honker, procrastinate): **cheap** — reimplement work-discovery/claim/lease/stale-recovery; domain core untouched (modulo W1). honker is cleanest: same SQLite file, so the same-transaction co-commit invariant _survives literally_ (caveat: honker is **alpha** — no `:memory:`, a transaction pins a connection mutex; both bite our test setup).
   Note procrastinate does **not** ship stale/zombie-job recovery — you hand-roll the sweep (correcting an earlier overstatement that "they all do stale-recovery").
-- **A→B** (absurd, prefect): harness discarded; `execute` decomposes into the engine's steps; `map_result` maps to retry config.
+- **A→B** (absurd, prefect): runner discarded; `execute` decomposes into the engine's steps; `map_result` maps to retry config.
   Run-primitive + event-log survive (modulo W1).
   Authoritative status moves toward the engine; our event row becomes a projection.
-- **A→C** (restate, temporal): harness gone; `execute`/`map_result`/`cleanup` → activities; orchestration → deterministic `ctx`-mediated code.
+- **A→C** (restate, temporal): runner gone; `execute`/`map_result`/`cleanup` → activities; orchestration → deterministic `ctx`-mediated code.
   Domain core survives.
   **The determinism constraint lands on the orchestration we _discard_, not on `execute`** — in C engines, side effects live in activities/`ctx.run`, which carry no determinism requirement (only idempotency-under-replay).
   So a C move needs **no per-`execute`-body audit** (correcting this note's earlier claim); it relaxes the cross-store co-commit (see `PipelineEvent` below).
@@ -68,27 +68,27 @@ Implication that reframes the whole exercise:
 
 | Abstraction (file)                                  | Verdict                                                                     | Why (post-review)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | --------------------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PipelineRun` / `record_run` (`run.py`)             | **Portable in shape — but NOT "untouched" (W1 bug)**                        | Dataset-versioning/lineage; no orchestrator provides it (it is Rapidflare Pt2's two-version swap). It survives an engine swap as "a transactional DB op a stage performs," never "a harness step" — design already separates it. **But the one-active-run invariant is enforced by a partial index declared `sqlite_where`-only ([run.py:62](../../../src/aizk/pipeline/run.py#L62) + migration), which Postgres silently drops** → degrades to a full unique index → forbids superseding. So it _breaks_ on the very Postgres engines (procrastinate/absurd) ranked as cheapest. Fix routed to `tasks.md` (W1).                        |
-| `WorkUnitStatus` + `RetryClass` (`lifecycle.py`)    | **Portable — the lingua franca** ✅                                         | `{succeeded, failed, cancelled, timed_out}` + retryable/permanent is the lowest common denominator every engine expresses (Temporal `non_retryable`; Restate `TerminalError` vs `Exception`; procrastinate `retry_exceptions`+`max_attempts`). `map_result` is the translation seam. The _consumer_ (retry-wait eligibility) is engine territory — keep it in the harness, never the adapter.                                                                                                                                                                                                                                           |
+| `PipelineRun` / `record_run` (`run.py`)             | **Portable in shape — but NOT "untouched" (W1 bug)**                        | Dataset-versioning/lineage; no orchestrator provides it (it is Rapidflare Pt2's two-version swap). It survives an engine swap as "a transactional DB op a stage performs," never "a runner step" — design already separates it. **But the one-active-run invariant is enforced by a partial index declared `sqlite_where`-only ([run.py:62](../../../src/aizk/pipeline/run.py#L62) + migration), which Postgres silently drops** → degrades to a full unique index → forbids superseding. So it _breaks_ on the very Postgres engines (procrastinate/absurd) ranked as cheapest. Fix routed to `tasks.md` (W1).                        |
+| `WorkUnitStatus` + `RetryClass` (`lifecycle.py`)    | **Portable — the lingua franca** ✅                                         | `{succeeded, failed, cancelled, timed_out}` + retryable/permanent is the lowest common denominator every engine expresses (Temporal `non_retryable`; Restate `TerminalError` vs `Exception`; procrastinate `retry_exceptions`+`max_attempts`). `map_result` is the translation seam. The _consumer_ (retry-wait eligibility) is engine territory — keep it in the runner, never the adapter.                                                                                                                                                                                                                                           |
 | `PipelineEvent` / `record_transition` (`events.py`) | **Portable as a read-model; the co-commit _mechanism_ shifts in cluster C** | The table is Rapidflare Pt2's "dedicated status worker" — even Temporal shops re-project lifecycle into their own DB keyed by _their_ identity (our `aizk_uuid`). Not redundant under an engine; it is the thing you build anyway. Precise correction: co-commit **within your DB** survives in C (an activity opens a txn, writes row + event, commits). What you lose is **cross-store atomicity** between your DB and the engine's progress marker — the activity may commit then crash before reporting success, so the write must be **idempotent under replay**; the row demotes from "authoritative" to "idempotent projection." |
-| `StageRepository` (`repository.py`)                 | **Mixed — a first-cut split, with straddlers**                              | First cut: domain (`validate_dependencies`, `execute`, `map_result`, `cleanup`, `scope_key`) vs queue (`claim_next`, `recover_stale`, `finalize`). But several straddle: `finalize` and `claim_next` each contain a _claim/lease_ half (engine-replaced) **and** a _status-transition write_ half (the projection that survives); `concurrency_limit`/`timeout` are stage-_declared_ but engine-_consumed_; `cancel` is meaningful only relative to who owns the run loop. So design.md's "the seam splits cleanly" is overconfident. The precise line is below, not method-by-method.                                                  |
-| Harness (unbuilt)                                   | **This _is_ the engine — swappable wholesale** ✅                           | Best news: it doesn't exist yet. Define it as _one implementation of an engine role_, bound to adapters at the composition root, calling only the domain operations.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `StageHandler` (`repository.py`)                 | **Mixed — a first-cut split, with straddlers**                              | First cut: domain (`validate_dependencies`, `execute`, `map_result`, `cleanup`, `scope_key`) vs queue (`claim_next`, `recover_stale`, `finalize`). But several straddle: `finalize` and `claim_next` each contain a _claim/lease_ half (engine-replaced) **and** a _status-transition write_ half (the projection that survives); `concurrency_limit`/`timeout` are stage-_declared_ but engine-_consumed_; `cancel` is meaningful only relative to who owns the run loop. So design.md's "the seam splits cleanly" is overconfident. The precise line is below, not method-by-method.                                                  |
+| Runner (unbuilt)                                   | **This _is_ the engine — swappable wholesale** ✅                           | Best news: it doesn't exist yet. Define it as _one implementation of an engine role_, bound to adapters at the composition root, calling only the domain operations.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 ### The precise portability line (correcting both this note and the reviewer)
 
 Not "which method."
 The engine-replaced part is specifically **work discovery → claim → lease → eligibility-ordering → stale-recovery** (the SQL-queue logic an engine does itself).
-The **transactional table operations** — `record_run`, `record_transition`, and `finalize`'s status-write — are **caller-agnostic**: their "caller owns the session, helper never commits" convention is _portable_ (the caller is the harness today, an activity/step tomorrow).
+The **transactional table operations** — `record_run`, `record_transition`, and `finalize`'s status-write — are **caller-agnostic**: their "caller owns the session, helper never commits" convention is _portable_ (the caller is the runner today, an activity/step tomorrow).
 So `claim_next`'s eligibility-SELECT dies; `claim_next`'s/`finalize`'s _transition write_ survives as the projection.
 All three primitives sit on the **same** session/co-commit mechanic — which is why rating one "dead" and another "fully portable" was internally inconsistent (review I3).
 They port together; only the _discovery/claim logic_ is welded.
 
 ## What the documents teach (mapped to us)
 
-1. **Constant-size orchestration state / DB-as-queue** (Rapidflare Pt1): our `claim_next` already makes the DB the source of truth and the harness hold only bounded in-flight state.
+1. **Constant-size orchestration state / DB-as-queue** (Rapidflare Pt1): our `claim_next` already makes the DB the source of truth and the runner hold only bounded in-flight state.
    Keep it — it is what makes a future `continue-as-new`/engine port painless.
 2. **Bounded fan-out beats unbounded** (Pt1): treat per-stage `concurrency_limit` as a _rate_ knob (Little's Law), not just a resource cap — directly relevant to the LLM contextualization stage.
-3. **Retry at exactly one layer** (Pt2): contextualization/extraction will have _provider-level_ retry; the harness must not re-retry on top. `map_result` owning retryable/permanent is the seam that lets a stage say "do not retry me."
+3. **Retry at exactly one layer** (Pt2): contextualization/extraction will have _provider-level_ retry; the runner must not re-retry on top. `map_result` owning retryable/permanent is the seam that lets a stage say "do not retry me."
 4. **Unit-level failure is data, not control flow** (Pt2): `map_result(result_or_exc)` accepting _both_ result and exception already supports this — permanent(domain) vs retryable(infra) is the right cut.
 5. **Durable read-model decoupled from the engine** (Pt2): the strongest validation that `pipeline_events` survives a swap — _never let the operator UI query the engine; go through our own projection._
 6. **Three-level correlation IDs** (Pt2): make the structured-logging requirement _name_ `(run_id, aizk_uuid, stage, work_unit_ref)` so cross-stage + cross-restart debugging works on any engine.
@@ -101,12 +101,12 @@ They port together; only the _discovery/claim logic_ is welded.
 The triple review shrank the original three "cheap moves" hard:
 
 1. **Keep `execute`/`map_result` free of `Session`/claim semantics — justified by _present-tense testability_, not migration insurance.**
-   This is already the design's functional-core/imperative-shell intent ("stages testable without the harness"), so it is not new work — just don't regress it.
+   This is already the design's functional-core/imperative-shell intent ("stages testable without the runner"), so it is not new work — just don't regress it.
    _Reframed_ from the original "document the swap line": the value is testing today; the portability is a free side effect.
 2. **(Retracted) ~~Reword the event-log spec requirement as engine-neutral~~.**
    This would _dilute_ a crisp, testable, currently-true invariant ("co-committed in the same transaction") into a hedge against a migration that probably won't come, and it would smuggle a band taxonomy into a spec requirement (against the "specs stand alone" stance).
    Drop it.
-3. **(Downgraded) Naming the harness an "engine" at the composition root** carries a misuse-attractor risk — it advertises a second-engine seam toward the "meta-engine over all clusters" trap the design explicitly fears.
+3. **(Downgraded) Naming the runner an "engine" at the composition root** carries a misuse-attractor risk — it advertises a second-engine seam toward the "meta-engine over all clusters" trap the design explicitly fears.
    Optional cosmetic; not recommended on its own.
 4. **(ADR, 2 sentences) Add restate + procrastinate to ADR-009's alternatives** — restate is single-binary cluster-C durability **below** Temporal's _starting_ ops cost (HA still wants a cluster + object store); procrastinate is a mature cluster-A Postgres queue _minus_ step-checkpointing and _minus_ free stale-recovery.
 5. **(Code) Fix W1** — see `tasks.md`.
@@ -117,24 +117,24 @@ Already right — keep: run-primitive separated from execution; event log keyed 
 ## Pointed takeaways — runtime-side mechanisms that MUST hold
 
 The load-bearing contracts this note reduces to (mechanisms, not named structures).
-All but the last two are **already requirements in the pipeline-stage-runtime spec** — listed so they are not regressed during the harness build and conversion port.
+All but the last two are **already requirements in the pipeline-stage-runtime spec** — listed so they are not regressed during the runner build and conversion port.
 
 - **Functional core / imperative shell.**
-  The unit-of-work (do-the-work + classify-outcome) is separable from the I/O shell (claim/commit/transition/cleanup); the harness owns the DB session/transaction, the work logic owns neither.
+  The unit-of-work (do-the-work + classify-outcome) is separable from the I/O shell (claim/commit/transition/cleanup); the runner owns the DB session/transaction, the work logic owns neither.
   This is simultaneously today's testability and tomorrow's engine-portability.
   **[locked]**
 - **Generic lifecycle is the lingua franca.**
-  Stages map their statuses onto queued→running→{succeeded, failed, cancelled, timed_out} + retryable/permanent; the harness reasons only over the generic set.
-  Retry-wait eligibility is the harness's, never the adapter's.
+  Stages map their statuses onto queued→running→{succeeded, failed, cancelled, timed_out} + retryable/permanent; the runner reasons only over the generic set.
+  Retry-wait eligibility is the runner's, never the adapter's.
   **[locked]**
 - **A status change and its transition event co-commit atomically**, or neither persists. **[locked]**
 - **The event log is a durable read-model keyed by source identity** — built regardless of engine; an operator/query surface reads the projection, never the engine's own history. **[locked + discipline]**
-- **Retry at exactly one layer.** map_result owns retryable/permanent so a stage with provider-level retry can opt out of harness retry. **[discipline]**
-- **Keep the engine-replaceable seam narrow** (discipline, not a spec requirement): only discovery → claim → lease → eligibility → stale-recovery is engine-coupled; the transactional table ops and the unit-of-work stay caller-agnostic, so the harness can be swapped without touching stages. **[discipline]**
+- **Retry at exactly one layer.** map_result owns retryable/permanent so a stage with provider-level retry can opt out of runner retry. **[discipline]**
+- **Keep the engine-replaceable seam narrow** (discipline, not a spec requirement): only discovery → claim → lease → eligibility → stale-recovery is engine-coupled; the transactional table ops and the unit-of-work stay caller-agnostic, so the runner can be swapped without touching stages. **[discipline]**
 
 ## Triple-review adjudication (what I accepted vs rejected)
 
-**Accepted** (changed the analysis): W1 dialect bug (verified in code); determinism lands on the discarded harness not `execute` (O1, strengthens the thesis); `StageRepository` split is a first cut with straddlers (I1); co-commit = cross-store atomicity + idempotent projection (I2); the portability line is queue-discovery-logic vs transactional-ops, not whole-method (I3, refined); procrastinate has no free stale-recovery; the migration trigger is capability not durability (2a); the gradient flattens orthogonal axes — clusters real, path framing wrong (3b); "cost ≈ nothing" was false → moves collapsed; spec-reword move retracted (2c).
+**Accepted** (changed the analysis): W1 dialect bug (verified in code); determinism lands on the discarded runner not `execute` (O1, strengthens the thesis); `StageHandler` split is a first cut with straddlers (I1); co-commit = cross-store atomicity + idempotent projection (I2); the portability line is queue-discovery-logic vs transactional-ops, not whole-method (I3, refined); procrastinate has no free stale-recovery; the migration trigger is capability not durability (2a); the gradient flattens orthogonal axes — clusters real, path framing wrong (3b); "cost ≈ nothing" was false → moves collapsed; spec-reword move retracted (2c).
 
 **Rejected / moderated** (reviewers overreached):
 

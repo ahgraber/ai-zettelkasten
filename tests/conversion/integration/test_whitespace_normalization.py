@@ -19,10 +19,30 @@ from sqlmodel import Session, select
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
+from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.db import get_engine
+from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.workers import orchestrator
+
+
+def _run_conversion(job_id: int, config: ConversionConfig, runtime) -> None:
+    """Drive one conversion attempt through the runner adapter (RUNNING-seed).
+
+    Marks the QUEUED job RUNNING (as ``claim_next`` would) and runs the adapter's
+    :meth:`ConversionStageHandler.execute`, which performs spawn + supervise +
+    enrich + UPLOAD_PENDING + upload→SUCCEEDED through the same conversion helpers.
+    """
+    engine = get_engine(config.database_url)
+    with Session(engine) as session:
+        job = session.get(ConversionJob, job_id)
+        if job is not None and job.status == ConversionJobStatus.QUEUED:
+            job.status = ConversionJobStatus.RUNNING
+            job.attempts += 1
+            session.add(job)
+            session.commit()
+    ConversionStageHandler(config, runtime=runtime).execute(job_id)
 
 
 class _InlineProcess:
@@ -184,13 +204,13 @@ def test_whitespace_normalization_produces_stable_output(monkeypatch) -> None:
             "/v1/jobs", json={"source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_ws_stable_001"}}
         )
         assert resp1.status_code == 201
-        orchestrator.process_job_supervised(resp1.json()["id"], config, runtime)
+        _run_conversion(resp1.json()["id"], config, runtime)
 
         resp2 = client.post(
             "/v1/jobs", json={"source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bm_ws_stable_002"}}
         )
         assert resp2.status_code == 201
-        orchestrator.process_job_supervised(resp2.json()["id"], config, runtime)
+        _run_conversion(resp2.json()["id"], config, runtime)
 
     assert len(captured_markdown_bodies) == 2, "output.md should be uploaded for both jobs"
     assert captured_markdown_bodies[0] == captured_markdown_bodies[1], (

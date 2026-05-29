@@ -3,11 +3,11 @@
 This package holds the stage-agnostic primitives a processing stage builds on:
 
 - the generic work-unit lifecycle and retry classification (:mod:`lifecycle`),
-- the :class:`~aizk.pipeline.repository.StageRepository` protocol the harness
-  drives over a stage's own store (:mod:`repository`),
-- the :class:`~aizk.pipeline.harness.StageHarness` — the current embedded
+- the :class:`~aizk.pipeline.handler.StageHandler` protocol the runner
+  drives over a stage's own store (:mod:`handler`),
+- the :class:`~aizk.pipeline.runner.StageRunner` — the current embedded
   orchestration engine — with its per-instance
-  :class:`~aizk.pipeline.shutdown.ShutdownController` (:mod:`harness`,
+  :class:`~aizk.pipeline.shutdown.ShutdownController` (:mod:`runner`,
   :mod:`shutdown`),
 - the stage-run / dataset-version primitive (:mod:`run`), and
 - the shared append-only transition-event log and ``record_transition`` helper
@@ -15,14 +15,14 @@ This package holds the stage-agnostic primitives a processing stage builds on:
 
 It is deliberately a set of primitives, not a framework: each stage owns its own
 work-unit tables and identities and consumes these primitives through the
-repository protocol. ``aizk.pipeline`` stays import-independent of
+handler protocol. ``aizk.pipeline`` stays import-independent of
 ``aizk.conversion`` — consumers import the runtime, not vice versa.
 """
 
 from __future__ import annotations
 
 from aizk.pipeline.events import PipelineEvent, record_transition
-from aizk.pipeline.harness import InMemoryMetrics, StageHarness, StageMetrics
+from aizk.pipeline.handler import Isolation, StageHandler, StageResult, WorkUnitHandle
 from aizk.pipeline.lifecycle import (
     TERMINAL_STATUSES,
     RetryClass,
@@ -30,8 +30,8 @@ from aizk.pipeline.lifecycle import (
     WorkUnitStatus,
     is_terminal,
 )
-from aizk.pipeline.repository import Isolation, StageRepository, StageResult, WorkUnitHandle
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
+from aizk.pipeline.runner import InMemoryMetrics, StageMetrics, StageRunner
 
 __all__ = [
     "TERMINAL_STATUSES",
@@ -41,9 +41,9 @@ __all__ = [
     "PipelineRun",
     "RetryClass",
     "RunStatus",
-    "StageHarness",
+    "StageRunner",
     "StageMetrics",
-    "StageRepository",
+    "StageHandler",
     "StageResult",
     "TerminalOutcome",
     "WorkUnitHandle",

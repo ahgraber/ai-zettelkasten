@@ -1,0 +1,54 @@
+{
+  "audit_source_event_count": 2,
+  "audit_source_uuid": "fc6d654454785258af390d70be9ff2ec",
+  "event_kind_counts": {
+    "cancelled": 4,
+    "claimed": 22,
+    "failed": 8,
+    "phase": 1,
+    "queued": 24,
+    "recovered_stale": 1,
+    "source_enriched": 2,
+    "succeeded": 8,
+    "upload_pending": 2
+  },
+  "fixture": "legacy_a8c9d0e1f2b3.db",
+  "generated_from": {
+    "job_status_counts": {
+      "CANCELLED": 13,
+      "FAILED_PERM": 19,
+      "FAILED_RETRYABLE": 6,
+      "SUCCEEDED": 6211
+    },
+    "row_counts": {
+      "bookmarks": 6250,
+      "conversion_jobs": 6249,
+      "conversion_outputs": 6211
+    },
+    "source_path": "data/conversion_service.db"
+  },
+  "job_status_counts": {
+    "CANCELLED": 3,
+    "FAILED_PERM": 3,
+    "FAILED_RETRYABLE": 4,
+    "NEW": 1,
+    "QUEUED": 2,
+    "RUNNING": 2,
+    "SUCCEEDED": 8,
+    "UPLOAD_PENDING": 2
+  },
+  "legacy_revision": "a8c9d0e1f2b3",
+  "orphan_event_count": 2,
+  "row_counts": {
+    "conversion_job_events": 72,
+    "conversion_jobs": 25,
+    "conversion_outputs": 8,
+    "sources": 25
+  },
+  "sanitization": {
+    "copied_raw_row_values": false,
+    "karakeep_id_prefix": "fixture_",
+    "url_domain": "example.invalid",
+    "uuid_strategy": "uuid5(NAMESPACE_URL, synthetic fixture URL)"
+  }
+}

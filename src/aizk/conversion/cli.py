@@ -76,10 +76,10 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
     from aizk.conversion.migrations import run_migrations
 
     run_migrations()
-    try:
-        from aizk.conversion.workers.loop import run_worker
-    except ImportError as exc:
-        raise RuntimeError("Worker implementation is not available yet.") from exc
+    # The worker drives the conversion stage through the pipeline runner
+    # (StageRunner + ConversionStageHandler).
+    from aizk.conversion.workers.worker import run_worker
+
     return run_worker(config)
 
 

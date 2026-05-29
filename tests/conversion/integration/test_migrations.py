@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import json
 from pathlib import Path
 import sqlite3
 from uuid import uuid4
@@ -264,9 +265,7 @@ def test_backfill_populates_source_ref_and_hash(tmp_path):
         ).fetchone()
 
     assert row is not None
-    import json as _json
-
-    expected_ref = _json.dumps(
+    expected_ref = json.dumps(
         {"kind": "karakeep_bookmark", "bookmark_id": karakeep_id},
         sort_keys=True,
         separators=(",", ":"),
@@ -422,9 +421,7 @@ _MIGRATION_FROZEN_SNAPSHOT = {
 
 
 def _source_ref_hash_for(karakeep_id: str) -> str:
-    import json as _json
-
-    source_ref = _json.dumps(
+    source_ref = json.dumps(
         {"kind": "karakeep_bookmark", "bookmark_id": karakeep_id},
         sort_keys=True,
         separators=(",", ":"),
@@ -434,19 +431,15 @@ def _source_ref_hash_for(karakeep_id: str) -> str:
 
 def _expected_canonical_key(karakeep_id: str) -> str:
     """Clean formula matching compute_idempotency_key() — used for the canonical job."""
-    import json as _json
-
     source_ref_hash = _source_ref_hash_for(karakeep_id)
-    config_json = _json.dumps(_MIGRATION_FROZEN_SNAPSHOT, sort_keys=True, separators=(",", ":"))
+    config_json = json.dumps(_MIGRATION_FROZEN_SNAPSHOT, sort_keys=True, separators=(",", ":"))
     return _sha256_hex(f"{source_ref_hash}:docling:{config_json}")
 
 
 def _expected_suffixed_key(karakeep_id: str, job_id: int) -> str:
     """Suffixed formula — used for non-canonical (extra) historical jobs per source."""
-    import json as _json
-
     source_ref_hash = _source_ref_hash_for(karakeep_id)
-    config_json = _json.dumps(_MIGRATION_FROZEN_SNAPSHOT, sort_keys=True, separators=(",", ":"))
+    config_json = json.dumps(_MIGRATION_FROZEN_SNAPSHOT, sort_keys=True, separators=(",", ":"))
     return _sha256_hex(f"{source_ref_hash}:docling:{config_json}:job_{job_id}")
 
 
@@ -632,8 +625,6 @@ def test_succeeded_job_is_canonical_over_higher_id_failed_job(tmp_path):
 
 def test_enforce_not_null_aborts_with_null_source_ref(tmp_path):
     """Pre-flight abort: upgrade raises IrreversibleMigrationError when source_ref IS NULL."""
-    import uuid
-
     db_url = f"sqlite:///{tmp_path / 'abort.db'}"
     cfg = _alembic_cfg(db_url)
 
@@ -651,7 +642,7 @@ def test_enforce_not_null_aborts_with_null_source_ref(tmp_path):
             ),
             {
                 "kid": "test-null-ref",
-                "uuid": str(uuid.uuid4()),
+                "uuid": str(uuid4()),
                 "now": datetime.datetime.now(datetime.UTC).isoformat(),
             },
         )
@@ -662,9 +653,6 @@ def test_enforce_not_null_aborts_with_null_source_ref(tmp_path):
 
 def test_enforce_not_null_round_trip_on_populated_database(tmp_path):
     """Round-trip upgrade/downgrade of d5e6f7a8b9c0 on a fully-populated database."""
-    import json
-    import uuid
-
     db_url = f"sqlite:///{tmp_path / 'populated.db'}"
     cfg = _alembic_cfg(db_url)
 
@@ -686,7 +674,7 @@ def test_enforce_not_null_round_trip_on_populated_database(tmp_path):
             ),
             {
                 "kid": "abc123",
-                "uuid": str(uuid.uuid4()),
+                "uuid": str(uuid4()),
                 "ref": source_ref,
                 "hash": source_ref_hash,
                 "now": datetime.datetime.now(datetime.UTC).isoformat(),
@@ -723,9 +711,7 @@ def _seed_pre_owner_rows(engine, *, karakeep_id: str = "owner_seed_bm") -> dict[
     The schema at the d5e6f7a8b9c0 revision has no owner_id columns yet, so
     the inserts use only the columns that exist at that revision.
     """
-    import json as _json
-
-    source_ref = _json.dumps(
+    source_ref = json.dumps(
         {"kind": "karakeep_bookmark", "bookmark_id": karakeep_id},
         sort_keys=True,
         separators=(",", ":"),
@@ -983,9 +969,7 @@ def test_owner_scoped_idempotency_downgrade_round_trip_with_no_conflicts(tmp_pat
 
 def _seed_source_for_jobs(engine, *, karakeep_id: str) -> str:
     """Insert a sources row at the post-owner-id schema and return its aizk_uuid."""
-    import json as _json
-
-    source_ref = _json.dumps(
+    source_ref = json.dumps(
         {"kind": "karakeep_bookmark", "bookmark_id": karakeep_id},
         sort_keys=True,
         separators=(",", ":"),
@@ -1017,7 +1001,7 @@ def _seed_source_for_jobs(engine, *, karakeep_id: str) -> str:
 def test_owner_id_post_migration_schema_matches_create_all(tmp_path):
     """Schema-equivalence test: post-migration columns/indexes match SQLModel.create_all().
 
-    The repo-wide schema-parity check at ``test_upgrade_produces_schema_matching_create_all``
+    The handler-wide schema-parity check at ``test_upgrade_produces_schema_matching_create_all``
     already covers this, but we pin the owner_id columns explicitly here so a
     regression on this migration shows up next to the migration's own tests.
     """
@@ -1191,3 +1175,249 @@ def test_conversion_job_events_migration_kind_enum_matches_model():
         f"Migration enum drift: only-in-migration={migration_kinds - model_kinds}, "
         f"only-in-model={model_kinds - migration_kinds}"
     )
+
+
+# ---------------------------------------------------------------------------
+# e1f2a3b4c5d6 relocate_conversion_events_to_pipeline_events
+# ---------------------------------------------------------------------------
+
+_RELOCATE_REVISION = "e1f2a3b4c5d6"
+# The revision just before the relocation: pipeline_events + conversion_job_events
+# both exist, so we can seed the old table and exercise the row copy.
+_RELOCATE_PREV_REVISION = "d0e1f2a3b4c5"
+
+# A representative set of conversion events spanning the lifecycle kinds, status
+# columns (incl. a NULL from_status origin event and a NULL-status
+# source_enriched event), and varying attempts. Each entry mirrors a row the
+# runtime would have written to conversion_job_events.
+_RELOCATION_FIXTURE_EVENTS = (
+    # (kind, from_status, to_status, attempt, payload_json)
+    ("queued", None, "QUEUED", 0, '{"kind":"queued","submitted_by":"self","requeue_reason":"initial"}'),
+    ("claimed", "QUEUED", "RUNNING", 1, '{"kind":"claimed","claimed_at":"2026-05-20T10:00:00","worker_pid":4242}'),
+    ("phase", "RUNNING", "RUNNING", 1, '{"kind":"phase","phase":"converting","reported_at":"2026-05-20T10:00:05"}'),
+    (
+        "source_enriched",
+        None,
+        None,
+        1,
+        '{"kind":"source_enriched","aizk_uuid":"11111111-1111-1111-1111-111111111111",'
+        '"columns_written":["url","title"],"update_succeeded":true,"failure_reason":null}',
+    ),
+    (
+        "failed",
+        "RUNNING",
+        "FAILED_RETRYABLE",
+        1,
+        '{"kind":"failed","error_code":"transient","error_message":"boom","error_detail":null,'
+        '"retryable":true,"last_phase":"converting"}',
+    ),
+)
+
+
+def _seed_conversion_job_events(engine, *, job_id: int | None, aizk_uuid: str) -> None:
+    """Insert the fixture event rows into conversion_job_events for ``job_id``."""
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with engine.begin() as conn:
+        for kind, from_status, to_status, attempt, payload_json in _RELOCATION_FIXTURE_EVENTS:
+            conn.execute(
+                text(
+                    "INSERT INTO conversion_job_events "
+                    "(job_id, aizk_uuid, attempt, occurred_at, kind, from_status, to_status, payload_json) "
+                    "VALUES (:jid, :uuid, :attempt, :now, :kind, :fs, :ts, :payload)"
+                ),
+                {
+                    "jid": job_id,
+                    "uuid": aizk_uuid,
+                    "attempt": attempt,
+                    "now": now,
+                    "kind": kind,
+                    "fs": from_status,
+                    "ts": to_status,
+                    "payload": payload_json,
+                },
+            )
+
+
+def _seed_source_and_job_for_events(engine, *, karakeep_id: str) -> tuple[int, str]:
+    """Insert a sources + conversion_jobs row at the relocation-prev schema.
+
+    Returns ``(job_id, aizk_uuid)``.
+    """
+    source_ref = json.dumps(
+        {"kind": "karakeep_bookmark", "bookmark_id": karakeep_id},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    source_ref_hash = _sha256_hex(source_ref)
+    aizk_uuid_value = str(uuid4())
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO sources "
+                "(karakeep_id, aizk_uuid, source_ref, source_ref_hash, owner_id, created_at, updated_at) "
+                "VALUES (:kid, :uuid, :ref, :hash, 'self', :now, :now)"
+            ),
+            {"kid": karakeep_id, "uuid": aizk_uuid_value, "ref": source_ref, "hash": source_ref_hash, "now": now},
+        )
+        result = conn.execute(
+            text(
+                "INSERT INTO conversion_jobs "
+                "(aizk_uuid, owner_id, title, payload_version, status, attempts, "
+                "idempotency_key, created_at, updated_at) "
+                "VALUES (:uuid, 'self', 't', 1, 'FAILED_RETRYABLE', 1, :key, :now, :now)"
+            ),
+            {"uuid": aizk_uuid_value, "key": uuid4().hex, "now": now},
+        )
+        job_id = result.lastrowid
+    return job_id, aizk_uuid_value
+
+
+def test_relocation_drops_conversion_job_events_and_creates_pipeline_events(tmp_path):
+    """After the relocation runs to head, conversion_job_events is gone."""
+    db_url = _db_url(tmp_path, "relocate_drop.db")
+    cfg = _alembic_cfg(db_url)
+    command.upgrade(cfg, "head")
+
+    inspector = inspect(create_engine(db_url))
+    tables = set(inspector.get_table_names())
+    assert "conversion_job_events" not in tables, "old table must be dropped by the relocation"
+    assert "pipeline_events" in tables
+
+
+def test_relocation_copies_rows_content_preserving(tmp_path):
+    """Equivalence: pipeline_events rows post-relocation match the seeded conversion_job_events.
+
+    Seeds a representative set of conversion_job_events rows at the
+    pre-relocation revision, then upgrades through the relocation. The migrated
+    pipeline_events rows (filtered to ``stage='conversion'``) must carry the
+    same kind, from/to status, payload, aizk_uuid, attempt, and ordering as the
+    original event log held.
+    """
+    db_url = _db_url(tmp_path, "relocate_copy.db")
+    cfg = _alembic_cfg(db_url)
+    command.upgrade(cfg, _RELOCATE_PREV_REVISION)
+
+    engine = create_engine(db_url)
+    job_id, aizk_uuid_value = _seed_source_and_job_for_events(engine, karakeep_id="reloc_copy")
+    _seed_conversion_job_events(engine, job_id=job_id, aizk_uuid=aizk_uuid_value)
+
+    command.upgrade(cfg, _RELOCATE_REVISION)
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT stage, work_unit_ref, run_id, aizk_uuid, from_status, to_status, "
+                "kind, attempt, payload_json "
+                "FROM pipeline_events WHERE stage = 'conversion' ORDER BY event_id"
+            )
+        ).fetchall()
+
+    # Same count + order, content-preserving.
+    assert len(rows) == len(_RELOCATION_FIXTURE_EVENTS)
+    for migrated, expected in zip(rows, _RELOCATION_FIXTURE_EVENTS, strict=True):
+        stage, work_unit_ref, run_id, aizk_uuid, from_status, to_status, kind, attempt, payload_json = migrated
+        exp_kind, exp_from, exp_to, exp_attempt, exp_payload = expected
+        assert stage == "conversion"
+        assert work_unit_ref == str(job_id), "live job's work_unit_ref is its id as text"
+        assert run_id is None, "conversion has no run/dataset-version"
+        assert str(aizk_uuid) == aizk_uuid_value, "aizk_uuid preserved verbatim"
+        assert kind == exp_kind
+        assert from_status == exp_from
+        assert to_status == exp_to
+        assert attempt == exp_attempt
+        assert payload_json == exp_payload, "payload bytes preserved exactly"
+
+
+def test_relocation_preserves_deleted_job_audit_row(tmp_path):
+    """A NULL job_id (operator-deleted job) maps to work_unit_ref='None' with aizk_uuid intact.
+
+    The original audit guarantee — events survive job deletion via the
+    denormalized aizk_uuid — is preserved across the relocation even though the
+    shared table has no FK.
+    """
+    db_url = _db_url(tmp_path, "relocate_deleted.db")
+    cfg = _alembic_cfg(db_url)
+    command.upgrade(cfg, _RELOCATE_PREV_REVISION)
+
+    engine = create_engine(db_url)
+    orphan_uuid = str(uuid4())
+    # Seed an orphaned event row (job already deleted -> job_id NULL).
+    _seed_conversion_job_events(engine, job_id=None, aizk_uuid=orphan_uuid)
+
+    command.upgrade(cfg, _RELOCATE_REVISION)
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT work_unit_ref, aizk_uuid FROM pipeline_events WHERE stage = 'conversion' AND aizk_uuid = :uuid"
+            ),
+            {"uuid": orphan_uuid},
+        ).fetchall()
+
+    assert len(rows) == len(_RELOCATION_FIXTURE_EVENTS)
+    for work_unit_ref, aizk_uuid in rows:
+        assert work_unit_ref == "None", "deleted-job rows get the literal 'None' work_unit_ref"
+        assert str(aizk_uuid) == orphan_uuid, "aizk_uuid remains the post-deletion lookup key"
+
+
+def test_relocation_downgrade_restores_rows_and_clears_pipeline_events(tmp_path):
+    """Downgrade recreates conversion_job_events, copies rows back, and removes them from pipeline_events."""
+    db_url = _db_url(tmp_path, "relocate_down.db")
+    cfg = _alembic_cfg(db_url)
+    command.upgrade(cfg, _RELOCATE_PREV_REVISION)
+
+    engine = create_engine(db_url)
+    job_id, aizk_uuid_value = _seed_source_and_job_for_events(engine, karakeep_id="reloc_down")
+    _seed_conversion_job_events(engine, job_id=job_id, aizk_uuid=aizk_uuid_value)
+
+    command.upgrade(cfg, _RELOCATE_REVISION)
+    command.downgrade(cfg, _RELOCATE_PREV_REVISION)
+
+    inspector = inspect(create_engine(db_url))
+    assert "conversion_job_events" in inspector.get_table_names(), "downgrade recreates the conversion table"
+
+    with engine.connect() as conn:
+        restored = conn.execute(
+            text(
+                "SELECT job_id, kind, from_status, to_status, attempt, payload_json "
+                "FROM conversion_job_events ORDER BY id"
+            )
+        ).fetchall()
+        # The conversion rows were removed from the shared table on downgrade.
+        leftover = conn.execute(text("SELECT COUNT(*) FROM pipeline_events WHERE stage = 'conversion'")).scalar()
+
+    assert leftover == 0, "downgrade must not leave conversion rows duplicated in pipeline_events"
+    assert len(restored) == len(_RELOCATION_FIXTURE_EVENTS)
+    for row, expected in zip(restored, _RELOCATION_FIXTURE_EVENTS, strict=True):
+        r_job_id, kind, from_status, to_status, attempt, payload_json = row
+        exp_kind, exp_from, exp_to, exp_attempt, exp_payload = expected
+        assert r_job_id == job_id, "work_unit_ref round-trips back to the integer job_id"
+        assert kind == exp_kind
+        assert from_status == exp_from
+        assert to_status == exp_to
+        assert attempt == exp_attempt
+        assert payload_json == exp_payload
+
+
+def test_relocation_downgrade_restores_null_job_id_for_orphan(tmp_path):
+    """Downgrade maps work_unit_ref='None' back to a NULL job_id."""
+    db_url = _db_url(tmp_path, "relocate_down_orphan.db")
+    cfg = _alembic_cfg(db_url)
+    command.upgrade(cfg, _RELOCATE_PREV_REVISION)
+
+    engine = create_engine(db_url)
+    orphan_uuid = str(uuid4())
+    _seed_conversion_job_events(engine, job_id=None, aizk_uuid=orphan_uuid)
+
+    command.upgrade(cfg, _RELOCATE_REVISION)
+    command.downgrade(cfg, _RELOCATE_PREV_REVISION)
+
+    with engine.connect() as conn:
+        job_ids = conn.execute(
+            text("SELECT job_id FROM conversion_job_events WHERE aizk_uuid = :uuid"),
+            {"uuid": orphan_uuid},
+        ).fetchall()
+
+    assert job_ids, "orphan rows restored on downgrade"
+    assert all(jid[0] is None for jid in job_ids), "'None' work_unit_ref restores to NULL job_id"

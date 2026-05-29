@@ -27,9 +27,9 @@ from sqlmodel import Session, SQLModel, select
 
 import aizk.conversion.datamodel  # noqa: F401  (registers SQLModel metadata)
 from aizk.conversion.datamodel.events import (
+    STAGE,
     ClaimedPayload,
     ConversionEventKind,
-    ConversionJobEvent,
     FailedPayload,
     PhasePayload,
     QueuedPayload,
@@ -39,8 +39,16 @@ from aizk.conversion.datamodel.events import (
 )
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source
+from aizk.pipeline.events import PipelineEvent
 
 _NOW = datetime.datetime(2026, 5, 17, 12, 0, 0, tzinfo=datetime.timezone.utc)
+
+
+def _conversion_events(session) -> list[PipelineEvent]:
+    """Return all conversion-stage events in insertion order."""
+    return session.exec(
+        select(PipelineEvent).where(PipelineEvent.stage == STAGE).order_by(PipelineEvent.event_id)
+    ).all()
 
 
 @pytest.fixture()
@@ -109,7 +117,7 @@ def test_record_transition_does_not_commit(engine, queued_job):
         with Session(engine) as other:
             other_job = other.get(ConversionJob, queued_job.id)
             assert other_job.status == ConversionJobStatus.QUEUED
-            assert other.exec(select(ConversionJobEvent)).all() == []
+            assert _conversion_events(other) == []
 
         session.commit()
 
@@ -117,10 +125,14 @@ def test_record_transition_does_not_commit(engine, queued_job):
     with Session(engine) as verify:
         committed = verify.get(ConversionJob, queued_job.id)
         assert committed.status == ConversionJobStatus.RUNNING
-        events = verify.exec(select(ConversionJobEvent)).all()
+        events = _conversion_events(verify)
         assert len(events) == 1
-        assert events[0].kind == ConversionEventKind.CLAIMED
+        assert events[0].kind == ConversionEventKind.CLAIMED.value
         assert events[0].attempt == 1
+        # Relocation: the event lands in pipeline_events with the generic
+        # work-unit reference (the job id rendered to text) and the stage tag.
+        assert events[0].stage == STAGE
+        assert events[0].work_unit_ref == str(queued_job.id)
 
 
 def test_record_transition_writes_both_rows_in_one_commit(engine, queued_job):
@@ -139,11 +151,11 @@ def test_record_transition_writes_both_rows_in_one_commit(engine, queued_job):
 
     with Session(engine) as verify:
         committed = verify.get(ConversionJob, queued_job.id)
-        events = verify.exec(select(ConversionJobEvent)).all()
+        events = _conversion_events(verify)
         assert committed.status == ConversionJobStatus.RUNNING
         assert len(events) == 1
-        assert events[0].from_status == ConversionJobStatus.QUEUED
-        assert events[0].to_status == ConversionJobStatus.RUNNING
+        assert events[0].from_status == ConversionJobStatus.QUEUED.value
+        assert events[0].to_status == ConversionJobStatus.RUNNING.value
 
 
 def test_record_transition_persists_event_kind_value(engine, queued_job):
@@ -161,7 +173,7 @@ def test_record_transition_persists_event_kind_value(engine, queued_job):
         session.commit()
 
     with Session(engine) as verify:
-        row = verify.execute(text("SELECT kind FROM conversion_job_events")).one()
+        row = verify.execute(text("SELECT kind FROM pipeline_events WHERE stage = 'conversion'")).one()
         assert row[0] == ConversionEventKind.CLAIMED.value
 
 
@@ -181,7 +193,7 @@ def test_record_transition_rolled_back_transaction_discards_both(engine, queued_
 
     with Session(engine) as verify:
         committed = verify.get(ConversionJob, queued_job.id)
-        events = verify.exec(select(ConversionJobEvent)).all()
+        events = _conversion_events(verify)
         assert committed.status == ConversionJobStatus.QUEUED
         assert events == []
 
@@ -266,7 +278,7 @@ def test_record_transition_revalidates_payload_model_shape(engine, queued_job):
                 payload=malformed_failed_payload(),
             )
         assert job.status == ConversionJobStatus.QUEUED
-        assert session.exec(select(ConversionJobEvent)).all() == []
+        assert _conversion_events(session) == []
 
 
 # ---------------------------------------------------------------------------
@@ -296,12 +308,12 @@ def test_record_phase_event_does_not_mutate_status(engine, queued_job):
 
     with Session(engine) as verify:
         committed = verify.get(ConversionJob, queued_job.id)
-        events = verify.exec(select(ConversionJobEvent)).all()
+        events = _conversion_events(verify)
         assert committed.status == ConversionJobStatus.RUNNING
         assert len(events) == 1
-        assert events[0].kind == ConversionEventKind.PHASE
-        assert events[0].from_status == ConversionJobStatus.RUNNING
-        assert events[0].to_status == ConversionJobStatus.RUNNING
+        assert events[0].kind == ConversionEventKind.PHASE.value
+        assert events[0].from_status == ConversionJobStatus.RUNNING.value
+        assert events[0].to_status == ConversionJobStatus.RUNNING.value
 
 
 def test_record_phase_event_persistence_failure_is_swallowed_and_logged(engine, queued_job, monkeypatch, caplog):
@@ -347,7 +359,7 @@ def test_record_phase_event_validation_failure_drops_row(engine, queued_job, cap
     assert any("validation failure" in r.message for r in caplog.records)
 
     with Session(engine) as verify:
-        events = verify.exec(select(ConversionJobEvent)).all()
+        events = _conversion_events(verify)
         assert events == []
 
 
@@ -369,13 +381,13 @@ def test_record_source_event_does_not_commit(engine, queued_job):
             failure_reason=None,
         )
         with Session(engine) as other:
-            assert other.exec(select(ConversionJobEvent)).all() == []
+            assert _conversion_events(other) == []
         session.commit()
 
     with Session(engine) as verify:
-        events = verify.exec(select(ConversionJobEvent)).all()
+        events = _conversion_events(verify)
         assert len(events) == 1
-        assert events[0].kind == ConversionEventKind.SOURCE_ENRICHED
+        assert events[0].kind == ConversionEventKind.SOURCE_ENRICHED.value
 
 
 def test_record_source_event_failure_indicator(engine, queued_job):
@@ -393,7 +405,7 @@ def test_record_source_event_failure_indicator(engine, queued_job):
         session.commit()
 
     with Session(engine) as verify:
-        events = verify.exec(select(ConversionJobEvent)).all()
+        events = _conversion_events(verify)
         assert len(events) == 1
         # Decode payload — it carries the failure indicator.
         import json
@@ -443,13 +455,13 @@ def test_initial_submission_event_writes_null_from_status(engine, source):
         session.commit()
 
     with Session(engine) as verify:
-        events = verify.exec(select(ConversionJobEvent)).all()
+        events = _conversion_events(verify)
         assert len(events) == 1
-        assert events[0].kind == ConversionEventKind.QUEUED
+        assert events[0].kind == ConversionEventKind.QUEUED.value
         assert events[0].from_status is None, (
             "Origin event must persist NULL from_status when from_status=None is passed"
         )
-        assert events[0].to_status == ConversionJobStatus.QUEUED
+        assert events[0].to_status == ConversionJobStatus.QUEUED.value
         assert events[0].attempt == 0
 
 
@@ -468,7 +480,7 @@ def test_record_transition_from_status_defaults_to_job_status(engine, queued_job
         session.commit()
 
     with Session(engine) as verify:
-        events = verify.exec(select(ConversionJobEvent)).all()
-        assert events[0].from_status == ConversionJobStatus.QUEUED, (
+        events = _conversion_events(verify)
+        assert events[0].from_status == ConversionJobStatus.QUEUED.value, (
             "Default behavior must read from_status from job.status before mutation"
         )

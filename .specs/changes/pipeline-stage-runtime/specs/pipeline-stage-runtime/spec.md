@@ -2,22 +2,22 @@
 
 ## ADDED Requirements
 
-### Requirement: The harness operates over a stage-supplied repository protocol
+### Requirement: The runner operates over a stage-supplied handler protocol
 
-The runtime SHALL drive work-unit processing — discovery, claim, status transition, and cleanup — through a repository protocol that each stage implements over its own store; the runtime SHALL NOT require a shared work-unit table or knowledge of any stage's schema.
+The runtime SHALL drive work-unit processing — discovery, claim, status transition, and cleanup — through a handler protocol that each stage implements over its own store; the runtime SHALL NOT require a shared work-unit table or knowledge of any stage's schema.
 Adding or changing a stage SHALL NOT require modifying the runtime; registering a stage's adapter through the composition root SHALL make that stage runnable.
 
 #### Scenario: A new stage runs purely by supplying an adapter
 
-- **GIVEN** a stage that implements the repository protocol over its own store and supplies a unit-of-work adapter
+- **GIVEN** a stage that implements the handler protocol over its own store and supplies a unit-of-work adapter
 - **WHEN** the adapter is registered through the composition root
 - **THEN** the runtime processes that stage's work-units without any change to the runtime or any shared work-unit table
 
-#### Scenario: Two stages with different stores share the harness
+#### Scenario: Two stages with different stores share the runner
 
 - **GIVEN** two stages whose work-units live in different stage-owned tables with different identities
 - **WHEN** both register adapters
-- **THEN** the same harness drives both, each through its own repository implementation
+- **THEN** the same runner drives both, each through its own repository implementation
 
 ### Requirement: Derived outputs belong to runs invalidated atomically at the run level
 
@@ -76,7 +76,7 @@ Every work-unit and every transition event SHALL carry the identity of the sourc
 
 The runtime SHALL define a generic work-unit lifecycle: a unit is queued, then running, then reaches exactly one terminal outcome — succeeded, failed, cancelled, or timed out.
 A failed outcome SHALL be classified as retryable or permanent.
-Stage-specific statuses SHALL map onto this generic lifecycle, so the harness reasons about progress and retry uniformly across stages.
+Stage-specific statuses SHALL map onto this generic lifecycle, so the runner reasons about progress and retry uniformly across stages.
 
 #### Scenario: Each work-unit reaches exactly one classified terminal outcome
 

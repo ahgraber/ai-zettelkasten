@@ -1,9 +1,10 @@
-"""Contract tests for the ConversionJobEvent log produced by API write sites.
+"""Contract tests for the conversion event log produced by API write sites.
 
 These tests pin the spec contract that every API status-mutating endpoint
 appends exactly one matching event row in the same transaction as the job
 mutation. They exercise the HTTP layer end-to-end (TestClient + real
 SQLite via the ``db_session`` fixture) and read the persisted event rows
+from the shared ``pipeline_events`` table (filtered to ``stage="conversion"``)
 to verify shape and payload contents.
 """
 
@@ -11,19 +12,11 @@ from __future__ import annotations
 
 import json
 
-from sqlmodel import select
-
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.datamodel.events import ConversionEventKind, ConversionJobEvent
+from aizk.conversion.datamodel.events import ConversionEventKind, events_for_job
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
-
-
-def _events_for_job(db_session, job_id: int) -> list[ConversionJobEvent]:
-    return db_session.exec(
-        select(ConversionJobEvent).where(ConversionJobEvent.job_id == job_id).order_by(ConversionJobEvent.id)
-    ).all()
 
 
 def _submit_job(client: TestClient, bookmark_id: str) -> dict:
@@ -60,7 +53,7 @@ def test_job_submission_emits_queued_event(db_session) -> None:
     with TestClient(app) as client:
         body = _submit_job(client, "bm_event_submit")
 
-    events = _events_for_job(db_session, body["id"])
+    events = events_for_job(db_session, body["id"])
     assert len(events) == 1
     event = events[0]
     assert event.kind == ConversionEventKind.QUEUED
@@ -90,7 +83,7 @@ def test_retry_endpoint_emits_queued_event_with_retry_reason(db_session) -> None
         retry_resp = client.post(f"/v1/jobs/{job_id}/retry")
         assert retry_resp.status_code == 200, retry_resp.json()
 
-    events = _events_for_job(db_session, job_id)
+    events = events_for_job(db_session, job_id)
     # Origin queued + retry queued; no other API events fire.
     queued_events = [e for e in events if e.kind == ConversionEventKind.QUEUED]
     assert len(queued_events) == 2
@@ -117,7 +110,7 @@ def test_cancel_endpoint_emits_cancelled_event(db_session) -> None:
         cancel_resp = client.post(f"/v1/jobs/{job_id}/cancel")
         assert cancel_resp.status_code == 200, cancel_resp.json()
 
-    events = _events_for_job(db_session, job_id)
+    events = events_for_job(db_session, job_id)
     cancelled_events = [e for e in events if e.kind == ConversionEventKind.CANCELLED]
     assert len(cancelled_events) == 1
     cancel_event = cancelled_events[0]
@@ -147,7 +140,7 @@ def test_bulk_retry_emits_one_queued_event_per_job(db_session) -> None:
         assert body["summary"]["errors"] == 0
 
     for jid in ids:
-        events = _events_for_job(db_session, jid)
+        events = events_for_job(db_session, jid)
         queued_events = [e for e in events if e.kind == ConversionEventKind.QUEUED]
         # origin queued + bulk-retry queued
         assert len(queued_events) == 2, f"job {jid} produced events {[e.kind for e in events]}"
@@ -175,7 +168,7 @@ def test_bulk_cancel_emits_one_cancelled_event_per_job(db_session) -> None:
         assert body["summary"]["errors"] == 0
 
     for jid in ids:
-        events = _events_for_job(db_session, jid)
+        events = events_for_job(db_session, jid)
         cancelled_events = [e for e in events if e.kind == ConversionEventKind.CANCELLED]
         assert len(cancelled_events) == 1, f"job {jid} produced events {[e.kind for e in events]}"
         cancel_event = cancelled_events[0]
