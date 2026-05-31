@@ -192,11 +192,12 @@ The three changes' migrations must land as one linear head — sequence them in 
 **Chosen:** The run/dataset-version primitive is **additive** — conversion is **not** retrofitted onto it in this change.
 Conversion keeps its `ConversionJob` model and owner-scoped idempotency as-is; the port relocates only the **runner** and the **transition events** (`conversion_job_events` → `pipeline_events`).
 The run primitive is built and tested against a stub repository and is first consumed by the graph stages.
-Conversion therefore has no `scope_key` and no run record.
+Conversion therefore records no run: it never calls the run primitive, so no `run` row exists for a conversion job.
+`ConversionStageHandler` still implements the protocol's `scope_key(handle)` property (returning the job id, a per-job scope) because the `StageHandler` surface requires it, but that key is never used to open or supersede a run — it is inert for conversion.
 
 **Rationale:** Conversion has no dataset-version semantics to preserve, and retrofitting runs onto it would be a behavior change, not a structural move.
 Keeping the run primitive additive is what lets the graph stages (the real consumers) validate it before the abstraction freezes — and it answers the review's "what is conversion's `scope_key`?"
-(there isn't one).
+(it has a protocol-required per-job key, but records no run, so no dataset-version semantics ride on it).
 
 ## Architecture
 

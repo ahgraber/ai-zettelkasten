@@ -12,71 +12,24 @@ It covers subprocess isolation for crash containment, reliable cancellation and 
 
 ### Requirement: Isolate job conversion from the worker process
 
-The system SHALL isolate each job's document conversion phase such that a crash or hang during conversion does not affect the worker process or any other in-flight job, and such that any memory and OS resources acquired during conversion are fully released on completion.
+The conversion stage SHALL run its document-conversion unit-of-work in an
+isolated subprocess (the optional subprocess-isolation capability the runner
+exposes), declaring subprocess isolation through its stage adapter so that a
+crash or hang during conversion does not affect the worker process or any other
+in-flight unit, and so that any memory and OS resources acquired during
+conversion are fully released on completion.
+
+The generic guarantees that follow from isolation — crash containment across
+in-flight units, graceful-before-forceful termination, and no orphaned
+descendant processes — are owned by `pipeline-stage-runtime`; this requirement
+retains only conversion's choice to opt into subprocess isolation for its
+conversion phase and the subprocess model used to achieve it.
 
 #### Scenario: Conversion crash does not affect other jobs
 
 - **GIVEN** a job's conversion phase crashes or hangs
 - **WHEN** the worker observes the failure
 - **THEN** that job is marked as retryable-failed and other in-flight jobs continue processing without disruption
-
-### Requirement: Leave no descendant processes behind when stopping a job
-
-When stopping a job, the system SHALL ensure that no processes spawned — directly or transitively — by the conversion phase remain running.
-
-#### Scenario: Descendant processes terminated with the job
-
-- **GIVEN** the conversion phase has spawned child processes of its own
-- **WHEN** the worker stops the job
-- **THEN** no process descended from that job's conversion remains running
-
-### Requirement: Detect and respond to job cancellation within 2 seconds
-
-The system SHALL poll for job cancellation in the parent process and terminate the conversion subprocess when a cancellation is detected, with detection latency not exceeding 2 seconds.
-
-#### Scenario: Running job cancelled during conversion phase
-
-- **GIVEN** a job is RUNNING in the conversion phase
-- **WHEN** a user cancels the job via the API
-- **THEN** the worker detects cancellation within 2 seconds, terminates the subprocess, and transitions the job to CANCELLED with the interrupted phase recorded
-
-#### Scenario: Running job cancelled during upload phase
-
-- **GIVEN** a job is RUNNING in the upload phase
-- **WHEN** a user cancels the job via the API
-- **THEN** the worker terminates any ongoing upload, cleans up the temporary workspace, and marks the job CANCELLED
-
-### Requirement: Skip processing of cancelled queued jobs
-
-The system SHALL not begin processing a job that is already CANCELLED when a worker picks it up.
-
-#### Scenario: Cancelled queued job skipped by worker
-
-- **GIVEN** a job is QUEUED and then cancelled before any worker starts it
-- **WHEN** a worker polls for work and selects the job
-- **THEN** the worker detects CANCELLED status and exits immediately without starting the subprocess
-
-#### Scenario: Job cancelled between poll and running transition
-
-- **GIVEN** a job is selected by the worker but cancelled before the supervised processing function begins
-- **WHEN** the worker reads the current job status from the database before issuing the RUNNING update
-- **THEN** it detects the CANCELLED status and exits without starting the conversion subprocess and without transitioning the job to RUNNING
-
-### Requirement: Enforce a wall-clock timeout on job execution
-
-The system SHALL terminate a job and mark it retryable-failed if it exceeds the configured total execution timeout, covering all phases including preflight, conversion, upload, and retry delays.
-
-#### Scenario: Job exceeds total timeout
-
-- **GIVEN** a job has been running for longer than the configured timeout (default: 7200 seconds)
-- **WHEN** the timeout deadline is reached
-- **THEN** the worker terminates the subprocess and marks the job FAILED_RETRYABLE with a timeout error code and the interrupted phase in the error message
-
-#### Scenario: Retried job receives a fresh timeout window
-
-- **GIVEN** a job previously failed due to timeout
-- **WHEN** the job is retried
-- **THEN** it receives a new full timeout window starting from the new attempt
 
 ### Requirement: Report job phase transitions for observability
 
@@ -94,25 +47,10 @@ The system SHALL log phase transitions as a job progresses through its execution
 - **WHEN** the error is recorded
 - **THEN** the error message includes the phase that was active at the time of interruption
 
-### Requirement: Attempt graceful termination before forceful termination
-
-When stopping a subprocess, the system SHALL first request a graceful exit and allow a bounded grace period for the subprocess to exit cleanly before escalating to a forceful termination.
-
-#### Scenario: Graceful stop succeeds within the grace period
-
-- **GIVEN** a subprocess must be stopped
-- **WHEN** the worker requests a graceful stop
-- **THEN** the subprocess exits within the grace period without forceful termination
-
-#### Scenario: Forceful termination escalated after grace period
-
-- **GIVEN** a subprocess has not exited within the grace period of a graceful stop request
-- **WHEN** the grace period elapses
-- **THEN** the worker forcefully terminates the subprocess and waits a further bounded period for the process to exit
-
 ### Requirement: Clean up temporary workspace on all job outcomes
 
-The system SHALL guarantee that the temporary workspace created for a job is removed after the job finishes, regardless of whether it succeeded, failed, was cancelled, or raised an exception.
+The conversion stage's primary transient resource is the temporary workspace created for a job; the conversion adapter SHALL remove that workspace on every terminal outcome — succeeded, failed, cancelled, or timed out — by scoping it to the adapter's unit-of-work execution, so no workspace survives the unit regardless of how it ends.
+The generic guarantee that transient resources are released on every terminal outcome is owned by `pipeline-stage-runtime`; this requirement retains only the conversion-specific obligation to remove the temporary workspace.
 
 #### Scenario: Workspace removed after successful job
 
@@ -128,12 +66,14 @@ The system SHALL guarantee that the temporary workspace created for a job is rem
 
 ### Requirement: Classify errors as retryable or permanent
 
-Every failure mode SHALL be classified as either retryable or permanent, and the job SHALL transition to `FAILED_RETRYABLE` for retryable failures and `FAILED_PERM` for permanent failures.
+The conversion adapter SHALL map each conversion failure mode onto the generic `retryable | permanent` classification that the runner consumes for retry scheduling.
 Classification SHALL be a fixed property of the failure mode — it SHALL NOT depend on error-message text, runtime introspection of error objects, or caller context.
 
-Missing conversion artifacts, explicit cancellation, and data-integrity violations SHALL be classified as permanent.
-Transient fetch failures, conversion-subprocess crashes, preflight failures, upload failures, and storage failures SHALL be classified as retryable.
-A child-reported failure that carries no explicit classification SHALL be treated as retryable.
+The conversion-specific mapping SHALL be:
+
+- Missing conversion artifacts, explicit cancellation, and data-integrity violations SHALL be classified as permanent.
+- Transient fetch failures, conversion-subprocess crashes, preflight failures, upload failures, and storage failures SHALL be classified as retryable.
+- A child-reported failure that carries no explicit classification SHALL be treated as retryable.
 
 #### Scenario: Permanent error for missing artifacts
 
@@ -158,66 +98,6 @@ A child-reported failure that carries no explicit classification SHALL be treate
 - **GIVEN** the conversion subprocess reports a failure without specifying retryability
 - **WHEN** the error handler processes the failure
 - **THEN** the job transitions to `FAILED_RETRYABLE`
-
-### Requirement: Handle SIGTERM and SIGINT by draining in-flight work before exiting
-
-The worker process SHALL register signal handlers for SIGTERM and SIGINT that initiate a graceful shutdown sequence: stop polling for new jobs, allow all in-flight jobs to complete within a bounded drain timeout, and then exit.
-
-#### Scenario: Worker receives SIGTERM with multiple in-flight jobs
-
-- **GIVEN** the worker is processing multiple jobs concurrently
-- **WHEN** the worker process receives SIGTERM
-- **THEN** the worker stops claiming new jobs and waits for all in-flight jobs to complete before exiting
-
-#### Scenario: Worker receives signal while idle
-
-- **GIVEN** the worker is idle (no jobs in progress)
-- **WHEN** the worker process receives SIGTERM or SIGINT
-- **THEN** the worker exits immediately without error
-
-### Requirement: Enforce a bounded drain timeout on graceful shutdown
-
-The worker process SHALL enforce a configurable drain timeout (default: 300 seconds) after receiving a shutdown signal.
-If any in-flight jobs do not complete within this timeout, the worker SHALL terminate them using the existing subprocess termination sequence and then exit.
-
-#### Scenario: All in-flight jobs complete within drain timeout
-
-- **GIVEN** the worker has received SIGTERM and is draining multiple in-flight jobs
-- **WHEN** all jobs complete before the drain timeout elapses
-- **THEN** the worker exits with a zero exit code
-
-#### Scenario: Some in-flight jobs exceed drain timeout
-
-- **GIVEN** the worker has received SIGTERM and is draining multiple in-flight jobs
-- **WHEN** the drain timeout elapses before all jobs complete
-- **THEN** the worker terminates remaining in-flight jobs using the existing graceful-then-forceful subprocess termination sequence, marks them FAILED_RETRYABLE, and exits with a non-zero exit code
-
-### Requirement: Leave no jobs in RUNNING state after worker exit
-
-The worker process SHALL ensure that no jobs remain in RUNNING state when the worker exits, whether the exit is due to a completed drain or a drain timeout.
-Jobs that cannot complete are transitioned to FAILED_RETRYABLE so they are eligible for pickup by a restarted worker.
-
-#### Scenario: Worker exits cleanly after draining multiple jobs
-
-- **GIVEN** all in-flight jobs completed during the drain period
-- **WHEN** the worker process exits
-- **THEN** no jobs in the database have status RUNNING that were owned by this worker
-
-#### Scenario: Worker exits after drain timeout with forced termination of multiple jobs
-
-- **GIVEN** the drain timeout elapsed and multiple in-flight jobs were forcefully terminated
-- **WHEN** the worker process exits
-- **THEN** all terminated jobs have status FAILED_RETRYABLE and their workspaces have been cleaned up
-
-### Requirement: Log shutdown lifecycle events
-
-The worker process SHALL log structured messages at each stage of the shutdown sequence for operational observability.
-
-#### Scenario: Shutdown sequence logged
-
-- **GIVEN** the worker receives a shutdown signal
-- **WHEN** the shutdown sequence progresses
-- **THEN** the worker logs: signal received (with signal name), drain started (with number of in-flight jobs), each job completion or forced termination during drain, and final exit (with exit code)
 
 ## Technical Notes
 

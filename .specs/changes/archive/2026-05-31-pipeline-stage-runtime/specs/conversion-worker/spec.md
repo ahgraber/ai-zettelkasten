@@ -143,13 +143,13 @@ The `ConversionJob.status` field SHALL remain the authoritative current-state pr
 #### Scenario: Permanent failure transition is recorded
 
 - **GIVEN** a job in status `RUNNING` whose subprocess produces a non-retryable failure
-- **WHEN** the orchestrator transitions the job to `FAILED_PERM`
+- **WHEN** the stage handler transitions the job to `FAILED_PERM`
 - **THEN** an event record is committed with prior status `RUNNING`, new status `FAILED_PERM`, and a typed cause payload carrying the non-retryable indicator and the sanitized error identifiers
 
 #### Scenario: Upload-pending transition is recorded
 
 - **GIVEN** a job whose subprocess has completed conversion successfully
-- **WHEN** the orchestrator transitions the job to `UPLOAD_PENDING` prior to invoking upload
+- **WHEN** the stage handler transitions the job to `UPLOAD_PENDING` prior to invoking upload
 - **THEN** an event record is committed with prior status `RUNNING`, new status `UPLOAD_PENDING`, and a typed cause payload identifying the artifact that is about to upload
 
 #### Scenario: Cancellation mid-conversion is recorded

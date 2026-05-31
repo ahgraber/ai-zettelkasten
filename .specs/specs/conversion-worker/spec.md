@@ -164,18 +164,18 @@ The `source_ref` is denormalized from the Source row onto the job record for fet
 ### Requirement: Validate source content before conversion
 
 The system SHALL validate that the fetched content is non-empty and carries a `ContentType` for which a converter is registered, before proceeding to conversion.
-Content-type and source-type detection are the responsibility of the fetcher/resolver chain, not the orchestrator. (Previously: detection was performed by the orchestrator from KaraKeep bookmark structure and URL.)
+Content-type and source-type detection are the responsibility of the fetcher/resolver chain, not the conversion coordinator. (Previously: detection was performed by the conversion coordinator from KaraKeep bookmark structure and URL.)
 
 #### Scenario: Fetcher returns empty content
 
 - **GIVEN** a fetcher returns a `ConversionInput` with zero-length bytes
-- **WHEN** the orchestrator inspects the input
+- **WHEN** the conversion coordinator inspects the input
 - **THEN** the job is marked permanently failed with a missing-content error code
 
 #### Scenario: No converter registered for content type
 
 - **GIVEN** a fetcher returns a `ConversionInput` with a content type for which no converter is registered
-- **WHEN** the orchestrator attempts to resolve a converter
+- **WHEN** the conversion coordinator attempts to resolve a converter
 - **THEN** the job is marked permanently failed with a `NoConverterForFormat` error
 
 ### Requirement: Fetch source content via the registered fetcher
@@ -253,14 +253,14 @@ Converter-specific behavior (picture classification, figure enrichment, serializ
 #### Scenario: Converter resolved and invoked
 
 - **GIVEN** a `ConversionInput` with content type `pdf` and a configured converter name `"docling"`
-- **WHEN** the orchestrator invokes conversion
+- **WHEN** the conversion coordinator invokes conversion
 - **THEN** the `DoclingConverter` is resolved from the registry and produces `ConversionArtifacts`
 
 #### Scenario: Converter-specific enrichment remains internal
 
 - **GIVEN** the `DoclingConverter` is invoked for a PDF with picture classification enabled
 - **WHEN** conversion completes
-- **THEN** figure descriptions and classification metadata are present in the output, as before, without the orchestrator having knowledge of these adapter-specific behaviors
+- **THEN** figure descriptions and classification metadata are present in the output, as before, without the conversion coordinator having knowledge of these adapter-specific behaviors
 
 ### Requirement: Route figure-description prompts by classification label
 
@@ -468,8 +468,8 @@ All other constraints from the prior requirement (`owner_id` copied from `Job.ow
 
 ### Requirement: Transition job status atomically
 
-The system SHALL update job status to `SUCCEEDED`, `FAILED_RETRYABLE`, or `FAILED_PERM` only after the associated S3 or error state is confirmed, and SHALL ensure that the status update and a corresponding event record become observable to readers atomically: a committed status update SHALL always coincide with a committed event record, and a rollback SHALL discard both.
-All other constraints from the prior requirement (atomic projection update, status set only after associated state is confirmed) SHALL be preserved.
+The system SHALL update job status to `SUCCEEDED`, `FAILED_RETRYABLE`, or `FAILED_PERM` only after the associated S3 or error state is confirmed.
+The atomicity of the status update with its transition event is provided by the generic co-commit helper; conversion retains the constraint that a conversion status is set only after the associated S3/error state is confirmed, and that the conversion outcome statuses are `SUCCEEDED`, `FAILED_RETRYABLE`, and `FAILED_PERM`.
 
 #### Scenario: Status set to SUCCEEDED after verified upload
 
@@ -491,9 +491,11 @@ All other constraints from the prior requirement (atomic projection update, stat
 
 ### Requirement: Record every ConversionJob status transition as a durable event
 
-The system SHALL durably record every change to `ConversionJob.status` such that the projection (the `ConversionJob` current-state record) and the durable event record become observable to readers atomically: a committed status change SHALL always coincide with a committed event record, and a rolled-back status change SHALL leave no event record.
+The system SHALL durably record every change to `ConversionJob.status` as a
+transition event co-committed with the status change (the same-transaction
+co-commit guarantee is provided by the generic helper).
 
-Each event record SHALL identify the affected job, the underlying Source identity, the attempt number that the transition belongs to, the time of the transition, the event kind from a closed enumeration of transition causes, the prior status (absent for the job's first observable state), the new status, and a typed structured cause appropriate to the kind.
+Each event record SHALL identify the affected job, the underlying Source identity, the attempt number that the transition belongs to, the time of the transition, the event kind from a closed enumeration of conversion transition causes, the prior status (absent for the job's first observable state), the new status, and a typed structured cause appropriate to the kind.
 The Source identity SHALL be recorded alongside the job identity so that audit queries spanning future processing-stage event records (chunking, embedding, etc.) can be served by Source identity without joining through `ConversionJob`.
 
 Event records SHALL NOT be updated or deleted by the conversion system after insertion; corrections SHALL be expressed as new event records.
@@ -526,13 +528,13 @@ The `ConversionJob.status` field SHALL remain the authoritative current-state pr
 #### Scenario: Permanent failure transition is recorded
 
 - **GIVEN** a job in status `RUNNING` whose subprocess produces a non-retryable failure
-- **WHEN** the orchestrator transitions the job to `FAILED_PERM`
+- **WHEN** the stage handler transitions the job to `FAILED_PERM`
 - **THEN** an event record is committed with prior status `RUNNING`, new status `FAILED_PERM`, and a typed cause payload carrying the non-retryable indicator and the sanitized error identifiers
 
 #### Scenario: Upload-pending transition is recorded
 
 - **GIVEN** a job whose subprocess has completed conversion successfully
-- **WHEN** the orchestrator transitions the job to `UPLOAD_PENDING` prior to invoking upload
+- **WHEN** the stage handler transitions the job to `UPLOAD_PENDING` prior to invoking upload
 - **THEN** an event record is committed with prior status `RUNNING`, new status `UPLOAD_PENDING`, and a typed cause payload identifying the artifact that is about to upload
 
 #### Scenario: Cancellation mid-conversion is recorded
@@ -572,9 +574,9 @@ Subprocess-reported phase event payloads SHALL be validated against the closed c
 
 #### Scenario: Subprocess-reported terminal event does not produce its own record
 
-- **GIVEN** a subprocess that reports `failed` with a retryable error code, followed by the orchestrator transitioning the job to `FAILED_RETRYABLE`
-- **WHEN** the parent drains the subprocess report and the orchestrator commits the transition
-- **THEN** the only failure-related event record observable for that attempt is the orchestrator-committed transition event carrying the sanitized error identifiers
+- **GIVEN** a subprocess that reports `failed` with a retryable error code, followed by the stage handler transitioning the job to `FAILED_RETRYABLE`
+- **WHEN** the parent drains the subprocess report and the stage handler commits the transition
+- **THEN** the only failure-related event record observable for that attempt is the stage-handler-committed transition event carrying the sanitized error identifiers
 
 #### Scenario: Subprocess-reported cancellation does not produce its own record
 
@@ -585,8 +587,8 @@ Subprocess-reported phase event payloads SHALL be validated against the closed c
 #### Scenario: Egress-policy rejection detail not persisted via subprocess channel
 
 - **GIVEN** a subprocess that reports `failed` with an egress-policy error code and a traceback containing a rejected destination
-- **WHEN** the parent drains the report and the orchestrator commits the resulting transition
-- **THEN** no event record observable to durable readers carries the rejected destination; the orchestrator's transition event carries only the sanitized error code
+- **WHEN** the parent drains the report and the stage handler commits the resulting transition
+- **THEN** no event record observable to durable readers carries the rejected destination; the stage handler's transition event carries only the sanitized error code
 
 #### Scenario: Phase-event persistence failure does not halt the job
 
@@ -624,27 +626,10 @@ The event record SHALL NOT be written for Source-row mutations that the conversi
 - **WHEN** the change is committed
 - **THEN** no enrichment event record is appended; the requirement applies only to writes the worker itself authors
 
-### Requirement: Stale-job recovery records the recovery cause in the event payload
-
-The system SHALL record each stale-RUNNING-job recovery as a status-transition event whose payload identifies the recovery cause: the staleness threshold applied and the original start-time of the stale attempt.
-The event kind for stale recovery SHALL be distinct from the kind used for ordinary failure transitions so that operators can separate recovered attempts from subprocess-reported failures when querying history.
-
-#### Scenario: Recovered stale job carries staleness payload
-
-- **GIVEN** a job in status `RUNNING` whose start-time is older than the worker's configured stale-job threshold
-- **WHEN** the worker's stale-job sweep transitions the job to `FAILED_RETRYABLE`
-- **THEN** a single event record is appended with prior status `RUNNING`, new status `FAILED_RETRYABLE`, the stale-recovery kind, and a payload identifying the threshold and the prior start-time
-
-#### Scenario: Ordinary retryable failure does not use the recovery kind
-
-- **GIVEN** a job whose subprocess reports a retryable failure
-- **WHEN** the orchestrator's error handler transitions the job to `FAILED_RETRYABLE`
-- **THEN** the resulting transition event carries the ordinary-failure kind, not the stale-recovery kind, and its payload carries the reported error identifiers rather than a staleness threshold
-
 ### Requirement: Event payloads validate against typed per-kind contracts
 
-The system SHALL validate every event-record payload against a typed contract specific to the event's kind before insertion.
-Each kind in the closed enumeration of event kinds SHALL have its own contract defining the permitted fields and field types; the system SHALL reject at write time any payload that fails validation, with a typed error rather than persisting opaque or unrecognized data.
+The system SHALL define, for each kind in the closed enumeration of conversion event kinds, a typed payload contract specifying that kind's permitted fields and field types.
+The generic obligation to validate every event payload against its kind's contract before insertion is provided by the runner; this requirement retains the conversion-specific per-kind payload contracts and conversion's forward-compatibility rule.
 
 An unknown kind SHALL fail validation.
 A payload whose fields do not satisfy the contract for its kind SHALL fail validation.
@@ -674,31 +659,14 @@ Readers SHALL tolerate the future addition of unrecognized fields to a known kin
 - **WHEN** the current reader deserializes the payload
 - **THEN** any unrecognized fields are ignored without raising, and the recognized fields are returned
 
-### Requirement: Process jobs with bounded concurrency in FIFO order
-
-The system SHALL process conversion jobs in first-in-first-out order by queue time, with the number of concurrently processing jobs bounded by a configurable limit.
-Job claiming SHALL be atomic — the same job SHALL NOT be claimed and processed by two workers concurrently.
-
-#### Scenario: Concurrent jobs processed up to limit
-
-- **GIVEN** more jobs are queued than the concurrency limit
-- **WHEN** the main thread polls for work
-- **THEN** at most the configured number of jobs run simultaneously in worker threads and jobs are selected in queue-time order
-
-#### Scenario: Main thread fills worker slots greedily
-
-- **GIVEN** multiple jobs are queued and worker slots are available
-- **WHEN** the main thread polls for work
-- **THEN** it claims and dispatches jobs until all worker slots are filled or no more jobs are eligible
-
 ### Requirement: Bound concurrency of GPU-consuming conversion phases
 
 The system SHALL bound the number of GPU-consuming conversion subprocesses running concurrently via a GPU `ResourceGuard` context manager acquired in the parent process before subprocess spawn and held for the subprocess's full lifetime (spawn, supervision, and reap).
 The guard SHALL be a threading primitive shared across the parent's worker thread pool.
-The orchestrator SHALL acquire the guard if and only if the dispatched converter declares `requires_gpu == True`; a converter declaring `requires_gpu == False` SHALL spawn its subprocess without contending on the GPU guard.
+The stage handler SHALL acquire the guard if and only if the dispatched converter declares `requires_gpu == True`; a converter declaring `requires_gpu == False` SHALL spawn its subprocess without contending on the GPU guard.
 Converter adapters running inside forked child processes SHALL NOT own or acquire the cross-job GPU guard.
 The acquiring worker thread SHALL be the sole releaser; the supervision loop SHALL NOT call release directly, and the guard SHALL be released by normal or exceptional unwind of the acquiring thread's `with` block after subprocess reap.
-Today the only registered converter is `DoclingConverter` with `requires_gpu = True`, so every conversion subprocess acquires the guard in the current deployment; the bypass path is a defined protocol capability for future non-GPU converters. (Previously: bounded by a module-level `threading.Semaphore` in the orchestrator.
+Today the only registered converter is `DoclingConverter` with `requires_gpu = True`, so every conversion subprocess acquires the guard in the current deployment; the bypass path is a defined protocol capability for future non-GPU converters. (Previously: bounded by a module-level `threading.Semaphore` in the conversion worker.
 Now the guard is wrapped as an injected `ResourceGuard` at the parent/supervision level, not inside converter adapters — because forked children would get independent semaphore copies, destroying the global cap.)
 
 #### Scenario: GPU-consuming converter acquires guard
@@ -741,26 +709,6 @@ The system SHALL store the Markdown artifact as a file named `output.md` regardl
 - **WHEN** the artifact is written to the workspace
 - **THEN** the file is named `output.md`
 
-### Requirement: Emit structured logs with trace context
-
-The system SHALL log key processing events with job identifier, bookmark identifier, KaraKeep identifier, and status in every log entry to enable trace reconstruction.
-
-#### Scenario: Log entries include trace context
-
-- **GIVEN** a worker is processing a job
-- **WHEN** any key event is logged
-- **THEN** the log entry includes the job identifier, internal bookmark identifier, and KaraKeep identifier
-
-### Requirement: Emit operational metrics
-
-The system SHALL emit metrics for queue depth, job duration, job status counts, fetch latency, and S3 upload latency.
-
-#### Scenario: Metrics emitted during processing
-
-- **GIVEN** jobs are being processed
-- **WHEN** a job transitions through lifecycle phases
-- **THEN** the worker emits timing and status metrics for each measurable operation
-
 ### Requirement: Load configuration from environment variables
 
 The system SHALL load configuration from environment variables organized into per-adapter nested namespaces.
@@ -797,8 +745,8 @@ The system SHALL expose `AIZK_CONVERTER__DOCLING__PICTURE_CLASSIFICATION_ENABLED
 
 ### Requirement: Validate required external services on startup
 
-The system SHALL probe required external services at process startup, with the set of probes determined by the registered adapters and their configuration. (Previously: probes were hard-coded for S3, KaraKeep, and the picture-description endpoint.
-Now each adapter may declare startup probes, and the composition root aggregates them.)
+The system SHALL declare conversion's required external-service probes — S3, the database, and (when configured) the picture-description endpoint — through its registered adapters so the runner's startup-validation gate executes them before any conversion work is accepted.
+The set of probes SHALL be determined by the registered adapters and their configuration.
 
 #### Scenario: Adapter-declared probe executed at startup
 
@@ -853,16 +801,6 @@ Picture classification reports as enabled only when both `AIZK_CONVERTER__DOCLIN
 - **GIVEN** `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL` is not configured (picture description is disabled)
 - **WHEN** the process starts
 - **THEN** the startup summary log entry lists picture classification as disabled with reason "picture description not enabled"
-
-### Requirement: Identify process role for operator monitoring
-
-Every Python process (API server, worker, CLI) SHALL expose its role as a human-readable label to enable operators to distinguish process types during monitoring.
-
-#### Scenario: Worker process identifiable by role
-
-- **GIVEN** multiple process types are running on the same host
-- **WHEN** an operator inspects the process list
-- **THEN** each process is labeled with its role (API, worker, or CLI)
 
 ### Requirement: Declare provenance per source type
 
