@@ -1,6 +1,6 @@
-"""Orchestrator: coordinates the fetch-chain and converter dispatch.
+"""ConversionCoordinator: coordinates the fetch-chain and converter dispatch.
 
-The orchestrator is a pure coordinator:
+It is a pure coordinator:
 - It does not import adapter modules (depends only on injected callables).
 - It holds no global state.
 - It determines the dispatch role (ContentFetcher vs RefResolver) structurally
@@ -36,11 +36,11 @@ class ProcessResult:
     config_snapshot: dict[str, Any]
 
 
-class Orchestrator:
+class ConversionCoordinator:
     """Coordinates fetch -> convert for a single job.
 
     Dependencies are injected as callables so tests can substitute fakes and
-    the orchestrator is agnostic to which concrete registries are in use.
+    the coordinator is agnostic to which concrete registries are in use.
     """
 
     def __init__(

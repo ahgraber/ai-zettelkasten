@@ -9,7 +9,7 @@ covered by ``tests/pipeline/test_runner_shutdown.py`` (signal dispatch),
 drain on shutdown).
 
 What remains here is conversion-specific: the ``shutdown_requested_fn`` drain
-branch inside :func:`~aizk.conversion.workers.supervision._supervise_conversion_process`.
+branch inside :func:`~aizk.conversion.processing.supervision._supervise_conversion_process`.
 That seam is still live — the runner owns drain via the ``terminate_event`` seam
 and passes ``None`` — but the branch itself remains and these tests pin its
 behavior using a plain local flag.
@@ -22,7 +22,7 @@ import queue
 import signal
 import time
 
-from aizk.conversion.workers.supervision import _supervise_conversion_process
+from aizk.conversion.processing.supervision import _supervise_conversion_process
 
 
 class _StubProcess:

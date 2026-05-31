@@ -50,13 +50,13 @@ def test_build_worker_runtime_returns_worker_runtime_dataclass():
     assert isinstance(rt, WorkerRuntime)
 
 
-def test_build_worker_runtime_orchestrator_is_present():
-    # Import after building so sys.modules[orchestrator] is the same object the
-    # builder used.  The test_orchestrator import-graph test deletes orchestrator
+def test_build_worker_runtime_coordinator_is_present():
+    # Import after building so sys.modules[coordinator] is the same object the
+    # builder used.  The test_coordinator import-graph test deletes coordinator
     # from sys.modules, which would cause isinstance() to fail if we import the
     # class before calling build_worker_runtime.
     rt = build_worker_runtime(_CFG)
-    assert type(rt.orchestrator).__name__ == "Orchestrator"
+    assert type(rt.coordinator).__name__ == "ConversionCoordinator"
 
 
 def test_build_worker_runtime_resource_guard_is_present():

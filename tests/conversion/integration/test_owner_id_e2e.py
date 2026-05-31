@@ -29,8 +29,8 @@ from aizk.conversion.core.errors import ConfigurationError
 from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
+from aizk.conversion.processing import uploader
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.workers import uploader
 
 
 class _MockS3Client:

@@ -5,7 +5,7 @@
 
 ## Purpose
 
-The pluggable pipeline defines the core protocols, registries, and composition contracts that allow fetchers, resolvers, and converters to be swapped, extended, and validated at wiring time without modifying the orchestrator.
+The pluggable pipeline defines the core protocols, registries, and composition contracts that allow fetchers, resolvers, and converters to be swapped, extended, and validated at wiring time without modifying the coordinator.
 It separates adapter declaration from deployment policy and enforces structural invariants through a single composition root (the wiring package).
 
 ## Requirements
@@ -16,7 +16,7 @@ The system SHALL define a `SourceMetadata` value type that propagates source-des
 
 `SourceMetadata` SHALL be an immutable value type with optional fields, addable without breaking existing adapters.
 
-A `SourceMetadata` value SHALL exist for every job from the resolver stage onward; when the job has no resolver, the orchestrator SHALL synthesise a `SourceMetadata()` with all fields `None` before invoking the fetcher.
+A `SourceMetadata` value SHALL exist for every job from the resolver stage onward; when the job has no resolver, the coordinator SHALL synthesise a `SourceMetadata()` with all fields `None` before invoking the fetcher.
 
 `SourceMetadata` SHALL define an explicit `merge(other) -> SourceMetadata` operation with field-wise "earlier non-None wins" semantics: for each field, the result is `self.<field>` if non-`None`, else `other.<field>`.
 This SHALL be the only mechanism by which a stage combines its observations with prior observations.
@@ -26,7 +26,7 @@ A pipeline stage SHALL NOT silently overwrite a non-`None` `SourceMetadata` fiel
 #### Scenario: Metadata exists for non-resolver job
 
 - **GIVEN** a job submitted with a `SourceRef` whose kind has no registered resolver
-- **WHEN** the orchestrator dispatches to the fetcher
+- **WHEN** the coordinator dispatches to the fetcher
 - **THEN** a `SourceMetadata` value with all fields `None` is passed alongside the ref
 
 #### Scenario: Resolver observation reaches the converter unchanged
@@ -80,7 +80,7 @@ Source-descriptive metadata observed during resolution had no return path and wa
 
 #### Scenario: Content fetcher receives and returns SourceMetadata
 
-- **GIVEN** a `SourceRef` whose kind maps to a registered content fetcher and a `SourceMetadata` from the orchestrator
+- **GIVEN** a `SourceRef` whose kind maps to a registered content fetcher and a `SourceMetadata` from the coordinator
 - **WHEN** the fetcher is invoked
 - **THEN** a `ConversionInput` is returned whose `source_meta` field carries forward all non-`None` fields supplied by the caller, plus any fields the fetcher itself observed, combined via `SourceMetadata.merge()`
 
@@ -112,12 +112,12 @@ Source-descriptive metadata observed during resolution had no return path and wa
 
 - **GIVEN** a `SourceRef` whose kind maps to a registered ref resolver
 - **WHEN** the resolver is invoked
-- **THEN** a new `SourceRef` of a different kind is returned, to be dispatched on by the orchestrator
+- **THEN** a new `SourceRef` of a different kind is returned, to be dispatched on by the coordinator
 
 #### Scenario: Dispatch role is determined structurally at runtime
 
 - **GIVEN** a registered adapter and a `SourceRef` whose kind maps to it
-- **WHEN** the orchestrator dispatches the ref
+- **WHEN** the coordinator dispatches the ref
 - **THEN** it invokes `impl.resolve(ref)` when `isinstance(impl, RefResolver)` is true and `impl.fetch(ref, source_meta)` otherwise
 
 #### Scenario: register_content_fetcher rejects a resolver impl
@@ -266,28 +266,28 @@ This is a static, one-shot check against declared edges; it does not replace the
 - **WHEN** `register_ready_adapters` runs closure validation
 - **THEN** a `ChainNotTerminated` error is raised identifying the cycle
 
-### Requirement: Inject fetcher and converter resolution into the orchestrator
+### Requirement: Inject fetcher and converter resolution into the coordinator
 
-The orchestrator SHALL receive its fetcher resolver and converter resolver as constructor dependencies, and SHALL not import or reference any concrete adapter module.
-The orchestrator's result type SHALL carry the converter name and its config snapshot so that callers (e.g., the worker) do not need to re-resolve the converter to obtain those values.
-Specifically, `ProcessResult` SHALL include `converter_name: str` and `config_snapshot: dict[str, Any]`, written by the orchestrator before returning to the caller.
-No caller SHALL access `Orchestrator._resolve_converter` directly; the private resolver method is an implementation detail of the orchestrator and SHALL NOT be reached from outside the orchestrator class.
+The coordinator SHALL receive its fetcher resolver and converter resolver as constructor dependencies, and SHALL not import or reference any concrete adapter module.
+The coordinator's result type SHALL carry the converter name and its config snapshot so that callers (e.g., the worker) do not need to re-resolve the converter to obtain those values.
+Specifically, `ProcessResult` SHALL include `converter_name: str` and `config_snapshot: dict[str, Any]`, written by the coordinator before returning to the caller.
+No caller SHALL access `ConversionCoordinator._resolve_converter` directly; the private resolver method is an implementation detail of the coordinator and SHALL NOT be reached from outside the coordinator class.
 
-#### Scenario: Orchestrator operates with injected fakes
+#### Scenario: ConversionCoordinator operates with injected fakes
 
-- **GIVEN** an orchestrator constructed with fake resolver callables returning in-memory fetchers and converters
+- **GIVEN** a coordinator constructed with fake resolver callables returning in-memory fetchers and converters
 - **WHEN** a job is processed
-- **THEN** the orchestrator completes the fetch-convert cycle using only the injected fakes, with no dependency on real adapters or registries
+- **THEN** the coordinator completes the fetch-convert cycle using only the injected fakes, with no dependency on real adapters or registries
 
-#### Scenario: Orchestrator has no transitive import of adapter modules
+#### Scenario: ConversionCoordinator has no transitive import of adapter modules
 
-- **GIVEN** the orchestrator's module source
+- **GIVEN** the coordinator's module source
 - **WHEN** its import graph is inspected
 - **THEN** no adapter module (e.g., docling, karakeep, arxiv) appears in the transitive closure
 
 #### Scenario: ProcessResult carries converter metadata
 
-- **GIVEN** an orchestrator that successfully completes the fetch-convert cycle
+- **GIVEN** a coordinator that successfully completes the fetch-convert cycle
 - **WHEN** the caller receives the `ProcessResult`
 - **THEN** `result.converter_name` and `result.config_snapshot` are populated with the converter
   that ran and its output-affecting configuration snapshot, without the caller making any
@@ -295,16 +295,16 @@ No caller SHALL access `Orchestrator._resolve_converter` directly; the private r
 
 #### Scenario: Worker consumes config_snapshot from ProcessResult directly
 
-- **GIVEN** a worker that receives a `ProcessResult` from the orchestrator
+- **GIVEN** a worker that receives a `ProcessResult` from the coordinator
 - **WHEN** the worker constructs the idempotency key or records provenance
-- **THEN** it reads `config_snapshot` from the result without calling any orchestrator method
+- **THEN** it reads `config_snapshot` from the result without calling any coordinator method
   beyond `process_with_provenance`
 
 ### Requirement: Enforce GPU admission control above the subprocess boundary
 
 The system SHALL bound the number of GPU-consuming conversion subprocesses running concurrently via a GPU `ResourceGuard` acquired in the parent process before subprocess spawn.
 The guard SHALL be a context manager implemented by a threading primitive shared across the parent's worker thread pool.
-The orchestrator SHALL acquire the guard if and only if the dispatched converter declares `requires_gpu == True`; converters declaring `requires_gpu == False` SHALL spawn without contending on the GPU guard.
+The coordinator SHALL acquire the guard if and only if the dispatched converter declares `requires_gpu == True`; converters declaring `requires_gpu == False` SHALL spawn without contending on the GPU guard.
 The acquiring worker thread SHALL be the sole releaser: the guard SHALL be held for the full subprocess lifecycle (spawn, supervise, reap) and SHALL be released when the acquiring thread's `with` block unwinds — whether conversion succeeded, the child crashed, the supervision loop raised, or the parent cancelled.
 The supervision loop SHALL NOT release the guard on behalf of the acquiring thread; its role is to detect child termination and return control so the acquiring thread's `with` block unwinds.
 Converter adapters running inside forked child processes SHALL NOT own or acquire the cross-job GPU guard.
@@ -341,7 +341,7 @@ Converter adapters running inside forked child processes SHALL NOT own or acquir
 
 ### Requirement: Wire adapters via role-specific builders
 
-The system SHALL assemble registries, adapters, resource guards, and the orchestrator via role-specific builder functions in a single wiring package.
+The system SHALL assemble registries, adapters, resource guards, and the coordinator via role-specific builder functions in a single wiring package.
 Each builder SHALL register only the adapters, probes, and accepted source kinds appropriate for its process role.
 The wiring package SHALL be the only package that imports both core protocols and concrete adapter implementations.
 Role-specific builder functions SHALL construct all `BaseSettings` instances exactly once and SHALL NOT allow settings to be re-read from disk or environment on subsequent calls.
@@ -352,7 +352,7 @@ Settings instances that are needed at request time (e.g., `DoclingConverterConfi
 
 - **GIVEN** a worker process starting up
 - **WHEN** `build_worker_runtime(cfg)` is called
-- **THEN** all fetcher and converter adapters are registered, the GPU guard is created, and the orchestrator is fully wired
+- **THEN** all fetcher and converter adapters are registered, the GPU guard is created, and the coordinator is fully wired
 
 #### Scenario: API builder provides accepted-kinds set
 
@@ -391,7 +391,7 @@ Adapters that are not yet ready to serve SHALL NOT be registered in the registry
 
 - **GIVEN** worker wiring has registered `KarakeepBookmarkResolver` and content fetchers for `"arxiv"`, `"github_readme"`, `"url"`, and `"inline_html"`
 - **WHEN** `DeploymentCapabilities` is built
-- **THEN** `registered_kinds` contains `"karakeep_bookmark"`, `"arxiv"`, `"github_readme"`, `"url"`, `"inline_html"` — every kind the orchestrator can dispatch
+- **THEN** `registered_kinds` contains `"karakeep_bookmark"`, `"arxiv"`, `"github_readme"`, `"url"`, `"inline_html"` — every kind the coordinator can dispatch
 
 #### Scenario: Not-yet-ready adapter is not registered
 

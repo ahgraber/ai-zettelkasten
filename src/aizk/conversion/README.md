@@ -31,7 +31,7 @@ When the subprocess finishes it writes two things to the shared workspace direct
 - `metadata.json` — declares `markdown_filename` and `figure_files`.
 - The markdown file and any figure files at the declared paths.
 
-The **parent uploader** ([`workers/uploader.py`](workers/uploader.py)) treats these as **untrusted** inputs from a subprocess that may have been compromised.
+The **parent uploader** ([`processing/uploader.py`](processing/uploader.py)) treats these as **untrusted** inputs from a subprocess that may have been compromised.
 Before opening any path it passes the filename through `_assert_within(workspace, name)` ([`utilities/paths.py`](utilities/paths.py)), which:
 
 1. Rejects filenames containing path separators (`/`, `\`) or the bare traversal

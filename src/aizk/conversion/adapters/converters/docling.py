@@ -1,7 +1,7 @@
 """Docling converter adapter implementing the ``Converter`` protocol.
 
 The adapter is a thin wrapper around the legacy ``convert_pdf`` / ``convert_html``
-free functions living in :mod:`aizk.conversion.workers.converter`. The free
+free functions living in :mod:`aizk.conversion.processing.converter`. The free
 functions stay in place for PR 3 — this adapter calls into them. A later PR
 will relocate the conversion implementation alongside the adapter.
 """
@@ -14,9 +14,9 @@ from typing import Any, ClassVar, Optional
 
 from aizk.conversion.core.protocols import Converter
 from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput
+from aizk.conversion.processing.converter import convert_html, convert_pdf
 from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig
 from aizk.conversion.utilities.hashing import build_output_config_snapshot
-from aizk.conversion.workers.converter import convert_html, convert_pdf
 
 
 def _get_docling_version() -> str:

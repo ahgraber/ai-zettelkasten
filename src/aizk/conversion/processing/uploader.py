@@ -23,6 +23,8 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.db import get_engine
+from aizk.conversion.processing.errors import ConversionArtifactsMissingError, SubprocessMetadataInvalid
+from aizk.conversion.processing.types import SubprocessMetadata, _utcnow
 from aizk.conversion.storage.manifest import (
     generate_manifest_v2,
     save_manifest,
@@ -35,8 +37,6 @@ from aizk.conversion.utilities.paths import (
     metadata_path,
     read_text_nofollow,
 )
-from aizk.conversion.workers.errors import ConversionArtifactsMissingError, SubprocessMetadataInvalid
-from aizk.conversion.workers.types import SubprocessMetadata, _utcnow
 
 logger = logging.getLogger(__name__)
 

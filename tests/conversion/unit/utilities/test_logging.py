@@ -266,7 +266,7 @@ def test_cmd_worker_configures_logging_before_running(monkeypatch: pytest.Monkey
     fake_run_worker_calls: list[object] = []
 
     # ``run_worker`` is imported lazily inside _cmd_worker; intercept it.
-    import aizk.conversion.workers.worker as worker
+    import aizk.conversion.processing.worker as worker
 
     def _fake_run_worker(config: object, *, shutdown: object = None) -> int:
         fake_run_worker_calls.append(config)

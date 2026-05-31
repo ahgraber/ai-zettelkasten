@@ -289,7 +289,7 @@ def test_extract_document_title_returns_first_title_item(monkeypatch: pytest.Mon
 
     from docling.datamodel.document import DocItemLabel
 
-    from aizk.conversion.workers.converter import _extract_document_title_from_doc
+    from aizk.conversion.processing.converter import _extract_document_title_from_doc
 
     title_item = MagicMock()
     title_item.label = DocItemLabel.TITLE
@@ -312,7 +312,7 @@ def test_extract_document_title_returns_none_when_no_title_item() -> None:
 
     from docling.datamodel.document import DocItemLabel
 
-    from aizk.conversion.workers.converter import _extract_document_title_from_doc
+    from aizk.conversion.processing.converter import _extract_document_title_from_doc
 
     body_item = MagicMock()
     body_item.label = DocItemLabel.TEXT
@@ -330,7 +330,7 @@ def test_extract_document_title_skips_blank_title() -> None:
 
     from docling.datamodel.document import DocItemLabel
 
-    from aizk.conversion.workers.converter import _extract_document_title_from_doc
+    from aizk.conversion.processing.converter import _extract_document_title_from_doc
 
     blank_title = MagicMock()
     blank_title.label = DocItemLabel.TITLE

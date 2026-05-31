@@ -12,7 +12,7 @@ import signal
 import threading
 import time
 
-from aizk.conversion.workers.types import SupervisionResult
+from aizk.conversion.processing.types import SupervisionResult
 
 logger = logging.getLogger(__name__)
 

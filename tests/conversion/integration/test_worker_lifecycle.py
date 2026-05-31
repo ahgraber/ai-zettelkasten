@@ -29,13 +29,13 @@ import psutil
 import pytest
 from sqlmodel import Session
 
-from aizk.conversion import handler as repository_mod
+from aizk.conversion import handler as repository_mod, queries
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.handler import ConversionStageHandler
+from aizk.conversion.processing import errors as errors_mod, subproc
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.workers import errors as errors_mod, orchestrator, queries
 from tests.conversion.integration import _subprocess_helpers
 
 # Mark all tests in this module to run in isolated process.
@@ -102,7 +102,7 @@ def _make_fake_runtime():
     fake_caps = MagicMock()
     fake_caps.converter_requires_gpu.return_value = False
     return WorkerRuntime(
-        orchestrator=MagicMock(),
+        coordinator=MagicMock(),
         resource_guard=MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False)),
         capabilities=fake_caps,
     )
@@ -154,20 +154,20 @@ def _create_running_job(db_session: Session, bookmark: Bookmark) -> ConversionJo
 def _track_spawn(monkeypatch, target) -> list:
     """Patch the subprocess target + track the spawned ``mp.Process`` instances.
 
-    ``orchestrator._spawn_conversion_subprocess`` calls ``ctx.Process`` with the
+    ``subproc._spawn_conversion_subprocess`` calls ``ctx.Process`` with the
     ``target``/``args``/``daemon`` keyword arguments, so the tracking wrapper must
     accept them by keyword.
     """
     spawned: list = []
-    original_process_class = orchestrator.mp.get_context("spawn").Process
+    original_process_class = subproc.mp.get_context("spawn").Process
 
     def _track_process(*, target, args, daemon):
         proc = original_process_class(target=target, args=args, daemon=daemon)
         spawned.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "_process_job_subprocess", target)
-    ctx = orchestrator.mp.get_context("spawn")
+    monkeypatch.setattr(subproc, "_process_job_subprocess", target)
+    ctx = subproc.mp.get_context("spawn")
     monkeypatch.setattr(ctx, "Process", _track_process)
     return spawned
 

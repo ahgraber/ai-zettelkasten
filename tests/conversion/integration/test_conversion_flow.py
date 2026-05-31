@@ -21,10 +21,10 @@ from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.db import get_engine
 from aizk.conversion.handler import ConversionStageHandler
+from aizk.conversion.processing import subproc
+from aizk.conversion.processing.errors import ConversionCancelledError
 from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig
 from aizk.conversion.utilities.hashing import build_output_config_snapshot, compute_idempotency_key
-from aizk.conversion.workers import orchestrator
-from aizk.conversion.workers.errors import ConversionCancelledError
 
 
 def _run_conversion(job_id: int, config: ConversionConfig, runtime) -> None:
@@ -158,7 +158,7 @@ def _make_fake_runtime():
     fake_caps = MagicMock()
     fake_caps.converter_requires_gpu.return_value = False
     return WorkerRuntime(
-        orchestrator=MagicMock(),
+        coordinator=MagicMock(),
         resource_guard=MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False)),
         capabilities=fake_caps,
     )
@@ -224,7 +224,7 @@ def _create_job_for_ref(db_session, ref, *, idempotency_key: str) -> int:
 
 
 def _process_and_get_markdown(db_session, monkeypatch, *, ref, idempotency_key: str) -> str:
-    monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
+    monkeypatch.setattr(subproc.mp, "get_context", lambda _ctx: _InlineContext())
     monkeypatch.setattr("aizk.conversion.adapters.converters.docling.convert_pdf", _fake_convert_pdf)
     storage = _install_memory_s3(monkeypatch)
 
@@ -242,8 +242,8 @@ def _process_and_get_markdown(db_session, monkeypatch, *, ref, idempotency_key: 
 
 def test_conversion_flow_end_to_end(monkeypatch):
     """Exercise API submit + worker processing with stubbed external services."""
-    monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
-    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _make_subprocess_stub())
+    monkeypatch.setattr(subproc.mp, "get_context", lambda _ctx: _InlineContext())
+    monkeypatch.setattr(subproc, "_process_job_subprocess", _make_subprocess_stub())
     app = create_app()
 
     s3_client = boto3.client("s3", region_name="us-east-1")
@@ -275,9 +275,9 @@ def test_conversion_flow_end_to_end(monkeypatch):
         s3.client.head_object(Bucket=s3.bucket, Key=s3_key)
         return f"s3://{s3.bucket}/{s3_key}"
 
-    monkeypatch.setattr("aizk.conversion.workers.uploader.S3Client.__init__", _init_s3_client)
-    monkeypatch.setattr("aizk.conversion.workers.uploader.S3Client.upload_file", _upload_file)
-    monkeypatch.setattr("aizk.conversion.workers.uploader.S3Client.upload_fileobj", _upload_fileobj)
+    monkeypatch.setattr("aizk.conversion.processing.uploader.S3Client.__init__", _init_s3_client)
+    monkeypatch.setattr("aizk.conversion.processing.uploader.S3Client.upload_file", _upload_file)
+    monkeypatch.setattr("aizk.conversion.processing.uploader.S3Client.upload_fileobj", _upload_fileobj)
 
     with TestClient(app) as client:
         response = client.post(
@@ -297,8 +297,8 @@ def test_conversion_flow_end_to_end(monkeypatch):
 
 def test_conversion_flow_cancelled_job_skips_upload(monkeypatch):
     """Stop processing when a running job is cancelled mid-execution."""
-    monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
-    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _make_cancelling_subprocess_stub())
+    monkeypatch.setattr(subproc.mp, "get_context", lambda _ctx: _InlineContext())
+    monkeypatch.setattr(subproc, "_process_job_subprocess", _make_cancelling_subprocess_stub())
 
     upload_called = []
     monkeypatch.setattr(
@@ -359,7 +359,7 @@ def test_submit_job_idempotency_key_disables_picture_description_without_api_key
 
 
 def test_conversion_flow_proceeds_when_source_enrichment_fails(monkeypatch, db_session) -> None:
-    monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
+    monkeypatch.setattr(subproc.mp, "get_context", lambda _ctx: _InlineContext())
     monkeypatch.setattr("aizk.conversion.adapters.converters.docling.convert_pdf", _fake_convert_pdf)
     storage = _install_memory_s3(monkeypatch)
 
@@ -371,7 +371,7 @@ def test_conversion_flow_proceeds_when_source_enrichment_fails(monkeypatch, db_s
         raise RuntimeError("db write failed")
 
     monkeypatch.setattr("aizk.conversion.adapters.fetchers.arxiv._fetch_url", _fake_fetch_url)
-    monkeypatch.setattr(orchestrator, "_write_source_enrichment", _boom)
+    monkeypatch.setattr("aizk.conversion.handler._write_source_enrichment", _boom)
 
     ref = ArxivRef(arxiv_id="2301.12345", arxiv_pdf_url="https://arxiv.org/pdf/2301.12345")
     job_id = _create_job_for_ref(db_session, ref, idempotency_key="4" * 64)
@@ -453,7 +453,7 @@ def test_conversion_flow_enriches_source_and_manifest_end_to_end(monkeypatch, db
     """Karakeep HTML bookmark flows resolver-observed metadata into Source row, manifest, and ConversionOutput."""
     from aizk.utilities.url_utils import normalize_url
 
-    monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
+    monkeypatch.setattr(subproc.mp, "get_context", lambda _ctx: _InlineContext())
     storage = _install_memory_s3(monkeypatch)
 
     bookmark = _make_html_link_bookmark(
@@ -502,7 +502,7 @@ def test_conversion_flow_source_title_branches_end_to_end(
     monkeypatch, db_session, document_title, bookmark_title, expected_source_title
 ) -> None:
     """Subprocess select_source_title runs through the IPC bridge to produce the manifest title for each branch."""
-    monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
+    monkeypatch.setattr(subproc.mp, "get_context", lambda _ctx: _InlineContext())
     storage = _install_memory_s3(monkeypatch)
 
     bookmark_id = f"bm_title_branch_{abs(hash((document_title, bookmark_title))) % 10_000}"

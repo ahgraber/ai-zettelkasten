@@ -78,7 +78,7 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
     run_migrations()
     # The worker drives the conversion stage through the pipeline runner
     # (StageRunner + ConversionStageHandler).
-    from aizk.conversion.workers.worker import run_worker
+    from aizk.conversion.processing.worker import run_worker
 
     return run_worker(config)
 

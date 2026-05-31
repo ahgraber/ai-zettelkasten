@@ -35,8 +35,8 @@ from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.handler import ConversionStageHandler
+from aizk.conversion.processing import subproc
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.workers import orchestrator
 from aizk.pipeline.runner import StageRunner
 from tests.conversion.integration import _subprocess_helpers
 
@@ -87,7 +87,7 @@ def _make_fake_runtime():
     fake_caps = MagicMock()
     fake_caps.converter_requires_gpu.return_value = False
     return WorkerRuntime(
-        orchestrator=MagicMock(),
+        coordinator=MagicMock(),
         resource_guard=MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False)),
         capabilities=fake_caps,
     )
@@ -152,20 +152,20 @@ def test_runner_timeout_terminates_subprocess_via_single_owner(
     # Use the stdlib-only subprocess target (sleeps + spawns a grandchild) and
     # track the spawned mp.Process so we can probe its PID and liveness.
     spawned: list = []
-    original_process_class = orchestrator.mp.get_context("spawn").Process
+    original_process_class = subproc.mp.get_context("spawn").Process
 
     def _track_process(target, args, daemon):
         proc = original_process_class(target=target, args=args, daemon=daemon)
         spawned.append(proc)
         return proc
 
-    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _spawn_child_target)
-    ctx = orchestrator.mp.get_context("spawn")
+    monkeypatch.setattr(subproc, "_process_job_subprocess", _spawn_child_target)
+    ctx = subproc.mp.get_context("spawn")
     monkeypatch.setattr(ctx, "Process", _track_process)
 
     # The DB-status cancel poll stays inert; termination is driven solely by the
     # runner deadline → cancel → terminate-event single-owner path.
-    monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
+    monkeypatch.setattr(subproc, "_is_job_cancelled", lambda _job_id, _engine: False)
 
     # Patch finalize to a no-op so the reap path is inert — the termination path
     # under test runs entirely before finalize.

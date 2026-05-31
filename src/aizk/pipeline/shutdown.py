@@ -1,6 +1,6 @@
 """Per-instance graceful-shutdown control for a pipeline-stage runner.
 
-Generalizes ``aizk.conversion.workers.shutdown`` from module-global state to a
+Generalizes conversion's former module-global shutdown state to a
 per-:class:`ShutdownController` instance so two stage runners can share one
 process without sharing drain bookkeeping. OS signals are inherently
 process-wide; the *state* they set (shutdown requested, force-exit requested) is

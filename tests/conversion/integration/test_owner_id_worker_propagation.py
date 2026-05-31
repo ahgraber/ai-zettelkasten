@@ -21,8 +21,8 @@ from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
+from aizk.conversion.processing import uploader
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.workers import uploader
 
 
 def _make_workspace_metadata(tmp_path: Path, *, markdown_hash: str, bookmark_id: str) -> Path:

@@ -13,13 +13,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aizk.conversion.utilities.config import DoclingConverterConfig
-import aizk.conversion.workers.converter as converter_module
-from aizk.conversion.workers.converter import (
+import aizk.conversion.processing.converter as converter_module
+from aizk.conversion.processing.converter import (
     _ALT_TEXT_PROMPT,
     _enrich_picture_descriptions,
     _get_classification_label,
 )
+from aizk.conversion.utilities.config import DoclingConverterConfig
 
 # ---------------------------------------------------------------------------
 # Helpers to build mock PictureItem with annotations

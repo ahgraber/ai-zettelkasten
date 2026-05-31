@@ -4,9 +4,7 @@
 # %%
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
 from pathlib import Path
 from typing import Literal
 
@@ -14,6 +12,8 @@ from dotenv import load_dotenv
 import nest_asyncio
 from setproctitle import setproctitle
 
+from aizk.conversion.processing.converter import convert_html, convert_pdf
+from aizk.conversion.processing.fetcher import fetch_arxiv, fetch_github_readme, fetch_karakeep_asset
 from aizk.conversion.utilities.bookmark_utils import (
     BookmarkContentError,
     detect_content_type,
@@ -27,8 +27,6 @@ from aizk.conversion.utilities.bookmark_utils import (
     validate_bookmark_content,
 )
 from aizk.conversion.utilities.config import DoclingConverterConfig
-from aizk.conversion.workers.converter import convert_html, convert_pdf
-from aizk.conversion.workers.fetcher import fetch_arxiv, fetch_github_readme, fetch_karakeep_asset
 from karakeep_client.models import Bookmark
 
 # %%

@@ -2,7 +2,7 @@
 """Real-world end-to-end smoke gate for the shared-runner conversion worker.
 
 This is a MANUAL confidence gate, NOT a pytest test. It drives the new
-runner-based conversion worker (:func:`aizk.conversion.workers.worker.run_worker`,
+runner-based conversion worker (:func:`aizk.conversion.processing.worker.run_worker`,
 i.e. ``StageRunner`` over ``ConversionStageHandler`` — the path
 ``aizk-conversion worker`` now runs) against:
 
@@ -270,7 +270,7 @@ def submit_sample_jobs(bookmark_ids: list[str]) -> list[dict]:
 def run_runner_until_drained(max_iterations: int = 100_000) -> None:
     """Drive the shared-runner conversion worker until the temp DB drains.
 
-    Mirrors :func:`aizk.conversion.workers.worker.run_worker`
+    Mirrors :func:`aizk.conversion.processing.worker.run_worker`
     (same handler, engine, and loop timings) but calls
     :meth:`~aizk.pipeline.runner.StageRunner.run_until_idle` so this cell
     returns once no work is in flight and none is eligible — rather than running

@@ -23,8 +23,8 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.db import get_engine
 from aizk.conversion.handler import ConversionStageHandler
+from aizk.conversion.processing import subproc
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.workers import orchestrator
 
 
 def _run_conversion(job_id: int, config: ConversionConfig, runtime) -> None:
@@ -142,7 +142,7 @@ def _make_fake_runtime():
     fake_caps = MagicMock()
     fake_caps.converter_requires_gpu.return_value = False
     return WorkerRuntime(
-        orchestrator=MagicMock(),
+        coordinator=MagicMock(),
         resource_guard=MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False)),
         capabilities=fake_caps,
     )
@@ -150,11 +150,11 @@ def _make_fake_runtime():
 
 def test_whitespace_normalization_produces_stable_output(monkeypatch) -> None:
     """Two conversions with different whitespace artifacts produce identical output.md and hash."""
-    monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
+    monkeypatch.setattr(subproc.mp, "get_context", lambda _ctx: _InlineContext())
     app = create_app()
 
     markdowns = iter([_MARKDOWN_WITH_ARTIFACTS, _MARKDOWN_CLEAN])
-    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _make_subprocess_stub(markdowns))
+    monkeypatch.setattr(subproc, "_process_job_subprocess", _make_subprocess_stub(markdowns))
 
     s3_client = boto3.client("s3", region_name="us-east-1")
     stubber = Stubber(s3_client)
@@ -191,9 +191,9 @@ def test_whitespace_normalization_produces_stable_output(monkeypatch) -> None:
             captured_markdown_bodies.append(body)
         return _stub_put_and_head(self, s3_key, body)
 
-    monkeypatch.setattr("aizk.conversion.workers.uploader.S3Client.__init__", _init_s3_client)
-    monkeypatch.setattr("aizk.conversion.workers.uploader.S3Client.upload_file", _upload_file)
-    monkeypatch.setattr("aizk.conversion.workers.uploader.S3Client.upload_fileobj", _upload_fileobj)
+    monkeypatch.setattr("aizk.conversion.processing.uploader.S3Client.__init__", _init_s3_client)
+    monkeypatch.setattr("aizk.conversion.processing.uploader.S3Client.upload_file", _upload_file)
+    monkeypatch.setattr("aizk.conversion.processing.uploader.S3Client.upload_fileobj", _upload_fileobj)
 
     runtime = _make_fake_runtime()
 

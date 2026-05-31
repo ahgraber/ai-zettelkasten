@@ -123,4 +123,4 @@ This preserves the single-serialized-writer / co-commit invariant (status change
 
 ## Worked example
 
-`aizk.conversion.handler.ConversionStageHandler` is the reference implementation: it carries the conversion unit-of-work (fetch → convert → upload → enrich) behind this protocol, maps conversion's statuses onto the generic lifecycle, and runs under `StageRunner` via `aizk.conversion.workers.worker`.
+`aizk.conversion.handler.ConversionStageHandler` is the reference implementation: it carries the conversion unit-of-work (fetch → convert → upload → enrich) behind this protocol, maps conversion's statuses onto the generic lifecycle, and runs under `StageRunner` via `aizk.conversion.processing.worker`.

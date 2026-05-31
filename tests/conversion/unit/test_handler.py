@@ -5,8 +5,8 @@ Covers the runner-facing surface (properties, ``scope_key``,
 
 The DB-backed claim/recovery surface — ``claim_next`` and ``recover_stale`` —
 runs inside a caller-owned (runner-owned) session and never commits, via
-:func:`~aizk.conversion.workers.queries.claim_next_in_session` /
-:func:`~aizk.conversion.workers.queries.recover_stale_in_session` (the claim
+:func:`~aizk.conversion.queries.claim_next_in_session` /
+:func:`~aizk.conversion.queries.recover_stale_in_session` (the claim
 post-increments ``attempts``).
 """
 
@@ -31,19 +31,19 @@ from aizk.conversion.datamodel.events import (
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.handler import ConversionStageHandler
-from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.workers.errors import (
+from aizk.conversion.processing.errors import (
     ConversionArtifactsMissingError,
     ConversionCancelledError,
     ConversionSubprocessError,
     ConversionTimeoutError,
     JobDataIntegrityError,
+    JobErrorDetails,
     PreflightError,
     ReportedChildError,
     SubprocessMetadataInvalid,
 )
-from aizk.conversion.workers.orchestrator import JobErrorDetails
-from aizk.conversion.workers.types import SubprocessMetadata, SupervisionResult
+from aizk.conversion.processing.types import SubprocessMetadata, SupervisionResult
+from aizk.conversion.utilities.config import ConversionConfig
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.handler import Isolation, StageHandler
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus

@@ -232,6 +232,7 @@ norecursedirs = [
   ".env.*",
   ".envrc",
   ".git",
+  ".hypothesis",
   ".nox",
   ".pytest_cache",
   ".tox",
