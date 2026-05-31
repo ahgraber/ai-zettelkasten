@@ -36,10 +36,10 @@ from aizk.conversion.datamodel.events import (
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.handler import ConversionStageHandler
+from aizk.conversion.processing.errors import classify_job_error
+from aizk.conversion.processing.source import _write_source_enrichment
+from aizk.conversion.processing.types import SourceMetaFields, SubprocessMetadata, SupervisionResult
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.workers import orchestrator
-from aizk.conversion.workers.orchestrator import classify_job_error
-from aizk.conversion.workers.types import SourceMetaFields, SubprocessMetadata, SupervisionResult
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
 from tests.conversion._helpers import make_job, make_source
@@ -318,7 +318,7 @@ def test_source_enriched_event_emitted_on_success(monkeypatch, db_session: Sessi
     subprocess_meta = _make_subprocess_metadata(karakeep_id=source.karakeep_id)
     engine = db_session.get_bind()
 
-    orchestrator._write_source_enrichment(
+    _write_source_enrichment(
         subprocess_meta,
         str(source.aizk_uuid),
         engine,
@@ -364,7 +364,7 @@ def test_source_enriched_event_emitted_on_failure(monkeypatch, db_session: Sessi
 
     monkeypatch.setattr(_Session, "commit", _flaky_commit)
 
-    orchestrator._write_source_enrichment(
+    _write_source_enrichment(
         subprocess_meta,
         str(source.aizk_uuid),
         engine,
@@ -410,7 +410,7 @@ def _make_fake_runtime() -> MagicMock:
     runtime = MagicMock()
     runtime.resource_guard = nullcontext()
     runtime.capabilities.converter_requires_gpu.return_value = False
-    runtime.orchestrator = Mock()
+    runtime.coordinator = Mock()
     return runtime
 
 
@@ -567,7 +567,7 @@ def test_subprocess_terminal_events_not_persisted_via_subprocess_channel(monkeyp
 
     monkeypatch.setattr(repository_mod, "_spawn_and_supervise", _fake_spawn_and_supervise)
 
-    from aizk.conversion.workers.errors import ReportedChildError
+    from aizk.conversion.processing.errors import ReportedChildError
 
     handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
     # execute raises; finalize then writes the single terminal failed event.

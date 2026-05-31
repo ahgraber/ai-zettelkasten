@@ -26,10 +26,10 @@ from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.handler import ConversionStageHandler
+from aizk.conversion.processing.errors import classify_job_error
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.egress import assert_egress_allowed
 from aizk.conversion.utilities.html_prefetch import prefetch_images
-from aizk.conversion.workers.orchestrator import classify_job_error
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
 
 # ---------------------------------------------------------------------------
@@ -170,7 +170,7 @@ def test_classify_job_error_strips_traceback_for_subprocess_egress_error(
     ``error_detail`` would leak the host/IP that the design says shall not be
     echoed back to clients.
     """
-    from aizk.conversion.workers.errors import ReportedChildError
+    from aizk.conversion.processing.errors import ReportedChildError
 
     rejected_host = "internal.corp.example"
     leaked_traceback = (

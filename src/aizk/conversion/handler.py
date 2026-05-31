@@ -65,27 +65,23 @@ from aizk.conversion.datamodel.events import (
 )
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.db import get_engine
-from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.utilities.paths import metadata_path, read_text_nofollow
-from aizk.conversion.workers.errors import (
+from aizk.conversion.processing.errors import (
     ConversionCancelledError,
     ConversionSubprocessError,
     ConversionTimeoutError,
     JobDataIntegrityError,
+    JobErrorDetails,
     ReportedChildError,
     SubprocessMetadataInvalid,
-)
-from aizk.conversion.workers.orchestrator import (
-    JobErrorDetails,
-    _get_source_ref,
-    _is_job_cancelled,
-    _spawn_and_supervise,
-    _write_source_enrichment,
     classify_job_error,
 )
-from aizk.conversion.workers.queries import claim_next_in_session, recover_stale_in_session
-from aizk.conversion.workers.types import SubprocessMetadata, _utcnow
-from aizk.conversion.workers.uploader import _execute_upload, _prepare_upload
+from aizk.conversion.processing.source import _get_source_ref, _write_source_enrichment
+from aizk.conversion.processing.subproc import _is_job_cancelled, _spawn_and_supervise
+from aizk.conversion.processing.types import SubprocessMetadata, _utcnow
+from aizk.conversion.processing.uploader import _execute_upload, _prepare_upload
+from aizk.conversion.queries import claim_next_in_session, recover_stale_in_session
+from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.paths import metadata_path, read_text_nofollow
 from aizk.pipeline.handler import Isolation, StageResult
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
 
@@ -112,7 +108,7 @@ class ConversionStageHandler:
             config: The conversion service configuration, supplying the
                 wall-clock timeout (``worker_job_timeout_seconds``) and the
                 execution concurrency bound (``worker_concurrency``).
-            runtime: The assembled worker runtime (orchestrator, resource guard,
+            runtime: The assembled worker runtime (coordinator, resource guard,
                 capabilities). Built lazily on first ``execute`` when omitted so
                 construction stays cheap for the trivial runner surface.
         """
@@ -190,12 +186,12 @@ class ConversionStageHandler:
         """Map an execution result or exception to a terminal outcome.
 
         Classification follows the ``retryable`` class attribute on the
-        conversion error classes in ``workers/errors.py``:
+        conversion error classes in ``processing/errors.py``:
 
-        * A :class:`~aizk.conversion.workers.errors.ConversionTimeoutError`
+        * A :class:`~aizk.conversion.processing.errors.ConversionTimeoutError`
           maps to ``TIMED_OUT`` (its own terminal outcome under the generic
           lifecycle).
-        * A :class:`~aizk.conversion.workers.errors.ConversionCancelledError`
+        * A :class:`~aizk.conversion.processing.errors.ConversionCancelledError`
           maps to ``CANCELLED``.
         * Any other exception maps to ``FAILED``, with the retry class taken
           from the exception's ``retryable`` attribute, defaulting to retryable
@@ -231,7 +227,7 @@ class ConversionStageHandler:
         when none is eligible. Does NOT commit — the runner owns the transaction
         boundary.
 
-        Delegates to :func:`aizk.conversion.workers.queries.claim_next_in_session`,
+        Delegates to :func:`aizk.conversion.queries.claim_next_in_session`,
         the single source of truth for the claim query + transition.
         """
         return claim_next_in_session(session)
@@ -245,7 +241,7 @@ class ConversionStageHandler:
         ``recovered_stale`` event for each. Does NOT commit — the runner owns the
         transaction boundary.
 
-        Delegates to :func:`aizk.conversion.workers.queries.recover_stale_in_session`,
+        Delegates to :func:`aizk.conversion.queries.recover_stale_in_session`,
         the single source of truth for the recovery query + transition.
         """
         return recover_stale_in_session(session, self._config)
@@ -559,7 +555,7 @@ class ConversionStageHandler:
     ):
         """Spawn + supervise the subprocess, registering it for ``cancel``.
 
-        Wraps :func:`~aizk.conversion.workers.orchestrator._spawn_and_supervise`,
+        Wraps :func:`~aizk.conversion.processing.subproc._spawn_and_supervise`,
         registering the live subprocess and a per-handle terminate-event under
         ``handle`` via the ``on_spawn`` hook (the seam ``cancel`` reads)
         **before** supervision blocks, and clearing both once supervision returns

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import ValidationError
 import pytest
 
-from aizk.conversion.workers.types import SourceMetaFields, SubprocessMetadata, select_source_title
+from aizk.conversion.processing.types import SourceMetaFields, SubprocessMetadata, select_source_title
 
 # ---------------------------------------------------------------------------
 # select_source_title
@@ -70,7 +70,7 @@ class TestSelectSourceTitle:
 
     def test_document_title_truncated_to_max_length(self):
         """Selected title is capped at MAX_SOURCE_TITLE_LEN to match the Source.title column."""
-        from aizk.conversion.workers.types import MAX_SOURCE_TITLE_LEN
+        from aizk.conversion.processing.types import MAX_SOURCE_TITLE_LEN
 
         long_title = "x" * (MAX_SOURCE_TITLE_LEN + 100)
         result = select_source_title(long_title, None)
@@ -79,7 +79,7 @@ class TestSelectSourceTitle:
 
     def test_resolver_title_truncated_to_max_length(self):
         """Resolver-fallback title also gets truncated at the column boundary."""
-        from aizk.conversion.workers.types import MAX_SOURCE_TITLE_LEN
+        from aizk.conversion.processing.types import MAX_SOURCE_TITLE_LEN
 
         long_title = "y" * (MAX_SOURCE_TITLE_LEN + 50)
         result = select_source_title(None, long_title)

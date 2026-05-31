@@ -5,6 +5,7 @@
 - December 23, 2024 - Accepted (initial)
 - April 4, 2026 - Revised: SQLite task queue adopted; Prefect not pursued
 - May 27, 2026 - Revised: pipeline-stage runtime addendum, capability-trigger migration criteria, Restate/Procrastinate alternatives
+- May 30, 2026 - Revised: naming convention — "orchestration" reserved for the engine layer (see Decision § Naming convention)
 
 ## Context
 
@@ -46,6 +47,19 @@ No external orchestration system is adopted at this time.
 The pipeline-stage runtime keeps that decision but names the current runner as an embedded orchestration engine.
 The engine owns work discovery, claim/lease, eligibility ordering, retry scheduling, bounded concurrency, cancellation, timeout, drain, and stale-work recovery.
 Stage-owned domain contracts own unit-of-work execution, result classification, run/generation state, artifact writes, and product-facing status/event projections.
+
+### Naming convention
+
+Because the engine is named the **orchestration engine**, the word "orchestration"/"orchestrator" is reserved for that engine role (`StageRunner` in `aizk.pipeline`) and SHALL NOT name domain code in `aizk.conversion`.
+This keeps the domain-core/engine seam legible: a reader who sees "orchestrator" knows it is the engine, not a stage's domain logic.
+
+Applied to the conversion stage (May 2026 rename):
+
+- The fetch-chain/converter coordinator is `ConversionCoordinator` (`conversion/core/coordinator.py`), not "Orchestrator".
+- The conversion unit-of-work domain lives in `aizk.conversion.processing` (converter, fetcher, uploader, supervision, source enrichment, error taxonomy, the `run_worker` entrypoint), not a "workers/orchestrator" module.
+- The per-job subprocess driver is `processing/subproc.py`; claim/stale-recovery queries are `conversion/queries.py` (next to the db), consumed by the engine through the stage handler.
+
+"Worker" remains a legitimate domain term for the OS process and its runtime (`run_worker`, `WorkerRuntime`, `worker_concurrency`); it is the _process_, distinct from the engine's _orchestration_ role.
 
 ### Rationale
 
@@ -100,7 +114,7 @@ Adds Postgres-style `NOTIFY`/`LISTEN` semantics by polling `PRAGMA data_version`
 - **Same file as the application database**: enqueue commits atomically with business writes in the same transaction — eliminates the dual-write problem the current `ConversionJob` table already avoids, but with proper queue primitives instead of hand-rolled polling
 - **No additional infrastructure**: just a SQLite extension; works with the existing Litestream replication story
 - **Multi-language bindings**: Python, Node, Rust, Go, Ruby, Bun, Elixir share one on-disk format
-- **Built-in primitives**: durable queues, retries, timeouts, pub/sub, event streams, cron — replaces the bespoke status machine, retry counter, and stale-job recovery now embodied by the `aizk.pipeline` runner (the engine loop) plus `conversion/workers/queries.py` (claim / stale-recovery queries)
+- **Built-in primitives**: durable queues, retries, timeouts, pub/sub, event streams, cron — replaces the bespoke status machine, retry counter, and stale-job recovery now embodied by the `aizk.pipeline` runner (the engine loop) plus `conversion/queries.py` (claim / stale-recovery queries)
 - **Low wake latency**: ~0.7 ms p50 cross-process wake without client polling
 - **Decorator API** available (Huey-style) for ergonomic task definitions
 

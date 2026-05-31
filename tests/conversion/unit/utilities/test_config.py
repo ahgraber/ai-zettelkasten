@@ -269,7 +269,7 @@ def test_builders_do_not_call_load_dotenv(module):
     [
         "aizk.conversion.cli",
         "aizk.conversion.api.main",
-        "aizk.conversion.workers.orchestrator",
+        "aizk.conversion.processing.subproc",
     ],
 )
 def test_composition_roots_call_guarded_dotenv_loader(module):

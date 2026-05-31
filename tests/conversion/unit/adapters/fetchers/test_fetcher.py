@@ -12,9 +12,9 @@ import httpx
 from pyleak import no_task_leaks
 import pytest
 
+from aizk.conversion.processing import fetcher
 from aizk.conversion.utilities import fetch_helpers as _fetch_helpers
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.workers import fetcher
 
 
 class _DummyBookmark:

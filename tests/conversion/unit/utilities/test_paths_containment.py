@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from aizk.conversion.core.errors import WorkspaceEscape
+from aizk.conversion.processing.uploader import _upload_nofollow
 from aizk.conversion.utilities.paths import (
     METADATA_FILENAME,
     _assert_within,
@@ -16,7 +17,6 @@ from aizk.conversion.utilities.paths import (
     metadata_path,
     read_text_nofollow,
 )
-from aizk.conversion.workers.uploader import _upload_nofollow
 
 # ---------------------------------------------------------------------------
 # _assert_within — string-level rejections

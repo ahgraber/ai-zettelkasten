@@ -14,6 +14,10 @@ from aizk.conversion.wiring.ingress_policy import IngressPolicy
 class TestRuntime:
     """Test-configurable runtime exposing registries directly for fake injection."""
 
+    # Not a pytest test class despite the ``Test`` prefix; ``@dataclass`` gives it
+    # an ``__init__``, which pytest would otherwise warn it cannot collect.
+    __test__ = False
+
     fetcher_registry: FetcherRegistry
     converter_registry: ConverterRegistry
     capabilities: DeploymentCapabilities

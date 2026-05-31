@@ -1,7 +1,7 @@
 """End-to-end proof: the runner entrypoint drives a real conversion job.
 
 Proves the runner-driven worker entrypoint
-(:func:`aizk.conversion.workers.worker.run_worker`, the path the
+(:func:`aizk.conversion.processing.worker.run_worker`, the path the
 CLI ``worker`` command runs) drives a **real seeded QUEUED job** through the
 generic :class:`~aizk.pipeline.runner.StageRunner` +
 :class:`~aizk.conversion.handler.ConversionStageHandler` to a terminal outcome:
@@ -35,8 +35,8 @@ from aizk.conversion.datamodel.events import ConversionEventKind, events_for_job
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source as Bookmark
+from aizk.conversion.processing import subproc, worker
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.workers import orchestrator, worker
 from aizk.pipeline.shutdown import ShutdownController
 from tests.conversion.integration import _subprocess_helpers
 
@@ -94,7 +94,7 @@ def _make_fake_runtime():
     fake_caps = MagicMock()
     fake_caps.converter_requires_gpu.return_value = False
     return WorkerRuntime(
-        orchestrator=MagicMock(),
+        coordinator=MagicMock(),
         resource_guard=MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False)),
         capabilities=fake_caps,
     )
@@ -145,8 +145,8 @@ def _patch_worker_infra(monkeypatch) -> tuple[dict[str, bytes], list[int]]:
     Returns ``(storage, exit_calls)`` so per-test assertions can inspect them.
     """
     storage = _install_memory_s3(monkeypatch)
-    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _success_target)
-    monkeypatch.setattr(orchestrator, "_is_job_cancelled", lambda _job_id, _engine: False)
+    monkeypatch.setattr(subproc, "_process_job_subprocess", _success_target)
+    monkeypatch.setattr(subproc, "_is_job_cancelled", lambda _job_id, _engine: False)
     monkeypatch.setattr("aizk.conversion.wiring.worker.build_worker_runtime", lambda _cfg: _make_fake_runtime())
     exit_calls: list[int] = []
     monkeypatch.setattr("aizk.pipeline.shutdown.force_exit", lambda code: exit_calls.append(code))

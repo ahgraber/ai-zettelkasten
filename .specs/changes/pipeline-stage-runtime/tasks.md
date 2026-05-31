@@ -98,6 +98,10 @@
 
 - [x] Relocate the now-duplicated generic contracts out of `worker-process-management` and `conversion-worker` into `pipeline-stage-runtime`: add MODIFIED/REMOVED deltas for the relocated requirements with `> Previously:` provenance, leaving the conversion specs holding only conversion-specific behavior.
   Update the change's delta specs accordingly.
+- [ ] **(do BEFORE sync)** Align `conversion-worker` spec prose with the ADR-009 naming convention (orchestration = engine layer only).
+      Replace the ~12 lowercase "orchestrator" actor-labels in `.specs/specs/conversion-worker/spec.md` per their sense: the fetch/convert _coordination_ usages (input inspection, converter resolution, conversion invocation) → "the conversion coordinator"; the _transition_ usages ("the orchestrator transitions the job to FAILED_PERM/UPLOAD_PENDING/...") → "the stage handler" (those moved to `ConversionStageHandler` in this change).
+      The implementation rename already landed (`Orchestrator`→`ConversionCoordinator`, `workers/`→`processing/`); this closes the spec-vs-code drift so the baseline is congruent at sync time.
+      See `docs/decision-record/009-orchestration.md` § Naming convention.
 
 ## Documentation / decision record
 

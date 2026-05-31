@@ -147,14 +147,16 @@ def _fetcher_py_files() -> list[Path]:
 
 
 @pytest.mark.parametrize("fetcher_file", _fetcher_py_files(), ids=lambda p: p.name)
-def test_fetcher_adapter_does_not_import_workers(fetcher_file: Path) -> None:
-    """Fetcher adapter modules must not import from aizk.conversion.workers.
+def test_fetcher_adapter_does_not_import_processing(fetcher_file: Path) -> None:
+    """Fetcher adapter modules must not import from aizk.conversion.processing.
 
-    workers/ is a higher layer than adapters/; importing from it inverts the
+    processing/ is a higher layer than adapters/; importing from it inverts the
     dependency direction and couples adapters to worker-specific concerns.
     Error classes and HTTP helpers are now in core.errors and
     utilities.fetch_helpers respectively.
     """
     imports = _collect_imports(fetcher_file)
-    violations = [imp for imp in imports if imp.startswith("aizk.conversion.workers")]
-    assert violations == [], f"{fetcher_file.relative_to(_CONVERSION_ROOT)} imports from workers layer: {violations}"
+    violations = [imp for imp in imports if imp.startswith("aizk.conversion.processing")]
+    assert violations == [], (
+        f"{fetcher_file.relative_to(_CONVERSION_ROOT)} imports from processing layer: {violations}"
+    )

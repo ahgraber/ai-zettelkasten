@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import threading
 
-from aizk.conversion.core.orchestrator import Orchestrator
+from aizk.conversion.core.coordinator import ConversionCoordinator
 from aizk.conversion.core.protocols import ResourceGuard
 from aizk.conversion.core.registry import ConverterRegistry, FetcherRegistry
 from aizk.conversion.core.types import ContentType
@@ -30,9 +30,9 @@ class _SemaphoreGuard:
 
 @dataclass
 class WorkerRuntime:
-    """Assembled worker-side runtime: orchestrator, resource guard, and capabilities."""
+    """Assembled worker-side runtime: coordinator, resource guard, and capabilities."""
 
-    orchestrator: Orchestrator
+    coordinator: ConversionCoordinator
     resource_guard: ResourceGuard
     capabilities: DeploymentCapabilities
 
@@ -41,7 +41,7 @@ def build_worker_runtime(cfg: ConversionConfig) -> WorkerRuntime:
     """Build and return a fully wired ``WorkerRuntime``.
 
     Populates fresh registries, registers all production-ready adapters,
-    validates the resolver chain, and wires the Orchestrator with DI callables.
+    validates the resolver chain, and wires the ConversionCoordinator with DI callables.
 
     Args:
         cfg: Conversion configuration forwarded to adapters that require it.
@@ -66,14 +66,14 @@ def build_worker_runtime(cfg: ConversionConfig) -> WorkerRuntime:
     def resolve_converter(content_type: ContentType, name: str):
         return converter_registry.resolve(content_type, name)
 
-    orchestrator = Orchestrator(
+    coordinator = ConversionCoordinator(
         resolve_fetcher=resolve_fetcher,
         resolve_converter=resolve_converter,
     )
     capabilities = DeploymentCapabilities(fetcher_registry, converter_registry)
 
     return WorkerRuntime(
-        orchestrator=orchestrator,
+        coordinator=coordinator,
         resource_guard=resource_guard,
         capabilities=capabilities,
     )

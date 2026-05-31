@@ -22,8 +22,8 @@ from aizk.conversion.datamodel.events import (
     record_transition,
 )
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.processing.types import _utcnow
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.workers.types import _utcnow
 
 logger = logging.getLogger(__name__)
 

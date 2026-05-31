@@ -5,21 +5,17 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-import tempfile
 
 from dotenv import load_dotenv
 import nest_asyncio
 
+from aizk.conversion.processing.fetcher import fetch_karakeep_asset
 from aizk.conversion.utilities.bookmark_utils import (
     fetch_karakeep_bookmark,
     get_bookmark_asset_id,
     is_pdf_asset,
 )
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.utilities.paths import OUTPUT_MARKDOWN_FILENAME, figure_dir, markdown_path
-from aizk.conversion.workers.converter import convert_pdf
-from aizk.conversion.workers.fetcher import fetch_karakeep_asset
 from aizk.utilities.async_utils import run_async
 
 nest_asyncio.apply()

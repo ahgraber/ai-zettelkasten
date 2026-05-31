@@ -8,7 +8,7 @@ semantics — are now owned by the pipeline runner and covered by
 ``tests/conversion/unit/test_handler.py`` (claim/recover transactionality).
 
 What remains here is conversion-specific: the GPU resource guard that
-:func:`~aizk.conversion.workers.orchestrator._spawn_and_supervise` acquires only
+:func:`~aizk.conversion.processing.subproc._spawn_and_supervise` acquires only
 when the converter requires the GPU, and releases on every subprocess outcome.
 """
 
@@ -55,7 +55,7 @@ class TestGpuSemaphoreGuard:
         from pathlib import Path
         import queue as queue_module
 
-        from aizk.conversion.workers import orchestrator as orchestrator_mod
+        from aizk.conversion.processing import subproc as subproc_mod
 
         acquire_calls: list[str] = []
 
@@ -93,9 +93,9 @@ class TestGpuSemaphoreGuard:
             def Process(self, target, args, daemon):  # noqa: N802
                 return _StubProcess()
 
-        monkeypatch.setattr(orchestrator_mod.mp, "get_context", lambda _: _InlineCtx())
+        monkeypatch.setattr(subproc_mod.mp, "get_context", lambda _: _InlineCtx())
 
-        orchestrator_mod._spawn_and_supervise(
+        subproc_mod._spawn_and_supervise(
             job_id=1,
             workspace=Path("/tmp"),  # noqa: S108
             source_ref_json='{"kind":"karakeep_bookmark","bookmark_id":"bm_x"}',
@@ -114,8 +114,8 @@ class TestGpuSemaphoreGuard:
         from pathlib import Path
         import queue as queue_module
 
+        from aizk.conversion.processing import subproc as subproc_mod
         from aizk.conversion.wiring.worker import _SemaphoreGuard
-        from aizk.conversion.workers import orchestrator as orchestrator_mod
 
         class _CrashedProcess:
             pid = None
@@ -143,12 +143,12 @@ class TestGpuSemaphoreGuard:
             def Process(self, target, args, daemon):  # noqa: N802
                 return _CrashedProcess()
 
-        monkeypatch.setattr(orchestrator_mod.mp, "get_context", lambda _: _InlineCtx())
+        monkeypatch.setattr(subproc_mod.mp, "get_context", lambda _: _InlineCtx())
 
         sem = threading.BoundedSemaphore(1)
         guard = _SemaphoreGuard(sem)
 
-        orchestrator_mod._spawn_and_supervise(
+        subproc_mod._spawn_and_supervise(
             job_id=1,
             workspace=Path("/tmp"),  # noqa: S108
             source_ref_json='{"kind":"karakeep_bookmark","bookmark_id":"bm_x"}',
@@ -168,8 +168,8 @@ class TestGpuSemaphoreGuard:
         from pathlib import Path
         import queue as queue_module
 
+        from aizk.conversion.processing import subproc as subproc_mod, supervision as supervision_mod
         from aizk.conversion.wiring.worker import _SemaphoreGuard
-        from aizk.conversion.workers import orchestrator as orchestrator_mod, supervision as supervision_mod
 
         class _LingeringProcess:
             """Alive on first poll so the deadline check fires; dead afterward."""
@@ -205,17 +205,17 @@ class TestGpuSemaphoreGuard:
             def Process(self, target, args, daemon):  # noqa: N802
                 return _LingeringProcess()
 
-        monkeypatch.setattr(orchestrator_mod.mp, "get_context", lambda _: _InlineCtx())
+        monkeypatch.setattr(subproc_mod.mp, "get_context", lambda _: _InlineCtx())
 
         # Deterministic clock: deadline = 0 + 1 = 1; supervisor's first check sees t=2 ≥ 1.
         clock = iter([0.0, 2.0, 2.0, 2.0, 2.0])
-        monkeypatch.setattr(orchestrator_mod.time, "monotonic", lambda: next(clock))
+        monkeypatch.setattr(subproc_mod.time, "monotonic", lambda: next(clock))
         monkeypatch.setattr(supervision_mod.time, "monotonic", lambda: next(clock))
 
         sem = threading.BoundedSemaphore(1)
         guard = _SemaphoreGuard(sem)
 
-        _, result, _ = orchestrator_mod._spawn_and_supervise(
+        _, result, _ = subproc_mod._spawn_and_supervise(
             job_id=2,
             workspace=Path("/tmp"),  # noqa: S108
             source_ref_json='{"kind":"karakeep_bookmark","bookmark_id":"bm_x"}',

@@ -1,10 +1,10 @@
-"""Unit tests for the conversion Orchestrator.
+"""Unit tests for the conversion ConversionCoordinator.
 
 Covers:
 - Single-hop fetch returns ConversionInput.
 - Two-hop resolution (RefResolver -> ContentFetcher) succeeds through process().
 - Depth-cap enforcement raises FetcherDepthExceeded with cap, kinds trail, and config key.
-- Orchestrator does not transitively import any adapter or wiring module.
+- ConversionCoordinator does not transitively import any adapter or wiring module.
 - End-to-end fetch-convert cycle uses only injected fakes.
 - process() dispatches converter by the fetched content_type (not hardcoded).
 - Default depth cap of 2 permits a one-hop chain.
@@ -19,8 +19,8 @@ from typing import Any, ClassVar
 
 import pytest
 
+from aizk.conversion.core.coordinator import ConversionCoordinator, ProcessResult
 from aizk.conversion.core.errors import FetcherDepthExceeded, MissingContentError
-from aizk.conversion.core.orchestrator import Orchestrator, ProcessResult
 from aizk.conversion.core.protocols import ContentFetcher, Converter, RefResolver
 from aizk.conversion.core.source_ref import (
     ArxivRef,
@@ -123,7 +123,7 @@ def _make_converter_resolver(mapping: dict[tuple[ContentType, str], Converter]):
 
 def test_single_hop_fetch_returns_conversion_input():
     fetcher = _FakePdfFetcher(payload=b"hello-pdf")
-    orch = Orchestrator(
+    orch = ConversionCoordinator(
         resolve_fetcher=_make_fetcher_resolver({"arxiv": fetcher}),
         resolve_converter=_make_converter_resolver({}),
     )
@@ -143,7 +143,7 @@ def test_two_hop_resolution_succeeds_through_process():
     fetcher = _FakePdfFetcher(payload=b"hello-pdf")
     converter = _FakeConverter(markdown="# docling output")
 
-    orch = Orchestrator(
+    orch = ConversionCoordinator(
         resolve_fetcher=_make_fetcher_resolver(
             {"karakeep_bookmark": resolver, "arxiv": fetcher},
         ),
@@ -164,7 +164,7 @@ def test_two_hop_resolution_succeeds_through_process():
     assert converter.received[0].content_type is ContentType.PDF
 
 
-def test_orchestrator_threads_metadata_through_resolver_chain():
+def test_coordinator_threads_metadata_through_resolver_chain():
     """Two-hop resolver chain accumulates SourceMetadata via merge() with earlier-non-None-wins.
 
     Outer resolver supplies source_url; inner resolver supplies resolver_title.
@@ -183,7 +183,7 @@ def test_orchestrator_threads_metadata_through_resolver_chain():
     fetcher = _FakePdfFetcher(payload=b"pdf-bytes")
     converter = _FakeConverter()
 
-    orch = Orchestrator(
+    orch = ConversionCoordinator(
         resolve_fetcher=_make_fetcher_resolver(
             {
                 "url": outer_resolver,
@@ -216,7 +216,7 @@ def test_depth_limit_exceeded_raises_fetcher_depth_exceeded():
     inner_resolver = _FakeKarakeepResolver(target=ArxivRef(arxiv_id="2301.99999"))
     # At depth=1 (post-outer), resolving "karakeep_bookmark" would be the 2nd
     # resolver hop and violate the cap.
-    orch = Orchestrator(
+    orch = ConversionCoordinator(
         resolve_fetcher=_make_fetcher_resolver(
             {
                 # First hop: depth=0, resolves_to karakeep_bookmark
@@ -250,33 +250,33 @@ def test_depth_limit_exceeded_raises_fetcher_depth_exceeded():
     assert "AIZK_TEST__DEPTH" in message
 
 
-def test_orchestrator_has_no_transitive_import_of_adapter_modules():
+def test_coordinator_has_no_transitive_import_of_adapter_modules():
     # Ensure a clean import graph: remove any cached entries for the
-    # orchestrator and its candidate leak targets (adapters, wiring) so the
-    # subsequent re-import measures ONLY the orchestrator's own transitive
+    # coordinator and its candidate leak targets (adapters, wiring) so the
+    # subsequent re-import measures ONLY the coordinator's own transitive
     # closure — not whatever earlier tests happened to import.
     for name in list(sys.modules):
         if (
-            name == "aizk.conversion.core.orchestrator"
+            name == "aizk.conversion.core.coordinator"
             or name.startswith("aizk.conversion.adapters")
             or name.startswith("aizk.conversion.wiring")
         ):
             del sys.modules[name]
 
-    importlib.import_module("aizk.conversion.core.orchestrator")
+    importlib.import_module("aizk.conversion.core.coordinator")
 
     leaked_adapters = [name for name in sys.modules if name.startswith("aizk.conversion.adapters")]
     leaked_wiring = [name for name in sys.modules if name.startswith("aizk.conversion.wiring")]
 
-    assert leaked_adapters == [], f"Orchestrator transitively imports adapter modules: {leaked_adapters}"
-    assert leaked_wiring == [], f"Orchestrator transitively imports wiring modules: {leaked_wiring}"
+    assert leaked_adapters == [], f"ConversionCoordinator transitively imports adapter modules: {leaked_adapters}"
+    assert leaked_wiring == [], f"ConversionCoordinator transitively imports wiring modules: {leaked_wiring}"
 
 
-def test_orchestrator_with_injected_fakes_completes_fetch_convert_cycle():
+def test_coordinator_with_injected_fakes_completes_fetch_convert_cycle():
     # End-to-end with fakes only: no real adapters/registries involved.
     fetcher = _FakePdfFetcher(payload=b"pdf")
     converter = _FakeConverter(markdown="# fake-markdown")
-    orch = Orchestrator(
+    orch = ConversionCoordinator(
         resolve_fetcher=_make_fetcher_resolver({"arxiv": fetcher}),
         resolve_converter=_make_converter_resolver({(ContentType.PDF, "docling"): converter}),
     )
@@ -298,7 +298,7 @@ def test_process_dispatches_converter_by_fetched_content_type():
         resolve_calls.append((content_type, name))
         return html_converter
 
-    orch = Orchestrator(
+    orch = ConversionCoordinator(
         resolve_fetcher=_make_fetcher_resolver({"url": fetcher}),
         resolve_converter=_resolve_converter,
     )
@@ -313,7 +313,7 @@ def test_process_rejects_zero_length_content_before_conversion():
     fetcher = _FakePdfFetcher(payload=b"")
     converter = _FakeConverter(markdown="# should-not-run")
 
-    orch = Orchestrator(
+    orch = ConversionCoordinator(
         resolve_fetcher=_make_fetcher_resolver({"arxiv": fetcher}),
         resolve_converter=_make_converter_resolver({(ContentType.PDF, "docling"): converter}),
     )
@@ -328,7 +328,7 @@ def test_process_with_provenance_rejects_zero_length_content_before_conversion()
     fetcher = _FakePdfFetcher(payload=b"")
     converter = _FakeConverter(markdown="# should-not-run")
 
-    orch = Orchestrator(
+    orch = ConversionCoordinator(
         resolve_fetcher=_make_fetcher_resolver({"arxiv": fetcher}),
         resolve_converter=_make_converter_resolver({(ContentType.PDF, "docling"): converter}),
     )
@@ -346,7 +346,7 @@ def test_default_depth_cap_of_2_allows_one_hop_chain():
     resolver = _FakeKarakeepResolver(target=arxiv_ref)
     fetcher = _FakePdfFetcher()
 
-    orch = Orchestrator(
+    orch = ConversionCoordinator(
         resolve_fetcher=_make_fetcher_resolver(
             {"karakeep_bookmark": resolver, "arxiv": fetcher},
         ),
@@ -369,7 +369,7 @@ def test_process_with_provenance_carries_converter_name_and_config_snapshot():
         resolve_calls.append((content_type, name))
         return base_resolve(content_type, name)
 
-    orch = Orchestrator(
+    orch = ConversionCoordinator(
         resolve_fetcher=_make_fetcher_resolver({"arxiv": fetcher}),
         resolve_converter=_tracked_resolve,
     )
@@ -379,7 +379,7 @@ def test_process_with_provenance_carries_converter_name_and_config_snapshot():
     assert isinstance(result, ProcessResult)
     assert result.converter_name == "fake_conv"
     assert result.config_snapshot == {"converter_name": "fake"}
-    # Orchestrator resolves the converter exactly once; callers must NOT re-resolve.
+    # ConversionCoordinator resolves the converter exactly once; callers must NOT re-resolve.
     assert resolve_calls == [(ContentType.PDF, "fake_conv")]
 
 
@@ -396,7 +396,7 @@ def test_worker_data_access_pattern_reads_only_from_process_result():
         resolve_calls.append((content_type, name))
         return base_resolve(content_type, name)
 
-    orch = Orchestrator(
+    orch = ConversionCoordinator(
         resolve_fetcher=_make_fetcher_resolver({"arxiv": fetcher}),
         resolve_converter=_tracked_resolve,
     )
@@ -410,7 +410,7 @@ def test_worker_data_access_pattern_reads_only_from_process_result():
 
     assert converter_name == "fake_conv"
     assert config_snapshot == {"converter_name": "fake"}
-    # Exactly one resolve call (made by the orchestrator); the worker pattern
+    # Exactly one resolve call (made by the coordinator); the worker pattern
     # makes zero additional calls.
     assert len(resolve_calls) == resolve_count_after == 1
 
@@ -422,7 +422,7 @@ def test_fetch_raises_with_correctly_ordered_kinds_trail_from_top():
     outer = _FakeChainingResolver(target=KarakeepBookmarkRef(bookmark_id="b"))
     inner = _FakeKarakeepResolver(target=github_ref)
 
-    orch = Orchestrator(
+    orch = ConversionCoordinator(
         resolve_fetcher=_make_fetcher_resolver(
             {
                 "url": outer,  # depth 0 -> karakeep_bookmark

@@ -19,12 +19,12 @@ from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.handler import ConversionStageHandler
+from aizk.conversion.processing import converter, errors as errors_mod, fetcher
+from aizk.conversion.processing.errors import ReportedChildError, SubprocessMetadataInvalid
+from aizk.conversion.processing.subproc import _report_status
 from aizk.conversion.storage.s3_client import S3Error, S3UploadError
 from aizk.conversion.utilities.bookmark_utils import BookmarkContentError
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.workers import converter, errors as errors_mod, fetcher
-from aizk.conversion.workers.errors import ReportedChildError, SubprocessMetadataInvalid
-from aizk.conversion.workers.orchestrator import _report_status
 
 
 def _finalize_failure(db_session: Session, job_id: int, error: Exception, config: ConversionConfig) -> None:
@@ -38,7 +38,7 @@ def _finalize_failure(db_session: Session, job_id: int, error: Exception, config
     """
     handler = ConversionStageHandler(config)
     outcome = handler.map_result(error)
-    from aizk.conversion.workers.orchestrator import classify_job_error
+    from aizk.conversion.processing.errors import classify_job_error
 
     handler._error_details[job_id] = classify_job_error(error)
     with Session(db_session.get_bind()) as session:
@@ -502,7 +502,7 @@ _VALID_SUBPROCESS_METADATA = {
 )
 def test_load_subprocess_metadata_raises_on_invalid(tmp_path, metadata):
     """metadata.json with an unknown extra field or a missing required field raises SubprocessMetadataInvalid."""
-    from aizk.conversion.workers.uploader import _load_subprocess_metadata
+    from aizk.conversion.processing.uploader import _load_subprocess_metadata
 
     ws = tmp_path / "workspace"
     ws.mkdir()
@@ -530,7 +530,7 @@ def test_prepare_upload_invalid_metadata_flows_to_failed_perm(
     finalize to FAILED_PERM — ``execute`` raises it, ``map_result`` classifies it
     PERMANENT, and ``finalize`` writes the terminal FAILED_PERM status."""
 
-    from aizk.conversion.workers.uploader import _prepare_upload
+    from aizk.conversion.processing.uploader import _prepare_upload
 
     ws = tmp_path / "workspace"
     ws.mkdir()

@@ -29,11 +29,11 @@ from aizk.conversion.core.source_ref import KarakeepBookmarkRef, UrlRef, compute
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.handler import ConversionStageHandler
+from aizk.conversion.processing import subproc, uploader as uploader_mod
 from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
 from aizk.conversion.utilities.egress import ValidatedDestination
 from aizk.conversion.utilities.egress_fetch import egress_fetch_bytes
 from aizk.conversion.utilities.html_prefetch import prefetch_images
-from aizk.conversion.workers import orchestrator, uploader as uploader_mod
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -115,7 +115,7 @@ def _make_fake_runtime() -> MagicMock:
     runtime = MagicMock()
     runtime.resource_guard = nullcontext()
     runtime.capabilities.converter_requires_gpu.return_value = False
-    runtime.orchestrator = MagicMock()
+    runtime.coordinator = MagicMock()
     return runtime
 
 
@@ -455,9 +455,9 @@ def test_happy_path_public_url_succeeds(monkeypatch: pytest.MonkeyPatch, db_sess
     db_session.refresh(job)
 
     storage = _install_memory_s3(monkeypatch)
-    monkeypatch.setattr(orchestrator.mp, "get_context", lambda _ctx: _InlineContext())
-    monkeypatch.setattr(orchestrator, "_process_job_subprocess", _make_subprocess_stub())
-    monkeypatch.setattr(orchestrator, "get_engine", lambda _url=None: db_session.get_bind())
+    monkeypatch.setattr(subproc.mp, "get_context", lambda _ctx: _InlineContext())
+    monkeypatch.setattr(subproc, "_process_job_subprocess", _make_subprocess_stub())
+    monkeypatch.setattr(subproc, "get_engine", lambda _url=None: db_session.get_bind())
     monkeypatch.setattr(repository_mod, "get_engine", lambda _url=None: db_session.get_bind())
     monkeypatch.setattr(repository_mod, "_is_job_cancelled", lambda *_a, **_k: False)
     monkeypatch.setattr(uploader_mod, "get_engine", lambda _url=None: db_session.get_bind())
