@@ -11,7 +11,7 @@ from aizk.conversion.core.registry import ConverterRegistry, FetcherRegistry
 from aizk.conversion.core.types import ContentType
 from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
 from aizk.conversion.wiring.capabilities import DeploymentCapabilities
-from aizk.conversion.wiring.registrations import register_ready_adapters
+from aizk.conversion.wiring.registrations import build_startup_probes, register_ready_adapters
 
 
 class _SemaphoreGuard:
@@ -70,7 +70,8 @@ def build_worker_runtime(cfg: ConversionConfig) -> WorkerRuntime:
         resolve_fetcher=resolve_fetcher,
         resolve_converter=resolve_converter,
     )
-    capabilities = DeploymentCapabilities(fetcher_registry, converter_registry)
+    startup_probes = build_startup_probes(fetcher_registry, cfg, docling_cfg, karakeep_cfg)
+    capabilities = DeploymentCapabilities(fetcher_registry, converter_registry, startup_probes=startup_probes)
 
     return WorkerRuntime(
         coordinator=coordinator,

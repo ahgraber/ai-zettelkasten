@@ -17,11 +17,13 @@ from typing import Any, ClassVar
 import pytest
 
 from aizk.conversion.core.errors import ConfigurationError
+from aizk.conversion.core.registry import FetcherRegistry
 from aizk.conversion.core.types import ContentType, ConversionInput
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
 from aizk.conversion.wiring.api import ApiRuntime, build_api_runtime
 from aizk.conversion.wiring.capabilities import DeploymentCapabilities, SubmissionCapabilities
 from aizk.conversion.wiring.ingress_policy import IngressPolicy
+from aizk.conversion.wiring.registrations import build_startup_probes, register_fetchers
 from aizk.conversion.wiring.testing import TestRuntime, build_test_runtime
 from aizk.conversion.wiring.worker import WorkerRuntime, build_worker_runtime
 
@@ -31,7 +33,7 @@ from aizk.conversion.wiring.worker import WorkerRuntime, build_worker_runtime
 
 _CFG = ConversionConfig(_env_file=None)
 
-# Expected kinds that register_ready_adapters wires (in Stage 5):
+# Expected kinds that register_ready_adapters wires:
 # 1 resolver:  karakeep_bookmark
 # 4 fetchers:  arxiv, github_readme, url, inline_html
 _EXPECTED_REGISTERED_KINDS = frozenset({"karakeep_bookmark", "arxiv", "github_readme", "url", "inline_html"})
@@ -257,3 +259,58 @@ def test_build_test_runtime_capabilities_reflect_registered_fakes():
     rt.fetcher_registry.register_content_fetcher("url", _FakePdfFetcher())
     # capabilities reads live from registry; the new kind must be reflected.
     assert "url" in rt.capabilities.registered_kinds
+
+
+# ---------------------------------------------------------------------------
+# build_startup_probes — adapter-declared startup probes
+# ---------------------------------------------------------------------------
+
+_DOCLING_OFF = DoclingConverterConfig(_env_file=None, picture_description_base_url="", picture_description_api_key="")
+_DOCLING_ON = DoclingConverterConfig(
+    _env_file=None, picture_description_base_url="http://vlm.local", picture_description_api_key="k"
+)
+_KK = KarakeepFetcherConfig(_env_file=None, base_url="http://kk.local", api_key="k")
+
+
+def _probe_names(probes) -> list[str]:
+    """Return the underlying probe-function names from the assembled partials."""
+    return [p.func.__name__ for p in probes]
+
+
+def _registry_with_karakeep() -> FetcherRegistry:
+    fr = FetcherRegistry()
+    register_fetchers(fr, _CFG, karakeep_cfg=_KK)
+    return fr
+
+
+def test_build_startup_probes_always_includes_s3_and_database():
+    names = _probe_names(build_startup_probes(_registry_with_karakeep(), _CFG, _DOCLING_OFF, _KK))
+    assert names[:2] == ["probe_s3", "probe_database"]
+
+
+def test_build_startup_probes_includes_karakeep_when_registered():
+    names = _probe_names(build_startup_probes(_registry_with_karakeep(), _CFG, _DOCLING_OFF, _KK))
+    assert "probe_karakeep" in names
+
+
+def test_build_startup_probes_skips_karakeep_when_not_registered():
+    # Unused adapter probe skipped: no KaraKeep resolver registered -> no KaraKeep probe.
+    names = _probe_names(build_startup_probes(FetcherRegistry(), _CFG, _DOCLING_OFF, _KK))
+    assert "probe_karakeep" not in names
+
+
+def test_build_startup_probes_includes_picture_description_when_enabled():
+    names = _probe_names(build_startup_probes(_registry_with_karakeep(), _CFG, _DOCLING_ON, _KK))
+    assert "probe_picture_description" in names
+
+
+def test_build_startup_probes_skips_picture_description_when_disabled():
+    names = _probe_names(build_startup_probes(_registry_with_karakeep(), _CFG, _DOCLING_OFF, _KK))
+    assert "probe_picture_description" not in names
+
+
+def test_build_worker_runtime_capabilities_expose_startup_probes():
+    rt = build_worker_runtime(_CFG)
+    names = _probe_names(rt.capabilities.startup_probes)
+    assert "probe_s3" in names
+    assert "probe_database" in names

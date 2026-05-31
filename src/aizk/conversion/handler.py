@@ -147,14 +147,16 @@ class ConversionStageHandler:
         return "conversion"
 
     def validate_dependencies(self) -> None:
-        """Validate required external dependencies at startup.
+        """Run the adapter-declared startup probes, gating work acceptance.
 
-        Conversion has no synchronous startup dependency to probe here: the
-        database engine is built lazily per call, and the per-job subprocess
-        validates the S3/storage and converter dependencies it needs as part of
-        preflight. This is therefore a no-op.
+        The probe set is assembled from the registered adapters and
+        configuration (S3 and the database always; KaraKeep when its resolver is
+        registered; the picture-description endpoint when configured). A probe
+        that raises ``StartupValidationError`` propagates so the runner refuses
+        to accept work.
         """
-        return None
+        for probe in self._ensure_runtime().capabilities.startup_probes:
+            probe()
 
     def scope_key(self, handle: int) -> str:
         """Return the run ``scope_key`` for ``handle`` (per-job scope).

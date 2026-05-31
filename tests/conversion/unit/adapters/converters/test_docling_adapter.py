@@ -1,4 +1,4 @@
-"""Unit tests for the ``DoclingConverter`` adapter (Stage 3).
+"""Unit tests for the ``DoclingConverter`` adapter.
 
 These tests are hermetic — no ``.env`` reads. Every ``ConversionConfig`` is
 constructed with ``_env_file=None`` and explicit field overrides.
@@ -107,7 +107,7 @@ def test_docling_config_snapshot_includes_picture_description_enabled_flag() -> 
 
 def test_docling_config_snapshot_must_not_include_converter_name() -> None:
     # ``converter_name`` is the orchestrator's concern — the adapter's snapshot
-    # MUST NOT include it (see tasks.md Stage 6b lines 129, 131).
+    # MUST NOT include it.
     config = _make_enabled_config()
     snapshot = DoclingConverter(config).config_snapshot()
     assert "converter_name" not in snapshot
@@ -138,7 +138,7 @@ def test_docling_convert_dispatches_pdf_to_convert_pdf(monkeypatch: pytest.Monke
     assert artifacts.markdown == "# PDF markdown"
     assert len(artifacts.figures) == 1
     assert artifacts.figures[0] == tmp_path / "figure-001.png"
-    # Adapter populates docling_version in metadata (Stage 7).
+    # Adapter populates docling_version in metadata.
     assert "docling_version" in artifacts.metadata
 
     # Verify the adapter passed the bytes, a temp_dir Path, and the config through.
@@ -180,7 +180,7 @@ def test_docling_convert_dispatches_html_to_convert_html(monkeypatch: pytest.Mon
     assert isinstance(artifacts, ConversionArtifacts)
     assert artifacts.markdown == "# HTML markdown"
     assert artifacts.figures == []
-    # Adapter populates docling_version in metadata (Stage 7).
+    # Adapter populates docling_version in metadata.
     assert "docling_version" in artifacts.metadata
 
     assert captured["html_bytes"] == b"<html></html>"

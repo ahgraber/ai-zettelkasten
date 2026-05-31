@@ -11,6 +11,9 @@ and no path may exceed ``depth_cap`` resolver hops.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from functools import partial
+
 from aizk.conversion.adapters.converters.docling import DoclingConverter
 from aizk.conversion.adapters.fetchers.arxiv import ArxivFetcher
 from aizk.conversion.adapters.fetchers.github import GithubReadmeFetcher
@@ -21,6 +24,12 @@ from aizk.conversion.core.errors import ChainNotTerminated
 from aizk.conversion.core.protocols import RefResolver
 from aizk.conversion.core.registry import ConverterRegistry, FetcherRegistry
 from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
+from aizk.conversion.utilities.startup import (
+    probe_database,
+    probe_karakeep,
+    probe_picture_description,
+    probe_s3,
+)
 
 
 def register_fetchers(
@@ -71,6 +80,31 @@ def register_ready_adapters(
     """
     register_fetchers(fetcher_registry, cfg, karakeep_cfg=karakeep_cfg)
     register_converters(converter_registry, cfg, docling_cfg=docling_cfg)
+
+
+def build_startup_probes(
+    fetcher_registry: FetcherRegistry,
+    cfg: ConversionConfig,
+    docling_cfg: DoclingConverterConfig,
+    karakeep_cfg: KarakeepFetcherConfig,
+) -> list[Callable[[], None]]:
+    """Assemble the startup health-check probes implied by the registered adapters.
+
+    S3 and the database are always probed; the KaraKeep probe is included only
+    when the KaraKeep resolver is registered, and the picture-description probe
+    only when that endpoint is configured. The probe set is therefore determined
+    by which adapters are wired rather than hard-coded; the runner's startup gate
+    runs each before any work is accepted.
+    """
+    probes: list[Callable[[], None]] = [
+        partial(probe_s3, cfg),
+        partial(probe_database, cfg),
+    ]
+    if "karakeep_bookmark" in fetcher_registry.registered_kinds():
+        probes.append(partial(probe_karakeep, karakeep_cfg))
+    if docling_cfg.is_picture_description_enabled():
+        probes.append(partial(probe_picture_description, docling_cfg))
+    return probes
 
 
 def validate_chain_closure(fetcher_registry: FetcherRegistry, *, depth_cap: int) -> None:

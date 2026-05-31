@@ -89,9 +89,34 @@ def test_stage_name_is_conversion(handler: ConversionStageHandler) -> None:
     assert handler.stage == "conversion"
 
 
-def test_validate_dependencies_is_noop(handler: ConversionStageHandler) -> None:
-    """``validate_dependencies`` returns without raising (no startup dependency)."""
-    assert handler.validate_dependencies() is None
+def test_validate_dependencies_runs_all_startup_probes() -> None:
+    """The runner's startup gate runs every adapter-declared probe."""
+    from types import SimpleNamespace
+
+    calls: list[str] = []
+    probes = [lambda: calls.append("s3"), lambda: calls.append("db")]
+    runtime = SimpleNamespace(capabilities=SimpleNamespace(startup_probes=probes))
+    handler = ConversionStageHandler(ConversionConfig(_env_file=None), runtime=runtime)
+
+    handler.validate_dependencies()
+
+    assert calls == ["s3", "db"]
+
+
+def test_validate_dependencies_propagates_probe_failure() -> None:
+    """A probe that raises blocks work acceptance by propagating the error."""
+    from types import SimpleNamespace
+
+    from aizk.conversion.utilities.startup import StartupValidationError
+
+    def _boom() -> None:
+        raise StartupValidationError("S3 bucket unreachable")
+
+    runtime = SimpleNamespace(capabilities=SimpleNamespace(startup_probes=[_boom]))
+    handler = ConversionStageHandler(ConversionConfig(_env_file=None), runtime=runtime)
+
+    with pytest.raises(StartupValidationError, match="S3 bucket unreachable"):
+        handler.validate_dependencies()
 
 
 def test_scope_key_is_per_job_string(handler: ConversionStageHandler) -> None:
@@ -809,6 +834,70 @@ def test_execute_writes_upload_pending_with_content_hash(
         assert events[0].attempt == 1
         payload = parse_payload_lenient(events[0].payload_json)
         assert payload.content_hash == "abc123"
+
+
+def test_execute_removes_workspace_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+    exec_engine,
+    exec_config: ConversionConfig,
+    exec_runtime,
+    exec_source: Source,
+) -> None:
+    """The temporary workspace is gone once ``execute`` completes successfully.
+
+    Conversion scopes the workspace to ``execute`` (a ``TemporaryDirectory``
+    spanning the unit-of-work), so it is removed on the succeeded outcome —
+    satisfying "clean up temporary workspace on all job outcomes".
+    """
+    job_id = _seed_running_job(exec_engine, exec_source, attempts=1)
+    captured = _patch_supervise(
+        monkeypatch,
+        result=SupervisionResult("converting", None, False, False),
+        process=_FakeProcess(exitcode=0),
+        write_metadata=True,
+    )
+    monkeypatch.setattr(repository_mod, "_prepare_upload", lambda *_a, **_k: None)
+    monkeypatch.setattr(repository_mod, "_is_job_cancelled", lambda *_a, **_k: False)
+
+    handler = ConversionStageHandler(exec_config, runtime=exec_runtime)
+    handler.execute(job_id)
+
+    assert "workspace" in captured
+    assert not captured["workspace"].exists(), "workspace must be removed after a successful execute"
+
+
+def test_execute_removes_workspace_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    exec_engine,
+    exec_config: ConversionConfig,
+    exec_runtime,
+    exec_source: Source,
+) -> None:
+    """The temporary workspace is gone even when ``execute`` raises.
+
+    A forced subprocess failure unwinds the ``TemporaryDirectory`` context, so no
+    workspace leaks on the failed outcome.
+    """
+    job_id = _seed_running_job(exec_engine, exec_source, attempts=1)
+    captured = _patch_supervise(
+        monkeypatch,
+        result=SupervisionResult(
+            "converting",
+            {"event": "failed", "message": "boom", "error_code": "x", "retryable": "false"},
+            False,
+            False,
+        ),
+        process=_FakeProcess(exitcode=1),
+        write_metadata=False,
+    )
+    monkeypatch.setattr(repository_mod, "_is_job_cancelled", lambda *_a, **_k: False)
+
+    handler = ConversionStageHandler(exec_config, runtime=exec_runtime)
+    with pytest.raises(ReportedChildError):
+        handler.execute(job_id)
+
+    assert "workspace" in captured
+    assert not captured["workspace"].exists(), "workspace must be removed after a failed execute"
 
 
 @pytest.mark.parametrize(

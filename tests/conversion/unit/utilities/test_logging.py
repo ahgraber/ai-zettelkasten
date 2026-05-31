@@ -244,7 +244,6 @@ def test_cmd_worker_configures_logging_before_running(monkeypatch: pytest.Monkey
     # configure_logging call.
     monkeypatch.setattr(cli_module, "configure_logging", _fake_configure)
     monkeypatch.setattr(cli_module, "log_feature_summary", lambda *_a, **_kw: None)
-    monkeypatch.setattr(cli_module, "validate_startup", lambda *_a, **_kw: None)
     monkeypatch.setattr(cli_module, "configure_mlflow_tracing", lambda **_kw: None)
     monkeypatch.setattr(cli_module, "setproctitle", lambda _t: None)
 
