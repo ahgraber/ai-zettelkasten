@@ -260,12 +260,12 @@ Converter-specific behavior (picture classification, figure enrichment, serializ
 
 - **GIVEN** the `DoclingConverter` is invoked for a PDF with picture classification enabled
 - **WHEN** conversion completes
-- **THEN** figure descriptions and classification annotations are present in the output, as before, without the orchestrator having knowledge of these adapter-specific behaviors
+- **THEN** figure descriptions and classification metadata are present in the output, as before, without the orchestrator having knowledge of these adapter-specific behaviors
 
 ### Requirement: Route figure-description prompts by classification label
 
 When picture classification is enabled and a picture-description endpoint is configured, the `DoclingConverter`'s post-conversion enrichment pass SHALL select each figure's description by its classification label: chart-type figures receive chart summaries, table-type figures receive tabular-form descriptions, and all other or unclassified figures receive generic alt-text.
-Each resulting description SHALL be injected as a `PictureDescriptionData` annotation.
+Each resulting description SHALL be recorded as the figure's description metadata (`meta.description`).
 Whether this routing runs at all is governed by the configuration in "Load picture classification configuration from environment".
 
 #### Scenario: Chart figure described with chart2summary prompt
@@ -273,37 +273,38 @@ Whether this routing runs at all is governed by the configuration in "Load pictu
 - **GIVEN** a PDF figure is classified as a chart type by `DocumentFigureClassifier`
 - **WHEN** the post-conversion enrichment pass runs
 - **THEN** the enrichment loop calls the VLM with a `<chart2summary>` prompt for that figure
-- **AND** the resulting description is injected as a `PictureDescriptionData` annotation
+- **AND** the resulting description is recorded as the figure's description metadata (`meta.description`)
 
 #### Scenario: Table-image figure described with tables_html prompt
 
 - **GIVEN** a PDF figure is classified as a table type by `DocumentFigureClassifier`
 - **WHEN** the post-conversion enrichment pass runs
 - **THEN** the enrichment loop calls the VLM with a `<tables_html>` prompt for that figure
-- **AND** the resulting description is injected as a `PictureDescriptionData` annotation
+- **AND** the resulting description is recorded as the figure's description metadata (`meta.description`)
 
 #### Scenario: Unclassified or photo figure uses generic prompt
 
 - **GIVEN** a PDF figure has no classification label, or is classified as photograph/logo/other
 - **WHEN** the post-conversion enrichment pass runs
 - **THEN** the enrichment loop calls the VLM with the existing generic alt-text prompt
-- **AND** the resulting description is injected as a `PictureDescriptionData` annotation
+- **AND** the resulting description is recorded as the figure's description metadata (`meta.description`)
 
-### Requirement: Serialize Markdown output with figure annotations
+### Requirement: Serialize Markdown output with figure metadata
 
-When serializing a `PictureItem` to Markdown, the system SHALL append annotation blocks as HTML comments following the image placeholder.
-If a `PictureDescriptionData` annotation is present, the serializer emits a `<!-- Figure Description -->` comment block containing the description text.
-If a `PictureClassificationData` annotation is also present, the serializer prepends a `<!-- Figure Type: <label> -->` comment immediately before the description block, enabling downstream consumers to filter or route by figure type.
+When serializing a `PictureItem` to Markdown, the system SHALL append figure metadata blocks as HTML comments following the image placeholder, and SHALL NOT emit the serialization framework's default metadata lines (e.g. a bare `[Classification] <label>` line) for the figure.
+If figure description metadata (`meta.description`) is present, the serializer emits a `<!-- Figure Description -->` comment block containing the description text.
+If figure classification metadata (`meta.classification`) is also present, the serializer prepends a `<!-- Figure Type: <label> -->` comment immediately before the description block, enabling downstream consumers to filter or route by figure type.
 
 #### Scenario: Classification label included in serialized output
 
-- **GIVEN** a `PictureItem` has both a `PictureClassificationData` and a `PictureDescriptionData` annotation
+- **GIVEN** a `PictureItem` has both classification and description metadata
 - **WHEN** the item is serialized to Markdown
 - **THEN** the output contains `<!-- Figure Type: <label> -->` followed by the description block
+- **AND** the output contains no framework default metadata line (e.g. `[Classification] <label>`)
 
 #### Scenario: No classification label when classifier disabled
 
-- **GIVEN** `do_picture_classification=False` and no `PictureClassificationData` annotation exists
+- **GIVEN** `do_picture_classification=False` and no classification metadata exists
 - **WHEN** the item is serialized to Markdown
 - **THEN** the output contains only the description block, unchanged from prior behavior
 

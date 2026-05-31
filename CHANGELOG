@@ -6,6 +6,14 @@
 
 - Chunking splitter foundation (`aizk.chunking`): document-structure splitter, chunk data model, deterministic identity
 
+### Changed
+
+- Migrate the Docling figure converter off the deprecated `PictureItem.annotations` field to the `PictureItem.meta` API (`meta.classification`, `meta.description`)
+
+### Fixed
+
+- Stop emitting a spurious `[Classification] <label>` line for every classified figure in converted Markdown; figure output is now the `<!-- Figure Type -->` / `<!-- Figure Description -->` comments only, matching the conversion-worker spec. Figure-bearing conversions now produce different output bytes, so their content hashes shift
+
 ---
 
 ## [0.1.3] - 2026-05-18

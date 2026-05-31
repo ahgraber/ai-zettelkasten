@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Docling worker demo."""
+"""Manual validation driver for the production Docling conversion path.
+
+Exercises ``aizk.conversion.processing.converter`` (``convert_html`` /
+``convert_pdf``) directly and applies the same whitespace normalization the
+production worker does, so ``output.md`` matches what the worker would write.
+"""
 
 # %%
 from __future__ import annotations
@@ -27,6 +32,7 @@ from aizk.conversion.utilities.bookmark_utils import (
     validate_bookmark_content,
 )
 from aizk.conversion.utilities.config import DoclingConverterConfig
+from aizk.conversion.utilities.whitespace import normalize_whitespace
 from karakeep_client.models import Bookmark
 
 # %%
@@ -50,7 +56,7 @@ logger.setLevel(logging.DEBUG)
 # %%
 _ = load_dotenv()
 
-output_dir = Path("data/docling_demo_worker")
+output_dir = Path("data/validate_docling_worker")
 output_dir.mkdir(parents=True, exist_ok=True)
 
 # %%
@@ -109,11 +115,17 @@ def convert_to_markdown(
     workspace.mkdir(parents=True, exist_ok=True)
 
     if pipeline == "pdf":
-        markdown_text, figure_paths = convert_pdf(content_bytes, workspace, config)
-        (workspace / "output.md").write_text(markdown_text)
+        markdown_text, figure_paths, document_title = convert_pdf(content_bytes, workspace, config)
     else:
-        markdown_text, figure_paths = convert_html(content_bytes, workspace, config, source_url=source_url)
-        (workspace / "output.md").write_text(markdown_text)
+        markdown_text, figure_paths, document_title = convert_html(
+            content_bytes, workspace, config, source_url=source_url
+        )
+
+    # Mirror the production worker: normalize whitespace before writing output.md
+    # (see aizk.conversion.processing.subproc).
+    markdown_text = normalize_whitespace(markdown_text)
+    (workspace / "output.md").write_text(markdown_text)
+    print(f"  title={document_title!r}  figures={len(figure_paths)}  -> {workspace / 'output.md'}")
 
 
 # %%
@@ -147,6 +159,6 @@ for bookmark_id in bookmarks:
 
     convert_to_markdown(pipeline, content_bytes, output_dir, bookmark.id, source_url=source_url)
 
-print("Docling demo worker finished.")
+print("Docling worker validation finished.")
 
 # %%
