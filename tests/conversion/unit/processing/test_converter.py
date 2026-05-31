@@ -13,6 +13,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from docling_core.types.doc.document import (
+    DescriptionMetaField,
+    PictureClassificationMetaField,
+    PictureClassificationPrediction,
+    PictureMeta,
+    SummaryMetaField,
+)
+
 import aizk.conversion.processing.converter as converter_module
 from aizk.conversion.processing.converter import (
     _ALT_TEXT_PROMPT,
@@ -22,31 +30,35 @@ from aizk.conversion.processing.converter import (
 from aizk.conversion.utilities.config import DoclingConverterConfig
 
 # ---------------------------------------------------------------------------
-# Helpers to build mock PictureItem with annotations
+# Helpers to build a PictureItem-like mock with classification/description meta
 # ---------------------------------------------------------------------------
 
 
-def _make_classification_annotation(label: str, confidence: float = 0.95) -> MagicMock:
-    ann = MagicMock()
-    ann.__class__ = converter_module.PictureClassificationData
-    predicted_class = MagicMock()
-    predicted_class.class_name = label
-    predicted_class.confidence = confidence
-    ann.predicted_classes = [predicted_class]
-    return ann
+def _make_classification_meta(*labels: str, confidence: float = 0.95) -> PictureClassificationMetaField:
+    """Build a classification meta field; predictions are ordered as given."""
+    return PictureClassificationMetaField(
+        predictions=[
+            PictureClassificationPrediction(class_name=label, confidence=confidence, created_by="test")
+            for label in labels
+        ]
+    )
 
 
-def _make_description_annotation(text: str) -> MagicMock:
-    ann = MagicMock()
-    ann.__class__ = converter_module.PictureDescriptionData
-    ann.text = text
-    return ann
+def _make_meta(
+    *, labels: tuple[str, ...] = (), description: str | None = None, summary: str | None = None
+) -> PictureMeta:
+    """Build a ``PictureMeta`` with optional classification, description, and summary."""
+    return PictureMeta(
+        classification=_make_classification_meta(*labels) if labels else None,
+        description=DescriptionMetaField(text=description, created_by="test") if description is not None else None,
+        summary=SummaryMetaField(text=summary, created_by="test") if summary is not None else None,
+    )
 
 
-def _make_picture(annotations: list) -> MagicMock:
+def _make_picture(meta: PictureMeta | None = None) -> MagicMock:
     pic = MagicMock()
     pic.self_ref = "#/pictures/0"
-    pic.annotations = list(annotations)
+    pic.meta = meta
     return pic
 
 
@@ -57,35 +69,27 @@ def _make_picture(annotations: list) -> MagicMock:
 
 class TestGetClassificationLabel:
     def test_returns_top_label_when_classification_present(self):
-        ann = _make_classification_annotation("bar_chart")
-        pic = _make_picture([ann])
+        pic = _make_picture(_make_meta(labels=("bar_chart",)))
         assert _get_classification_label(pic) == "bar_chart"
 
-    def test_returns_none_when_no_classification_annotation(self):
-        ann = _make_description_annotation("some description")
-        pic = _make_picture([ann])
+    def test_returns_none_when_no_classification(self):
+        pic = _make_picture(_make_meta(description="some description"))
         assert _get_classification_label(pic) is None
 
-    def test_returns_none_for_empty_annotations(self):
-        pic = _make_picture([])
+    def test_returns_none_when_meta_absent(self):
+        pic = _make_picture(None)
         assert _get_classification_label(pic) is None
 
     def test_returns_first_class_when_multiple_classes(self):
-        ann = MagicMock()
-        ann.__class__ = converter_module.PictureClassificationData
-        cls1 = MagicMock()
-        cls1.class_name = "pie_chart"
-        cls2 = MagicMock()
-        cls2.class_name = "chart"
-        ann.predicted_classes = [cls1, cls2]
-        pic = _make_picture([ann])
+        pic = _make_picture(_make_meta(labels=("pie_chart", "chart")))
         assert _get_classification_label(pic) == "pie_chart"
 
-    def test_returns_none_when_predicted_classes_empty(self):
-        ann = MagicMock()
-        ann.__class__ = converter_module.PictureClassificationData
-        ann.predicted_classes = []
-        pic = _make_picture([ann])
+    def test_returns_none_when_predictions_empty(self):
+        # The real PictureClassificationMetaField forbids empty predictions
+        # (min_length=1), so the empty-predictions edge is modelled with a mock.
+        meta = MagicMock()
+        meta.classification.predictions = []
+        pic = _make_picture(meta)
         assert _get_classification_label(pic) is None
 
 
@@ -123,8 +127,7 @@ class TestEnrichPictureDescriptions:
             captured_prompts.append(prompt)
             return "chart description"
 
-        ann = _make_classification_annotation("bar_chart")
-        pic = _make_picture([ann])
+        pic = _make_picture(_make_meta(labels=("bar_chart",)))
         pic.get_image.return_value = MagicMock()
 
         doc = self._make_doc([pic])
@@ -136,11 +139,7 @@ class TestEnrichPictureDescriptions:
         _enrich_picture_descriptions(doc, config)
 
         assert captured_prompts == ["<chart2summary>"]
-        assert any(
-            isinstance(a, converter_module.PictureDescriptionData)
-            or (hasattr(a, "text") and a.text == "chart description")
-            for a in pic.annotations
-        )
+        assert pic.meta.description.text == "chart description"
 
     def test_table_figure_uses_tables_html_prompt(self, monkeypatch):
         captured_prompts: list[str] = []
@@ -149,8 +148,7 @@ class TestEnrichPictureDescriptions:
             captured_prompts.append(prompt)
             return "table description"
 
-        ann = _make_classification_annotation("table")
-        pic = _make_picture([ann])
+        pic = _make_picture(_make_meta(labels=("table",)))
         pic.get_image.return_value = MagicMock()
 
         doc = self._make_doc([pic])
@@ -170,7 +168,7 @@ class TestEnrichPictureDescriptions:
             captured_prompts.append(prompt)
             return "generic description"
 
-        pic = _make_picture([])
+        pic = _make_picture(None)
         pic.get_image.return_value = MagicMock()
 
         doc = self._make_doc([pic])
@@ -183,11 +181,11 @@ class TestEnrichPictureDescriptions:
 
         assert captured_prompts == [_ALT_TEXT_PROMPT]
 
-    def test_picture_description_data_appended(self, monkeypatch):
+    def test_description_written_to_meta(self, monkeypatch):
         def _fake_call_vlm(image, prompt, config):
             return "injected description"
 
-        pic = _make_picture([])
+        pic = _make_picture(None)
         pic.get_image.return_value = MagicMock()
 
         doc = self._make_doc([pic])
@@ -198,8 +196,8 @@ class TestEnrichPictureDescriptions:
 
         _enrich_picture_descriptions(doc, config)
 
-        appended = pic.annotations[-1]
-        assert appended.text == "injected description"
+        # meta was absent; enrichment must create it and set the description.
+        assert pic.meta.description.text == "injected description"
 
     def test_skips_when_description_disabled(self, monkeypatch):
         call_count = {"n": 0}
@@ -208,7 +206,7 @@ class TestEnrichPictureDescriptions:
             call_count["n"] += 1
             return "should not be called"
 
-        pic = _make_picture([])
+        pic = _make_picture(None)
         pic.get_image.return_value = MagicMock()
         doc = self._make_doc([pic])
 
@@ -228,7 +226,7 @@ class TestEnrichPictureDescriptions:
             call_count["n"] += 1
             return "should not be called"
 
-        pic = _make_picture([])
+        pic = _make_picture(None)
         pic.get_image.return_value = None  # no image
 
         doc = self._make_doc([pic])
@@ -250,7 +248,7 @@ class TestEnrichPictureDescriptions:
 class TestAnnotationPictureSerializer:
     """Tests for the AnnotationPictureSerializer embedded in _docling_to_markdown."""
 
-    def _serialize_picture(self, annotations: list) -> str:
+    def _serialize_picture(self, meta: PictureMeta) -> str:
         """Build a minimal DoclingDocument with one picture and serialize it."""
 
         from docling_core.types.doc.document import DoclingDocument, PictureItem
@@ -282,8 +280,7 @@ class TestAnnotationPictureSerializer:
         doc = DoclingDocument.model_validate(doc_dict)
         pic: PictureItem = doc.pictures[0]
 
-        for ann in annotations:
-            pic.annotations.append(ann)
+        pic.meta = meta
 
         # Call _docling_to_markdown; suppress DoclingEmptyOutputError for empty docs
         try:
@@ -293,17 +290,11 @@ class TestAnnotationPictureSerializer:
         return result
 
     def test_figure_type_comment_precedes_description_block(self):
-        from docling_core.types.doc.document import PictureClassificationClass, PictureClassificationData as RealPCD
+        meta = _make_meta(labels=("bar_chart",), description="A bar chart showing sales data.")
 
-        cls = PictureClassificationClass(class_name="bar_chart", confidence=0.9)
-        classification = RealPCD(provenance="test", predicted_classes=[cls])
-        description = converter_module.PictureDescriptionData(
-            text="A bar chart showing sales data.", provenance="test"
-        )
+        result = self._serialize_picture(meta)
 
-        result = self._serialize_picture([classification, description])
-
-        assert result, "Serializer produced empty output — annotations were not rendered"
+        assert result, "Serializer produced empty output — figure meta was not rendered"
         type_pos = result.find("<!-- Figure Type: bar_chart -->")
         desc_pos = result.find("<!-- Figure Description -->")
         assert type_pos != -1, "Figure Type comment missing"
@@ -311,11 +302,42 @@ class TestAnnotationPictureSerializer:
         assert type_pos < desc_pos, "Figure Type must precede Figure Description"
 
     def test_no_figure_type_comment_when_no_classification(self):
-        description = converter_module.PictureDescriptionData(text="A generic figure.", provenance="test")
-
-        result = self._serialize_picture([description])
+        result = self._serialize_picture(_make_meta(description="A generic figure."))
 
         assert "Figure Type" not in result
+
+    def test_classification_and_description_meta_lines_are_suppressed(self):
+        """The doc serializer must not emit bare ``[Classification]`` / ``[Description]``
+        lines alongside our HTML comments.
+
+        docling populates ``meta`` for every classified figure, which would
+        otherwise trigger the framework's per-item meta rendering. The
+        conversion-worker spec defines figure classification/description output
+        as the HTML comments only, so those two framework lines must stay
+        suppressed.
+        """
+        meta = _make_meta(labels=("bar_chart",), description="A bar chart.")
+
+        result = self._serialize_picture(meta)
+
+        assert "[Classification]" not in result
+        assert "[Description]" not in result
+
+    def test_other_meta_still_serializes(self):
+        """Suppression is scoped to classification/description only.
+
+        The block list must not drop other meta fields (e.g. ``summary``);
+        those still render through the framework's default path so docling
+        metadata we do not override is not silently lost.
+        """
+        meta = _make_meta(labels=("bar_chart",), description="A bar chart.", summary="A short summary.")
+
+        result = self._serialize_picture(meta)
+
+        # classification/description suppressed, but summary preserved.
+        assert "[Classification]" not in result
+        assert "[Description]" not in result
+        assert "A short summary." in result
 
 
 # ---------------------------------------------------------------------------

@@ -38,10 +38,10 @@ from docling_core.transforms.serializer.markdown import (
 )
 from docling_core.types.doc.base import ImageRefMode
 from docling_core.types.doc.document import (
+    DescriptionMetaField,
     DoclingDocument,
-    PictureClassificationData,
-    PictureDescriptionData,
     PictureItem,
+    PictureMeta,
 )
 from docling_core.types.io import DocumentStream
 
@@ -246,12 +246,12 @@ def _create_document_converter(
 
 def _get_classification_label(pic: PictureItem) -> str | None:
     """Return the top classification label for a picture, or None if absent."""
-    for annotation in pic.annotations:
-        if isinstance(annotation, PictureClassificationData) and annotation.predicted_classes:
-            label = annotation.predicted_classes[0].class_name
-            logger.debug("Figure %s classification: %s", pic.self_ref, label)
-            return label
-    return None
+    meta = pic.meta
+    if meta is None or meta.classification is None or not meta.classification.predictions:
+        return None
+    label = meta.classification.predictions[0].class_name
+    logger.debug("Figure %s classification: %s", pic.self_ref, label)
+    return label
 
 
 def _call_vlm_api(image: Image.Image, prompt: str, config: DoclingConverterConfig) -> str:
@@ -315,7 +315,7 @@ def _enrich_picture_descriptions(doc: DoclingDocument, config: DoclingConverterC
     """Post-conversion enrichment: classify each figure and call VLM with task-specific prompt.
 
     Only runs when both picture description and picture classification are enabled.
-    Appends PictureDescriptionData to each figure's annotations, replacing Docling's
+    Writes the VLM result to each figure's ``meta.description``, replacing Docling's
     built-in description pass.
 
     Args:
@@ -348,11 +348,13 @@ def _enrich_picture_descriptions(doc: DoclingDocument, config: DoclingConverterC
                 continue
 
             result = _call_vlm_api(image, prompt, config)
-            pic.annotations.append(PictureDescriptionData(text=result, provenance="aizk:vlm_enrichment"))
+            if pic.meta is None:
+                pic.meta = PictureMeta()
+            pic.meta.description = DescriptionMetaField(text=result, created_by="aizk:vlm_enrichment")
 
 
 def _docling_to_markdown(doc: DoclingDocument) -> str:
-    """Serialize DoclingDocument to Markdown with annotations."""
+    """Serialize DoclingDocument to Markdown with figure metadata."""
 
     class AnnotationPictureSerializer(MarkdownPictureSerializer):
         def serialize(
@@ -375,23 +377,21 @@ def _docling_to_markdown(doc: DoclingDocument) -> str:
             )
             text_parts.append(parent_res.text)
 
-            # Prepend figure type label if classification annotation is present
-            for annotation in item.annotations:
-                if isinstance(annotation, PictureClassificationData) and annotation.predicted_classes:
-                    label = annotation.predicted_classes[0].class_name
-                    text_parts.append(f"<!-- Figure Type: {label} -->")
-                    break
+            # Prepend figure type label if classification metadata is present
+            label = _get_classification_label(item)
+            if label is not None:
+                text_parts.append(f"<!-- Figure Type: {label} -->")
 
             # Append alt text as HTML comment
-            for annotation in item.annotations:
-                if isinstance(annotation, PictureDescriptionData):
-                    text_parts.append(
-                        f"""
+            meta = item.meta
+            if meta is not None and meta.description is not None:
+                text_parts.append(
+                    f"""
 <!-- Figure Description -->
-{annotation.text}
+{meta.description.text}
 <!-- End Figure Description -->
 """.strip()
-                    )
+                )
 
             text_res = (separator or "\n").join(text_parts)
             return create_ser_result(text=text_res, span_source=item)
@@ -404,7 +404,13 @@ def _docling_to_markdown(doc: DoclingDocument) -> str:
             enable_chart_tables=True,
             image_mode=ImageRefMode.PLACEHOLDER,
             image_placeholder="",
-            include_annotations=False,
+            # The framework renders a bare ``[Classification] <label>`` /
+            # ``[Description] <text>`` line for each populated meta field; this
+            # serializer already owns figure classification/description via the
+            # HTML comments above, so block just those two fields. Other meta
+            # (summary, code, molecule, tabular_chart) still renders as before.
+            # See conversion-worker spec.
+            blocked_meta_names={"classification", "description"},
             mark_meta=True,
         ),
     )

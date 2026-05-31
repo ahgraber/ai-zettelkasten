@@ -56,10 +56,10 @@ from docling_core.transforms.serializer.markdown import (
 )
 from docling_core.types.doc.base import ImageRefMode
 from docling_core.types.doc.document import (
+    DescriptionMetaField,
     DoclingDocument,
-    PictureClassificationData,
-    PictureDescriptionData,
     PictureItem,
+    PictureMeta,
     PictureTabularChartData,
     TableItem,
 )
@@ -349,11 +349,9 @@ def enrich_picture_descriptions(
     for pic in doc.pictures:
         # Determine classification label
         label: Optional[str] = None
-        for ann in pic.annotations:
-            if isinstance(ann, PictureClassificationData) and ann.predicted_classes:
-                label = ann.predicted_classes[0].class_name
-                logger.debug("Figure %s classification: %s", pic.self_ref, label)
-                break
+        if pic.meta is not None and pic.meta.classification is not None and pic.meta.classification.predictions:
+            label = pic.meta.classification.predictions[0].class_name
+            logger.debug("Figure %s classification: %s", pic.self_ref, label)
 
         if label is not None and label not in _LABEL_TO_PROMPT:
             logger.debug("Figure %s: unknown label %r, using generic prompt", pic.self_ref, label)
@@ -387,7 +385,9 @@ def enrich_picture_descriptions(
             response = httpx.post(url, json=payload, headers=headers, timeout=timeout)
             response.raise_for_status()
             result = response.json()["choices"][0]["message"]["content"]
-            pic.annotations.append(PictureDescriptionData(text=result, provenance="aizk:vlm_enrichment"))
+            if pic.meta is None:
+                pic.meta = PictureMeta()
+            pic.meta.description = DescriptionMetaField(text=result, created_by="aizk:vlm_enrichment")
         except httpx.HTTPError as exc:
             logger.warning("VLM call failed for figure %s: %s", pic.self_ref, exc)
 
@@ -415,23 +415,21 @@ class AnnotationPictureSerializer(MarkdownPictureSerializer):
         )
         text_parts.append(parent_res.text)
 
-        # Prepend figure type label if classification annotation is present
-        for annotation in item.annotations:
-            if isinstance(annotation, PictureClassificationData) and annotation.predicted_classes:
-                label = annotation.predicted_classes[0].class_name
-                text_parts.append(f"<!-- Figure Type: {label} -->")
-                break
+        # Prepend figure type label if classification metadata is present
+        meta = item.meta
+        if meta is not None and meta.classification is not None and meta.classification.predictions:
+            label = meta.classification.predictions[0].class_name
+            text_parts.append(f"<!-- Figure Type: {label} -->")
 
-        # appending annotations:
-        for annotation in item.annotations:
-            if isinstance(annotation, PictureDescriptionData):
-                text_parts.append(
-                    f"""
+        # append figure description from metadata:
+        if meta is not None and meta.description is not None:
+            text_parts.append(
+                f"""
 <!-- Figure Description -->
-{annotation.text}
+{meta.description.text}
 <!-- End Figure Description -->
 """.strip()
-                )
+            )
 
         text_res = (separator or "\n").join(text_parts)
         return create_ser_result(text=text_res, span_source=item)
@@ -448,7 +446,10 @@ def convert_docling_document_to_markdown(doc: DoclingDocument) -> str:
             enable_chart_tables=True,
             image_mode=ImageRefMode.PLACEHOLDER,
             image_placeholder="",  # Do not inject image placeholder indicator
-            include_annotations=False,  # or raw annotation text because customize in the AnnotationPictureSerializer
+            # The AnnotationPictureSerializer above owns figure classification/
+            # description via HTML comments, so block just those two meta fields;
+            # other meta (summary, code, etc.) still renders as before.
+            blocked_meta_names={"classification", "description"},
             mark_meta=True,
         ),
     )
