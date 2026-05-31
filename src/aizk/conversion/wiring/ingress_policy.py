@@ -13,6 +13,10 @@ class IngressPolicy(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="AIZK_INGRESS__", env_file=None, extra="ignore")
 
+    # TODO: only ``karakeep_bookmark`` is publicly submittable. The worker already
+    # registers and can fetch ``arxiv``, ``url``, ``github_readme``, and
+    # ``inline_html``, but they are intentionally not accepted from external
+    # callers and there is no concrete plan to widen this yet.
     accepted_submission_kinds: frozenset[str] = frozenset({"karakeep_bookmark"})
 
 

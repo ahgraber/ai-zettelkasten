@@ -9,11 +9,11 @@ import sys
 from setproctitle import setproctitle
 import uvicorn
 
-from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
+from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig
 from aizk.conversion.utilities.dotenv import load_process_dotenv_once
 from aizk.conversion.utilities.litestream import LitestreamManager
 from aizk.conversion.utilities.logging import configure_logging
-from aizk.conversion.utilities.startup import StartupValidationError, log_feature_summary, validate_startup
+from aizk.conversion.utilities.startup import StartupValidationError, log_feature_summary
 from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
 
 logger = logging.getLogger(__name__)
@@ -61,12 +61,7 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
     # the audit trail the network-egress-policy design depends on.
     configure_logging(config)
     docling_cfg = DoclingConverterConfig()
-    karakeep_cfg = KarakeepFetcherConfig()
-    try:
-        validate_startup(config, docling_cfg, karakeep_cfg, role="worker")
-    except StartupValidationError:
-        logger.exception("startup validation failed", extra={"role": "worker"})
-        return 1
+    log_feature_summary(config, docling_cfg, "worker")
     configure_mlflow_tracing(
         enabled=config.mlflow_tracing_enabled,
         tracking_uri=config.mlflow_tracking_uri,
@@ -77,10 +72,16 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
 
     run_migrations()
     # The worker drives the conversion stage through the pipeline runner
-    # (StageRunner + ConversionStageHandler).
+    # (StageRunner + ConversionStageHandler). The runner's startup gate runs the
+    # adapter-declared probes before claiming any work; a probe failure raises
+    # StartupValidationError, which we map to a non-zero exit.
     from aizk.conversion.processing.worker import run_worker
 
-    return run_worker(config)
+    try:
+        return run_worker(config)
+    except StartupValidationError:
+        logger.exception("startup validation failed", extra={"role": "worker"})
+        return 1
 
 
 def main(argv: list[str] | None = None) -> int:

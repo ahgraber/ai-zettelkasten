@@ -13,10 +13,10 @@ from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterC
 from aizk.conversion.utilities.startup import (
     StartupValidationError,
     log_feature_summary,
+    probe_database,
     probe_karakeep,
     probe_picture_description,
     probe_s3,
-    validate_startup,
 )
 
 # ---------------------------------------------------------------------------
@@ -226,53 +226,26 @@ def test_log_feature_summary_combinations(
 
 
 # ---------------------------------------------------------------------------
-# validate_startup
+# probe_database
 # ---------------------------------------------------------------------------
 
 
-def test_validate_startup_succeeds_when_all_probes_pass(
-    config: ConversionConfig,
-    docling_cfg: DoclingConverterConfig,
-    karakeep_cfg: KarakeepFetcherConfig,
-) -> None:
+def test_probe_database_succeeds_when_reachable() -> None:
+    from sqlalchemy import create_engine
+
+    engine = create_engine("sqlite://")  # in-memory; SELECT 1 needs no tables
+    cfg = ConversionConfig(_env_file=None, database_url="sqlite://")
+    with patch("aizk.conversion.db.get_engine", return_value=engine):
+        probe_database(cfg)  # must not raise
+
+
+def test_probe_database_raises_when_unreachable() -> None:
+    cfg = ConversionConfig(_env_file=None)
     with (
-        patch("aizk.conversion.utilities.startup.probe_s3") as mock_s3,
-        patch("aizk.conversion.utilities.startup.probe_karakeep") as mock_kk,
-        patch("aizk.conversion.utilities.startup.log_feature_summary") as mock_log,
+        patch("aizk.conversion.db.get_engine", side_effect=Exception("db boom")),
+        pytest.raises(StartupValidationError, match="Database is unreachable"),
     ):
-        validate_startup(config, docling_cfg, karakeep_cfg, role="worker")
-
-    mock_s3.assert_called_once_with(config)
-    mock_kk.assert_called_once_with(karakeep_cfg)
-    mock_log.assert_called_once_with(config, docling_cfg, "worker")
-
-
-def test_validate_startup_raises_on_s3_failure(
-    config: ConversionConfig,
-    docling_cfg: DoclingConverterConfig,
-    karakeep_cfg: KarakeepFetcherConfig,
-) -> None:
-    with (
-        patch("aizk.conversion.utilities.startup.probe_s3", side_effect=StartupValidationError("s3 down")),
-        patch("aizk.conversion.utilities.startup.probe_karakeep") as mock_kk,
-        pytest.raises(StartupValidationError, match="s3 down"),
-    ):
-        validate_startup(config, docling_cfg, karakeep_cfg, role="worker")
-
-    mock_kk.assert_not_called()
-
-
-def test_validate_startup_raises_on_karakeep_failure(
-    config: ConversionConfig,
-    docling_cfg: DoclingConverterConfig,
-    karakeep_cfg: KarakeepFetcherConfig,
-) -> None:
-    with (
-        patch("aizk.conversion.utilities.startup.probe_s3"),
-        patch("aizk.conversion.utilities.startup.probe_karakeep", side_effect=StartupValidationError("kk down")),
-        pytest.raises(StartupValidationError, match="kk down"),
-    ):
-        validate_startup(config, docling_cfg, karakeep_cfg, role="api")
+        probe_database(cfg)
 
 
 # ---------------------------------------------------------------------------

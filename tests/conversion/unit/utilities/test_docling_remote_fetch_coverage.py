@@ -109,23 +109,25 @@ def test_spike_a_no_requests_get_calls_with_remote_fetch_disabled(
 def test_spike_a_remote_fetch_true_would_call_requests_get(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Spike A (inverse): with enable_remote_fetch=True, requests.get IS called.
+    """Spike A (inverse): with enable_remote_fetch=True, the remote fetch IS made.
 
     Confirms that the test above is meaningful — the mock is actually reached
-    when remote fetch is enabled.
+    when remote fetch is enabled. Docling's HTML backend fetches via
+    ``requests.Session().get`` (not the module-level ``requests.get``), so the
+    mock is installed on ``Session.get``.
     """
     from docling.backend.html_backend import HTMLDocumentBackend
 
     requests_get_calls: list[str] = []
 
-    def _record_get(url, **kwargs):
+    def _record_get(self, url, **kwargs):
         requests_get_calls.append(url)
         # Raise HTTPError — Docling catches this and warns instead of propagating.
         import requests as _requests
 
         raise _requests.HTTPError("test: blocking outbound for spike")
 
-    monkeypatch.setattr(_html_backend_mod.requests, "get", _record_get)
+    monkeypatch.setattr(_html_backend_mod.requests.Session, "get", _record_get)
 
     options = HTMLBackendOptions(
         kind="html",

@@ -14,22 +14,37 @@ choice. They diverge by design.
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
 
 from aizk.conversion.core.protocols import RefResolver
 from aizk.conversion.core.registry import ConverterRegistry, FetcherRegistry
 from aizk.conversion.core.types import ContentType
 
-# Probe type — deferred to Stage 7. Placeholder for startup health-check callables.
-Probe = Any
+# A startup health-check callable; raises StartupValidationError when its service is unreachable.
+Probe = Callable[[], None]
 
 
 class DeploymentCapabilities:
     """Worker-side capability descriptor. Sourced from FetcherRegistry + ConverterRegistry."""
 
-    def __init__(self, fetcher_registry: FetcherRegistry, converter_registry: ConverterRegistry) -> None:
+    def __init__(
+        self,
+        fetcher_registry: FetcherRegistry,
+        converter_registry: ConverterRegistry,
+        startup_probes: list[Probe] | None = None,
+    ) -> None:
+        """Store the registries and the adapter-declared startup probes.
+
+        Args:
+            fetcher_registry: Registry of resolvers and content fetchers.
+            converter_registry: Registry of converters.
+            startup_probes: Probes the runner's startup gate runs before
+                accepting work, assembled by ``build_startup_probes`` from the
+                registered adapters. Empty when none are supplied.
+        """
         self._fr = fetcher_registry
         self._cr = converter_registry
+        self._startup_probes: list[Probe] = list(startup_probes) if startup_probes else []
 
     @property
     def registered_kinds(self) -> frozenset[str]:
@@ -64,8 +79,13 @@ class DeploymentCapabilities:
 
     @property
     def startup_probes(self) -> list[Probe]:
-        """Return startup health-check probes. Deferred to Stage 7."""
-        return []
+        """Return the adapter-declared startup health-check probes.
+
+        The set is determined by which adapters are registered and by
+        configuration (see ``build_startup_probes``); the runner's startup gate
+        runs each before any work is accepted.
+        """
+        return self._startup_probes
 
 
 class SubmissionCapabilities:

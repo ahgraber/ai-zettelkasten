@@ -26,14 +26,14 @@
 - [x] Implement graceful drain on termination signal (stop claiming, bounded drain timeout, none left running), cancellation (running ≤ bounded interval; queued-cancelled skipped), wall-clock timeout (→ `timed_out`, graceful-before-forceful, no orphan descendants), transient-resource cleanup on every outcome, and stale-unit recovery recording its cause.
 - [x] Implement startup dependency validation gating work acceptance, structured logs with trace context, operational metrics, and `setproctitle` stage-role identification.
 - [x] Build a stub `StageHandler` (in-memory) for runner tests.
-- [x] Test `tests/pipeline/test_harness_adapter.py::test_new_stage_runs_via_adapter` and `::test_two_stores_share_harness`. **[R: runner over handler protocol]**
-- [x] Test `tests/pipeline/test_harness_scheduling.py::test_concurrency_within_limit_in_order` and `::test_retry_wait_gates_eligibility` (wrap act with `no_task_leaks`). **[R: eligible-in-submission-order + bounded concurrency]**
-- [x] Test `tests/pipeline/test_harness_drain.py::test_inflight_finishes_during_drain` and `::test_drain_timeout_enforced` (wrap with `no_task_leaks`/`no_thread_leaks`). **[R: graceful drain]**
-- [x] Test `tests/pipeline/test_harness_cancel.py::test_running_cancelled_promptly` and `::test_queued_cancel_skipped`. **[R: cancellation]**
-- [x] Test `tests/pipeline/test_harness_exec.py::test_timeout_recorded_no_orphans` and `::test_cleanup_on_every_outcome` (wrap with `no_thread_leaks`). **[R: bounded execution + cleanup]**
-- [x] Test `tests/pipeline/test_harness_recovery.py::test_stale_unit_recovered_with_cause`. **[R: stale-unit recovery]**
-- [x] Test `tests/pipeline/test_harness_startup.py::test_missing_dependency_blocks_acceptance`. **[R: startup validation gates acceptance]**
-- [x] Test `tests/pipeline/test_harness_observability.py::test_lifecycle_logs_metrics_and_role`. **[R: lifecycle observability + stage-role]**
+- [x] Test `tests/pipeline/test_runner_adapter.py::test_new_stage_runs_via_adapter` and `::test_two_stores_share_runner`. **[R: runner over handler protocol]**
+- [x] Test `tests/pipeline/test_runner_scheduling.py::test_concurrency_within_limit_in_order` and `::test_retry_wait_gates_eligibility` (wrap act with `no_task_leaks`). **[R: eligible-in-submission-order + bounded concurrency]**
+- [x] Test `tests/pipeline/test_runner_drain.py::test_inflight_finishes_during_drain` and `::test_drain_timeout_enforced` (wrap with `no_task_leaks`/`no_thread_leaks`). **[R: graceful drain]**
+- [x] Test `tests/pipeline/test_runner_cancel.py::test_running_cancelled_promptly` and `::test_queued_cancel_skipped`. **[R: cancellation]**
+- [x] Test `tests/pipeline/test_runner_exec.py::test_timeout_recorded_no_orphans` and `::test_cleanup_on_every_outcome` (wrap with `no_thread_leaks`). **[R: bounded execution + cleanup]**
+- [x] Test `tests/pipeline/test_runner_recovery.py::test_stale_unit_recovered_with_cause`. **[R: stale-unit recovery]**
+- [x] Test `tests/pipeline/test_runner_startup.py::test_missing_dependency_blocks_acceptance`. **[R: startup validation gates acceptance]**
+- [x] Test `tests/pipeline/test_runner_observability.py::test_lifecycle_logs_metrics_and_role`. **[R: lifecycle observability + stage-role]**
 
 ## Runner hardening (review round 2)
 
@@ -99,9 +99,9 @@
 - [x] Relocate the now-duplicated generic contracts out of `worker-process-management` and `conversion-worker` into `pipeline-stage-runtime`: add MODIFIED/REMOVED deltas for the relocated requirements with `> Previously:` provenance, leaving the conversion specs holding only conversion-specific behavior.
   Update the change's delta specs accordingly.
 - [ ] **(do BEFORE sync)** Align `conversion-worker` spec prose with the ADR-009 naming convention (orchestration = engine layer only).
-      Replace the ~12 lowercase "orchestrator" actor-labels in `.specs/specs/conversion-worker/spec.md` per their sense: the fetch/convert _coordination_ usages (input inspection, converter resolution, conversion invocation) → "the conversion coordinator"; the _transition_ usages ("the orchestrator transitions the job to FAILED_PERM/UPLOAD_PENDING/...") → "the stage handler" (those moved to `ConversionStageHandler` in this change).
-      The implementation rename already landed (`Orchestrator`→`ConversionCoordinator`, `workers/`→`processing/`); this closes the spec-vs-code drift so the baseline is congruent at sync time.
-      See `docs/decision-record/009-orchestration.md` § Naming convention.
+  Replace the ~12 lowercase "orchestrator" actor-labels in `.specs/specs/conversion-worker/spec.md` per their sense: the fetch/convert _coordination_ usages (input inspection, converter resolution, conversion invocation) → "the conversion coordinator"; the _transition_ usages ("the orchestrator transitions the job to FAILED_PERM/UPLOAD_PENDING/...") → "the stage handler" (those moved to `ConversionStageHandler` in this change).
+  The implementation rename already landed (`Orchestrator`→`ConversionCoordinator`, `workers/`→`processing/`); this closes the spec-vs-code drift so the baseline is congruent at sync time.
+  See `docs/decision-record/009-orchestration.md` § Naming convention.
 
 ## Documentation / decision record
 

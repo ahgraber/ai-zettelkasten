@@ -102,6 +102,24 @@ def probe_picture_description(docling_cfg: DoclingConverterConfig) -> None:
         raise StartupValidationError(f"Picture description endpoint unreachable at {url}: {exc}") from exc
 
 
+def probe_database(config: ConversionConfig) -> None:
+    """Verify the conversion database is reachable with a trivial query.
+
+    Raises:
+        StartupValidationError: If the database cannot be opened or queried.
+    """
+    from sqlalchemy import text
+
+    from aizk.conversion.db import get_engine
+
+    try:
+        engine = get_engine(config.database_url)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as exc:
+        raise StartupValidationError(f"Database is unreachable: {exc}") from exc
+
+
 def log_feature_summary(config: ConversionConfig, docling_cfg: DoclingConverterConfig, role: str) -> None:
     """Log a structured summary of optional feature states.
 
@@ -161,39 +179,3 @@ def log_feature_summary(config: ConversionConfig, docling_cfg: DoclingConverterC
         "startup feature summary",
         extra={"role": role, "features": features},
     )
-
-
-def validate_startup(
-    config: ConversionConfig,
-    docling_cfg: DoclingConverterConfig,
-    karakeep_cfg: KarakeepFetcherConfig,
-    role: str,
-) -> None:
-    """Run all startup validation checks.
-
-    Probes required services (S3, KaraKeep) and the optional picture description
-    endpoint (when configured), then logs optional feature status.
-    Raises on the first required service failure.
-
-    Args:
-        config: Conversion service configuration.
-        docling_cfg: Docling-specific configuration.
-        karakeep_cfg: KaraKeep-specific configuration.
-        role: Process role (e.g. "worker", "api").
-
-    Raises:
-        StartupValidationError: If any required service is unreachable.
-    """
-    logger.info("validating startup prerequisites", extra={"role": role})
-
-    probe_s3(config)
-    logger.info("S3 probe passed", extra={"role": role})
-
-    probe_karakeep(karakeep_cfg)
-    logger.info("KaraKeep probe passed", extra={"role": role})
-
-    probe_picture_description(docling_cfg)
-    if docling_cfg.is_picture_description_enabled():
-        logger.info("picture description endpoint probe passed", extra={"role": role})
-
-    log_feature_summary(config, docling_cfg, role)

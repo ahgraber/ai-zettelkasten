@@ -128,8 +128,8 @@ conversion phase and the subprocess model used to achieve it.
 
 ### Requirement: Clean up temporary workspace on all job outcomes
 
-The conversion stage's transient resource is the temporary workspace created for a job; the conversion adapter SHALL release that workspace when the runner invokes its cleanup hook.
-The generic guarantee that transient resources are released on every terminal outcome — succeeded, failed, cancelled, or timed out — is owned by `pipeline-stage-runtime`; this requirement retains only the conversion-specific binding of that hook to temporary-workspace removal.
+The conversion stage's primary transient resource is the temporary workspace created for a job; the conversion adapter SHALL remove that workspace on every terminal outcome — succeeded, failed, cancelled, or timed out — by scoping it to the adapter's unit-of-work execution, so no workspace survives the unit regardless of how it ends.
+The generic guarantee that transient resources are released on every terminal outcome is owned by `pipeline-stage-runtime`; this requirement retains only the conversion-specific obligation to remove the temporary workspace.
 
 > Previously: "The system SHALL guarantee that the temporary workspace created
 > for a job is removed after the job finishes, regardless of whether it

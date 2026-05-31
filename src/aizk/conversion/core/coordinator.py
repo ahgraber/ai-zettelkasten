@@ -7,10 +7,10 @@ It is a pure coordinator:
   via ``isinstance(impl, RefResolver)`` — matching the registry invariant so
   declared intent and runtime role cannot diverge.
 
-Stage 2 scope: the GPU ``ResourceGuard`` is NOT entered here. Parent-side
-admission control is a Stage 7 concern (see
-``.specs/changes/pluggable-fetch-convert/design.md``, "Decision: GPU admission
-control stays in the parent process").
+The GPU ``ResourceGuard`` is NOT entered here: GPU admission control stays in
+the parent worker process, not the coordinator (see
+``.specs/changes/archive/2026-04-20-pluggable-fetch-convert/design.md``,
+"Decision: GPU admission control stays in the parent process").
 """
 
 from __future__ import annotations
