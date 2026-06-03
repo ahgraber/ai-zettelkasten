@@ -44,6 +44,10 @@ def upgrade() -> None:
         sa.Column("scope_key", sa.String(), nullable=False),
         # status mirrors RunStatus (active|superseded); plain text, no named enum.
         sa.Column("status", sa.String(length=10), nullable=False),
+        # Created here as ``input_fingerprint``; renamed to ``derivation_key`` by a
+        # later migration (the chunk-persistence-contextualization vocabulary
+        # change) so DBs already at this revision are migrated forward rather than
+        # diverging from the ORM.
         sa.Column("input_fingerprint", sa.Text(), nullable=False),
         sa.Column("version_stamps_json", sa.Text(), nullable=False),
         sa.Column("supersedes_run_id", sa.Integer(), nullable=True),

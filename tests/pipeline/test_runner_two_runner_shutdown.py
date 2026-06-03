@@ -32,9 +32,9 @@ from pyleak import no_thread_leaks
 import pytest
 
 from aizk.pipeline import shutdown as shutdown_module
+from aizk.pipeline.lifecycle import WorkUnitStatus
 import aizk.pipeline.runner as runner_module
 from aizk.pipeline.runner import StageRunner
-from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.shutdown import ShutdownController
 
 from ._stub_handler import StubStageHandler, create_stub_engine

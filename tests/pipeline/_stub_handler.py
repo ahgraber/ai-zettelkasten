@@ -37,8 +37,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlmodel import Session, select
 
 from aizk.pipeline.events import record_transition
-from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
 from aizk.pipeline.handler import Isolation
+from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine

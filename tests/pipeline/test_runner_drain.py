@@ -16,8 +16,8 @@ import threading
 
 from pyleak import no_thread_leaks
 
-from aizk.pipeline.runner import StageRunner
 from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.pipeline.runner import StageRunner
 from aizk.pipeline.shutdown import ShutdownController
 
 from ._stub_handler import StubStageHandler, create_stub_engine

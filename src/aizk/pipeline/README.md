@@ -62,7 +62,7 @@ Once a unit is dispatched to the pool, the worker threads may begin in any order
 
 `PipelineRun` + `record_run` version a stage's model/config-dependent derived output.
 At most one run per `(stage, scope_key)` is `active` (enforced by a partial unique index); recording a new run and superseding the prior one is atomic — never two active, never a gap.
-Runs record an input fingerprint and version stamps for reproducibility, and are immutable except for the active→superseded lifecycle transition.
+Runs record a derivation key and version stamps for reproducibility, and are immutable except for the active→superseded lifecycle transition.
 _No orchestrator provides this_ — it is domain state that survives any engine.
 
 ### Transition-event log — [`events.py`](events.py)
