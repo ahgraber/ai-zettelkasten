@@ -1,0 +1,1705 @@
+{
+  "components": {
+    "schemas": {
+      "ArtifactSummary": {
+        "description": "Summary of conversion artifacts for completed jobs.",
+        "properties": {
+          "figure_count": {
+            "title": "Figure Count",
+            "type": "integer"
+          },
+          "manifest_key": {
+            "title": "Manifest Key",
+            "type": "string"
+          },
+          "markdown_key": {
+            "title": "Markdown Key",
+            "type": "string"
+          },
+          "s3_prefix": {
+            "title": "S3 Prefix",
+            "type": "string"
+          }
+        },
+        "required": [
+          "s3_prefix",
+          "markdown_key",
+          "manifest_key",
+          "figure_count"
+        ],
+        "title": "ArtifactSummary",
+        "type": "object"
+      },
+      "ArxivRef": {
+        "description": "Reference to an arXiv paper.",
+        "properties": {
+          "arxiv_id": {
+            "title": "Arxiv Id",
+            "type": "string"
+          },
+          "arxiv_pdf_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arxiv Pdf Url"
+          },
+          "kind": {
+            "const": "arxiv",
+            "default": "arxiv",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "arxiv_id"
+        ],
+        "title": "ArxivRef",
+        "type": "object"
+      },
+      "Body_ui_job_actions_ui_jobs_actions_post": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "desc",
+            "title": "Direction"
+          },
+          "job_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Ids"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "search": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search"
+          },
+          "sort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "queued_at",
+            "title": "Sort"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "Body_ui_job_actions_ui_jobs_actions_post",
+        "type": "object"
+      },
+      "BulkActionResponse": {
+        "description": "Response schema for bulk job actions.",
+        "properties": {
+          "action": {
+            "enum": [
+              "retry",
+              "cancel"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/BulkActionResult"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/BulkActionSummary"
+          }
+        },
+        "required": [
+          "action",
+          "results",
+          "summary"
+        ],
+        "title": "BulkActionResponse",
+        "type": "object"
+      },
+      "BulkActionResult": {
+        "description": "Per-job result for bulk actions.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "success",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "BulkActionResult",
+        "type": "object"
+      },
+      "BulkActionSummary": {
+        "description": "Summary counts for bulk actions.",
+        "properties": {
+          "errors": {
+            "title": "Errors",
+            "type": "integer"
+          },
+          "success": {
+            "title": "Success",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "success",
+          "errors"
+        ],
+        "title": "BulkActionSummary",
+        "type": "object"
+      },
+      "BulkJobActionRequest": {
+        "description": "Request schema for bulk job actions.",
+        "properties": {
+          "action": {
+            "enum": [
+              "retry",
+              "cancel"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "job_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Job Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "action",
+          "job_ids"
+        ],
+        "title": "BulkJobActionRequest",
+        "type": "object"
+      },
+      "CheckResult": {
+        "description": "Result of an individual health check.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "status"
+        ],
+        "title": "CheckResult",
+        "type": "object"
+      },
+      "ContentType": {
+        "description": "Closed enumeration of content types the pipeline can handle.",
+        "enum": [
+          "pdf",
+          "html",
+          "image",
+          "docx",
+          "pptx",
+          "xlsx",
+          "csv"
+        ],
+        "title": "ContentType",
+        "type": "string"
+      },
+      "ConversionJobStatus": {
+        "description": "Allowed statuses for conversion jobs.",
+        "enum": [
+          "NEW",
+          "QUEUED",
+          "RUNNING",
+          "UPLOAD_PENDING",
+          "SUCCEEDED",
+          "FAILED_RETRYABLE",
+          "FAILED_PERM",
+          "CANCELLED"
+        ],
+        "title": "ConversionJobStatus",
+        "type": "string"
+      },
+      "GithubReadmeRef": {
+        "description": "Reference to a GitHub repo README.\n\n``branch`` is accepted for forward compatibility but currently ignored by\n``GithubReadmeFetcher``, which hardcodes a ``main``/``master`` fallback.\nWiring ``branch`` through to the fetcher is deferred until ``IngressPolicy``\nwidens to admit ``github_readme`` for public submission. The field is also\nexcluded from ``to_dedup_payload()`` so identity is ``(owner, repo)``.",
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "kind": {
+            "const": "github_readme",
+            "default": "github_readme",
+            "title": "Kind",
+            "type": "string"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner",
+          "repo"
+        ],
+        "title": "GithubReadmeRef",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "description": "Health endpoint response.",
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/CheckResult"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "InlineHtmlRef": {
+        "description": "Reference carrying inline HTML/text bytes directly, capped at 64 KiB raw.",
+        "properties": {
+          "body": {
+            "contentMediaType": "application/octet-stream",
+            "title": "Body",
+            "type": "string"
+          },
+          "kind": {
+            "const": "inline_html",
+            "default": "inline_html",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "title": "InlineHtmlRef",
+        "type": "object"
+      },
+      "JobList": {
+        "description": "Response schema for job listing.",
+        "properties": {
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/JobResponse"
+            },
+            "title": "Jobs",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "jobs",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "JobList",
+        "type": "object"
+      },
+      "JobResponse": {
+        "description": "Response schema for conversion jobs.",
+        "properties": {
+          "aizk_uuid": {
+            "format": "uuid",
+            "title": "Aizk Uuid",
+            "type": "string"
+          },
+          "artifact_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "earliest_next_attempt_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Earliest Next Attempt At"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "karakeep_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Karakeep Id"
+          },
+          "payload_version": {
+            "title": "Payload Version",
+            "type": "integer"
+          },
+          "queued_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queued At"
+          },
+          "source_ref": {
+            "discriminator": {
+              "mapping": {
+                "arxiv": "#/components/schemas/ArxivRef",
+                "github_readme": "#/components/schemas/GithubReadmeRef",
+                "inline_html": "#/components/schemas/InlineHtmlRef",
+                "karakeep_bookmark": "#/components/schemas/KarakeepBookmarkRef",
+                "singlefile": "#/components/schemas/SingleFileRef",
+                "url": "#/components/schemas/UrlRef"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/KarakeepBookmarkRef"
+              },
+              {
+                "$ref": "#/components/schemas/ArxivRef"
+              },
+              {
+                "$ref": "#/components/schemas/GithubReadmeRef"
+              },
+              {
+                "$ref": "#/components/schemas/UrlRef"
+              },
+              {
+                "$ref": "#/components/schemas/SingleFileRef"
+              },
+              {
+                "$ref": "#/components/schemas/InlineHtmlRef"
+              }
+            ],
+            "title": "Source Ref"
+          },
+          "source_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Type"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConversionJobStatus"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "format": "uri",
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "id",
+          "aizk_uuid",
+          "source_ref",
+          "status",
+          "attempts",
+          "payload_version",
+          "idempotency_key",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "JobResponse",
+        "type": "object"
+      },
+      "JobStatusCounts": {
+        "description": "Aggregated conversion job counts by status.",
+        "properties": {
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts",
+            "type": "object"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "counts",
+          "total"
+        ],
+        "title": "JobStatusCounts",
+        "type": "object"
+      },
+      "JobSubmission": {
+        "description": "Request schema for job submission.",
+        "properties": {
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "payload_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Payload Version",
+            "type": "integer"
+          },
+          "source_ref": {
+            "discriminator": {
+              "mapping": {
+                "karakeep_bookmark": "#/components/schemas/KarakeepBookmarkRef"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/KarakeepBookmarkRef"
+              }
+            ],
+            "title": "Source Ref"
+          }
+        },
+        "required": [
+          "source_ref"
+        ],
+        "title": "JobSubmission",
+        "type": "object"
+      },
+      "KarakeepBookmarkRef": {
+        "description": "Reference to a KaraKeep bookmark; resolved to a more specific ref by the resolver.",
+        "properties": {
+          "bookmark_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "title": "Bookmark Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "karakeep_bookmark",
+            "default": "karakeep_bookmark",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bookmark_id"
+        ],
+        "title": "KarakeepBookmarkRef",
+        "type": "object"
+      },
+      "OutputResponse": {
+        "description": "Response schema for a conversion output record.",
+        "properties": {
+          "aizk_uuid": {
+            "format": "uuid",
+            "title": "Aizk Uuid",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "docling_version": {
+            "title": "Docling Version",
+            "type": "string"
+          },
+          "figure_count": {
+            "title": "Figure Count",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "integer"
+          },
+          "manifest_key": {
+            "title": "Manifest Key",
+            "type": "string"
+          },
+          "markdown_hash_xx64": {
+            "title": "Markdown Hash Xx64",
+            "type": "string"
+          },
+          "markdown_key": {
+            "title": "Markdown Key",
+            "type": "string"
+          },
+          "payload_version": {
+            "title": "Payload Version",
+            "type": "integer"
+          },
+          "pipeline_name": {
+            "title": "Pipeline Name",
+            "type": "string"
+          },
+          "s3_prefix": {
+            "title": "S3 Prefix",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "job_id",
+          "aizk_uuid",
+          "title",
+          "payload_version",
+          "s3_prefix",
+          "markdown_key",
+          "manifest_key",
+          "markdown_hash_xx64",
+          "figure_count",
+          "docling_version",
+          "pipeline_name",
+          "created_at"
+        ],
+        "title": "OutputResponse",
+        "type": "object"
+      },
+      "QueueFullResponse": {
+        "description": "Response schema when the job queue is at capacity.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "retry_after": {
+            "title": "Retry After",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "detail",
+          "retry_after"
+        ],
+        "title": "QueueFullResponse",
+        "type": "object"
+      },
+      "SingleFileRef": {
+        "description": "Reference to a SingleFile-archived page.\n\nSkeleton variant: unused at cutover; kept in the union so future wiring\ndoes not require a SourceRef migration.",
+        "properties": {
+          "kind": {
+            "const": "singlefile",
+            "default": "singlefile",
+            "title": "Kind",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "SingleFileRef",
+        "type": "object"
+      },
+      "UrlRef": {
+        "description": "Reference to a URL. The URL is stored in normalized form for stable identity.\n\nThe URL is normalized for dedup-payload stability but NOT validated against\nthe egress policy at construction time. The load-bearing security check is\nthe fetch-time call to ``async_assert_egress_allowed`` inside the fetcher\npath (``UrlFetcher``, ``ArxivFetcher``, ``GithubReadmeFetcher``, and\n``prefetch_images`` via ``egress_fetch_bytes``).\n\nSee ``.specs/changes/network-egress-policy/design.md`` \u00a7 \"Defer egress\nvalidation to fetch time only\" for the rationale (KaraKeep private\nbase-URL paradox; redundant DNS in API + worker rehydration paths).",
+        "properties": {
+          "content_type_hint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContentType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "const": "url",
+            "default": "url",
+            "title": "Kind",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "UrlRef",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Docling Conversion Service",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/health/live": {
+      "get": {
+        "description": "Liveness probe \u2014 returns 200 if the process is running.",
+        "operationId": "liveness_health_live_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Liveness",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "description": "Readiness probe \u2014 validates DB connectivity and S3 reachability.",
+        "operationId": "readiness_health_ready_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Readiness",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/ui/jobs": {
+      "get": {
+        "description": "Render the jobs Web UI.",
+        "operationId": "ui_jobs_ui_jobs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": "queued_at",
+              "title": "Sort"
+            }
+          },
+          {
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": "desc",
+              "title": "Direction"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ui Jobs",
+        "tags": [
+          "ui"
+        ]
+      }
+    },
+    "/ui/jobs/actions": {
+      "post": {
+        "description": "Apply retry, cancel, or delete actions from the Web UI.",
+        "operationId": "ui_job_actions_ui_jobs_actions_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_ui_job_actions_ui_jobs_actions_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ui Job Actions",
+        "tags": [
+          "ui"
+        ]
+      }
+    },
+    "/v1/bookmarks/{aizk_uuid}/outputs": {
+      "get": {
+        "description": "Return conversion outputs for a bookmark ordered by creation time descending.\n\nPass ``?latest=true`` to receive only the most recently created output.\nOutput rows are scoped to ``ConversionOutput.owner_id`` so a shared Source\ncannot leak another principal's outputs.",
+        "operationId": "get_bookmark_outputs_v1_bookmarks__aizk_uuid__outputs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "aizk_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Aizk Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "latest",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Latest",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/OutputResponse"
+                  },
+                  "title": "Response Get Bookmark Outputs V1 Bookmarks  Aizk Uuid  Outputs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Bookmark Outputs",
+        "tags": [
+          "bookmarks"
+        ]
+      }
+    },
+    "/v1/jobs": {
+      "get": {
+        "description": "List conversion jobs with filters, scoped to the caller.",
+        "operationId": "list_jobs_v1_jobs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ConversionJobStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "aizk_uuid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Aizk Uuid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "created_after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Created After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "created_before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Created Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Jobs",
+        "tags": [
+          "jobs"
+        ]
+      },
+      "post": {
+        "description": "Submit a new conversion job.",
+        "operationId": "submit_job_v1_jobs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueFullResponse"
+                }
+              }
+            },
+            "description": "Queue is at capacity"
+          }
+        },
+        "summary": "Submit Job",
+        "tags": [
+          "jobs"
+        ]
+      }
+    },
+    "/v1/jobs/actions": {
+      "post": {
+        "description": "Apply retry or cancel actions across multiple jobs.",
+        "operationId": "bulk_job_actions_v1_jobs_actions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkJobActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkActionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bulk Job Actions",
+        "tags": [
+          "jobs"
+        ]
+      }
+    },
+    "/v1/jobs/status-counts": {
+      "get": {
+        "description": "Return aggregated counts of jobs by status, scoped to the caller.",
+        "operationId": "get_job_status_counts_v1_jobs_status_counts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatusCounts"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Job Status Counts",
+        "tags": [
+          "jobs"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}": {
+      "get": {
+        "description": "Get conversion job details.",
+        "operationId": "get_job_v1_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Job",
+        "tags": [
+          "jobs"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/cancel": {
+      "post": {
+        "description": "Cancel a queued or running job.",
+        "operationId": "cancel_job_v1_jobs__job_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Job",
+        "tags": [
+          "jobs"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/retry": {
+      "post": {
+        "description": "Retry a failed or cancelled job.",
+        "operationId": "retry_job_v1_jobs__job_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Job",
+        "tags": [
+          "jobs"
+        ]
+      }
+    },
+    "/v1/outputs/{output_id}/figures/{filename}": {
+      "get": {
+        "description": "Return a figure image for a conversion output by bare filename.",
+        "operationId": "get_output_figure_v1_outputs__output_id__figures__filename__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "output_id",
+            "required": true,
+            "schema": {
+              "title": "Output Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "filename",
+            "required": true,
+            "schema": {
+              "title": "Filename",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Output Figure",
+        "tags": [
+          "outputs"
+        ]
+      }
+    },
+    "/v1/outputs/{output_id}/manifest": {
+      "get": {
+        "description": "Return the raw manifest JSON for a conversion output.",
+        "operationId": "get_output_manifest_v1_outputs__output_id__manifest_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "output_id",
+            "required": true,
+            "schema": {
+              "title": "Output Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Output Manifest",
+        "tags": [
+          "outputs"
+        ]
+      }
+    },
+    "/v1/outputs/{output_id}/markdown": {
+      "get": {
+        "description": "Return the converted markdown for a conversion output.",
+        "operationId": "get_output_markdown_v1_outputs__output_id__markdown_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "output_id",
+            "required": true,
+            "schema": {
+              "title": "Output Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Output Markdown",
+        "tags": [
+          "outputs"
+        ]
+      }
+    }
+  }
+}
