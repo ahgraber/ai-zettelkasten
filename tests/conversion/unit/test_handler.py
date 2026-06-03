@@ -1315,8 +1315,49 @@ def test_finalize_failed_retryable_sets_backoff_error_fields_and_event(
         assert payload.retryable is True
         assert payload.last_phase == "converting"
 
-    # Stash consumed.
-    assert job_id not in handler._error_details, "finalize clears the per-handle stash"
+    # The bridge SURVIVES finalize: the runner re-invokes finalize on a
+    # finalize-time DB error (slot retained), so clearing here would lose the real
+    # scrubbed cause. cleanup() is the sole clear point and runs once, after commit.
+    assert handler._error_details.get(job_id) is not None, "finalize must not clear the per-handle stash"
+    handler.cleanup(job_id)
+    assert job_id not in handler._error_details, "cleanup releases the stash after the durable commit"
+
+
+def test_finalize_bridge_survives_a_rolled_back_retry(
+    exec_config: ConversionConfig, exec_engine, exec_source: Source
+) -> None:
+    """A finalize that fails (rolls back) keeps the error-details bridge for the retry.
+
+    The shared runner retains the slot and re-invokes finalize on a finalize-time DB
+    error; the per-handle bridge must persist across that retry (cleanup clears it
+    only after the durable commit). Otherwise the retry records the unknown-error
+    fallback instead of the real scrubbed cause.
+    """
+    job_id = _seed_job_at(exec_engine, exec_source, status=ConversionJobStatus.UPLOAD_PENDING, attempts=2)
+    handler = ConversionStageHandler(exec_config)
+    handler._error_details[job_id] = JobErrorDetails(
+        error_code="conversion_subprocess_failed",
+        error_message="boom",
+        error_detail="trace",
+        retryable=True,
+        last_phase="converting",
+    )
+
+    # First finalize fails durably (simulate the runner's finalize DB error): roll back.
+    with Session(exec_engine) as session:
+        handler.finalize(session, job_id, TerminalOutcome(WorkUnitStatus.FAILED, RetryClass.RETRYABLE))
+        session.rollback()
+
+    # The runner retries finalize on the next reap (slot retained, no cleanup yet).
+    with Session(exec_engine) as session:
+        handler.finalize(session, job_id, TerminalOutcome(WorkUnitStatus.FAILED, RetryClass.RETRYABLE))
+        session.commit()
+
+    with Session(exec_engine) as verify:
+        job = verify.get(ConversionJob, job_id)
+        assert job.status == ConversionJobStatus.FAILED_RETRYABLE
+        assert job.error_code == "conversion_subprocess_failed"
+        assert job.error_message == "boom", "the retry recorded the real scrubbed cause, not the fallback"
 
 
 def test_finalize_failed_permanent_sets_finished_at_and_no_backoff(
