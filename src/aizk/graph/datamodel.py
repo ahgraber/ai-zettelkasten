@@ -1,0 +1,298 @@
+"""Graph-stage ORM models: persisted chunks, run manifest/input, and contextualization.
+
+These tables live in the conversion SQLite database alongside the shared
+``pipeline_runs`` / ``pipeline_events`` tables (see :mod:`aizk.pipeline`); the
+graph stage does not own a separate database. The run / dataset-version
+primitive and the transition-event log are reused from :mod:`aizk.pipeline`, so
+nothing here redefines a run record — these models carry only the graph-specific
+content.
+
+Facts are split by what they are *about*. A :class:`Chunk` is content-addressed
+and shared across every chunking generation that re-emits it, so it carries only
+**stable identity facts** — facts invariant for a ``chunk_id``. Facts that vary
+by generation live on the run instead:
+
+- :class:`Chunk` — content-addressed, immutable, run-independent chunk rows
+  keyed by the splitter's ``chunk_id``, carrying stable facts only (the source
+  ``doc_id`` ``= str(aizk_uuid)``, ``text``, ``content_hash``, ``char_count``,
+  ``heading_path``, ``ordinal``). An unchanged chunk keeps its identity and its
+  single row across re-chunks. Ordinary processing never mutates a row.
+- :class:`ChunkRunInput` — one row per chunking run recording what the run
+  **consumed**: a locator to the exact Markdown (``conversion_output_id``) and
+  that Markdown's ``markdown_hash_xx64`` so the input is retrievable and
+  verifiable. Mirrors conversion's input record.
+- :class:`ChunkRunManifest` — append-only ``(run_id, chunk_id, span)`` recording
+  what the run **produced** and where each chunk sat in that generation's
+  Markdown. ``span`` belongs here, not on the shared identity: an unchanged chunk
+  keeps its ``chunk_id`` yet shifts offset when a preceding chunk's length
+  changes. A ``chunk_id`` is current iff it is in the source's active chunking
+  run's manifest; supersession is expressed only on the run's status, never by
+  editing or deleting a manifest entry.
+- :class:`DocumentSummary` — a run-scoped per-document summary carrying the
+  source markdown hash, the consumed ``conversion_output_id`` (provenance), and
+  the ``summary_version`` that produced it.
+- :class:`ContextualizedChunk` — a run-scoped per-chunk contextualized variant
+  storing the model's self-contained **revision** of the chunk (or an empty
+  string when the chunk was already self-contained), carrying the source
+  ``chunk_id``, ``context_version``, the ``summary_run_id`` and ``chunking_run_id``
+  provenance pointers, and a derivation key for the summary, 2p/1n neighbor
+  identities, ``splitter_version``, prompt identity, and model profile used.
+
+``run_id`` columns are logical references to ``pipeline_runs.id`` with no
+database foreign key, matching the runtime's convention so superseded-run
+compaction can delete freely. ``chunk_id`` foreign keys into :class:`Chunk`
+because it is a genuine same-database content relationship that downstream
+stages (mention extraction) also reference.
+"""
+
+from __future__ import annotations
+
+import datetime
+from uuid import UUID
+
+from sqlalchemy import Column, DateTime, Enum as SAEnum, ForeignKey, Index, Text, UniqueConstraint, func
+from sqlmodel import Field, SQLModel
+
+from aizk.pipeline.lifecycle import WorkUnitStatus
+
+
+def _utcnow() -> datetime.datetime:
+    """Return a timezone-aware UTC timestamp."""
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+class Chunk(SQLModel, table=True):
+    """A persisted, content-addressed structural chunk emitted by the splitter.
+
+    One row per distinct ``chunk_id`` carrying **stable identity facts only**.
+    Rows are immutable and run-independent: persisting a ``chunk_id`` that already
+    exists reuses the row unchanged, and the same ``chunk_id`` is shared across
+    every chunking run it appears in via :class:`ChunkRunManifest`.
+
+    Generation-varying facts — the source ``markdown_hash_xx64``, the
+    ``splitter_version``, and the chunk's ``span`` in that generation's markdown —
+    are deliberately **not** stored here; they live on :class:`ChunkRunInput` and
+    :class:`ChunkRunManifest`. Storing them on the shared row would be a
+    first-writer lie: a chunk re-emitted unchanged by a later generation would
+    report whichever generation wrote the row first. ``heading_path`` (a tuple) is
+    stored as a canonical JSON array in ``heading_path_json``; the persistence
+    layer owns the lossless mapping back to the in-memory contract.
+    """
+
+    __tablename__ = "graph_chunks"
+    __table_args__ = (Index("ix_graph_chunks_doc_id", "doc_id"),)
+
+    chunk_id: str = Field(primary_key=True, nullable=False)
+    content_hash: str = Field(nullable=False)
+    doc_id: str = Field(nullable=False)
+    heading_path_json: str = Field(sa_column=Column(Text, nullable=False))
+    ordinal: int = Field(nullable=False)
+    text: str = Field(sa_column=Column(Text, nullable=False))
+    char_count: int = Field(nullable=False)
+
+
+class ChunkRunInput(SQLModel, table=True):
+    """The Markdown a chunking run consumed: a retrievable locator plus its hash.
+
+    One row per chunking run (``run_id`` primary key). Records the
+    ``conversion_output_id`` locator for the exact Markdown the run read and that
+    Markdown's ``markdown_hash_xx64`` so the input is both retrievable and
+    verifiable after the run is superseded — recovering what a generation
+    consumed without re-running the splitter. ``run_id`` is a logical reference to
+    ``pipeline_runs.id`` (no foreign key) so superseded-run compaction can delete
+    freely.
+
+    ``conversion_output_id`` is the **stringified** form of the conversion
+    artifact locator (``ConversionOutput.id``, an integer PK). It is stored as
+    text — matching the splitter's ``converted_artifact_id`` contract — to keep
+    the graph schema decoupled from the conversion stage's PK type and portable
+    along ADR-003's Postgres path; a caller dereferencing it back to a
+    ``ConversionOutput`` row converts to the native id type at that boundary. It
+    is a locator, never a derivation input.
+    """
+
+    __tablename__ = "graph_chunk_run_inputs"
+
+    run_id: int = Field(primary_key=True, nullable=False)
+    conversion_output_id: str = Field(nullable=False)
+    markdown_hash_xx64: str = Field(nullable=False)
+
+
+class ChunkRunManifest(SQLModel, table=True):
+    """Append-only manifest of the chunks a chunking run produced, with their spans.
+
+    The composite primary key ``(run_id, chunk_id)`` makes re-persisting a chunk
+    within the same run idempotent (no duplicate entry) and never mutates an
+    existing row. ``span_start`` / ``span_end`` capture where the chunk sat in
+    *this* generation's markdown — a generation-varying fact that does not belong
+    on the shared content-addressed identity. ``run_id`` is a logical reference to
+    ``pipeline_runs.id`` (no foreign key); ``chunk_id`` foreign keys into
+    :class:`Chunk`.
+    """
+
+    __tablename__ = "graph_chunk_run_manifest"
+    __table_args__ = (Index("ix_graph_chunk_run_manifest_chunk_id", "chunk_id"),)
+
+    run_id: int = Field(primary_key=True, nullable=False)
+    chunk_id: str = Field(
+        sa_column=Column(
+            ForeignKey("graph_chunks.chunk_id"),
+            primary_key=True,
+            nullable=False,
+        )
+    )
+    span_start: int = Field(nullable=False)
+    span_end: int = Field(nullable=False)
+
+
+class DocumentSummary(SQLModel, table=True):
+    """A run-scoped per-document summary produced by one LLM pass over the document.
+
+    Carries the source markdown hash, the consumed ``conversion_output_id`` as
+    provenance (so the summary's input is retrievable as well as verifiable), and
+    the ``summary_version``; the owning run carries the derivation key that
+    produced it (source markdown hash, prompt identity, model profile, and
+    version) and is scoped to the durable source identity (``str(aizk_uuid)``).
+    Re-summarizing a document whose derivation-key inputs are unchanged reuses the
+    active summary run; a change to any opens a new run that supersedes the prior,
+    leaving this row present and unmodified.
+    """
+
+    __tablename__ = "graph_document_summaries"
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_graph_document_summaries_run_id"),
+        Index("ix_graph_document_summaries_run_id", "run_id"),
+        Index("ix_graph_document_summaries_conversion_output_id", "conversion_output_id"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True, nullable=False)
+    run_id: int = Field(nullable=False)
+    conversion_output_id: str = Field(nullable=False)
+    summary_text: str = Field(sa_column=Column(Text, nullable=False))
+    markdown_hash_xx64: str = Field(nullable=False)
+    summary_version: int = Field(nullable=False)
+    created_at: datetime.datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
+    )
+
+
+class ContextualizedChunk(SQLModel, table=True):
+    """A run-scoped per-chunk contextualized variant: the model's self-contained revision.
+
+    Holds the dereferencing revision the model produced — the working chunk
+    rewritten so every outside reference is resolved inline (``contextualized_text``)
+    — or an empty string when the chunk was already self-contained, in which case
+    the raw chunk is consumed unchanged. The revision is a separate, derived
+    artifact: it is separately addressable from the chunk (its own ``id``) and
+    never mutates the source :class:`Chunk` row, which stays the cited,
+    source-faithful unit.
+
+    ``derivation_key`` records the contextualization inputs — the summary
+    identity, the working chunk identity, the 2p/1n neighboring chunk identities,
+    the ``splitter_version`` of the chunking generation read, the context-window
+    policy, prompt identity, and model profile used to build the variant —
+    alongside ``context_version``. A change to any derivation-key input or to
+    ``context_version`` opens a new run whose variant supersedes the prior;
+    unchanged inputs and version reuse the active run.
+
+    ``summary_run_id`` and ``chunking_run_id`` are provenance-only pointers (to
+    the ``pipeline_runs`` rows of the summary read and the exact chunking
+    generation whose manifest was read) — direct joins for operator/debug lookup
+    and the backward-trace chain. ``chunking_run_id`` disambiguates which
+    generation the variant read, since a ``chunk_id`` may appear in many. Both are
+    local run locators, so they are deliberately kept **out** of
+    ``derivation_key``; reuse/supersession is decided by the content-derived
+    identities the key carries, not by these row ids.
+    """
+
+    __tablename__ = "graph_contextualized_chunks"
+    __table_args__ = (
+        UniqueConstraint("run_id", "chunk_id", name="uq_graph_contextualized_chunks_run_chunk"),
+        Index("ix_graph_contextualized_chunks_run_id", "run_id"),
+        Index("ix_graph_contextualized_chunks_chunk_id", "chunk_id"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True, nullable=False)
+    run_id: int = Field(nullable=False)
+    summary_run_id: int = Field(nullable=False)
+    chunking_run_id: int = Field(nullable=False)
+    chunk_id: str = Field(sa_column=Column(ForeignKey("graph_chunks.chunk_id"), nullable=False))
+    context_version: int = Field(nullable=False)
+    contextualized_text: str = Field(sa_column=Column(Text, nullable=False))
+    derivation_key: str = Field(sa_column=Column(Text, nullable=False))
+    created_at: datetime.datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
+    )
+
+
+class ContextualizationJob(SQLModel, table=True):
+    """A claimable work-unit: chunk-persist and contextualize one converted document.
+
+    Mirrors the conversion stage's ``conversion_jobs`` — one row per document to
+    process, scoped to the durable source identity ``aizk_uuid`` — so the shared
+    runtime's claim/lease/retry/stale-recovery machinery can drive the graph stage
+    the same way it drives conversion. The runtime owns the lifecycle transitions
+    (this change only enqueues rows and runs the unit-of-work); the stage adapter
+    that claims and finalizes units is a separate concern.
+
+    Identity vocabulary follows the conversion pattern:
+
+    - ``id`` is the local claim handle (a row surrogate), never a derivation input.
+    - ``idempotency_key`` deduplicates enqueue requests, so re-enqueueing the same
+      document (incremental re-ingest, or a backfill overlapping an open unit)
+      reuses the existing row instead of creating a second.
+    - ``conversion_output_id`` is the local artifact locator used to fetch the
+      Markdown the unit splits and persists; it is a locator, never a derivation
+      input. ``aizk_uuid`` is the durable source identity carried onto the runs
+      and transition events. Both are stored as plain (logical) references rather
+      than cross-stage foreign keys, matching the graph stage's run-reference
+      convention and keeping the work-unit table self-contained.
+
+    ``status`` is the runtime's generic :class:`~aizk.pipeline.lifecycle.WorkUnitStatus`;
+    ``attempts`` and the ``*_at`` scheduling columns carry the retry/lease
+    bookkeeping the runner reads.
+    """
+
+    __tablename__ = "graph_contextualization_jobs"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_graph_contextualization_jobs_idempotency_key"),
+        Index(
+            "ix_graph_contextualization_jobs_claim",
+            "status",
+            "earliest_next_attempt_at",
+            "queued_at",
+        ),
+        Index("ix_graph_contextualization_jobs_aizk_uuid", "aizk_uuid"),
+        Index("ix_graph_contextualization_jobs_conversion_output_id", "conversion_output_id"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True, nullable=False)
+    idempotency_key: str = Field(nullable=False)
+    conversion_output_id: int = Field(nullable=False)
+    aizk_uuid: UUID = Field(nullable=False)
+    # values_callable stores enum values ("queued") not names ("QUEUED"), matching RunStatus.
+    status: WorkUnitStatus = Field(
+        default=WorkUnitStatus.QUEUED,
+        sa_column=Column(
+            SAEnum(WorkUnitStatus, values_callable=lambda x: [e.value for e in x]),
+            nullable=False,
+        ),
+    )
+    attempts: int = Field(default=0, nullable=False)
+    error_code: str | None = Field(default=None, nullable=True)
+    error_message: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    earliest_next_attempt_at: datetime.datetime | None = Field(default=None, nullable=True)
+    last_error_at: datetime.datetime | None = Field(default=None, nullable=True)
+    queued_at: datetime.datetime | None = Field(default=None, nullable=True)
+    started_at: datetime.datetime | None = Field(default=None, nullable=True)
+    finished_at: datetime.datetime | None = Field(default=None, nullable=True)
+    created_at: datetime.datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
+    )
+    updated_at: datetime.datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
+    )

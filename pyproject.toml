@@ -58,6 +58,7 @@ dependencies = [
 
 [project.scripts]
 aizk-conversion = "aizk.conversion.cli:main"
+aizk-graph = "aizk.graph.cli:main"
 
 [project.optional-dependencies]
 # for user-facing features;
