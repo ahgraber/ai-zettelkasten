@@ -5,7 +5,7 @@
 ### Requirement: Mentions are append-only and invalidated at the run level
 
 A persisted mention SHALL NOT be modified or deleted.
-Each mention SHALL belong to exactly one reification run, and a run SHALL record the versions and inputs that produced it (at minimum the extractor version, the reifier version, the input policy, and the contextualization input fingerprint) together with a `status` of active or superseded.
+Each mention SHALL belong to exactly one reification run, and a run SHALL record the versions and inputs that produced it (at minimum the extractor version, the reifier version, the input policy, and a fingerprint of the upstream inputs it consumed that changes whenever any consumed input changes) together with a `status` of active or superseded.
 At most one reification run SHALL be active for the corpus at a time; re-reification SHALL open a new run and supersede the prior one, expressed only as a run `status` transition — prior mentions SHALL remain present and unmodified.
 
 #### Scenario: A persisted mention is never mutated
@@ -41,7 +41,8 @@ Persisting a mention whose `mention_id` already exists SHALL NOT create a duplic
 ### Requirement: Every mention carries complete lexical provenance with declared span coordinates and no embedding
 
 Every persisted mention SHALL carry, populated and non-null: `surface_form`, `chunk_id`, `source_chunk_span` (character offsets into the raw chunk text), `input_kind` (raw or contextualized), `input_ref` (the input text the mention was read from), `input_span` (character offsets into that input text), and `blocking_keys`.
-The `source_chunk_span` SHALL locate the mention's source anchor within the raw chunk; for a mention derived from a resolved reference, the anchor SHALL be the referring expression in the raw chunk while `surface_form` is the resolved form.
+The `source_chunk_span` SHALL locate the mention's source anchor within the raw chunk.
+A mention detected from a contextualized input SHALL be persisted only when it has a deterministic raw-chunk anchor; context-only detections from references the revision resolved inline, without a raw anchor, SHALL NOT be persisted as mention records.
 A mention SHALL NOT carry a stored context embedding; any embedding a consumer needs is recomputed on demand from the mention's chunk and span and is never persisted.
 
 #### Scenario: A persisted mention has all provenance fields populated and no embedding
@@ -56,11 +57,11 @@ A mention SHALL NOT carry a stored context embedding; any embedding a consumer n
 - **WHEN** its `source_chunk_span` is resolved against the raw chunk text
 - **THEN** the resolved region equals the mention's `surface_form`
 
-#### Scenario: A resolved-reference mention anchors to the referring expression
+#### Scenario: A context-only detection without a raw anchor is not persisted
 
-- **GIVEN** a mention produced from a contextualized chunk where a reference (such as a pronoun) was resolved to an explicit referent
-- **WHEN** its `source_chunk_span` is resolved against the raw chunk text and its `surface_form` is inspected
-- **THEN** the span locates the original referring expression in the raw chunk while `surface_form` holds the resolved form, and `input_kind` is contextualized
+- **GIVEN** extraction reads a contextualized chunk whose revision resolves in an entity name that does not have a deterministic anchor in the raw chunk
+- **WHEN** mentions are persisted
+- **THEN** that context-only detection is skipped or surfaced as unmappable, and no mention row is written for it
 
 ### Requirement: Co-occurrence is resolvable without being stored on the mention row
 

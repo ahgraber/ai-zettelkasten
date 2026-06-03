@@ -22,7 +22,8 @@ All mentions emitted within a single run SHALL carry the same extractor and reif
 ### Requirement: Extraction emits an input span and a raw-chunk anchor span for every mention
 
 For every mention it emits, extraction SHALL record an `input_span` indexing the text it actually read and a `source_chunk_span` anchoring the mention into the raw chunk text.
-When extraction reads a contextualized variant in which a reference was resolved, the `source_chunk_span` SHALL anchor to the referring expression in the raw chunk and the `surface_form` SHALL be the resolved form.
+When extraction reads a contextualized variant, it SHALL emit only mentions whose input span can be deterministically mapped to a raw-chunk `source_chunk_span`.
+Detections that occur only in references the revision resolved inline and cannot be mapped to a raw-chunk anchor SHALL NOT be emitted as persisted mentions.
 
 #### Scenario: A verbatim mention's two spans coincide on the same text
 
@@ -30,11 +31,11 @@ When extraction reads a contextualized variant in which a reference was resolved
 - **WHEN** the mention's `input_span` and `source_chunk_span` are resolved against the raw chunk
 - **THEN** both resolve to the mention's surface form in the raw chunk
 
-#### Scenario: A resolved-reference mention maps its input span back to a raw anchor
+#### Scenario: A context-only detection without a raw anchor is not emitted
 
-- **GIVEN** extraction reading a contextualized variant where a pronoun was resolved to an explicit referent
-- **WHEN** the resulting mention's spans are inspected
-- **THEN** `input_span` indexes the resolved form in the variant while `source_chunk_span` anchors to the referring expression in the raw chunk
+- **GIVEN** extraction reading a contextualized variant whose revision resolves in an entity name not anchored in the raw chunk
+- **WHEN** the extractor identifies that context-only entity
+- **THEN** extraction skips or reports it as unmappable and does not emit a persisted mention for it
 
 ### Requirement: Co-occurrence links are intra-chunk, symmetric, and exclude self
 
