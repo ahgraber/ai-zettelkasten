@@ -7,7 +7,7 @@ That dataset is the prerequisite for designing entity canonicalization on eviden
 
 This change builds the extraction step and the store it writes to:
 
-- Run NER over each contextualized chunk to emit entity mentions with their surface form and source span.
+- Run NER over each chunk's selected input (contextualized when available, raw otherwise) to emit entity mentions with their surface form and raw-chunk source span.
 - Link mentions that share a chunk via co-occurrence — the raw substrate later edge and canonicalization work reads.
 - Persist mentions to an append-only store, never mutated, carrying the lexical evidence (aliases, blocking keys) and provenance (source chunk, span, extractor version) needed for replayable canonicalization.
 
@@ -25,15 +25,16 @@ Capabilities are listed in build-dependency order: `mention-store` (the data con
 
   - An append-only persisted store of mention records.
     Each mention carries: surface form, normalized aliases, redundant blocking keys (normalized / phonetic / acronym / token-shingle), source `chunk_id`, a `source_chunk_span` (offsets into the raw chunk) and an `input_span` (offsets into the text read), `input_kind`/`input_ref`, and a `source_occurrence_key`.
+    Context-only names introduced by the contextualization blurb may guide extraction and disambiguation, but are not persisted as mentions unless the reifier can map them to a deterministic raw-chunk anchor.
     Co-occurrence is resolvable through a link table, not stored on the mention row.
   - **No embedding field** — the context vector is recomputed on demand at canonicalization time, never persisted.
   - The append-only invariant (records are never mutated or deleted after write) and provenance-completeness invariant (every required provenance field populated).
-  - Mentions are produced by **reification runs** (the unified run/dataset-version model): a `mention_run` carries the extractor/reifier versions, input policy, contextualization input fingerprint, and `status` (active|superseded); `mention_id = hash(run_id, chunk_id, source_chunk_span, surface_form)` is run-scoped, with `source_occurrence_key = hash(chunk_id, source_chunk_span, source_anchor_text)` as a stable cross-run diagnostic key.
+  - Mentions are produced by **reification runs** (the unified run/dataset-version model): a `mention_run` carries the extractor/reifier versions, input policy, a fingerprint of the upstream inputs consumed, and `status` (active|superseded); `mention_id = hash(run_id, chunk_id, source_chunk_span, surface_form)` is run-scoped, with `source_occurrence_key = hash(chunk_id, source_chunk_span, source_anchor_text)` as a stable cross-run diagnostic key.
     Invalidation is run-level ("one active mention dataset at a time"); rows are immutable.
 
 - **`entity-extraction` capability (new).**
 
-  - NER over each contextualized chunk emitting entity mentions (surface form + character span), written to the mention store.
+  - NER over each selected chunk input emitting entity mentions (surface form + character span), written to the mention store only when the mention can be anchored to a deterministic raw-chunk span.
   - **Intra-chunk co-occurrence**: mentions sharing a chunk are linked in a flat co-occurrence link table — the substrate canonicalization will read; this change records the links, it does not materialize an entity-level graph.
   - Redundant blocking-key derivation per mention (the lexical candidate-generation index canonicalization will use).
   - An `extractor_version` captured on every mention.
@@ -52,7 +53,7 @@ Capabilities are listed in build-dependency order: `mention-store` (the data con
 
 > Mechanism sandbox; contracts live in the delta specs, chosen mechanisms formalize in `design.md`.
 
-Extraction runs in the graph-stage package, reading persisted contextualized chunks and writing mentions:
+Extraction runs in the graph-stage package, reading persisted contextualized chunks when available and writing mentions:
 
 - **NER** runs behind a pluggable extractor interface with two concrete extractors available — **spaCy** (fast, general-domain) and **GLiNER2** (schema-free, zero-shot) — both with model artifacts pinned as dependencies (no runtime download).
   The model choice and its extraction-F1 floor (low extraction F1 distorts every downstream graph metric) are a `design.md` decision and an explicit measurement target of the produced dataset.
@@ -66,7 +67,7 @@ Extraction runs in the graph-stage package, reading persisted contextualized chu
   Extraction inverts the pipeline's write profile: ~10 mentions plus their co-occurrence links per chunk is roughly two orders of magnitude more rows than chunking, written in bursts during ingest and backfill.
   Batch mention and co-occurrence inserts into a few transactions per chunk or per document against the serialized SQLite writer; run corpus-wide backfill as throttled background work, not foreground ingest.
 
-Because NER is a noisy sensor, the testable contracts assert **structure, provenance, span coordinates, and run-scoped identity** — every emitted mention has a `chunk_id`, a raw-chunk `source_chunk_span` and an `input_span`, and belongs to a versioned run; co-occurrence is resolvable within a chunk; re-extraction within a run produces no duplicates — not exact mention sets.
+Because NER is a noisy sensor, the testable contracts assert **structure, provenance, span coordinates, and run-scoped identity** — every emitted mention has a `chunk_id`, a raw-chunk `source_chunk_span` and an `input_span`, context-only detections without raw anchors are not persisted, and each mention belongs to a versioned run; co-occurrence is resolvable within a chunk; re-extraction within a run produces no duplicates — not exact mention sets.
 Tests stub the extractor; the real spaCy / GLiNER2 models are exercised only by the offline gold-set evaluation.
 
 ## Decisions Carried Into Design

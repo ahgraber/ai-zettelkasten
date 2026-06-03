@@ -6,7 +6,7 @@
 
 ## Mention-store foundation (run model + schema)
 
-- [ ] Define ORM models in `src/aizk/graph/datamodel.py`: `mention_run` (`run_id`, `extractor_version`, `reifier_version`, `input_policy`, contextualization `input_fingerprint`, `supersedes_run_id`, `status` active|superseded), `mention` (PK `mention_id`; `run_id`; `chunk_id` FK → chunk; `surface_form`, `source_chunk_span`, `input_span`, `input_kind`, `input_ref`, `blocking_keys`, `source_occurrence_key`; no embedding column), `mention_cooccurrence` (`run_id`, `mention_id_lo`, `mention_id_hi`, `chunk_id`).
+- [ ] Define ORM models in `src/aizk/graph/datamodel.py`: `mention_run` (`run_id`, `extractor_version`, `reifier_version`, `input_policy`, `consumed_input_fingerprint`, `supersedes_run_id`, `status` active|superseded), `mention` (PK `mention_id`; `run_id`; `chunk_id` FK → chunk; `surface_form`, `source_chunk_span`, `input_span`, `input_kind`, `input_ref`, `blocking_keys`, `source_occurrence_key`; no embedding column), `mention_cooccurrence` (`run_id`, `mention_id_lo`, `mention_id_hi`, `chunk_id`).
 - [ ] Implement `derive_mention_id(run_id, chunk_id, source_chunk_span, surface_form)` and `derive_source_occurrence_key(chunk_id, source_chunk_span, source_anchor_text)` as deterministic, cross-process-stable hashes.
 - [ ] Add an Alembic migration creating the run, mention, and co-occurrence tables in the conversion migration tree (no vector table).
 - [ ] Test `tests/graph/test_mention_migrations.py`: migrated schema structurally equivalent to the ORM baseline, including the `mention.chunk_id` foreign key. **[schema fidelity, MS5 FK]**
@@ -18,7 +18,7 @@
 - [ ] Test `tests/graph/test_mention_store.py::test_mentions_append_only` and `::test_re_reification_supersedes_and_retains`: a persisted mention is never mutated; a new run supersedes the prior and prior mentions remain. **[MS1]**
 - [ ] Test `::test_run_scoped_id_distinct_occurrence_key_stable`: the same source occurrence under two runs gets distinct `mention_id`s but equal `source_occurrence_key`s; re-running within a run does not duplicate. **[MS2 — within-run / cross-run partition]**
 - [ ] Test `::test_provenance_and_spans_present_no_embedding`: every mention has `surface_form`/`chunk_id`/`source_chunk_span`/`input_kind`/`input_ref`/`input_span`/`blocking_keys` populated and no embedding field. **[MS3]**
-- [ ] Test `::test_verbatim_span_resolves` and `::test_resolved_reference_anchor`: a verbatim mention's `source_chunk_span` resolves to its surface form; a resolved-reference mention anchors `source_chunk_span` to the referring expression with `surface_form` the resolved form and `input_kind` contextualized. **[MS3 — verbatim / resolved-reference partition]**
+- [ ] Test `::test_verbatim_span_resolves` and `::test_context_only_detection_without_raw_anchor_not_persisted`: a verbatim mention's `source_chunk_span` resolves to its surface form; a context-only detection from a reference the revision resolved inline, without a deterministic raw anchor, is skipped or surfaced as unmappable rather than persisted. **[MS3 — verbatim / context-only partition]**
 - [ ] Test `::test_cooccurrence_resolvable_off_row`: a mention's co-occurrences are resolvable from the link table without a co-occurrence field on the mention row. **[MS4]**
 - [ ] Test `::test_chunk_id_resolves`: a mention's `chunk_id` references an existing chunk. **[MS5]**
 
@@ -26,9 +26,9 @@
 
 - [ ] Define a pluggable NER extractor interface in `src/aizk/graph/extraction.py`; implement spaCy and GLiNER2 extractors with their model artifacts **pinned as dependencies** (no runtime download); provide a deterministic stub for tests; `extractor_version` encodes extractor + model + config.
 - [ ] Implement deterministic blocking-key derivation from the surface form.
-- [ ] Implement per-chunk extraction within a run: select input (contextualized variant if available → `input_kind=contextualized`/`input_ref`=variant, else raw → `input_kind=raw`/`input_ref`=chunk); run NER; record `input_span` (read text) and map it back to a `source_chunk_span` raw-chunk anchor (referring-expression anchor for resolved references); emit mentions and intra-chunk co-occurrence pairs; stamp the run's versions.
+- [ ] Implement per-chunk extraction within a run: select input (contextualized variant if available → `input_kind=contextualized`/`input_ref`=variant, else raw → `input_kind=raw`/`input_ref`=chunk); run NER; record `input_span` (read text) and map it back to a deterministic `source_chunk_span` raw-chunk anchor; skip or surface context-only detections from references the revision resolved inline when no deterministic raw anchor exists; emit mentions and intra-chunk co-occurrence pairs; stamp the run's versions.
 - [ ] Test `tests/graph/test_extraction.py::test_mentions_under_run` and `::test_uniform_run_versions`. **[EE1]**
-- [ ] Test `::test_verbatim_two_spans_coincide` and `::test_resolved_reference_maps_to_raw_anchor`. **[EE2 — verbatim / resolved-reference partition]**
+- [ ] Test `::test_verbatim_two_spans_coincide` and `::test_context_only_detection_without_raw_anchor_not_emitted`. **[EE2 — verbatim / context-only partition]**
 - [ ] Test `::test_cooccurrence_pair_mutual`, `::test_singleton_no_cooccurrence`, `::test_cross_chunk_no_cooccurrence`. **[EE3 — pair / singleton / cross-chunk partition]**
 - [ ] Test `::test_equal_surface_equal_blocking_keys` and `::test_blocking_keys_reproducible`. **[EE4]**
 - [ ] Test `::test_extracts_from_variant_when_available` and `::test_falls_back_to_raw`. **[EE5 — available / absent partition]**

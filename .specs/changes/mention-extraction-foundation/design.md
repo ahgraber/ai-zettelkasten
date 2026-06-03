@@ -25,7 +25,12 @@ Capabilities build in dependency order: `mention-store` (the data contract) befo
 
 ### Decision: ReificationRunModel
 
-**Chosen:** Mentions are produced by **reification runs**, reusing the unified stage-run/dataset-version model from `chunk-persistence-contextualization`. A `mention_run` records `run_id`, `extractor_version`, `reifier_version`, `input_policy`, the contextualization `input_fingerprint`, `supersedes_run_id`, and `status` (active | superseded). A `mention` is run-scoped: `mention_id = hash(run_id, chunk_id, source_chunk_span, surface_form)`. Each mention also carries `source_occurrence_key = hash(chunk_id, source_chunk_span, source_anchor_text)` as a non-primary, cross-run-stable diagnostic key. Invalidation is run-level: a changed extractor, reifier, input policy, or contextualization input opens a new run that supersedes the prior; mention rows are immutable. The invariant is **"one active mention dataset at a time."** The run's `scope_key` is corpus-wide (one active mention dataset for the corpus).
+**Chosen:** Mentions are produced by **reification runs**, reusing the unified stage-run/dataset-version model from `chunk-persistence-contextualization`. A `mention_run` records `run_id`, `extractor_version`, `reifier_version`, `input_policy`, a `consumed_input_fingerprint`, `supersedes_run_id`, and `status` (active | superseded). A `mention` is run-scoped: `mention_id = hash(run_id, chunk_id, source_chunk_span, surface_form)`. Each mention also carries `source_occurrence_key = hash(chunk_id, source_chunk_span, source_anchor_text)` as a non-primary, cross-run-stable diagnostic key. Invalidation is run-level: a changed extractor, reifier, input policy, or consumed upstream input opens a new run that supersedes the prior; mention rows are immutable. The invariant is **"one active mention dataset at a time."** The run's `scope_key` is corpus-wide (one active mention dataset for the corpus).
+
+Because the mention run is **corpus-wide** while the upstream contextualization (and chunking) runs it reads are **source-scoped** (one active run per `aizk_uuid`), there is no single upstream `derivation_key` to record on the mention run.
+Instead the run records a `consumed_input_fingerprint`: a deterministic digest over the identities (derivation keys) of the active upstream runs the reification consumed across the corpus — the active contextualization variant runs when `input_policy = contextualized`, or the active chunking runs when `input_policy = raw`.
+A re-contextualization or re-chunk of any consumed source supersedes its source-scoped upstream run, which changes the fingerprint and supersedes the mention run; this is the corpus-wide analogue of a single derivation key.
+Per-mention provenance is finer-grained still: each mention's `input_ref = (chunk_id, context_version, run_id)` pins the exact upstream run it was read from, so the consumed input is resolvable per row, not only in aggregate.
 
 The run records two distinct versions: **`extractor_version`** versions the NER extractor (model + config — spaCy or GLiNER2), and **`reifier_version`** versions the deterministic post-NER reification logic that turns NER output into persisted mention records — span mapping (input→raw-chunk anchor), blocking-key derivation, co-occurrence linking, and `mention_id`/`source_occurrence_key` derivation.
 A change to that logic bumps `reifier_version` without changing the NER model, and vice versa; `input_policy` records the raw-vs-contextualized input toggle the run was produced under.
@@ -47,19 +52,22 @@ Run-level invalidation matches the conversion stage's mutable-status + append-on
 
 **Chosen:** Every mention records two spans with declared coordinate systems: `input_span` indexes the text extraction actually read (raw chunk or contextualized variant, identified by `input_ref`/`input_kind`), and `source_chunk_span` anchors the mention into the **raw chunk text**.
 Extraction maps the NER offset back to a raw-chunk anchor.
-For a mention arising from a resolved reference (the variant rewrote "it" → "the monarch butterfly"), `source_chunk_span` anchors to the referring expression ("it") in the raw chunk while `surface_form` is the resolved form.
+When extraction reads a contextualized variant, the references the revision resolved inline (text not present verbatim in the raw chunk) are treated as supporting context, not a source of standalone mentions: a detected span SHALL be persisted only when the reifier can deterministically map it to a `source_chunk_span` in the raw chunk.
+Context-only detections without a raw anchor are skipped or surfaced as unmappable, not persisted as mentions.
 `source_anchor_text` (used in `source_occurrence_key`) is the raw text at `source_chunk_span`.
 
 **Rationale:** The raw chunk is the only stable coordinate system: it is what downstream provenance, `(chunk_id, span)` embedding recomputation, and the gold set anchor against.
 Storing only the variant-text offset would break replay and embedding windows when contextualization is re-run or toggled.
-Recording both spans keeps the lexical evidence (resolved `surface_form`) while preserving a stable raw-text anchor; anchoring resolved references to the referring expression gives every mention a raw-chunk home.
+Recording both spans preserves the extractor input while keeping the raw chunk as the stable source of truth.
+This intentionally does not create referent mentions from context-only names; recovering those requires a later structured resolution artifact that maps referents to raw referring expressions.
 
 **Alternatives considered:**
 
 - **Single span into whatever text was read.**
   Ambiguous coordinate system; breaks `(chunk_id, span)` recompute and gold alignment when the input text changes.
-- **Drop resolved-reference mentions (no raw verbatim).**
-  Loses exactly the mentions contextualization was added to recover.
+- **Persist context-only referents by anchoring them to raw pronouns.**
+  Requires a structured reference-resolution map the contextualized revision does not store; guessing the anchor from a free-form revision would violate provenance.
+  Deferred to a future change.
 
 ### Decision: MentionSchemaWithChunkForeignKeyAndFlatCooccurrence
 
@@ -119,7 +127,7 @@ Mention and co-occurrence inserts are batched into a few transactions per docume
 Batching keeps the elevated write volume (two orders of magnitude over chunking) inside ADR-003's serialized-writer budget; WAL keeps retrieval readers unblocked.
 
 **Source identity for runtime events.**
-Extraction resolves the `aizk_uuid` source identity for each mention/run via the chunk → its converted artifact → `ConversionOutput.aizk_uuid`, and carries it onto the reification run and its transition events so a source's progress is resolvable across stages (the runtime's cross-stage event requirement).
+Extraction resolves the `aizk_uuid` source identity for each mention/run directly from the chunk's `doc_id` — the persisted chunk carries its durable source identity as a stable fact (`doc_id = str(aizk_uuid)`), so no hop through a per-conversion artifact is needed — and carries it onto the reification run and its transition events so a source's progress is resolvable across stages (the runtime's cross-stage event requirement).
 The runtime ships no generic UI, so this stage builds its own operator view.
 
 **Generic lifecycle mapping.**
@@ -146,7 +154,7 @@ persisted chunk ──┬── contextualized variant available? ──► read
                                    ▼
        pluggable NER extractor (spaCy | GLiNER2, both pinned; stub in tests)
                                    │
-            map NER offset → input_span (read text) + source_chunk_span (raw-chunk anchor)
+            map NER offset → input_span (read text) + deterministic source_chunk_span (raw-chunk anchor)
                                    │
                     ┌──────────────┴───────────────┐
                     ▼                               ▼
@@ -157,7 +165,7 @@ persisted chunk ──┬── contextualized variant available? ──► read
     input_kind/ref; NO embedding)
                     │
                     ▼
-   mention_run (extractor/reifier versions, input_policy, input_fingerprint,
+   mention_run (extractor/reifier versions, input_policy, consumed_input_fingerprint,
                 supersedes_run_id, status active|superseded)  ── one active dataset
                     │
                     ▼
@@ -175,8 +183,8 @@ runs as a stage on the shared pipeline-stage runtime; bulk batches, incremental 
   Mitigation: batch per document, throttle background backfill, keep reads on WAL.
 - **Coupling to contextualization availability.**
   Mitigation: raw-text fallback with `input_kind`/`input_ref` recorded, so extraction proceeds and the raw-vs-contextualized comparison stays measurable.
-- **Span mapping for resolved references.**
-  Mapping a variant offset back to a raw-chunk anchor is non-trivial when contextualization rewrote text.
-  Mitigation: anchor to the referring expression and keep the resolved form as `surface_form`; the stub-based tests pin the contract, and mismatched/unmappable spans are surfaced rather than silently dropped.
+- **Span mapping from a contextualized revision.**
+  The revision resolves references inline, so it can contain entity names that do not appear verbatim in the raw chunk.
+  Mitigation: persist only detections with deterministic raw anchors; context-only detections are skipped or surfaced as unmappable, and structured referent mentions are deferred until there is a stored resolution map.
 - **Superseded-run accumulation.**
   Mitigation: run-level invalidation is a cheap status transition; superseded-run content is reclaimed by the `artifact-compaction-retention` change.
