@@ -633,8 +633,13 @@ class ConversionStageHandler:
         The error fields/scrub come from the per-handle stash ``execute`` recorded
         (the error-details bridge): the egress scrub is already applied there so a
         rejected URL/IP never lands in ``error_message`` / ``error_detail``. The
-        stash is read-and-cleared here. ``attempt`` for the event is re-read from
-        the row in ``session`` (the claim incremented it), never a stale snapshot.
+        stash is **read but not cleared** here: the runner retains the slot and
+        re-invokes ``finalize`` on a finalize-time DB error, so clearing now would
+        make the retry fall back to ``_unknown_failure_details()`` and lose the real
+        scrubbed cause. :meth:`cleanup` releases it, once, only after the durable
+        commit (it runs on every terminal outcome). ``attempt`` for the event is
+        re-read from the row in ``session`` (the claim incremented it), never a
+        stale snapshot.
 
         Args:
             session: The runner's active ``BEGIN IMMEDIATE`` session.
@@ -642,7 +647,7 @@ class ConversionStageHandler:
             outcome: The runner-resolved terminal outcome.
         """
         with self._processes_lock:
-            details = self._error_details.pop(handle, None)
+            details = self._error_details.get(handle)
 
         status = outcome.status
         if status is WorkUnitStatus.SUCCEEDED:
@@ -752,11 +757,12 @@ class ConversionStageHandler:
         error-details for ``handle``. The subprocess itself is reaped inside
         ``execute`` (the supervision loop joins it on normal completion or after
         ``cancel`` signals termination); this only clears the runner-visible
-        tracking entries so a finished handle leaves no dangling reference.
-        Clearing the error-details stash here (in addition to ``finalize``'s
-        read-and-clear) guarantees the bridge dict cannot grow unbounded even on
-        a terminal outcome that never finalizes the failed path. Idempotent and
-        never raises — the runner calls it on every terminal outcome.
+        tracking entries so a finished handle leaves no dangling reference. This is
+        the **sole** clear point for the error-details bridge (``finalize`` only
+        reads it): the runner calls ``cleanup`` exactly once per handle, only after
+        the durable terminal transition commits, so a finalize-time DB-error retry
+        still sees the stashed cause while the bridge can never grow unbounded.
+        Idempotent and never raises — the runner calls it on every terminal outcome.
         """
         with self._processes_lock:
             self._processes.pop(handle, None)
