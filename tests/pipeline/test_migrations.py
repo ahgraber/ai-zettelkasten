@@ -110,15 +110,15 @@ def test_pipeline_active_run_index_keeps_postgres_predicate() -> None:
     assert "postgresql_where=sa.text(\"status = 'active'\")" in migration_text
 
 
-def _insert_run(conn, *, status: str, fingerprint: str) -> None:
+def _insert_run(conn, *, status: str, derivation_key: str) -> None:
     """Insert a pipeline_runs row for the fixed scope directly (bypassing record_run)."""
     conn.execute(
         text(
-            "INSERT INTO pipeline_runs (stage, scope_key, status, input_fingerprint,"
+            "INSERT INTO pipeline_runs (stage, scope_key, status, derivation_key,"
             " version_stamps_json, created_at)"
             " VALUES ('teststage', 'scope', :status, :fp, '{}', '2026-01-01T00:00:00')"
         ),
-        {"status": status, "fp": fingerprint},
+        {"status": status, "fp": derivation_key},
     )
 
 
@@ -136,14 +136,14 @@ def test_migrated_index_is_partial_not_full(tmp_path: Path) -> None:
 
     # Multiple superseded runs for one scope coexist — the predicate exempts them.
     with engine.connect() as conn:
-        _insert_run(conn, status="superseded", fingerprint="fp-1")
-        _insert_run(conn, status="superseded", fingerprint="fp-2")
-        _insert_run(conn, status="active", fingerprint="fp-3")
+        _insert_run(conn, status="superseded", derivation_key="key-1")
+        _insert_run(conn, status="superseded", derivation_key="key-2")
+        _insert_run(conn, status="active", derivation_key="key-3")
         conn.commit()
 
     # A second active run for the same scope violates the partial unique index.
     with pytest.raises(IntegrityError), engine.connect() as conn:
-        _insert_run(conn, status="active", fingerprint="fp-4")
+        _insert_run(conn, status="active", derivation_key="key-4")
         conn.commit()
 
 
@@ -189,3 +189,38 @@ def test_pipeline_revision_downgrade_drops_only_pipeline_tables(tmp_path: Path) 
     assert not (set(_PIPELINE_TABLES) & tables_after), "pipeline tables should be dropped"
     assert "conversion_jobs" in tables_after, "conversion tables remain after downgrade"
     assert "conversion_job_events" in tables_after
+
+
+def test_input_fingerprint_renamed_to_derivation_key_preserving_data(tmp_path: Path) -> None:
+    """A DB already at d0e1f2a3b4c5 (input_fingerprint) migrates forward to derivation_key, keeping rows.
+
+    Guards the forward rename (b0d1e2f3a4c5): the earlier migration is not edited
+    in place, so a database that applied ``input_fingerprint`` is renamed rather
+    than left diverging from the ``PipelineRun`` ORM.
+    """
+    url = f"sqlite:///{tmp_path / 'rename.db'}"
+    cfg = _alembic_cfg(url)
+
+    # The old applied state: pipeline_runs carries ``input_fingerprint``.
+    command.upgrade(cfg, _PIPELINE_REVISION)
+    cols_before = {c["name"] for c in inspect(create_engine(url)).get_columns("pipeline_runs")}
+    assert "input_fingerprint" in cols_before
+    assert "derivation_key" not in cols_before
+    with create_engine(url).connect() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO pipeline_runs (stage, scope_key, status, input_fingerprint,"
+                " version_stamps_json, created_at)"
+                " VALUES ('s', 'scope', 'active', 'fp-1', '{}', '2026-01-01T00:00:00')"
+            )
+        )
+        conn.commit()
+
+    # Migrate forward to head: the column is renamed and the row is preserved.
+    command.upgrade(cfg, "head")
+    cols_after = {c["name"] for c in inspect(create_engine(url)).get_columns("pipeline_runs")}
+    assert "derivation_key" in cols_after
+    assert "input_fingerprint" not in cols_after
+    with create_engine(url).connect() as conn:
+        value = conn.execute(text("SELECT derivation_key FROM pipeline_runs WHERE scope_key='scope'")).scalar_one()
+    assert value == "fp-1"

@@ -21,8 +21,8 @@ import time
 from pyleak import no_thread_leaks
 import pytest
 
-from aizk.pipeline.runner import StageRunner
 from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.pipeline.runner import StageRunner
 
 from ._stub_handler import SubprocessStubRepository, create_stub_engine, succeed
 
@@ -157,5 +157,7 @@ def test_cleanup_on_every_outcome(tmp_path) -> None:
     assert cancel_handler.get_status(cancelled_id) == WorkUnitStatus.CANCELLED.value
 
     cleaned = set(handler.recorded.cleaned_up)
-    assert {str(succeeded_id), str(failed_id), str(timed_out_id)} <= cleaned, "cleanup ran for every in-handler outcome"
+    assert {str(succeeded_id), str(failed_id), str(timed_out_id)} <= cleaned, (
+        "cleanup ran for every in-handler outcome"
+    )
     assert str(cancelled_id) in cancel_handler.recorded.cleaned_up, "cleanup ran for the cancelled outcome"

@@ -44,13 +44,13 @@ def test_atomic_supersede(engine: Engine) -> None:
     pure status transition, leaving the prior run's recorded outputs untouched.
     """
     with Session(engine) as session:
-        first = record_run(session, stage=_STAGE, scope_key=_SCOPE, input_fingerprint="fp-1")
+        first = record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key="fp-1")
         session.commit()
         first_id = first.id
-        first_fingerprint = first.input_fingerprint
+        first_derivation_key = first.derivation_key
 
     with Session(engine) as session:
-        second = record_run(session, stage=_STAGE, scope_key=_SCOPE, input_fingerprint="fp-2")
+        second = record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key="fp-2")
         session.commit()
         second_id = second.id
         assert second.supersedes_run_id == first_id
@@ -61,19 +61,19 @@ def test_atomic_supersede(engine: Engine) -> None:
 
         prior = session.get(PipelineRun, first_id)
         assert prior.status is RunStatus.SUPERSEDED
-        assert prior.input_fingerprint == first_fingerprint, "prior run's recorded outputs are unmodified"
+        assert prior.derivation_key == first_derivation_key, "prior run's recorded outputs are unmodified"
 
 
 def test_supersession_is_scoped_per_stage_scope_key(engine: Engine) -> None:
     """One active run per ``(stage, scope_key)`` — a different scope stays active."""
     other_scope = "document:xyz"
     with Session(engine) as session:
-        record_run(session, stage=_STAGE, scope_key=_SCOPE, input_fingerprint="a")
-        record_run(session, stage=_STAGE, scope_key=other_scope, input_fingerprint="b")
+        record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key="a")
+        record_run(session, stage=_STAGE, scope_key=other_scope, derivation_key="b")
         session.commit()
 
     with Session(engine) as session:
-        record_run(session, stage=_STAGE, scope_key=_SCOPE, input_fingerprint="a2")
+        record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key="a2")
         session.commit()
 
     with Session(engine) as session:
@@ -89,12 +89,12 @@ def test_failed_supersession_changes_nothing(engine: Engine) -> None:
     partial new run is present.
     """
     with Session(engine) as session:
-        first = record_run(session, stage=_STAGE, scope_key=_SCOPE, input_fingerprint="fp-1")
+        first = record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key="fp-1")
         session.commit()
         first_id = first.id
 
     with Session(engine) as session:
-        record_run(session, stage=_STAGE, scope_key=_SCOPE, input_fingerprint="fp-2")
+        record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key="fp-2")
         session.rollback()  # transaction fails before commit
 
     with Session(engine) as session:
@@ -113,17 +113,17 @@ def test_concurrent_runs_one_active(serialized_engine: Engine) -> None:
     no run beyond the active one is left active.
     """
     with Session(serialized_engine) as session:
-        record_run(session, stage=_STAGE, scope_key=_SCOPE, input_fingerprint="initial")
+        record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key="initial")
         session.commit()
 
     barrier = threading.Barrier(2)
     errors: list[BaseException] = []
 
-    def _attempt(fingerprint: str) -> None:
+    def _attempt(derivation_key: str) -> None:
         barrier.wait()
         try:
             with Session(serialized_engine) as session:
-                record_run(session, stage=_STAGE, scope_key=_SCOPE, input_fingerprint=fingerprint)
+                record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key=derivation_key)
                 session.commit()
         except (IntegrityError, OperationalError) as exc:  # lost the race; expected
             errors.append(exc)
@@ -138,7 +138,7 @@ def test_concurrent_runs_one_active(serialized_engine: Engine) -> None:
     with Session(serialized_engine) as session:
         active = _active_runs(session, _STAGE, _SCOPE)
         assert len(active) == 1, "exactly one active run after concurrent attempts"
-        assert active[0].input_fingerprint != "initial", "the active run is one of the new attempts"
+        assert active[0].derivation_key != "initial", "the active run is one of the new attempts"
 
 
 def test_status_stored_as_lowercase_value(engine: Engine) -> None:
@@ -149,7 +149,7 @@ def test_status_stored_as_lowercase_value(engine: Engine) -> None:
     member name ('ACTIVE') and the index would never match.
     """
     with Session(engine) as session:
-        record_run(session, stage=_STAGE, scope_key=_SCOPE, input_fingerprint="fp")
+        record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key="fp")
         session.commit()
 
     with engine.connect() as conn:
@@ -163,7 +163,7 @@ def test_direct_active_insert_violates_unique_index(engine: Engine) -> None:
     with engine.connect() as conn:
         conn.execute(
             text(
-                "INSERT INTO pipeline_runs (stage, scope_key, status, input_fingerprint,"
+                "INSERT INTO pipeline_runs (stage, scope_key, status, derivation_key,"
                 " version_stamps_json, created_at)"
                 " VALUES (:stage, :scope, 'active', 'fp-1', '{}', :now)"
             ),
@@ -174,7 +174,7 @@ def test_direct_active_insert_violates_unique_index(engine: Engine) -> None:
     with pytest.raises(IntegrityError), engine.connect() as conn:
         conn.execute(
             text(
-                "INSERT INTO pipeline_runs (stage, scope_key, status, input_fingerprint,"
+                "INSERT INTO pipeline_runs (stage, scope_key, status, derivation_key,"
                 " version_stamps_json, created_at)"
                 " VALUES (:stage, :scope, 'active', 'fp-2', '{}', :now)"
             ),

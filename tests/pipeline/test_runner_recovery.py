@@ -13,8 +13,8 @@ import json
 from sqlmodel import Session, select
 
 from aizk.pipeline.events import PipelineEvent
-from aizk.pipeline.runner import StageRunner
 from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.pipeline.runner import StageRunner
 
 from ._stub_handler import StubStageHandler, create_stub_engine
 

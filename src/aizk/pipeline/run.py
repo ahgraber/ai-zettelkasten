@@ -76,7 +76,7 @@ class PipelineRun(SQLModel, table=True):
             nullable=False,
         ),
     )
-    input_fingerprint: str = Field(sa_column=Column(Text, nullable=False))
+    derivation_key: str = Field(sa_column=Column(Text, nullable=False))
     version_stamps_json: str = Field(default="{}", sa_column=Column(Text, nullable=False))
     supersedes_run_id: int | None = Field(default=None, nullable=True)
     created_at: datetime.datetime = Field(
@@ -94,7 +94,7 @@ def record_run(
     *,
     stage: str,
     scope_key: str,
-    input_fingerprint: str,
+    derivation_key: str,
     version_stamps: dict[str, str] | None = None,
 ) -> PipelineRun:
     """Activate a new run and supersede the prior active one atomically.
@@ -115,7 +115,8 @@ def record_run(
         session: Active session; the caller owns commit/rollback.
         stage: The stage that owns this run.
         scope_key: The stage-defined scope the run's outputs belong to.
-        input_fingerprint: Fingerprint of the run's inputs.
+        derivation_key: Deterministic key for the inputs/configuration that
+            produced the run's derived outputs.
         version_stamps: Optional reproducibility version identifiers; stored as
             a deterministic JSON object and not interpreted by the primitive.
 
@@ -142,7 +143,7 @@ def record_run(
         stage=stage,
         scope_key=scope_key,
         status=RunStatus.ACTIVE,
-        input_fingerprint=input_fingerprint,
+        derivation_key=derivation_key,
         version_stamps_json=json.dumps(version_stamps or {}, sort_keys=True, separators=(",", ":")),
         supersedes_run_id=supersedes_run_id,
     )
