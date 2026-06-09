@@ -46,29 +46,29 @@ foreign/superseded content never reaches the model.
 
 from __future__ import annotations
 
-import contextlib
 from dataclasses import dataclass
 import datetime
 import logging
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from sqlalchemy import text
 from sqlmodel import Session, select
 
 from aizk.chunking import SPLITTER_VERSION, split
 from aizk.graph.contextualization import (
+    consumed_output_memo_keys,
     contextualize_chunks,
-    generate_revisions,
+    resolve_revisions,
     resolve_summary_text,
     summarize_document,
 )
 from aizk.graph.datamodel import ContextualizationJob
-from aizk.graph.persistence import persist_chunks
+from aizk.graph.db import begin_immediate
+from aizk.graph.persistence import memo_delete_keys, persist_chunks
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.utilities.hashing import compute_markdown_hash
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator
+    from collections.abc import Callable, Iterable
     from uuid import UUID
 
     from sqlalchemy import Engine
@@ -81,21 +81,6 @@ logger = logging.getLogger(__name__)
 def _utcnow() -> datetime.datetime:
     """Return a timezone-aware UTC timestamp."""
     return datetime.datetime.now(datetime.timezone.utc)
-
-
-@contextlib.contextmanager
-def _begin_immediate(engine: "Engine") -> "Iterator[Session]":
-    """Open a ``BEGIN IMMEDIATE`` session; commit on success, roll back on error."""
-    session = Session(engine)
-    try:
-        session.exec(text("BEGIN IMMEDIATE"))
-        yield session
-        session.commit()
-    except BaseException:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 
 @dataclass(frozen=True)
@@ -271,23 +256,35 @@ def process_document(
     if _cancelled():
         logger.info("Cancellation observed before generation for conversion output %s", conversion_output_id)
         return Cancelled()
-    # Resolve the summary text that will actually be persisted — reusing the
-    # active summary's text when unchanged — so the revisions are generated from
-    # the same summary the variants will record as provenance (not a fresh one
-    # discarded when the summary run is reused). A read-only session: when not
-    # reused, generation still happens here, outside the persist write lock.
-    with Session(engine) as read_session:
-        summary_text = resolve_summary_text(
-            read_session,
-            client,
-            aizk_uuid=scope_key,
-            markdown_hash_xx64=loaded.markdown_hash_xx64,
-            document_text=loaded.text,
-        )
-    revisions = generate_revisions(client, summary_text, chunks)
+    # Resolve the summary text and per-chunk revisions, reusing validated model
+    # output retained by a prior partial attempt (and the active runs) so a retry
+    # re-invokes the model only for outputs not yet produced. These resolvers
+    # perform their own short autonomous memo commits and never hold the write lock
+    # across a model call; the revisions are conditioned on the resolved summary, so
+    # the variants record the same summary the revision was actually built from.
+    summary_text = resolve_summary_text(
+        engine,
+        client,
+        aizk_uuid=scope_key,
+        markdown_hash_xx64=loaded.markdown_hash_xx64,
+        document_text=loaded.text,
+    )
+    # ``None`` signals the generation phase resolved to reuse a complete active
+    # variant run (no revisions to carry); ``reuse_only`` then makes the persist
+    # phase fail retryably if that run vanished between plan and apply rather than
+    # misinterpreting an empty set as a torn run.
+    revisions = resolve_revisions(
+        engine,
+        client,
+        aizk_uuid=scope_key,
+        summary_text=summary_text,
+        markdown_hash_xx64=loaded.markdown_hash_xx64,
+        ordered_chunks=chunks,
+        splitter_version=SPLITTER_VERSION,
+    )
 
     # --- Apply phase: one short write transaction. ---
-    with _begin_immediate(engine) as session:
+    with begin_immediate(engine) as session:
         # Do not commit domain writes for a unit that is being cancelled.
         if _cancelled():
             logger.info("Cancellation observed before persist for conversion output %s", conversion_output_id)
@@ -326,6 +323,21 @@ def process_document(
             chunking_run_id=chunking_run.id,
             splitter_version=SPLITTER_VERSION,
             precomputed_revisions=revisions,
+            reuse_only=revisions is None,
+        )
+        # Prune the memo entries this generation consumed, atomically with the
+        # persist: the summary and revisions now live in DocumentSummary /
+        # ContextualizedChunk, so the checkpoint rows are redundant. Key-exact, so a
+        # concurrent same-source attempt under different keys keeps its checkpoints.
+        memo_delete_keys(
+            session,
+            scope_key,
+            consumed_output_memo_keys(
+                summary_text,
+                markdown_hash_xx64=loaded.markdown_hash_xx64,
+                ordered_chunks=chunks,
+                splitter_version=SPLITTER_VERSION,
+            ),
         )
         # Capture primitives while the rows are still attached (commit expires them).
         result = ProcessResult(

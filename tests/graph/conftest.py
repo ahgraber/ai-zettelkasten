@@ -22,6 +22,7 @@ from aizk.graph.datamodel import (
     ChunkRunInput,
     ChunkRunManifest,
     ContextualizationJob,
+    ContextualizationOutputMemo,
     ContextualizedChunk,
     DocumentSummary,
 )
@@ -34,6 +35,7 @@ _GRAPH_SCHEMA_TABLES = [
     ChunkRunManifest.__table__,
     DocumentSummary.__table__,
     ContextualizedChunk.__table__,
+    ContextualizationOutputMemo.__table__,
     ContextualizationJob.__table__,
     PipelineRun.__table__,
     PipelineEvent.__table__,

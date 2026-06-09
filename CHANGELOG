@@ -5,6 +5,7 @@
 ### Added
 
 - Chunking splitter foundation (`aizk.chunking`): document-structure splitter, chunk data model, deterministic identity
+- Checkpoint validated contextualization model output (the document summary and each per-chunk revision) in a new `graph_contextualization_output_memo` table, so a retry of a partially-completed contextualization re-invokes the model only for outputs not already retained; consumed entries are pruned atomically with a successful persist — run `alembic upgrade head` (revision `c2d3e4f5a6b7`) before starting the service
 
 ### Changed
 

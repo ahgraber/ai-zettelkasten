@@ -33,8 +33,17 @@ self-contained stores an empty revision, signalling "consume the raw chunk
 unchanged". :func:`resolve_chunk_text` selects raw vs revised text at use time,
 honoring the contextualization on/off toggle and recording which input was used.
 
-Calling convention mirrors the runtime helpers: these functions ``add``/``flush``
-on the caller's session and never commit.
+Calling convention mirrors the runtime helpers: the persist-phase functions
+(:func:`summarize_document`, :func:`contextualize_chunks`) ``add``/``flush`` on the
+caller's session and never commit. The **generation-phase** resolvers
+(:func:`resolve_summary_text`, :func:`resolve_revisions`) are the exception: they
+take the ``engine`` and perform autonomous memo writes in their own short
+transactions to checkpoint validated model output, so a retry of a
+partially-completed attempt re-invokes the model only for outputs not already
+retained. They never hold a transaction across a model call, and the memo is
+internal scratch state (:class:`~aizk.graph.datamodel.ContextualizationOutputMemo`),
+never read as product state; :func:`consumed_output_memo_keys` enumerates the keys
+the persist phase prunes once they are redundant with the committed records.
 """
 
 from __future__ import annotations
@@ -46,19 +55,25 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from sqlmodel import select
+from sqlmodel import Session, select
 
 from aizk.graph._version import CONTEXT_VERSION, SUMMARY_VERSION
-from aizk.graph.datamodel import ContextualizedChunk, DocumentSummary
-from aizk.graph.persistence import CHUNKING_STAGE, manifest_of_run
+from aizk.graph.datamodel import (
+    MEMO_KIND_REVISION,
+    MEMO_KIND_SUMMARY,
+    ContextualizedChunk,
+    DocumentSummary,
+)
+from aizk.graph.persistence import CHUNKING_STAGE, manifest_of_run, memo_get, memo_upsert_and_read
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from sqlmodel import Session
+    from sqlalchemy import Engine
 
     from aizk.chunking import Chunk as SplitterChunk
+    from aizk.graph.datamodel import MemoKind
     from aizk.graph.llm import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -67,6 +82,23 @@ logger = logging.getLogger(__name__)
 SUMMARY_STAGE = "document_summary"
 #: Stage identifier for per-document contextualized-variant runs in ``pipeline_runs``.
 VARIANT_STAGE = "chunk_contextualization"
+
+
+class StalePlanError(RuntimeError):
+    """The active run a generation planned to reuse changed before it was persisted.
+
+    Raised at the persist boundary when the summary or variant run the lock-free
+    generation phase resolved against is no longer the active, matching run — so
+    the revisions in hand were conditioned on a generation that the apply step
+    would otherwise misrecord (a different summary) or cannot reuse (a superseded
+    variant run). It is **not** a :class:`ValueError`: the stage handler maps it to
+    a *retryable* failure, so the unit re-resolves and regenerates against the
+    current state on the next attempt rather than failing permanently. Under the
+    current freshness-gate / single-writer invariants this is not expected to fire;
+    it enforces those invariants so a future weakening surfaces loudly and safely
+    instead of corrupting provenance or permanently failing the unit.
+    """
+
 
 SUMMARY_INSTRUCTIONS = (
     "Summarize the provided document. Ground strictly in the provided document;"
@@ -181,23 +213,35 @@ def _summary_derivation_key(
     )
 
 
-def _summary_identity(summary: DocumentSummary, summary_derivation_key: str) -> str:
-    """Canonical summary identity for variant derivation keys.
+def _summary_identity_from_text(summary_text: str, summary_version: int, summary_derivation_key: str) -> str:
+    """Canonical summary identity computed from the summary text, not a persisted row.
 
-    The summary row id and summary run id are local database handles, so they are
-    intentionally excluded. The contextualization prompt consumes the summary
-    text, so its hash participates along with the summary run's semantic
-    derivation key.
+    The generation phase must build variant derivation keys before any
+    :class:`DocumentSummary` row exists, so the identity is factored off the text
+    (and version + run derivation key) rather than the row. The summary row id and
+    run id are local database handles, intentionally excluded; the contextualization
+    prompt consumes the summary text, so its hash participates along with the
+    summary run's semantic derivation key.
     """
     return json.dumps(
         {
             "summary_derivation_key": summary_derivation_key,
-            "summary_text_hash": _stable_hash(summary.summary_text),
-            "summary_version": summary.summary_version,
+            "summary_text_hash": _stable_hash(summary_text),
+            "summary_version": summary_version,
         },
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+def _summary_identity(summary: DocumentSummary, summary_derivation_key: str) -> str:
+    """Canonical summary identity for variant derivation keys, from a persisted summary.
+
+    Delegates to :func:`_summary_identity_from_text` so the persist-phase callers
+    (which hold a :class:`DocumentSummary`) and the generation phase (which has only
+    the resolved text) compute byte-identical identities.
+    """
+    return _summary_identity_from_text(summary.summary_text, summary.summary_version, summary_derivation_key)
 
 
 def _variant_run_derivation_key(
@@ -395,7 +439,7 @@ def generate_summary_text(client: "LLMClient", document_text: str) -> str:
 
 
 def resolve_summary_text(
-    session: "Session",
+    engine: "Engine",
     client: "LLMClient",
     *,
     aizk_uuid: str,
@@ -404,25 +448,72 @@ def resolve_summary_text(
     summary_version: int = SUMMARY_VERSION,
     model_profile: str = DEFAULT_MODEL_PROFILE,
 ) -> str:
-    """Return the summary text that will be persisted for this document (read-only).
+    """Return the summary text to persist, reusing prior model work where possible.
 
-    If the active summary run's derivation key is unchanged, returns the existing
-    summary's text with **no model call**; otherwise generates a fresh summary.
-    The caller generates the per-chunk revisions from this returned text, so a
-    variant's recorded provenance (the summary run it points at) always matches
-    the summary text the revision was actually conditioned on — even when the
-    summary is reused but the variants are regenerated (e.g. a ``context_version``
-    or ``splitter_version`` bump). Performs no writes; the resolution must run
-    outside the persist transaction so that, when not reused, the model call does
-    not hold the write lock.
+    Resolves the summary in three escalating steps, holding **no transaction across
+    the model call**:
+
+    1. **Active-run reuse** — if the active summary run's derivation key is
+       unchanged, return its persisted text with no model call, so a variant's
+       recorded provenance always matches the summary text its revision was
+       conditioned on (even when the summary is reused but variants regenerate on a
+       ``context_version`` / ``splitter_version`` bump).
+    2. **Memo reuse** — otherwise, if a validated summary output is retained for the
+       derivation key, return it with no model call, so a retry of a
+       partially-completed attempt re-stabilizes the summary text and hence every
+       downstream revision derivation key.
+    3. **Generate** — otherwise call the model once, validate the output, retain it,
+       and return the **authoritative stored** value so benign same-source
+       contention resolves to one summary text.
+
+    This is **not** read-only: on a miss it performs an autonomous memo write
+    (:func:`~aizk.graph.persistence.memo_upsert_and_read`) in its own short
+    transaction. The read steps use a short-lived session closed before any model
+    call, so the write lock is never held across model latency.
+
+    Args:
+        engine: The shared engine; reads and the autonomous memo write each open
+            their own short session/transaction off it.
+        client: The single model access point for the summary pass.
+        aizk_uuid: The durable source identity (``str(aizk_uuid)``); the memo
+            ``scope_key``.
+        markdown_hash_xx64: Content hash of the source markdown (in the derivation key).
+        document_text: The document the summary pass reads on a miss.
+        summary_version: The summary behavior version.
+        model_profile: The model profile identity.
+
+    Returns:
+        The summary text to persist — reused, memo-retained, or freshly generated.
     """
     derivation_key = _summary_derivation_key(markdown_hash_xx64, summary_version, model_profile)
-    active = _active_run(session, SUMMARY_STAGE, aizk_uuid)
-    if active is not None and active.derivation_key == derivation_key:
-        existing = session.exec(select(DocumentSummary).where(DocumentSummary.run_id == active.id)).first()
-        if existing is not None:
-            return existing.summary_text
-    return generate_summary_text(client, document_text)
+    with Session(engine) as read:
+        active = _active_run(read, SUMMARY_STAGE, aizk_uuid)
+        if active is not None and active.derivation_key == derivation_key:
+            existing = read.exec(select(DocumentSummary).where(DocumentSummary.run_id == active.id)).first()
+            if existing is not None:
+                return existing.summary_text
+        memoed = memo_get(read, MEMO_KIND_SUMMARY, aizk_uuid, derivation_key)
+    if memoed is not None:
+        return memoed
+    validated = _validate_summary_text(generate_summary_text(client, document_text))
+    return memo_upsert_and_read(engine, MEMO_KIND_SUMMARY, aizk_uuid, derivation_key, validated)
+
+
+def _generate_one_revision(
+    client: "LLMClient",
+    summary_text: str,
+    prior_2: "SplitterChunk | None",
+    prior_1: "SplitterChunk | None",
+    working: "SplitterChunk",
+    next_1: "SplitterChunk | None",
+) -> str:
+    """Run the contextualization LLM pass for one chunk and return its raw output.
+
+    Pure model I/O with no database access, so a memo-aware caller can generate a
+    single chunk on a miss while the bulk :func:`generate_revisions` retains its
+    pure form. Length validation happens at the memo-write / persist boundary.
+    """
+    return client.generate(_contextualization_framing(summary_text, prior_2, prior_1, working, next_1))
 
 
 def generate_revisions(
@@ -442,8 +533,130 @@ def generate_revisions(
         prior_2 = ordered[index - 2] if index > 1 else None
         prior_1 = ordered[index - 1] if index > 0 else None
         next_1 = ordered[index + 1] if index < len(ordered) - 1 else None
-        revisions.append(client.generate(_contextualization_framing(summary_text, prior_2, prior_1, chunk, next_1)))
+        revisions.append(_generate_one_revision(client, summary_text, prior_2, prior_1, chunk, next_1))
     return revisions
+
+
+def resolve_revisions(
+    engine: "Engine",
+    client: "LLMClient",
+    *,
+    aizk_uuid: str,
+    summary_text: str,
+    markdown_hash_xx64: str,
+    ordered_chunks: "Sequence[SplitterChunk]",
+    splitter_version: int,
+    summary_version: int = SUMMARY_VERSION,
+    context_version: int = CONTEXT_VERSION,
+    model_profile: str = DEFAULT_MODEL_PROFILE,
+) -> list[str] | None:
+    """Return the per-chunk revisions to persist, reusing prior model work where possible.
+
+    The revision counterpart to :func:`resolve_summary_text`, holding **no
+    transaction across a model call**:
+
+    - **Active variant-run precheck** — if a *complete* active variant run matches
+      the run-level derivation key, return ``None`` (no model call) to signal the
+      persist phase to reuse that run. This is what restores zero model invocations
+      when re-executing an already-completed document whose memo entries were pruned
+      on success. A short/torn active run falls through to per-chunk resolution.
+    - **Per-chunk memo reuse or generate** — for each chunk in document order, return
+      the retained revision on a memo hit (including an empty, self-contained one,
+      which is a hit not a miss); otherwise generate one revision, validate it,
+      retain it, and use the **authoritative stored** value.
+
+    Summary identity is computed from ``summary_text`` (not a persisted row), so the
+    per-row revision derivation keys match those the persist phase records.
+
+    Args:
+        engine: The shared engine; reads and autonomous memo writes open their own
+            short sessions/transactions off it.
+        client: The single model access point for the per-chunk passes.
+        aizk_uuid: The durable source identity (``str(aizk_uuid)``); the memo
+            ``scope_key``.
+        summary_text: The resolved summary the revisions are conditioned on.
+        markdown_hash_xx64: Content hash of the source markdown (in the summary
+            identity).
+        ordered_chunks: The source's chunks in document order; the 2p/1n window is
+            taken from this order.
+        splitter_version: The ``splitter_version`` of the chunking generation read.
+        summary_version: The summary behavior version.
+        context_version: The contextualization behavior version.
+        model_profile: The model profile identity.
+
+    Returns:
+        ``None`` when a complete active variant run is to be reused, otherwise one
+        raw|empty revision per chunk in document order (``[]`` for a zero-chunk
+        document with no active run to reuse).
+    """
+    ordered = list(ordered_chunks)
+    summary_derivation_key = _summary_derivation_key(markdown_hash_xx64, summary_version, model_profile)
+    summary_identity = _summary_identity_from_text(summary_text, summary_version, summary_derivation_key)
+    run_derivation_key = _variant_run_derivation_key(
+        summary_identity, ordered, splitter_version, context_version, model_profile
+    )
+    with Session(engine) as read:
+        active = _active_run(read, VARIANT_STAGE, aizk_uuid)
+        if active is not None and active.derivation_key == run_derivation_key:
+            count = len(read.exec(select(ContextualizedChunk).where(ContextualizedChunk.run_id == active.id)).all())
+            if count == len(ordered):
+                return None
+
+    revisions: list[str] = []
+    for index, chunk in enumerate(ordered):
+        prior_2 = ordered[index - 2] if index > 1 else None
+        prior_1 = ordered[index - 1] if index > 0 else None
+        next_1 = ordered[index + 1] if index < len(ordered) - 1 else None
+        row_key = _variant_row_derivation_key(
+            summary_identity, chunk, prior_2, prior_1, next_1, splitter_version, context_version, model_profile
+        )
+        with Session(engine) as read:
+            memoed = memo_get(read, MEMO_KIND_REVISION, aizk_uuid, row_key)
+        if memoed is not None:
+            revisions.append(memoed)
+            continue
+        raw = _generate_one_revision(client, summary_text, prior_2, prior_1, chunk, next_1)
+        validated = _validate_contextualized_text(chunk.text, raw)
+        revisions.append(memo_upsert_and_read(engine, MEMO_KIND_REVISION, aizk_uuid, row_key, validated))
+    return revisions
+
+
+def consumed_output_memo_keys(
+    summary_text: str,
+    *,
+    markdown_hash_xx64: str,
+    ordered_chunks: "Sequence[SplitterChunk]",
+    splitter_version: int,
+    summary_version: int = SUMMARY_VERSION,
+    context_version: int = CONTEXT_VERSION,
+    model_profile: str = DEFAULT_MODEL_PROFILE,
+) -> "list[tuple[MemoKind, str]]":
+    """Return the memo keys a completed generation consumed, for the success-path prune.
+
+    Exactly the summary derivation key and the per-chunk revision derivation keys
+    that :func:`resolve_summary_text` / :func:`resolve_revisions` read or wrote for
+    this generation, so the persist phase deletes precisely those entries
+    (key-exact, not source-wide) once they are redundant with the persisted
+    ``DocumentSummary`` / ``ContextualizedChunk``. Recomputed from the same inputs,
+    so the keys match byte-for-byte regardless of whether each was a hit or a write.
+    """
+    summary_derivation_key = _summary_derivation_key(markdown_hash_xx64, summary_version, model_profile)
+    summary_identity = _summary_identity_from_text(summary_text, summary_version, summary_derivation_key)
+    ordered = list(ordered_chunks)
+    keys: list[tuple[MemoKind, str]] = [(MEMO_KIND_SUMMARY, summary_derivation_key)]
+    for index, chunk in enumerate(ordered):
+        prior_2 = ordered[index - 2] if index > 1 else None
+        prior_1 = ordered[index - 1] if index > 0 else None
+        next_1 = ordered[index + 1] if index < len(ordered) - 1 else None
+        keys.append(
+            (
+                MEMO_KIND_REVISION,
+                _variant_row_derivation_key(
+                    summary_identity, chunk, prior_2, prior_1, next_1, splitter_version, context_version, model_profile
+                ),
+            )
+        )
+    return keys
 
 
 def summarize_document(
@@ -482,6 +695,17 @@ def summarize_document(
     if active is not None and active.derivation_key == derivation_key:
         existing = session.exec(select(DocumentSummary).where(DocumentSummary.run_id == active.id)).first()
         if existing is not None:
+            # The revisions in hand were conditioned on ``precomputed_summary_text``.
+            # If the active summary's text differs (an overlapping attempt re-summarized
+            # under the same key between plan and apply), reusing it would record a
+            # different summary as provenance than the one the revisions used. Fail
+            # retryably so the unit re-resolves and regenerates against the current
+            # summary rather than persisting mismatched provenance.
+            if precomputed_summary_text is not None and existing.summary_text != precomputed_summary_text:
+                raise StalePlanError(
+                    f"active summary for source {aizk_uuid!r} changed since the revisions were planned; "
+                    "retry to re-resolve and regenerate against the current summary"
+                )
             logger.debug("Reusing active summary run id=%s for source=%s", active.id, aizk_uuid)
             return existing
 
@@ -527,6 +751,7 @@ def contextualize_chunks(
     context_version: int = CONTEXT_VERSION,
     model_profile: str = DEFAULT_MODEL_PROFILE,
     precomputed_revisions: "Sequence[str] | None" = None,
+    reuse_only: bool = False,
 ) -> list[ContextualizedChunk]:
     """Produce (or reuse) the active contextualized variants for a source's chunks.
 
@@ -565,12 +790,22 @@ def contextualize_chunks(
             caller's LLM pass (run outside the write lock), aligned to ``chunks``;
             when ``None``, they are generated here. Ignored when the active run is
             reused.
+        reuse_only: When the generation phase planned to reuse a complete active
+            variant run (so it carries no per-chunk revisions), set this so a
+            mismatch at persist — the planned active run no longer matches or is
+            torn — raises a retryable :class:`StalePlanError` instead of generating
+            inside the write lock. Leave ``False`` for the normal persist-from-
+            precomputed (or generate) path.
 
     Returns:
         The active list of :class:`ContextualizedChunk` for the document, in
         document order.
 
     Raises:
+        StalePlanError: If ``reuse_only`` is set but no complete active variant run
+            matches the planned derivation key at persist (a superseding generation
+            landed between plan and apply) — retryable, so the unit re-resolves and
+            regenerates the revisions outside the write lock on the next attempt.
         ValueError: If the summary or any chunk does not belong to ``aizk_uuid``,
             or if ``chunking_run_id`` does not reference a chunking run for this
             source at this ``splitter_version`` whose manifest contains every
@@ -609,6 +844,16 @@ def contextualize_chunks(
         if len(existing) == len(ordered):
             logger.debug("Reusing active variant run id=%s for source=%s", active.id, aizk_uuid)
             return existing
+
+    # The generation phase planned to reuse a complete active run but it is gone or
+    # torn at persist (a superseding generation landed in between). Fail retryably
+    # rather than generating under the write lock or treating an empty precomputed
+    # set as a torn run.
+    if reuse_only:
+        raise StalePlanError(
+            f"variant run for source {aizk_uuid!r} planned for reuse is no longer active/complete; "
+            "retry to regenerate the revisions outside the write lock"
+        )
 
     # Raw revisions come from the caller (LLM run outside the write lock) or are
     # produced here; either way they are validated (cheap) before persistence.
