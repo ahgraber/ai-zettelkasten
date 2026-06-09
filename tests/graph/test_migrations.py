@@ -15,7 +15,8 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect
+import pytest
+from sqlalchemy import create_engine, inspect, text
 from sqlmodel import SQLModel
 
 from aizk.graph.datamodel import (
@@ -23,15 +24,16 @@ from aizk.graph.datamodel import (
     ChunkRunInput,
     ChunkRunManifest,
     ContextualizationJob,
+    ContextualizationOutputMemo,
     ContextualizedChunk,
     DocumentSummary,
 )
 
 _MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "src" / "aizk" / "conversion" / "migrations"
 
-# The graph tables span two migrations on top of the pipeline-runtime revision:
-# f8b9c0d1e2a3 (chunk/contextualization tables) and a9c0d1e2f3b4 (work-unit table).
-# Downgrading to _PREV_REVISION removes all of them.
+# The graph tables span three migrations on top of the pipeline-runtime revision:
+# f8b9c0d1e2a3 (chunk/contextualization tables), a9c0d1e2f3b4 (work-unit table),
+# and c2d3e4f5a6b7 (output memo). Downgrading to _PREV_REVISION removes all of them.
 _PREV_REVISION = "e1f2a3b4c5d6"
 _GRAPH_TABLES = (
     "graph_chunks",
@@ -40,6 +42,7 @@ _GRAPH_TABLES = (
     "graph_document_summaries",
     "graph_contextualized_chunks",
     "graph_contextualization_jobs",
+    "graph_contextualization_output_memo",
 )
 _GRAPH_ORM_TABLES = [
     Chunk.__table__,
@@ -48,6 +51,7 @@ _GRAPH_ORM_TABLES = [
     DocumentSummary.__table__,
     ContextualizedChunk.__table__,
     ContextualizationJob.__table__,
+    ContextualizationOutputMemo.__table__,
 ]
 
 
@@ -136,6 +140,90 @@ def test_graph_chunk_id_foreign_keys_into_chunks(tmp_path: Path) -> None:
             and fk["constrained_columns"] == ["chunk_id"]
             for fk in fks
         ), f"{table} missing chunk_id foreign key into graph_chunks"
+
+
+_MEMO_REVISION = "c2d3e4f5a6b7"
+_MEMO_PREV_REVISION = "b0d1e2f3a4c5"
+
+
+def test_output_memo_migration_round_trips(tmp_path: Path) -> None:
+    """The output-memo revision creates and drops its table cleanly on a scratch DB."""
+    url = f"sqlite:///{tmp_path / 'memo_round_trip.db'}"
+    cfg = _alembic_cfg(url)
+
+    command.upgrade(cfg, _MEMO_REVISION)
+    assert "graph_contextualization_output_memo" in inspect(create_engine(url)).get_table_names()
+
+    command.downgrade(cfg, _MEMO_PREV_REVISION)
+    tables_after = set(inspect(create_engine(url)).get_table_names())
+    assert "graph_contextualization_output_memo" not in tables_after
+    # The prior graph tables are untouched by the memo downgrade.
+    assert "graph_contextualized_chunks" in tables_after
+    assert "graph_contextualization_jobs" in tables_after
+
+
+def test_output_memo_unique_constraint_rejects_duplicate_key(tmp_path: Path) -> None:
+    """The unique ``(kind, scope_key, derivation_key)`` rejects a duplicate memo row."""
+    url = f"sqlite:///{tmp_path / 'memo_unique.db'}"
+    command.upgrade(_alembic_cfg(url), _MEMO_REVISION)
+    engine = create_engine(url)
+
+    insert = text(
+        "INSERT INTO graph_contextualization_output_memo "
+        "(kind, scope_key, derivation_key, output_text, created_at) "
+        "VALUES (:kind, :scope, :key, :out, :now)"
+    )
+    params = {
+        "kind": "summary",
+        "scope": "11111111-1111-1111-1111-111111111111",
+        "key": '{"markdown_hash":"abc"}',
+        "out": "a summary",
+        "now": "2026-06-06T00:00:00",
+    }
+    with engine.begin() as conn:
+        conn.execute(insert, params)
+
+    # A second row with the same (kind, scope_key, derivation_key) violates the unique constraint,
+    # even with different output_text — the key, not the value, is unique.
+    with (
+        pytest.raises(Exception, match="UNIQUE|unique"),  # noqa: PT011 — driver-specific IntegrityError message
+        engine.begin() as conn,
+    ):
+        conn.execute(insert, {**params, "out": "a different summary"})
+
+
+def test_output_memo_kind_check_rejects_unknown_kind(tmp_path: Path) -> None:
+    """The ``kind`` CHECK constraint rejects any value outside ``summary`` / ``revision``.
+
+    A typo'd kind would otherwise create a durable but unreachable memo entry; the
+    constraint makes that fail closed at the persistence boundary.
+    """
+    url = f"sqlite:///{tmp_path / 'memo_kind.db'}"
+    command.upgrade(_alembic_cfg(url), _MEMO_REVISION)
+    engine = create_engine(url)
+
+    insert = text(
+        "INSERT INTO graph_contextualization_output_memo "
+        "(kind, scope_key, derivation_key, output_text, created_at) "
+        "VALUES (:kind, :scope, :key, :out, :now)"
+    )
+    params = {
+        "kind": "sumary",  # deliberate typo — not a legal kind
+        "scope": "11111111-1111-1111-1111-111111111111",
+        "key": '{"markdown_hash":"abc"}',
+        "out": "an output",
+        "now": "2026-06-06T00:00:00",
+    }
+    with (
+        pytest.raises(Exception, match="CHECK|check|constraint"),  # noqa: PT011 — driver-specific message
+        engine.begin() as conn,
+    ):
+        conn.execute(insert, params)
+
+    # The two legal kinds insert without error.
+    for kind in ("summary", "revision"):
+        with engine.begin() as conn:
+            conn.execute(insert, {**params, "kind": kind})
 
 
 def test_graph_revision_downgrade_drops_only_graph_tables(tmp_path: Path) -> None:

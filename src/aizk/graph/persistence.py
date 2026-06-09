@@ -31,16 +31,22 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
+from sqlalchemy import delete
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlmodel import select
 
 from aizk.chunking import Chunk as SplitterChunk
-from aizk.graph.datamodel import Chunk, ChunkRunInput, ChunkRunManifest
+from aizk.graph.datamodel import Chunk, ChunkRunInput, ChunkRunManifest, ContextualizationOutputMemo
+from aizk.graph.db import begin_immediate
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from sqlalchemy import Engine
     from sqlmodel import Session
+
+    from aizk.graph.datamodel import MemoKind
 
 logger = logging.getLogger(__name__)
 
@@ -358,3 +364,83 @@ def current_chunk_ids(session: "Session", aizk_uuid: str) -> set[str]:
     if run is None or run.id is None:
         return set()
     return set(members_of_run(session, run.id))
+
+
+# --------------------------------------------------------------------------- #
+# Contextualization output memo
+#
+# Internal scratch state caching validated contextualization model outputs so a
+# retry of a partially-completed attempt re-invokes the model only for outputs
+# not already retained. Identity is ``(kind, scope_key, derivation_key)``; the
+# value ``''`` is a legal present-empty entry distinct from absence. These helpers
+# are the only access path to ``graph_contextualization_output_memo``; the memo is
+# never read as product state.
+# --------------------------------------------------------------------------- #
+
+
+def memo_get(session: "Session", kind: "MemoKind", scope_key: str, derivation_key: str) -> str | None:
+    """Return the retained output for a memo key, or ``None`` if absent.
+
+    Distinguishes three cases the caller must treat differently: ``None`` means the
+    key is absent (a miss — the model must be invoked); ``''`` means a validated
+    present-empty entry (a hit — the chunk was judged already self-contained, so the
+    model is not re-invoked); a non-empty string is a retained revision/summary hit.
+    """
+    row = session.exec(
+        select(ContextualizationOutputMemo).where(
+            ContextualizationOutputMemo.kind == kind,
+            ContextualizationOutputMemo.scope_key == scope_key,
+            ContextualizationOutputMemo.derivation_key == derivation_key,
+        )
+    ).one_or_none()
+    return row.output_text if row is not None else None
+
+
+def memo_upsert_and_read(
+    engine: "Engine", kind: "MemoKind", scope_key: str, derivation_key: str, output_text: str
+) -> str:
+    """Idempotently retain ``output_text`` for a memo key and return the authoritative stored value.
+
+    Opens its own short ``BEGIN IMMEDIATE`` transaction (never spanning a model
+    call), inserts the row with ``ON CONFLICT(kind, scope_key, derivation_key) DO
+    NOTHING``, then reads and returns the value now stored. On a conflict the insert
+    is a no-op and the **pre-existing** value is returned, so a benign same-source
+    contention (two work-units re-deriving the same key) resolves to one
+    authoritative value: the caller must use this returned value — not its own
+    just-generated output — for all downstream derivation and persistence, because
+    model output is non-deterministic and a loser's value may differ from the
+    winner's.
+
+    Returns:
+        The value stored under the key after the upsert (the caller's value when it
+        won the insert, or the prior value on conflict).
+    """
+    statement = (
+        sqlite_insert(ContextualizationOutputMemo)
+        .values(kind=kind, scope_key=scope_key, derivation_key=derivation_key, output_text=output_text)
+        .on_conflict_do_nothing(index_elements=["kind", "scope_key", "derivation_key"])
+    )
+    with begin_immediate(engine) as session:
+        session.execute(statement)
+        stored = memo_get(session, kind, scope_key, derivation_key)
+    if stored is None:  # pragma: no cover — a row always exists after insert-or-ignore
+        raise RuntimeError(f"memo upsert for ({kind!r}, {scope_key!r}) produced no stored row")
+    return stored
+
+
+def memo_delete_keys(session: "Session", scope_key: str, keys: "Sequence[tuple[MemoKind, str]]") -> None:
+    """Delete exactly the listed ``(kind, derivation_key)`` memo entries under ``scope_key``.
+
+    Key-exact, not source-wide: it removes only the entries a completed generation
+    consumed, leaving any other same-``scope_key`` entry (e.g. a concurrent
+    same-source attempt working under different keys) intact. Runs in the caller's
+    transaction so the prune commits atomically with the generation's persistence.
+    """
+    for kind, derivation_key in keys:
+        session.execute(
+            delete(ContextualizationOutputMemo).where(
+                ContextualizationOutputMemo.scope_key == scope_key,
+                ContextualizationOutputMemo.kind == kind,
+                ContextualizationOutputMemo.derivation_key == derivation_key,
+            )
+        )

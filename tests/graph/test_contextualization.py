@@ -32,7 +32,6 @@ from aizk.graph.contextualization import (
     ContextSource,
     contextualize_chunks,
     resolve_chunk_text,
-    resolve_summary_text,
     summarize_document,
 )
 from aizk.graph.datamodel import Chunk, ContextualizedChunk, DocumentSummary
@@ -1003,46 +1002,3 @@ def test_variant_records_summary_run_id_outside_the_derivation_key(session: Sess
         select(PipelineRun).where(PipelineRun.stage == VARIANT_STAGE, PipelineRun.status == RunStatus.ACTIVE)
     ).one()
     assert "summary_run_id" not in active.derivation_key
-
-
-# --------------------------------------------------------------------------- #
-# Summary text resolution: revisions derive from the persisted summary
-# --------------------------------------------------------------------------- #
-
-
-def test_resolve_summary_text_reuses_existing_text(session: Session) -> None:
-    """When the active summary run is unchanged, resolve returns its persisted text with no model call.
-
-    This is what keeps a variant's recorded summary provenance consistent with the
-    text its revision was conditioned on: the unit-of-work generates revisions from
-    this returned text, so reusing the summary yields revisions built from the
-    reused summary, not a freshly regenerated one.
-    """
-    _persist(session, [_make_chunk("body", ordinal=0)], markdown_hash=_HASH_A)
-    summary = summarize_document(
-        session,
-        StubLLMClient(responder=lambda _p: "summary-one"),
-        aizk_uuid=_AIZK_UUID,
-        conversion_output_id=_OUTPUT,
-        markdown_hash_xx64=_HASH_A,
-        document_text=_DOC_TEXT,
-    )
-    session.commit()
-
-    # A client that *would* produce different text must not be consulted on reuse.
-    other = StubLLMClient(responder=lambda _p: "summary-two")
-    resolved = resolve_summary_text(
-        session, other, aizk_uuid=_AIZK_UUID, markdown_hash_xx64=_HASH_A, document_text=_DOC_TEXT
-    )
-    assert resolved == summary.summary_text == "summary-one"
-    assert other.prompts == [], "no model call when the summary is reused"
-
-
-def test_resolve_summary_text_generates_on_changed_input(session: Session) -> None:
-    """With no matching active summary run, resolve generates a fresh summary."""
-    client = StubLLMClient(responder=lambda _p: "fresh-summary")
-    resolved = resolve_summary_text(
-        session, client, aizk_uuid=_AIZK_UUID, markdown_hash_xx64=_HASH_B, document_text=_DOC_TEXT
-    )
-    assert resolved == "fresh-summary"
-    assert len(client.prompts) == 1

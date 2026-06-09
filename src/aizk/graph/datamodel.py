@@ -37,6 +37,11 @@ by generation live on the run instead:
   ``chunk_id``, ``context_version``, the ``summary_run_id`` and ``chunking_run_id``
   provenance pointers, and a derivation key for the summary, 2p/1n neighbor
   identities, ``splitter_version``, prompt identity, and model profile used.
+- :class:`ContextualizationOutputMemo` — internal scratch state caching validated
+  summary and per-chunk revision model outputs keyed by ``(kind, scope_key,
+  derivation_key)`` so a retry of a partially-completed contextualization attempt
+  re-invokes the model only for outputs not already retained. Never a product
+  projection: a row makes no run, summary, or variant active or readable.
 
 ``run_id`` columns are logical references to ``pipeline_runs.id`` with no
 database foreign key, matching the runtime's convention so superseded-run
@@ -48,12 +53,31 @@ stages (mention extraction) also reference.
 from __future__ import annotations
 
 import datetime
+from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import Column, DateTime, Enum as SAEnum, ForeignKey, Index, Text, UniqueConstraint, func
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    DateTime,
+    Enum as SAEnum,
+    ForeignKey,
+    Index,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlmodel import Field, SQLModel
 
 from aizk.pipeline.lifecycle import WorkUnitStatus
+
+#: The two kinds of contextualization model output the memo retains. The summary
+#: output (``summary``) and each per-chunk revision (``revision``) are the only
+#: legal discriminator values; a ``CHECK`` constraint on the table and this typed
+#: boundary together keep a typo from creating a durable but unreachable entry.
+MemoKind = Literal["summary", "revision"]
+MEMO_KIND_SUMMARY: MemoKind = "summary"
+MEMO_KIND_REVISION: MemoKind = "revision"
 
 
 def _utcnow() -> datetime.datetime:
@@ -221,6 +245,74 @@ class ContextualizedChunk(SQLModel, table=True):
     context_version: int = Field(nullable=False)
     contextualized_text: str = Field(sa_column=Column(Text, nullable=False))
     derivation_key: str = Field(sa_column=Column(Text, nullable=False))
+    created_at: datetime.datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
+    )
+
+
+class ContextualizationOutputMemo(SQLModel, table=True):
+    """A durable checkpoint of a validated contextualization model output.
+
+    Internal scratch state for resuming a partially-completed contextualization
+    attempt: it caches the validated summary and per-chunk revision outputs keyed
+    by their input-deterministic derivation keys, so a retry re-invokes the model
+    only for outputs not already retained. It is **not** a product projection — the
+    operator and explorer surfaces read :class:`DocumentSummary` /
+    :class:`ContextualizedChunk`, never this table — and a row never makes a run,
+    summary, or variant active or readable.
+
+    Identity is ``(kind, scope_key, derivation_key)``:
+
+    - ``kind`` discriminates the summary output (``summary``) from a per-chunk
+      revision (``revision``); a single discriminated table avoids two near-identical
+      tables, and the keys never collide across kinds because their JSON shapes
+      differ and ``kind`` partitions them.
+    - ``scope_key`` is the durable source identity (``str(aizk_uuid)``). It is
+      load-bearing for the summary kind, whose derivation key does **not** embed the
+      source: without it two distinct sources with byte-identical Markdown would
+      share a summary entry. The revision key is already source-distinct via its
+      ``chunk_id``, so ``scope_key`` is redundant-but-harmless there and keeps the
+      schema uniform; it also makes the success-path prune key set well-defined per
+      source.
+    - ``derivation_key`` is the respective input-deterministic derivation key — the
+      summary derivation key for ``summary``, the per-row variant derivation key for
+      ``revision``.
+
+    ``output_text`` stores the validated, normalized model output; ``''`` is a legal
+    value meaning the model judged the chunk already self-contained — a present-empty
+    entry that is a reuse hit, distinct from an absent entry (a miss that
+    re-invokes the model). ``created_at`` is recorded so a later permanent-failure /
+    TTL sweep is actionable.
+    """
+
+    __tablename__ = "graph_contextualization_output_memo"
+    __table_args__ = (
+        UniqueConstraint(
+            "kind",
+            "scope_key",
+            "derivation_key",
+            name="uq_graph_contextualization_output_memo_key",
+        ),
+        Index(
+            "ix_graph_contextualization_output_memo_key",
+            "kind",
+            "scope_key",
+            "derivation_key",
+        ),
+        # Fail closed on an unknown kind so a typo cannot create a durable but
+        # unreachable entry; the spec defines only these two discriminator values.
+        CheckConstraint(
+            f"kind IN ('{MEMO_KIND_SUMMARY}', '{MEMO_KIND_REVISION}')",
+            name="ck_graph_contextualization_output_memo_kind",
+        ),
+    )
+
+    id: int | None = Field(default=None, primary_key=True, nullable=False)
+    kind: str = Field(nullable=False)
+    scope_key: str = Field(nullable=False)
+    derivation_key: str = Field(sa_column=Column(Text, nullable=False))
+    output_text: str = Field(sa_column=Column(Text, nullable=False))
     created_at: datetime.datetime = Field(
         default_factory=_utcnow,
         sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
