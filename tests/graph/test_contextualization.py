@@ -19,12 +19,14 @@ import json
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
 from aizk.chunking.datamodel import derive_chunk_id
 from aizk.graph._version import CONTEXT_VERSION, SUMMARY_VERSION
+from aizk.graph.content_index import CONTENT_FTS_DDL
 import aizk.graph.contextualization as ctx_mod
 from aizk.graph.contextualization import (
     SUMMARY_STAGE,
@@ -304,6 +306,8 @@ def test_variant_derivation_key_ignores_local_summary_ids(tmp_path: Path) -> Non
     ) -> tuple[dict[str, object], list[dict[str, object]]]:
         engine = create_engine(f"sqlite:///{tmp_path / db_name}")
         SQLModel.metadata.create_all(engine)
+        with engine.begin() as conn:
+            conn.execute(text(CONTENT_FTS_DDL))
         chunks = [_make_chunk("first", ordinal=0), _make_chunk("second", ordinal=1)]
         client = StubLLMClient(
             responder=lambda prompt: "stable summary" if "summary_prompt" in prompt else "stable revision"

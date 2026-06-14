@@ -21,8 +21,10 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.datamodel import ContextualizationJob, ContextualizedChunk, DocumentSummary
 from aizk.graph.llm import StubLLMClient
 from aizk.graph.persistence import manifest_of_run, run_input
@@ -78,6 +80,8 @@ def _make_engine(tmp_path: Path, name: str):
     """Create a file-based SQLite engine with the full registered schema."""
     engine = create_engine(f"sqlite:///{tmp_path / name}", connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text(CONTENT_FTS_DDL))
     return engine
 
 

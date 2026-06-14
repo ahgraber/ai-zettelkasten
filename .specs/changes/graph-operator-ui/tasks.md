@@ -33,19 +33,19 @@
 
 ## Search data foundation (graph-explorer-ui)
 
-- [ ] Add the FTS5 migration: create `graph_content_fts(text, kind UNINDEXED, chunk_id UNINDEXED, run_id UNINDEXED, doc_id UNINDEXED)`; include `downgrade`.
-- [ ] Add a migration-time FTS5 availability check that fails clearly if FTS5 is not compiled into the SQLite build.
-- [ ] Backfill the index from **all committed** `graph_chunks` (kind=chunk) and `graph_contextualized_chunks` (kind=contextualized; empty revision indexes the raw chunk text) — not only the active generation.
-- [ ] Implement a rebuild routine that reconstructs `graph_content_fts` from the source tables (replay / corruption recovery).
-- [ ] Add the chunk FTS insert in `persist_chunks` — one row per chunk-row **creation** (reused `chunk_id` is not re-created, so not re-inserted), in the existing transaction.
-- [ ] Add the contextualized FTS insert in the contextualization persist — one row per committed variant (empty revision indexes raw text), in the existing transaction, sourced only from committed records (never the memo).
-- [ ] Update the graph test schema setup (`tests/graph/conftest.py`) to create the `graph_content_fts` virtual table (via the migration's DDL or by running migrations) — `SQLModel.metadata.create_all` cannot create a virtual table, so without this the new FTS inserts in `persist_chunks` / contextualization persist break every existing graph persistence test.
-- [ ] Test: the migration upgrades/downgrades cleanly on a scratch DB, and the availability check fails clearly when FTS5 is unavailable. (availability + migration)
-- [ ] Test: content persisted **before** the index existed is searchable after backfill. (searchability — pre-existing)
-- [ ] Test: a `chunk_id` not active at backfill but reused in a later active run is searchable. (searchability — superseded-then-reactivated; backfill-all write-site)
-- [ ] Test: rebuilding the index from source tables reproduces the same searchable content. (rebuild)
-- [ ] Test: a newly persisted chunk is searchable. (chunk-insert write-site)
-- [ ] Test: a newly persisted variant is searchable, and a self-contained chunk (empty revision) is searchable by its raw text. (variant-insert write-site + empty-as-raw)
+- [x] Add the FTS5 migration: create `graph_content_fts(text, kind UNINDEXED, chunk_id UNINDEXED, run_id UNINDEXED, doc_id UNINDEXED)`; include `downgrade`.
+- [x] Add a migration-time FTS5 availability check that fails clearly if FTS5 is not compiled into the SQLite build.
+- [x] Backfill the index from **all committed** `graph_chunks` (kind=chunk) and `graph_contextualized_chunks` (kind=contextualized; empty revision indexes the raw chunk text) — not only the active generation.
+- [x] Implement a rebuild routine that reconstructs `graph_content_fts` from the source tables (replay / corruption recovery).
+- [x] Add the chunk FTS insert in `persist_chunks` — one row per chunk-row **creation** (reused `chunk_id` is not re-created, so not re-inserted), in the existing transaction.
+- [x] Add the contextualized FTS insert in the contextualization persist — one row per committed variant (empty revision indexes raw text), in the existing transaction, sourced only from committed records (never the memo).
+- [x] Update the graph test schema setup (`tests/graph/conftest.py`) to create the `graph_content_fts` virtual table (via the migration's DDL or by running migrations) — `SQLModel.metadata.create_all` cannot create a virtual table, so without this the new FTS inserts in `persist_chunks` / contextualization persist break every existing graph persistence test.
+- [x] Test: the migration upgrades/downgrades cleanly on a scratch DB, and the availability check fails clearly when FTS5 is unavailable. (availability + migration)
+- [x] Test: content persisted **before** the index existed is searchable after backfill. (searchability — pre-existing)
+- [x] Test: a `chunk_id` not active at backfill but reused in a later active run is searchable. (searchability — superseded-then-reactivated; backfill-all write-site)
+- [x] Test: rebuilding the index from source tables reproduces the same searchable content. (rebuild)
+- [x] Test: a newly persisted chunk is searchable. (chunk-insert write-site)
+- [x] Test: a newly persisted variant is searchable, and a self-contained chunk (empty revision) is searchable by its raw text. (variant-insert write-site + empty-as-raw)
 
 ## Search provider (graph-explorer-ui)
 

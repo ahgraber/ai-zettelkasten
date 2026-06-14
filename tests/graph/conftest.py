@@ -24,13 +24,14 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from sqlalchemy import Engine, event
+from sqlalchemy import Engine, event, text
 from sqlmodel import Session, SQLModel, create_engine
 
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
+from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.datamodel import (
     Chunk,
     ChunkRunInput,
@@ -64,10 +65,27 @@ _GRAPH_SCHEMA_TABLES = [
 ]
 
 
+def create_content_fts(engine: Engine) -> None:
+    """Create the ``graph_content_fts`` virtual table on ``engine``.
+
+    ``SQLModel.metadata.create_all`` cannot create an FTS5 virtual table, so any
+    test engine the persist path writes index rows into must call this after
+    ``create_all``. Uses the migration's DDL (imported via
+    :data:`aizk.graph.content_index.CONTENT_FTS_DDL`) as the single source of truth.
+    """
+    with engine.begin() as conn:
+        conn.execute(text(CONTENT_FTS_DDL))
+
+
 def _create_graph_schema(url: str) -> None:
-    """Create the graph and pipeline tables on ``url`` using a throwaway engine."""
+    """Create the graph and pipeline tables on ``url`` using a throwaway engine.
+
+    Also creates the ``graph_content_fts`` virtual table after the SQLModel tables,
+    since the persist path writes index rows into it.
+    """
     setup_engine = create_engine(url, connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(setup_engine, tables=_GRAPH_SCHEMA_TABLES)
+    create_content_fts(setup_engine)
     setup_engine.dispose()
 
 
