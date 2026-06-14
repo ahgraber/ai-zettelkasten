@@ -35,10 +35,10 @@
           packages = [
             #--- cli ---
             # pkgs.ungoogled-chromium # not available on mac
+            pkgs.litestream
             pkgs.pandoc
             #--- node ---
             pkgs.deno
-            pkgs.node2nix
             # nodejs_20 # nodejs runtime v20 for v8 javascript
             #--- containers ---
             # pkgs.podman
