@@ -2,21 +2,35 @@
 
 Builds file-based SQLite engines holding the graph tables (``graph_*``) plus the
 shared ``pipeline_runs`` / ``pipeline_events`` tables the graph stage records
-runs and transitions on. The ``serialized_session`` fixture mirrors production's
-single serialized writer: every transaction starts with ``BEGIN IMMEDIATE`` so
-concurrent writers acquire the write lock up front rather than deadlocking on a
-lock upgrade. Tests never touch the conversion config or ``.env``.
+runs and transitions on, and the conversion ``sources`` / ``conversion_jobs`` /
+``conversion_outputs`` tables the operator UI joins (the jobs table enriches a
+work-unit with its ``Source.title``; the explorer resolves markdown through a
+``ConversionOutput`` locator). The ``serialized_session`` fixture mirrors
+production's single serialized writer: every transaction starts with
+``BEGIN IMMEDIATE`` so concurrent writers acquire the write lock up front rather
+than deadlocking on a lock upgrade. Tests never touch the conversion config or
+``.env``.
+
+The ``seed_source`` / ``seed_conversion_output`` / ``seed_contextualization_job``
+fixtures return session-agnostic factory callables shared across the graph
+operator-UI suites so a row can be seeded against either the lightweight
+``create_all`` engine or the migration-backed integration engine.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from sqlalchemy import Engine, event
 from sqlmodel import Session, SQLModel, create_engine
 
+from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
+from aizk.conversion.datamodel.job import ConversionJob
+from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.conversion.datamodel.source import Source
 from aizk.graph.datamodel import (
     Chunk,
     ChunkRunInput,
@@ -27,6 +41,7 @@ from aizk.graph.datamodel import (
     DocumentSummary,
 )
 from aizk.pipeline.events import PipelineEvent
+from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun
 
 _GRAPH_SCHEMA_TABLES = [
@@ -39,6 +54,13 @@ _GRAPH_SCHEMA_TABLES = [
     ContextualizationJob.__table__,
     PipelineRun.__table__,
     PipelineEvent.__table__,
+    # Conversion tables the operator UI reads alongside the graph tables. Ordered
+    # after the graph tables; SQLite does not require an FK target to pre-exist at
+    # CREATE time, so the conversion-internal FK web (conversion_outputs -> sources
+    # / conversion_jobs) does not constrain ordering here.
+    Source.__table__,
+    ConversionJob.__table__,
+    ConversionOutput.__table__,
 ]
 
 
@@ -82,3 +104,108 @@ def session(engine: Engine) -> Iterator[Session]:
     """An open session on the graph engine; the test owns commit boundaries."""
     with Session(engine) as sess:
         yield sess
+
+
+@pytest.fixture
+def seed_source() -> Callable[..., Source]:
+    """Return a factory that inserts a :class:`Source` and returns the refreshed row.
+
+    The factory derives the required ``source_ref`` / ``source_ref_hash`` from a
+    KaraKeep bookmark reference so callers only supply a ``karakeep_id`` and the
+    optional enriched ``title``.
+    """
+
+    def _make(
+        session: Session,
+        *,
+        karakeep_id: str,
+        title: str | None = None,
+        aizk_uuid: UUID | None = None,
+        owner_id: str = "self",
+    ) -> Source:
+        ref = KarakeepBookmarkRef(bookmark_id=karakeep_id)
+        fields: dict[str, object] = {
+            "owner_id": owner_id,
+            "karakeep_id": karakeep_id,
+            "source_ref": ref.model_dump_json(),
+            "source_ref_hash": compute_source_ref_hash(ref),
+            "title": title,
+            "url": f"https://example.com/{karakeep_id}",
+            "normalized_url": f"https://example.com/{karakeep_id}",
+            "content_type": "html",
+            "source_type": "other",
+        }
+        if aizk_uuid is not None:
+            fields["aizk_uuid"] = aizk_uuid
+        source = Source(**fields)
+        session.add(source)
+        session.commit()
+        session.refresh(source)
+        return source
+
+    return _make
+
+
+@pytest.fixture
+def seed_conversion_output() -> Callable[..., ConversionOutput]:
+    """Return a factory that inserts a :class:`ConversionOutput` markdown locator."""
+
+    def _make(
+        session: Session,
+        *,
+        job_id: int,
+        aizk_uuid: UUID,
+        title: str = "Untitled",
+        owner_id: str = "self",
+        markdown_hash_xx64: str = "0" * 16,
+        s3_prefix: str = "graph/test",
+        markdown_key: str = "markdown.md",
+        manifest_key: str = "manifest.json",
+    ) -> ConversionOutput:
+        output = ConversionOutput(
+            job_id=job_id,
+            aizk_uuid=aizk_uuid,
+            owner_id=owner_id,
+            title=title,
+            payload_version=1,
+            s3_prefix=s3_prefix,
+            markdown_key=markdown_key,
+            manifest_key=manifest_key,
+            markdown_hash_xx64=markdown_hash_xx64,
+            docling_version="0.0.0",
+            pipeline_name="test",
+        )
+        session.add(output)
+        session.commit()
+        session.refresh(output)
+        return output
+
+    return _make
+
+
+@pytest.fixture
+def seed_contextualization_job() -> Callable[..., ContextualizationJob]:
+    """Return a factory that inserts a :class:`ContextualizationJob` work-unit."""
+
+    def _make(
+        session: Session,
+        *,
+        aizk_uuid: UUID,
+        conversion_output_id: int = 1,
+        status: WorkUnitStatus = WorkUnitStatus.QUEUED,
+        attempts: int = 0,
+        idempotency_key: str | None = None,
+    ) -> ContextualizationJob:
+        job = ContextualizationJob(
+            idempotency_key=idempotency_key or f"conversion_output:{conversion_output_id}",
+            conversion_output_id=conversion_output_id,
+            aizk_uuid=aizk_uuid,
+            status=status,
+            attempts=attempts,
+        )
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        return job
+
+    return _make
