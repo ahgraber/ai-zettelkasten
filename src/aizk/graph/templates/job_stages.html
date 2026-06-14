@@ -1,0 +1,41 @@
+<section class="panel" id="job-stages" data-job-id="{{ drilldown.job_id }}">
+  <header style="padding: 12px 16px; border-bottom: 1px solid rgba(31, 26, 22, 0.12)">
+    <strong>Stage drill-down</strong> — job {{ drilldown.job_id }} ({{ drilldown.aizk_uuid }})
+  </header>
+
+  <div class="stage-runs" style="padding: 12px 16px">
+    <h3>Stage runs</h3>
+    <ul>
+      {% for stage in drilldown.stages %}
+      <li class="stage-run {{ stage.stage }}" data-present="{{ 'true' if stage.present else 'false' }}">
+        <strong>{{ stage.label }}</strong>:
+        {% if stage.present %}
+        {% for run in stage.runs %}
+        <span class="run-status {{ run.status }}">run {{ run.run_id }} — {{ run.status }}</span>{% if not loop.last %}, {% endif %}
+        {% endfor %}
+        {% else %}
+        <span class="run-absent">absent</span>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  <div class="event-trail" style="padding: 12px 16px; border-top: 1px solid rgba(31, 26, 22, 0.12)">
+    <h3>Work-unit event trail</h3>
+    {% if drilldown.events %}
+    <ol>
+      {% for event in drilldown.events %}
+      <li class="event {{ event.kind }}">
+        <span class="event-kind">{{ event.kind }}</span>
+        <span class="event-transition">{{ event.from_status }} → {{ event.to_status }}</span>
+        {% if event.attempt is not none %}<span class="event-attempt">attempt {{ event.attempt }}</span>{% endif %}
+        <span class="event-time mono">{{ event.occurred_at }}</span>
+      </li>
+      {% endfor %}
+    </ol>
+    {% else %}
+    <p class="event-empty">No lifecycle events recorded for this work-unit yet.</p>
+    {% endif %}
+  </div>
+</section>

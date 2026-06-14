@@ -14,22 +14,22 @@
 
 ## Contextualization jobs page (graph-jobs-ui)
 
-- [ ] Implement the jobs table route: query `ContextualizationJob` joined to `Source` (via `aizk_uuid`), render columns (job id, status, attempts, queued/started/finished, error code, title); full-page vs. `HX-Request` partial.
-- [ ] Implement title resolution: `Source.title` when non-`NULL`, else the source `aizk_uuid`.
-- [ ] Implement status filter + text search across the full job set (job id, `aizk_uuid`, source title, `conversion_output` id), plus offset pagination and column sorting.
-- [ ] Extract shared `_apply_retry(session, job)` / `_apply_cancel(session, job)` helpers from the inline logic in `graph/api/routes.py`'s `retry_job`/`cancel_job` handlers; repoint the JSON routes at the helpers so the existing JSON API behavior is unchanged.
-- [ ] Test: the existing graph JSON API retry/cancel tests still pass after the helper extraction. (refactor regression)
-- [ ] Implement the bulk actions route: loop over the shared `_apply_retry` / `_apply_cancel` helpers, accumulating an applied-vs-skipped summary; no bulk endpoint.
-- [ ] Implement the stage drill-down: stage runs via `PipelineRun` by `(stage ∈ {chunking, document_summary, chunk_contextualization}, scope_key=str(aizk_uuid))` with active/superseded status, plus the work-unit event trail via `PipelineEvent` by `aizk_uuid`/work-unit ref under `stage="contextualization"`; a stage with no run renders absent.
-- [ ] Test: the jobs table renders with all columns on load. (display table)
-- [ ] Test: title shows the enriched `Source.title` when present, and falls back to `aizk_uuid` when `Source.title` is `NULL`. (display table — both title partitions)
-- [ ] Test: a status filter returns matching jobs from beyond the current page and excludes other statuses. (filter/search)
-- [ ] Test: search by source title finds the job; a non-matching term renders the empty state. (filter/search)
-- [ ] Test: bulk **retry** returns selected eligible jobs to queued with a summary. (bulk — retry write-site)
-- [ ] Test: bulk **cancel** attempts cancellation with a summary. (bulk — cancel write-site)
-- [ ] Test: a mixed-eligibility bulk action distinguishes applied from skipped and alters no ineligible job. (bulk — mixed eligibility)
-- [ ] Test: a completed job's drill-down shows all three stage runs with status plus the work-unit event trail ending in succeeded. (drill-down — completed)
-- [ ] Test: a job chunked-but-not-contextualized shows the chunking run present, the contextualization run absent, and the work-unit failure event surfaced. (drill-down — failed-mid-stage)
+- [x] Implement the jobs table route: query `ContextualizationJob` joined to `Source` (via `aizk_uuid`), render columns (job id, status, attempts, queued/started/finished, error code, title); full-page vs. `HX-Request` partial.
+- [x] Implement title resolution: `Source.title` when non-`NULL`, else the source `aizk_uuid`.
+- [x] Implement status filter + text search across the full job set (job id, `aizk_uuid`, source title, `conversion_output` id), plus offset pagination and column sorting.
+- [x] Extract shared `_apply_retry(session, job)` / `_apply_cancel(session, job)` helpers from the inline logic in `graph/api/routes.py`'s `retry_job`/`cancel_job` handlers; repoint the JSON routes at the helpers so the existing JSON API behavior is unchanged.
+- [x] Test: the existing graph JSON API retry/cancel tests still pass after the helper extraction. (refactor regression)
+- [x] Implement the bulk actions route: loop over the shared `_apply_retry` / `_apply_cancel` helpers, accumulating an applied-vs-skipped summary; no bulk endpoint.
+- [x] Implement the stage drill-down: stage runs via `PipelineRun` by `(stage ∈ {chunking, document_summary, chunk_contextualization}, scope_key=str(aizk_uuid))` with active/superseded status, plus the work-unit event trail via `PipelineEvent` by `aizk_uuid`/work-unit ref under `stage="contextualization"`; a stage with no run renders absent.
+- [x] Test: the jobs table renders with all columns on load. (display table)
+- [x] Test: title shows the enriched `Source.title` when present, and falls back to `aizk_uuid` when `Source.title` is `NULL`. (display table — both title partitions)
+- [x] Test: a status filter returns matching jobs from beyond the current page and excludes other statuses. (filter/search)
+- [x] Test: search by source title finds the job; a non-matching term renders the empty state. (filter/search)
+- [x] Test: bulk **retry** returns selected eligible jobs to queued with a summary. (bulk — retry write-site)
+- [x] Test: bulk **cancel** attempts cancellation with a summary. (bulk — cancel write-site)
+- [x] Test: a mixed-eligibility bulk action distinguishes applied from skipped and alters no ineligible job. (bulk — mixed eligibility)
+- [x] Test: a completed job's drill-down shows all three stage runs with status plus the work-unit event trail ending in succeeded. (drill-down — completed)
+- [x] Test: a job chunked-but-not-contextualized shows the chunking run present, the contextualization run absent, and the work-unit failure event surfaced. (drill-down — failed-mid-stage)
 
 ## Search data foundation (graph-explorer-ui)
 

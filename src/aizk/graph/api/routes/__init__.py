@@ -56,6 +56,64 @@ def _get_or_404(session: "Session", job_id: int) -> ContextualizationJob:
     return job
 
 
+def _apply_retry(session: "Session", job: ContextualizationJob) -> None:
+    """Re-queue a terminal work-unit, clearing error/retry-wait fields and recording the event.
+
+    Performs the status-eligibility check and raises :class:`ValueError` when the
+    unit is not in a re-queueable terminal status (the message is the operator-facing
+    reason). Applies the field mutations and co-commits a ``requeued`` transition via
+    :func:`aizk.pipeline.events.record_transition`. The caller owns the surrounding
+    transaction; this helper does **not** commit.
+    """
+    if job.status not in _RETRYABLE_FROM:
+        raise ValueError(f"cannot retry a work-unit in status {job.status.value!r}")
+    now = _utcnow()
+    job.error_code = None
+    job.error_message = None
+    job.earliest_next_attempt_at = None
+    job.finished_at = None
+    job.queued_at = now
+    job.updated_at = now
+    record_transition(
+        session,
+        job,
+        stage=CONTEXTUALIZATION_STAGE,
+        work_unit_ref=str(job.id),
+        aizk_uuid=job.aizk_uuid,
+        to_status=WorkUnitStatus.QUEUED,
+        kind=GraphEventKind.REQUEUED,
+        attempt=job.attempts,
+        payload=RequeuedPayload(requeue_reason="operator_retry"),
+    )
+
+
+def _apply_cancel(session: "Session", job: ContextualizationJob) -> None:
+    """Cancel a work-unit, writing a terminal ``CANCELLED`` status and recording the event.
+
+    Performs the status-eligibility check and raises :class:`ValueError` when the
+    unit is not in a cancellable status (the message is the operator-facing reason).
+    Applies the field mutations and co-commits a ``cancelled`` transition via
+    :func:`aizk.pipeline.events.record_transition`. The caller owns the surrounding
+    transaction; this helper does **not** commit.
+    """
+    if job.status not in _CANCELLABLE_FROM:
+        raise ValueError(f"cannot cancel a work-unit in status {job.status.value!r}")
+    now = _utcnow()
+    job.finished_at = now
+    job.updated_at = now
+    record_transition(
+        session,
+        job,
+        stage=CONTEXTUALIZATION_STAGE,
+        work_unit_ref=str(job.id),
+        aizk_uuid=job.aizk_uuid,
+        to_status=WorkUnitStatus.CANCELLED,
+        kind=GraphEventKind.CANCELLED,
+        attempt=job.attempts,
+        payload=CancelledPayload(cancellation_reason="operator_cancel"),
+    )
+
+
 @router.get("", response_model=ContextualizationJobList)
 def list_jobs(
     session: Annotated["Session", Depends(get_db_session)],
@@ -104,26 +162,10 @@ def retry_job(
     """
     session.exec(text("BEGIN IMMEDIATE"))
     job = _get_or_404(session, job_id)
-    if job.status not in _RETRYABLE_FROM:
-        raise HTTPException(status_code=409, detail=f"cannot retry a work-unit in status {job.status.value!r}")
-    now = _utcnow()
-    job.error_code = None
-    job.error_message = None
-    job.earliest_next_attempt_at = None
-    job.finished_at = None
-    job.queued_at = now
-    job.updated_at = now
-    record_transition(
-        session,
-        job,
-        stage=CONTEXTUALIZATION_STAGE,
-        work_unit_ref=str(job.id),
-        aizk_uuid=job.aizk_uuid,
-        to_status=WorkUnitStatus.QUEUED,
-        kind=GraphEventKind.REQUEUED,
-        attempt=job.attempts,
-        payload=RequeuedPayload(requeue_reason="operator_retry"),
-    )
+    try:
+        _apply_retry(session, job)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     session.commit()
     session.refresh(job)
     return ContextualizationJobResponse.model_validate(job)
@@ -143,22 +185,10 @@ def cancel_job(
     """
     session.exec(text("BEGIN IMMEDIATE"))
     job = _get_or_404(session, job_id)
-    if job.status not in _CANCELLABLE_FROM:
-        raise HTTPException(status_code=409, detail=f"cannot cancel a work-unit in status {job.status.value!r}")
-    now = _utcnow()
-    job.finished_at = now
-    job.updated_at = now
-    record_transition(
-        session,
-        job,
-        stage=CONTEXTUALIZATION_STAGE,
-        work_unit_ref=str(job.id),
-        aizk_uuid=job.aizk_uuid,
-        to_status=WorkUnitStatus.CANCELLED,
-        kind=GraphEventKind.CANCELLED,
-        attempt=job.attempts,
-        payload=CancelledPayload(cancellation_reason="operator_cancel"),
-    )
+    try:
+        _apply_cancel(session, job)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     session.commit()
     session.refresh(job)
     return ContextualizationJobResponse.model_validate(job)
