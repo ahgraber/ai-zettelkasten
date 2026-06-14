@@ -136,6 +136,11 @@ def test_upgrade_produces_schema_matching_create_all(tmp_path):
     baseline_tables = set(baseline_inspector.get_table_names())
     # Alembic adds alembic_version; filter it out
     migrated_tables.discard("alembic_version")
+    # The graph content FTS5 index is a virtual table with auto-created shadow
+    # tables (graph_content_fts, _data, _idx, _docsize, _config, _content). None
+    # are SQLModel tables, so they cannot appear in the create_all baseline; drop
+    # the whole graph_content_fts* family before comparing.
+    migrated_tables = {t for t in migrated_tables if not t.startswith("graph_content_fts")}
 
     assert migrated_tables == baseline_tables, f"Table mismatch: {migrated_tables ^ baseline_tables}"
 

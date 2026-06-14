@@ -25,8 +25,10 @@ from uuid import UUID
 
 from pyleak import no_thread_leaks
 import pytest
+from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.datamodel import (
     Chunk,
     ContextualizationJob,
@@ -84,6 +86,8 @@ def _make_engine(tmp_path: Path):
         connect_args={"check_same_thread": False, "timeout": 30},
     )
     SQLModel.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text(CONTENT_FTS_DDL))
     return engine
 
 

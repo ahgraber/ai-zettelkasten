@@ -23,12 +23,13 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from sqlalchemy import Engine
+from sqlalchemy import Engine, text
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk, split
 from aizk.chunking.datamodel import derive_chunk_id
+from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.contextualization import (
     StalePlanError,
     contextualize_chunks,
@@ -90,6 +91,8 @@ def engine(tmp_path: Path) -> Iterator[Engine]:
         connect_args={"check_same_thread": False, "timeout": 30},
     )
     SQLModel.metadata.create_all(eng)
+    with eng.begin() as conn:
+        conn.execute(text(CONTENT_FTS_DDL))
     yield eng
     eng.dispose()
 
@@ -484,6 +487,8 @@ def test_retry_resumes_and_matches_an_uninterrupted_run(tmp_path: Path) -> None:
     # Baseline: an uninterrupted run on its own database.
     clean_engine = create_engine(f"sqlite:///{tmp_path / 'clean.db'}", connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(clean_engine)
+    with clean_engine.begin() as conn:
+        conn.execute(text(CONTENT_FTS_DDL))
     _process(clean_engine, StubLLMClient(responder=_responder()))
     baseline = _variant_snapshot(clean_engine, _SCOPE)
     clean_engine.dispose()
@@ -493,6 +498,8 @@ def test_retry_resumes_and_matches_an_uninterrupted_run(tmp_path: Path) -> None:
     # Resume: first attempt fails after the first chunk's revision; retry completes.
     resume_engine = create_engine(f"sqlite:///{tmp_path / 'resume_e2e.db'}", connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(resume_engine)
+    with resume_engine.begin() as conn:
+        conn.execute(text(CONTENT_FTS_DDL))
     failing = StubLLMClient(responder=_fail_after_k_context(1))
     with pytest.raises(RuntimeError, match="model failed on context call"):
         process_document(

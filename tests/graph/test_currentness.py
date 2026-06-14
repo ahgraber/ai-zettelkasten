@@ -17,9 +17,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
+from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.llm import StubLLMClient
 from aizk.graph.markdown_source import ConversionOutputFreshness, S3MarkdownSource
 from aizk.graph.persistence import run_input
@@ -44,6 +46,8 @@ class _FakeBlobReader:
 def _make_engine(tmp_path: Path):
     engine = create_engine(f"sqlite:///{tmp_path / 'currentness.db'}", connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text(CONTENT_FTS_DDL))
     return engine
 
 

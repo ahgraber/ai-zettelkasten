@@ -36,6 +36,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlmodel import select
 
 from aizk.chunking import Chunk as SplitterChunk
+from aizk.graph.content_index import index_chunk_content
 from aizk.graph.datamodel import Chunk, ChunkRunInput, ChunkRunManifest, ContextualizationOutputMemo
 from aizk.graph.db import begin_immediate
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
@@ -255,6 +256,15 @@ def persist_chunks(
     for chunk in chunks:
         if session.get(Chunk, chunk.chunk_id) is None:
             session.add(to_chunk_row(chunk))
+            # Index the raw text once, on chunk-row creation: a reused chunk_id is
+            # not re-created here and was already indexed from its first creation.
+            index_chunk_content(
+                session,
+                text_=chunk.text,
+                chunk_id=chunk.chunk_id,
+                run_id=run.id,
+                doc_id=aizk_uuid,
+            )
         session.add(
             ChunkRunManifest(
                 run_id=run.id,

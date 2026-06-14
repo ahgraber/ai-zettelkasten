@@ -58,6 +58,7 @@ from typing import TYPE_CHECKING
 from sqlmodel import Session, select
 
 from aizk.graph._version import CONTEXT_VERSION, SUMMARY_VERSION
+from aizk.graph.content_index import index_contextualized_content
 from aizk.graph.datamodel import (
     MEMO_KIND_REVISION,
     MEMO_KIND_SUMMARY,
@@ -910,6 +911,17 @@ def contextualize_chunks(
         )
         session.add(variant)
         variants.append(variant)
+        # Index the committed variant once. An empty revision means self-contained,
+        # so its contextualized representation is the raw chunk text. Sourced only
+        # here (the committed persist path), never the memo, so retained
+        # intermediate outputs are never searchable.
+        index_contextualized_content(
+            session,
+            text_=revision if revision != "" else chunk.text,
+            chunk_id=chunk.chunk_id,
+            run_id=run.id,
+            doc_id=aizk_uuid,
+        )
 
     session.flush()
     logger.debug("Recorded variant run id=%s with %d variants for source=%s", run.id, len(variants), aizk_uuid)
