@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Knowledge Base Explorer</title>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 0;
+        color: #1f1a16;
+        background: #f6f2eb;
+      }
+
+      .shell {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 24px 16px 48px;
+      }
+
+      .panel {
+        margin-top: 16px;
+        background: #fffdf8;
+        border: 1px solid rgba(31, 26, 22, 0.12);
+        border-radius: 12px;
+        overflow: hidden;
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: flex-end;
+        padding: 14px 16px;
+        border-bottom: 1px solid rgba(31, 26, 22, 0.12);
+      }
+
+      label,
+      .label {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #6c5f55;
+      }
+
+      input[type="text"],
+      select {
+        border: 1px solid rgba(31, 26, 22, 0.18);
+        border-radius: 8px;
+        padding: 8px 10px;
+        font: inherit;
+      }
+
+      .summary {
+        font-size: 0.85rem;
+        color: #6c5f55;
+        padding: 10px 16px;
+        border-bottom: 1px solid rgba(31, 26, 22, 0.12);
+      }
+
+      .explorer-grid {
+        display: flex;
+        min-height: 460px;
+      }
+
+      .spine {
+        flex: 1.05;
+        border-right: 1px solid rgba(31, 26, 22, 0.12);
+        display: flex;
+        flex-direction: column;
+      }
+
+      .spine-header,
+      .detail-header {
+        padding: 12px 16px;
+        border-bottom: 1px solid rgba(31, 26, 22, 0.12);
+      }
+
+      .doc-title,
+      .heading-path {
+        font-weight: 600;
+      }
+
+      .spine-list {
+        overflow: auto;
+        padding: 8px;
+      }
+
+      .spine-chunk {
+        border: 1px solid rgba(31, 26, 22, 0.18);
+        border-radius: 6px;
+        padding: 8px 10px;
+        margin: 6px 4px;
+        cursor: pointer;
+      }
+
+      .spine-chunk.selected {
+        border: 2px solid #6ea8fe;
+        background: rgba(110, 168, 254, 0.08);
+      }
+
+      .detail {
+        flex: 1.2;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .detail-body {
+        padding: 14px 16px;
+        overflow: auto;
+      }
+
+      .representation,
+      .raw-chunk {
+        border: 1px solid rgba(31, 26, 22, 0.18);
+        border-radius: 6px;
+        padding: 12px;
+        margin-top: 6px;
+        line-height: 1.5;
+      }
+
+      mark {
+        background: rgba(110, 168, 254, 0.28);
+      }
+
+      .provenance {
+        font-size: 0.85rem;
+        color: #6c5f55;
+        margin-top: 6px;
+        line-height: 1.7;
+      }
+
+      .markdown-text {
+        white-space: pre-wrap;
+        font-family: ui-monospace, monospace;
+        font-size: 0.82rem;
+        max-height: 240px;
+        overflow: auto;
+        border: 1px solid rgba(31, 26, 22, 0.12);
+        border-radius: 6px;
+        padding: 10px;
+      }
+
+      .results-legend,
+      .result-pair {
+        display: flex;
+      }
+
+      .results-legend {
+        gap: 12px;
+        padding: 2px 16px 8px;
+      }
+
+      .results-legend .label {
+        flex: 1;
+      }
+
+      .result-row {
+        border: 1px solid rgba(31, 26, 22, 0.18);
+        border-radius: 6px;
+        margin: 6px 10px;
+        cursor: pointer;
+      }
+
+      .result-head {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 12px;
+        border-bottom: 1px solid rgba(31, 26, 22, 0.12);
+      }
+
+      .result-raw,
+      .result-contextualized {
+        flex: 1;
+        padding: 10px 12px;
+        font-size: 0.9em;
+      }
+
+      .result-raw {
+        border-right: 1px solid rgba(31, 26, 22, 0.12);
+      }
+
+      .results-empty,
+      .spine-empty,
+      .detail-empty {
+        text-align: center;
+        padding: 32px 16px;
+        color: #6c5f55;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header>
+        <h1>Knowledge Base Explorer</h1>
+        <p>Browse a document's chunks in reading order and search the active content, raw and contextualized.</p>
+      </header>
+
+      <section class="panel">
+        <form
+          class="toolbar"
+          hx-post="/ui/graph/explorer/search"
+          hx-target="#search-results"
+          hx-swap="outerHTML"
+        >
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 4px">
+            <label for="search-query">Search content</label>
+            <input id="search-query" type="text" name="query" placeholder="search content…" autocomplete="off" />
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px">
+            <label for="search-kind">Match in</label>
+            <select id="search-kind" name="kind">
+              <option value="either" selected>either</option>
+              <option value="chunk">chunk</option>
+              <option value="contextualized">contextualized</option>
+            </select>
+          </div>
+          <button type="submit">Search</button>
+        </form>
+
+        <div id="search-results"></div>
+      </section>
+
+      {% include "explorer_panel.html" %}
+    </div>
+  </body>
+</html>

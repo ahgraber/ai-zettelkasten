@@ -1,0 +1,53 @@
+{# Inner document-browser body: the left chunk spine + the right detail panel.
+   Swapped on its own via HTMX when a chunk is selected. #}
+<section class="panel explorer" id="explorer-panel">
+  <div class="explorer-grid">
+    <div class="spine" id="spine">
+      <div class="spine-header">
+        <div class="label">document</div>
+        <div class="doc-title">{{ title }}</div>
+        <div class="label">
+          {{ spine | length }} chunks
+          {% if chunking_run_id %}· active chunking run #{{ chunking_run_id }}{% endif %}
+          {% if variant_run_id %}· active variant run #{{ variant_run_id }}{% else %}· no active variant run{% endif %}
+        </div>
+      </div>
+
+      <div class="spine-list">
+        {% if spine %}
+        {% for chunk in spine %}
+        <div
+          class="spine-chunk{% if chunk.chunk_id == selected_chunk_id %} selected{% endif %}"
+          data-chunk-id="{{ chunk.chunk_id }}"
+          data-self-contained="{{ 'true' if chunk.self_contained else 'false' }}"
+          hx-get="/ui/graph/explorer?doc_id={{ doc_id | urlencode }}&chunk_id={{ chunk.chunk_id | urlencode }}"
+          hx-target="#explorer-panel"
+          hx-swap="outerHTML"
+          hx-push-url="true"
+        >
+          <div class="label">
+            {{ chunk.heading_path | join(" ▸ ") if chunk.heading_path else "(no heading)" }} ·
+            {{ chunk.chunk_id }} · span {{ chunk.span_start }}–{{ chunk.span_end }} · {{ chunk.char_count }} chars
+          </div>
+          <div class="label spine-marker">
+            {% if not chunk.has_variant %}
+            ○ no contextualized representation
+            {% elif chunk.self_contained %}
+            ○ self-contained: yes · revision empty
+            {% else %}
+            ● self-contained: no · contextualized ✓
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="spine-empty">
+          {% if doc_id %}No active chunking run for this document.{% else %}Select a document to browse its chunks.{% endif %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    {% include "explorer_detail.html" %}
+  </div>
+</section>

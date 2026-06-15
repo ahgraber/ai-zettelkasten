@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 
 from aizk.conversion.db import _ENGINE_CACHE, get_engine
 from aizk.conversion.migrations import run_migrations
+from aizk.graph.api.dependencies import get_blob_reader
 from aizk.graph.api.main import create_app
 
 
@@ -79,3 +80,43 @@ def client(app: FastAPI) -> Iterator[TestClient]:
     """A TestClient over the real graph operator app (no dependency overrides)."""
     with TestClient(app) as test_client:
         yield test_client
+
+
+class FakeBlobReader:
+    """An in-memory :class:`~aizk.graph.markdown_source.BlobReader` for the explorer.
+
+    Maps a storage key to canned bytes, so the explorer's on-demand markdown
+    reconstruction (``S3MarkdownSource(engine, blob_reader).load``) is exercised
+    against a seeded ``ConversionOutput`` row without reaching real S3. An unknown
+    key raises ``KeyError`` (a programming error in the test, not a degrade path).
+    """
+
+    def __init__(self, blobs: dict[str, bytes]) -> None:
+        """Store the key → bytes mapping the fake serves."""
+        self._blobs = blobs
+
+    def get_object_bytes(self, s3_key: str) -> bytes:
+        """Return the canned bytes for ``s3_key``."""
+        return self._blobs[s3_key]
+
+
+@pytest.fixture
+def explorer_markdown() -> str:
+    """The canned source markdown the fake blob reader serves to the explorer."""
+    return "# Attention\n\nThe reconstructed source markdown body for the explorer detail panel."
+
+
+@pytest.fixture
+def explorer_client(app: FastAPI, explorer_markdown: str) -> Iterator[TestClient]:
+    """A TestClient whose ``get_blob_reader`` is overridden with a fake reader.
+
+    The fake serves ``explorer_markdown`` under the ``markdown_key`` the seeded
+    ``ConversionOutput`` records (the default ``"markdown.md"`` from the
+    ``seed_conversion_output`` factory), so the detail panel's markdown
+    reconstruction resolves the row and reads the canned bytes.
+    """
+    fake = FakeBlobReader({"markdown.md": explorer_markdown.encode("utf-8")})
+    app.dependency_overrides[get_blob_reader] = lambda: fake
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.pop(get_blob_reader, None)

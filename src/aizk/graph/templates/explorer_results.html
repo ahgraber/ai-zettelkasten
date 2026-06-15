@@ -1,0 +1,51 @@
+{# Paired search results: one row per matching chunk, raw │ contextualized, with
+   the term marked on whichever side(s) matched. Selecting a row opens the document
+   browser at that chunk with the detail panel populated. #}
+<div id="search-results">
+  <div class="summary" aria-live="polite">
+    {{ document_count }} documents · {{ rows | length }} chunks matched
+  </div>
+
+  <div class="results-legend">
+    <div class="label">RAW CHUNK</div>
+    <div class="label">CONTEXTUALIZED REPRESENTATION</div>
+  </div>
+
+  <div class="results-list">
+    {% if rows %}
+    {% for row in rows %}
+    <div
+      class="result-row"
+      data-chunk-id="{{ row.chunk_id }}"
+      data-matched-chunk="{{ 'true' if row.matched_in_chunk else 'false' }}"
+      data-matched-contextualized="{{ 'true' if row.matched_in_contextualized else 'false' }}"
+      hx-get="/ui/graph/explorer?doc_id={{ row.doc_id | urlencode }}&chunk_id={{ row.chunk_id | urlencode }}"
+      hx-target="#explorer-panel"
+      hx-swap="outerHTML"
+      hx-push-url="true"
+      role="button"
+      tabindex="0"
+    >
+      <div class="result-head">
+        <span class="label">{{ row.title }} · {{ row.heading_path | join(" ▸ ") if row.heading_path else "(no heading)" }} · {{ row.chunk_id }}</span>
+        <span class="label result-match">
+          {% if row.matched_in_chunk and row.matched_in_contextualized %}match: both
+          {% elif row.matched_in_contextualized %}match: contextualized only
+          {% elif row.self_contained %}match: raw · self-contained
+          {% else %}match: raw{% endif %}
+        </span>
+      </div>
+      <div class="result-pair">
+        <div class="result-raw">{{ row.raw_html | safe }}</div>
+        <div class="result-contextualized">
+          {{ row.representation_html | safe }}
+          {% if row.self_contained %}<span class="label">(revision empty — consumes raw)</span>{% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="results-empty" aria-live="polite">No results.</div>
+    {% endif %}
+  </div>
+</div>
