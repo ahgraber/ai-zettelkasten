@@ -49,15 +49,15 @@
 
 ## Search provider (graph-explorer-ui)
 
-- [ ] Define the `SearchProvider` protocol (query + type filter → ranked, per-chunk results) and an FTS5/`bm25` implementation; the explorer depends on the protocol.
-- [ ] Implement input escaping: tokenize/escape operator input into a literal-term FTS query; empty/whitespace short-circuits to no results; bound input length.
-- [ ] Implement the query: `MATCH` → join active chunking-run manifest + active variant run (drop superseded) → honor type filter via `kind` → aggregate by `chunk_id` into one result with per-side match flags → order documents by best (min) `bm25()` ascending, chunks within a document by `span_start` ascending.
-- [ ] Test: a superseded chunk is not returned; the active chunk is. (active-generation only — query active-filter write-site)
-- [ ] Test: a contextualized-only term is found under "contextualized"/"either" and not "chunk"; a raw-only term is found under "chunk"/"either" and not "contextualized"; a self-contained chunk matches under "contextualized" by its raw text. (type filter — three partitions)
-- [ ] Test: documents are ordered most-relevant-first and chunks within a document follow `span_start` order. (ranking — bm25-asc + doc-min + span_start write-site)
-- [ ] Test: a chunk matching on both sides yields a single result carrying both per-side flags. (dedup — aggregate-by-chunk_id write-site)
-- [ ] Test: an empty query yields an empty result set (no error, not the whole corpus); input with query-syntax characters (`"`, `*`, boolean operators) is matched literally and never errors. (input handling — escaping write-site)
-- [ ] Test: a source mid-contextualization (revisions retained, no active variant run) contributes no contextualized content to search; retained intermediate revisions never appear. (memo exclusion — search surface)
+- [x] Define the `SearchProvider` protocol (query + type filter → ranked, per-chunk results) and an FTS5/`bm25` implementation; the explorer depends on the protocol.
+- [x] Implement input escaping: tokenize/escape operator input into a literal-term FTS query; empty/whitespace short-circuits to no results; bound input length.
+- [x] Implement the query: `MATCH` → join active chunking-run manifest + active variant run (drop superseded) → honor type filter via `kind` → aggregate by `chunk_id` into one result with per-side match flags → order documents by best (min) `bm25()` ascending, chunks within a document by `span_start` ascending.
+- [x] Test: a superseded chunk is not returned; the active chunk is. (active-generation only — query active-filter write-site)
+- [x] Test: a contextualized-only term is found under "contextualized"/"either" and not "chunk"; a raw-only term is found under "chunk"/"either" and not "contextualized"; a self-contained chunk matches under "contextualized" by its raw text. (type filter — three partitions)
+- [x] Test: documents are ordered most-relevant-first and chunks within a document follow `span_start` order. (ranking — bm25-asc + doc-min + span_start write-site)
+- [x] Test: a chunk matching on both sides yields a single result carrying both per-side flags. (dedup — aggregate-by-chunk_id write-site)
+- [x] Test: an empty query yields an empty result set (no error, not the whole corpus); input with query-syntax characters (`"`, `*`, boolean operators) is matched literally and never errors. (input handling — escaping write-site)
+- [x] Test: a source mid-contextualization (revisions retained, no active variant run) contributes no contextualized content to search; retained intermediate revisions never appear. (memo exclusion — search surface)
 
 ## Explorer views (graph-explorer-ui)
 
