@@ -61,13 +61,13 @@
 
 ## Explorer views (graph-explorer-ui)
 
-- [ ] Implement the document browser route: left spine lists the active chunking run's chunks ordered by manifest `span_start` ascending (heading path, span, char count, self-contained marker); right detail panel; full-page vs. `HX-Request` partial.
-- [ ] Implement the detail panel: `resolve_chunk_text` over the active variant run's committed `ContextualizedChunk` (revision, or raw when empty), shown distinct from the raw chunk, with provenance (variant run/version/model + lineage to summary, chunking generation, source markdown) and on-demand markdown reconstruction via `S3MarkdownSource.load`.
-- [ ] Implement the search-results view (form-post → HTML partial): paired raw │ contextualized rows with the term highlighted on whichever side(s) matched (per-side flags), one row per chunk; selecting a row opens the document browser at that chunk with the detail panel populated.
-- [ ] Add the explicit `span_start`-ordered document-order read used by the spine and search (do not rely on `manifest_of_run`/`chunks_of_run` `chunk_id` ordering).
-- [ ] Add an explorer test fixture that injects a fake `BlobReader` (and seeds the corresponding `ConversionOutput`) so markdown reconstruction via `S3MarkdownSource(engine, blob_reader)` is exercised without real S3.
-- [ ] Test: a document's chunks render in `span_start` order with heading path, span, char count, and the self-contained chunk marked. (document browser spine — span_start write-site)
-- [ ] Test: a chunk with a non-empty revision shows the revision distinct from raw with provenance; a self-contained chunk shows the raw text marked self-contained with the same provenance lineage. (detail panel — both revision partitions)
-- [ ] Test: selecting a search result opens its document at the chunk with the detail panel showing its contextualized representation. (select-opens-document)
-- [ ] Test: a contextualized-only match is highlighted on the contextualized side only; a both-sides match renders one result highlighted on both. (paired-results highlight — view write-site)
-- [ ] Test: in the explorer, a source mid-contextualization shows its raw chunks but no contextualized representation, and no retained intermediate revision appears. (memo exclusion — explorer surface)
+- [x] Implement the document browser route: left spine lists the active chunking run's chunks ordered by manifest `span_start` ascending (heading path, span, char count, self-contained marker); right detail panel; full-page vs. `HX-Request` partial.
+- [x] Implement the detail panel: `resolve_chunk_text` over the active variant run's committed `ContextualizedChunk` (revision, or raw when empty), shown distinct from the raw chunk, with provenance (variant run/version/model + lineage to summary, chunking generation, source markdown) and on-demand markdown reconstruction via `S3MarkdownSource.load`.
+- [x] Implement the search-results view (form-post → HTML partial): paired raw │ contextualized rows with the term highlighted on whichever side(s) matched (per-side flags), one row per chunk; selecting a row opens the document browser at that chunk with the detail panel populated.
+- [x] Add the explicit `span_start`-ordered document-order read used by the spine and search (do not rely on `manifest_of_run`/`chunks_of_run` `chunk_id` ordering).
+- [x] Add an explorer test fixture that injects a fake `BlobReader` (and seeds the corresponding `ConversionOutput`) so markdown reconstruction via `S3MarkdownSource(engine, blob_reader)` is exercised without real S3.
+- [x] Test: a document's chunks render in `span_start` order with heading path, span, char count, and the self-contained chunk marked. (document browser spine — span_start write-site)
+- [x] Test: a chunk with a non-empty revision shows the revision distinct from raw with provenance; a self-contained chunk shows the raw text marked self-contained with the same provenance lineage. (detail panel — both revision partitions)
+- [x] Test: selecting a search result opens its document at the chunk with the detail panel showing its contextualized representation. (select-opens-document)
+- [x] Test: a contextualized-only match is highlighted on the contextualized side only; a both-sides match renders one result highlighted on both. (paired-results highlight — view write-site)
+- [x] Test: in the explorer, a source mid-contextualization shows its raw chunks but no contextualized representation, and no retained intermediate revision appears. (memo exclusion — explorer surface)

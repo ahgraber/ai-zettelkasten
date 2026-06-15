@@ -1,0 +1,62 @@
+{# Detail panel for the selected chunk: its current contextualized representation,
+   shown distinct from the raw chunk, with provenance and the on-demand markdown. #}
+<div class="detail" id="detail-panel">
+  {% if detail %}
+  <header class="detail-header">
+    <div class="label">selected chunk · {{ detail.chunk_id }}</div>
+    <div class="heading-path">{{ detail.heading_path | join(" ▸ ") if detail.heading_path else "(no heading)" }}</div>
+    <div class="label">span {{ detail.span_start }}–{{ detail.span_end }} · {{ detail.char_count }} chars</div>
+  </header>
+
+  <div class="detail-body">
+    <div class="label">contextualized representation (what downstream consumes)</div>
+    {% if detail.has_variant %}
+    <div class="representation {{ 'self-contained' if detail.self_contained else 'revision' }}" data-self-contained="{{ 'true' if detail.self_contained else 'false' }}">
+      {{ detail.representation_html | safe }}
+    </div>
+    {% if detail.self_contained %}
+    <div class="label">self-contained: yes · revision empty — consumes the raw chunk</div>
+    {% else %}
+    <div class="label">self-contained: no · contextualized revision</div>
+    {% endif %}
+    {% else %}
+    <div class="representation none" data-has-variant="false">
+      No contextualized representation — this source has no active variant run.
+    </div>
+    {% endif %}
+
+    <div class="label" style="margin-top: 16px">raw chunk</div>
+    <div class="raw-chunk">{{ detail.raw_html | safe }}</div>
+
+    <div class="label" style="margin-top: 16px">provenance</div>
+    <div class="provenance">
+      {% if detail.has_variant %}
+      variant run #{{ detail.provenance.variant_run_id }} ({{ detail.provenance.variant_run_status }}) ·
+      context_version {{ detail.provenance.context_version }} ·
+      model_profile <code>{{ detail.provenance.model_profile }}</code><br />
+      summary run #{{ detail.provenance.summary_run_id }} ({{ detail.provenance.summary_run_status }}) ·
+      chunking run #{{ detail.provenance.chunking_run_id }}
+      {% else %}
+      chunking run #{{ detail.provenance.chunking_run_id }} · no active variant run
+      {% endif %}
+    </div>
+
+    <div class="label" style="margin-top: 16px">source markdown</div>
+    {% if detail.markdown.available %}
+    <div class="markdown">
+      <div class="label">
+        conv_output {{ detail.markdown.conversion_output_id }} · md hash <code>{{ detail.markdown.markdown_hash_xx64 }}</code>
+      </div>
+      <pre class="markdown-text">{{ detail.markdown.text }}</pre>
+    </div>
+    {% else %}
+    <div class="markdown unavailable">
+      Source markdown unavailable
+      {% if detail.markdown.conversion_output_id %}(conv_output {{ detail.markdown.conversion_output_id }}){% endif %}.
+    </div>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="detail-empty">Select a chunk to view its contextualized representation.</div>
+  {% endif %}
+</div>

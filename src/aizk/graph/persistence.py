@@ -315,6 +315,34 @@ def manifest_of_run(session: "Session", run_id: int) -> list[ChunkRunManifest]:
     )
 
 
+def document_order_chunks(session: "Session", run_id: int) -> list[tuple[Chunk, int, int]]:
+    """Return a run's chunk rows with their manifest span, ordered by ``span_start`` ascending.
+
+    This is the explicit document-order (reading-order) read of a chunking run: it
+    joins each manifested ``chunk_id`` to its stable-identity :class:`Chunk` row and
+    its manifest ``span``, ordered by ``span_start`` — the true position of the chunk
+    in the source markdown. It deliberately does **not** reuse
+    :func:`manifest_of_run` / :func:`chunks_of_run`, which order by ``chunk_id``
+    (stable but not reading order); a consumer that needs the spine's reading order
+    must use this read.
+
+    Args:
+        session: Active session.
+        run_id: The chunking run whose chunks to read.
+
+    Returns:
+        ``(chunk_row, span_start, span_end)`` triples in ascending ``span_start``
+        order; empty when the run has no manifest entries.
+    """
+    rows = session.exec(
+        select(Chunk, ChunkRunManifest.span_start, ChunkRunManifest.span_end)
+        .join(ChunkRunManifest, ChunkRunManifest.chunk_id == Chunk.chunk_id)
+        .where(ChunkRunManifest.run_id == run_id)
+        .order_by(ChunkRunManifest.span_start)
+    ).all()
+    return [(chunk, span_start, span_end) for chunk, span_start, span_end in rows]
+
+
 def members_of_run(session: "Session", run_id: int) -> list[str]:
     """Return the ``chunk_id``s in a chunking run's manifest, ordered by ``chunk_id``."""
     return list(
