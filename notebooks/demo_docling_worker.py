@@ -1,17 +1,33 @@
-#!/usr/bin/env python3
-"""Manual validation driver for the production Docling conversion path.
-
-Exercises ``aizk.conversion.processing.converter`` (``convert_html`` /
-``convert_pdf``) directly and applies the same whitespace normalization the
-production worker does, so ``output.md`` matches what the worker would write.
-"""
+# %% [markdown]
+# # Docling Conversion — Hands-On Tour
+#
+# A hands-on walkthrough of the production Docling conversion path. For a handful
+# of real KaraKeep bookmarks it **selects the processing pipeline** (arXiv/GitHub/
+# PDF-asset/HTML), **fetches the source bytes**, **converts to Markdown** with the
+# same `aizk.conversion.processing.converter` calls the worker uses, applies the
+# worker's whitespace normalization, and writes an `output.md` you can open and
+# eyeball — so you can see exactly what the worker would persist.
+#
+# **Run model:** open in VS Code Interactive or Jupyter and execute cells
+# top-to-bottom with **Shift+Enter**. State lives in module-scope variables that
+# later cells reuse, so run the cells in order. The final driver cell uses
+# top-level `await` (valid because the kernel owns the event loop).
+#
+# **Real infrastructure:** this tour does REAL work — it calls a real KaraKeep
+# instance and runs real Docling conversion (and any configured VLM picture
+# description). Set the KaraKeep + converter env vars (e.g. via `.env`/direnv)
+# before running. There is no `__main__` guard: the cells run as you step through
+# them, the way you would the `ai-vfs` tour.
 
 # %%
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
+import socket
 from typing import Literal
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 import nest_asyncio
@@ -34,6 +50,16 @@ from aizk.conversion.utilities.bookmark_utils import (
 from aizk.conversion.utilities.config import DoclingConverterConfig
 from aizk.conversion.utilities.whitespace import normalize_whitespace
 from karakeep_client.models import Bookmark
+
+# %% [markdown]
+# ## 1. Setup
+#
+# Boilerplate you rarely step through: `nest_asyncio` lets the synchronous
+# `fetch_karakeep_bookmark` helper drive its async client on the kernel's running
+# loop; `setproctitle` gives the process a descriptive name; logging is turned up
+# so you can watch the conversion stages; `load_dotenv` brings in the KaraKeep +
+# converter credentials; and `output_dir` is where each bookmark's `output.md`
+# lands.
 
 # %%
 nest_asyncio.apply()
@@ -58,6 +84,42 @@ _ = load_dotenv()
 
 output_dir = Path("data/validate_docling_worker")
 output_dir.mkdir(parents=True, exist_ok=True)
+
+# %% [markdown]
+# ## Probe KaraKeep before converting (no work yet)
+#
+# This tour calls a real KaraKeep instance and runs real Docling conversion, so the
+# first thing to confirm is that KaraKeep is configured and reachable. Set
+# `AIZK_FETCHER__KARAKEEP__API_KEY` and `AIZK_FETCHER__KARAKEEP__BASE_URL` (e.g. via
+# `.env`/direnv). If either is missing or the host is unreachable, this prints what
+# to fix with no traceback; the fetch/convert cells below assume it succeeded.
+
+# %%
+_kk_api_key = os.environ.get("AIZK_FETCHER__KARAKEEP__API_KEY", "").strip()
+_kk_base_url = os.environ.get("AIZK_FETCHER__KARAKEEP__BASE_URL", "").strip()
+if not _kk_api_key or not _kk_base_url:
+    print("KaraKeep is not configured — the cells below need it. Set these, then re-run:")
+    print("  AIZK_FETCHER__KARAKEEP__API_KEY=<token>")
+    print("  AIZK_FETCHER__KARAKEEP__BASE_URL=https://karakeep.example.com")
+else:
+    _parsed = urlparse(_kk_base_url)
+    _host = _parsed.hostname or ""
+    _port = _parsed.port or (443 if _parsed.scheme == "https" else 80)
+    try:
+        with socket.create_connection((_host, _port), timeout=3.0):
+            print(f"KaraKeep reachable at {_host}:{_port} — later cells will fetch and convert.")
+    except OSError as exc:
+        print(f"KaraKeep configured but {_host}:{_port} is unreachable: {exc}")
+        print(f"Check AIZK_FETCHER__KARAKEEP__BASE_URL ({_kk_base_url!r}) and that the instance is up.")
+
+# %% [markdown]
+# ## 2. Fetch & prepare source content
+#
+# `fetch_source_content` mirrors the worker's source-selection logic: arXiv
+# bookmarks resolve to a downloaded PDF, GitHub bookmarks to rendered README HTML,
+# PDF assets to their stored bytes, and everything else falls back to the
+# bookmark's HTML (or its text content wrapped in HTML). It returns the chosen
+# pipeline (`"pdf"` / `"html"`) and the raw bytes to convert.
 
 # %%
 # process job: fetch & prepare source content
@@ -99,6 +161,18 @@ async def fetch_source_content(bookmark: Bookmark, source_type: str) -> tuple[Pr
     raise BookmarkContentError(f"Bookmark {bookmark.id} has no fetchable content")
 
 
+# %% [markdown]
+# ## 3. Convert to Markdown
+#
+# `convert_to_markdown` runs the production converter (`convert_pdf` /
+# `convert_html`) into a per-bookmark workspace, then applies the **same
+# whitespace normalization the worker applies before writing `output.md`** (see
+# `aizk.conversion.processing.subproc`) — so the file on disk matches what the
+# worker would persist. Set
+# `AIZK_CONVERTER__DOCLING__PICTURE_CLASSIFICATION_ENABLED=false` to disable
+# classification-based prompt routing.
+
+
 # %%
 # process job: convert to Markdown
 def convert_to_markdown(
@@ -127,6 +201,15 @@ def convert_to_markdown(
     (workspace / "output.md").write_text(markdown_text)
     print(f"  title={document_title!r}  figures={len(figure_paths)}  -> {workspace / 'output.md'}")
 
+
+# %% [markdown]
+# ## 4. Convert a sample of bookmarks
+#
+# The driver: for each bookmark id, fetch the bookmark, run the same job-submission
+# checks the API does (`validate_bookmark_content`, source/content-type detection),
+# then fetch and convert. The four samples below span the pipelines — an arXiv PDF,
+# a GitHub README, an HTML page with images, and a SingleFile capture. Swap in your
+# own bookmark ids and re-run to convert different sources.
 
 # %%
 bookmarks = [
@@ -159,6 +242,6 @@ for bookmark_id in bookmarks:
 
     convert_to_markdown(pipeline, content_bytes, output_dir, bookmark.id, source_url=source_url)
 
-print("Docling worker validation finished.")
+print("Docling conversion tour finished.")
 
 # %%
