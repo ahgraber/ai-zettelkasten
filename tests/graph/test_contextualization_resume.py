@@ -31,6 +31,7 @@ from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk, split
 from aizk.chunking.datamodel import derive_chunk_id
 from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.contextualization import (
+    MAX_SUMMARY_CHARS,
     StalePlanError,
     contextualize_chunks,
     resolve_revisions,
@@ -361,7 +362,7 @@ def test_invalid_revision_is_not_retained_and_is_re_invoked_on_retry(engine: Eng
 
 def test_invalid_summary_is_not_retained_and_is_re_invoked_on_retry(engine: Engine) -> None:
     """An overlong summary is not memoized, so a retry re-invokes the summary pass."""
-    overlong = StubLLMClient(responder=lambda _prompt: "x" * 5000)
+    overlong = StubLLMClient(responder=lambda _prompt: "x" * (MAX_SUMMARY_CHARS + 1))
     with pytest.raises(ValueError, match="summary is too long"):
         resolve_summary_text(engine, overlong, aizk_uuid=_SCOPE, markdown_hash_xx64=_HASH, document_text=_DOC_TEXT)
     assert _memo_rows(engine, _SCOPE, MEMO_KIND_SUMMARY) == [], "the invalid summary was not retained"
