@@ -260,10 +260,10 @@ def test_explorer_detail_self_contained_shows_raw_marked_with_same_provenance(
 
     assert response.status_code == 200
     body = response.text
-    # The consumed representation is the raw chunk text, marked self-contained.
+    # The consumed representation is the raw chunk text, marked self-contained via
+    # the data attribute (the human-readable status lives on the spine row).
     assert "bioluminescence in deep-sea organisms" in body
     assert 'data-self-contained="true"' in body
-    assert "revision empty" in body
     # Same provenance lineage as a revised chunk.
     assert "variant run #" in body
     assert "summary run #" in body

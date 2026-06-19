@@ -14,11 +14,6 @@
     <div class="representation {{ 'self-contained' if detail.self_contained else 'revision' }}" data-self-contained="{{ 'true' if detail.self_contained else 'false' }}">
       {{ detail.representation_html | safe }}
     </div>
-    {% if detail.self_contained %}
-    <div class="label">self-contained: yes · revision empty — consumes the raw chunk</div>
-    {% else %}
-    <div class="label">self-contained: no · contextualized revision</div>
-    {% endif %}
     {% else %}
     <div class="representation none" data-has-variant="false">
       No contextualized representation — this source has no active variant run.
@@ -47,7 +42,7 @@
       <div class="label">
         conv_output {{ detail.markdown.conversion_output_id }} · md hash <code>{{ detail.markdown.markdown_hash_xx64 }}</code>
       </div>
-      <pre class="markdown-text">{{ detail.markdown.text }}</pre>
+      <pre class="markdown-text"><code class="language-markdown">{{ detail.markdown.text }}</code></pre>
     </div>
     {% else %}
     <div class="markdown unavailable">

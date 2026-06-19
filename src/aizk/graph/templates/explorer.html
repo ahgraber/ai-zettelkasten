@@ -5,6 +5,35 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Knowledge Base Explorer</title>
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <!-- Source-markdown code renderer. The OS light/dark preference selects the
+         theme via the media-scoped stylesheets (One Light / One Dark). -->
+    <link
+      rel="stylesheet"
+      media="(prefers-color-scheme: light)"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-light.min.css"
+    />
+    <link
+      rel="stylesheet"
+      media="(prefers-color-scheme: dark)"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script>
+      // Highlight the source-markdown block on first paint and after every HTMX
+      // swap (the detail panel — and its code block — are swapped in dynamically).
+      function highlightMarkdown(root) {
+        if (!window.hljs) return;
+        (root || document).querySelectorAll("pre code.language-markdown:not(.hljs)").forEach(function (el) {
+          window.hljs.highlightElement(el);
+        });
+      }
+      document.addEventListener("DOMContentLoaded", function () {
+        highlightMarkdown(document);
+        document.body.addEventListener("htmx:afterSwap", function (evt) {
+          highlightMarkdown(evt.target);
+        });
+      });
+    </script>
     <style>
       body {
         font-family: system-ui, sans-serif;
@@ -111,13 +140,35 @@
         overflow: auto;
       }
 
+      /* Tinted field + a darker keyline in each kind's hue, so the boxes separate
+         from the near-white panel by color rather than by a drop-shadow card. */
       .representation,
       .raw-chunk {
-        border: 1px solid rgba(31, 26, 22, 0.18);
+        border: 1px solid;
         border-radius: 6px;
         padding: 12px;
         margin-top: 6px;
         line-height: 1.5;
+      }
+
+      /* Contextualized representation — the consumed output. Blue, matching the
+         selected-chunk and search-highlight cue. */
+      .representation {
+        background: #e7eeff;
+        border-color: #4a82e0;
+      }
+
+      /* No active variant: a muted placeholder, not a content field. */
+      .representation.none {
+        background: #faf7f1;
+        border-color: rgba(31, 26, 22, 0.18);
+        color: #6c5f55;
+      }
+
+      /* Raw chunk — warm tan, set apart from the blue contextualized field. */
+      .raw-chunk {
+        background: #f6ecd6;
+        border-color: #b07f33;
       }
 
       mark {
@@ -131,15 +182,25 @@
         line-height: 1.7;
       }
 
+      /* Source markdown — a real code block. Its background and token colors come
+         from the highlight.js theme, which the OS light/dark preference selects
+         (One Light / One Dark via the media-scoped <link>s in <head>). */
       .markdown-text {
-        white-space: pre-wrap;
-        font-family: ui-monospace, monospace;
-        font-size: 0.82rem;
+        margin: 6px 0 0;
         max-height: 240px;
         overflow: auto;
-        border: 1px solid rgba(31, 26, 22, 0.12);
+        border: 1px solid rgba(31, 26, 22, 0.25);
         border-radius: 6px;
-        padding: 10px;
+      }
+
+      .markdown-text code.hljs {
+        display: block;
+        padding: 10px 12px;
+        font-family: ui-monospace, SFMono-Regular, monospace;
+        font-size: 0.82rem;
+        line-height: 1.55;
+        white-space: pre-wrap;
+        border-radius: 6px;
       }
 
       .results-legend,
@@ -161,6 +222,16 @@
         border-radius: 6px;
         margin: 6px 10px;
         cursor: pointer;
+        background: #fffdf8;
+      }
+
+      /* Alternating row tint so adjacent matches are easy to tell apart. */
+      .result-row:nth-child(even) {
+        background: #f4efe6;
+      }
+
+      .result-row:hover {
+        border-color: #6ea8fe;
       }
 
       .result-head {
