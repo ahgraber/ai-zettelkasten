@@ -784,7 +784,7 @@ def test_revision_runaway_expansion_past_chunk_ratio_is_rejected(session: Sessio
 def test_overlong_summary_is_rejected(session: Session) -> None:
     """A document-level hallucination/verbosity spike is not persisted."""
     _persist(session, [_make_chunk("body", ordinal=0)], markdown_hash=_HASH_A)
-    client = StubLLMClient(responder=lambda _prompt: "x" * 5000)
+    client = StubLLMClient(responder=lambda _prompt: "x" * (ctx_mod.MAX_SUMMARY_CHARS + 1))
 
     with pytest.raises(ValueError, match="summary is too long"):
         summarize_document(
