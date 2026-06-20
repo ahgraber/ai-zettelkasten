@@ -98,13 +98,37 @@ Docs: see `docs/Litestream.md` for full setup and sidecar guidance.
 
 ## Running `aizk`
 
-Run the conversion CLI with uv:
+Each stage has its own console script. `db-init` runs the shared Alembic
+migrations (it creates both the conversion and graph tables — run it once); each
+`worker` also migrates on startup.
+
+### Conversion service
 
 ```sh
 uv run aizk-conversion db-init
 AIZK_FETCHER__KARAKEEP__API_KEY=... AIZK_FETCHER__KARAKEEP__BASE_URL=... uv run aizk-conversion serve
 AIZK_FETCHER__KARAKEEP__API_KEY=... AIZK_FETCHER__KARAKEEP__BASE_URL=... uv run aizk-conversion worker
 ```
+
+`serve` listens on `AIZK_API_HOST:AIZK_API_PORT` (default `0.0.0.0:8000`).
+
+### Graph (contextualization) stage
+
+```sh
+# Worker: splits, summarizes, and contextualizes converted documents.
+# Requires the model endpoint triple; refuses to start without it.
+AIZK_GRAPH__CONTEXTUALIZATION__LLM_BASE_URL=... \
+AIZK_GRAPH__CONTEXTUALIZATION__LLM_API_KEY=... \
+AIZK_GRAPH__CONTEXTUALIZATION__LLM_MODEL=... \
+  uv run aizk-graph worker
+
+# Operator API + UI: jobs monitor and content explorer.
+uv run aizk-graph serve
+```
+
+`aizk-graph serve` listens on its own port (default `0.0.0.0:8001`, set via `AIZK_GRAPH__CONTEXTUALIZATION__OPERATOR_API_PORT`) so it can run alongside the conversion API.
+The operator UI is at `http://<host>:8001/ui/graph/jobs` (jobs monitor) and `http://<host>:8001/ui/graph/explorer` (content explorer).
+The graph stage reuses the conversion database, so point both stages at the same `AIZK_DATABASE_URL`; Litestream replication of that database is owned by the conversion service (see `docs/Litestream.md`).
 
 ### Backfill KaraKeep bookmarks
 
