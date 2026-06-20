@@ -10,8 +10,27 @@ from _claimify.io import resolve_doc
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
-from aizk.conversion.datamodel.bookmark import Bookmark
+from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.conversion.datamodel.source import Source
+
+
+def _make_source(*, karakeep_id: str, aizk_uuid, title: str) -> Source:
+    """Build a persistable Source row with a valid karakeep source_ref.
+
+    `source_ref`, `source_ref_hash`, and `owner_id` are NOT NULL on the current
+    schema; derive the ref/hash from the karakeep id and default the owner to the
+    shipped principal so the row inserts cleanly.
+    """
+    ref = KarakeepBookmarkRef(bookmark_id=karakeep_id)
+    return Source(
+        karakeep_id=karakeep_id,
+        aizk_uuid=aizk_uuid,
+        title=title,
+        source_ref=ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(ref),
+        owner_id="self",
+    )
 
 
 class _FakeS3Client:
@@ -30,11 +49,12 @@ def _seed_db():
     aizk_uuid = uuid4()
     now = datetime.now(timezone.utc)
     with Session(engine) as session:
-        session.add(Bookmark(karakeep_id="kk-1", aizk_uuid=aizk_uuid, title="Doc"))
+        session.add(_make_source(karakeep_id="kk-1", aizk_uuid=aizk_uuid, title="Doc"))
         session.add(
             ConversionOutput(
                 job_id=1,
                 aizk_uuid=aizk_uuid,
+                owner_id="self",
                 title="Old title",
                 payload_version=1,
                 s3_prefix="pfx/",
@@ -50,6 +70,7 @@ def _seed_db():
             ConversionOutput(
                 job_id=2,
                 aizk_uuid=aizk_uuid,
+                owner_id="self",
                 title="New title",
                 payload_version=1,
                 s3_prefix="pfx/",
@@ -101,7 +122,7 @@ def test_resolve_doc_missing_output_raises(tmp_path, monkeypatch):
     SQLModel.metadata.create_all(engine)
 
     with Session(engine) as session:
-        session.add(Bookmark(karakeep_id="kk-orphan", aizk_uuid=uuid4(), title="No outputs"))
+        session.add(_make_source(karakeep_id="kk-orphan", aizk_uuid=uuid4(), title="No outputs"))
         session.commit()
         with pytest.raises(ValueError, match="No conversion_outputs"):
             resolve_doc("kk-orphan", session, s3_client=_FakeS3Client(b""))

@@ -12,8 +12,8 @@ from pydantic import TypeAdapter
 from sqlmodel import Session, select
 
 from _claimify.models import EvalRecord, ExtractionRecord, LoadedDoc
-from aizk.conversion.datamodel.bookmark import Bookmark
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.conversion.datamodel.source import Source
 from aizk.conversion.db import get_engine
 from aizk.conversion.storage.s3_client import S3Client
 from aizk.conversion.utilities.config import ConversionConfig
@@ -53,7 +53,7 @@ def resolve_doc(
     s3_client: S3Client | None = None,
 ) -> LoadedDoc:
     """Resolve a KaraKeep bookmark id to a `LoadedDoc`, fetching from cache or S3."""
-    bookmark = session.exec(select(Bookmark).where(Bookmark.karakeep_id == karakeep_id)).one_or_none()
+    bookmark = session.exec(select(Source).where(Source.karakeep_id == karakeep_id)).one_or_none()
     if bookmark is None:
         raise ValueError(f"No bookmark with karakeep_id={karakeep_id!r}")
 
