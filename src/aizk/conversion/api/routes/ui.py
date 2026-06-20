@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import datetime as dt
-from pathlib import Path
+import importlib.resources
 from typing import Annotated, Any
 
 from sqlalchemy import String, cast, func, or_, text
@@ -21,7 +21,7 @@ from aizk.conversion.datamodel.source import Source
 
 router = APIRouter(prefix="/ui", tags=["ui"])
 
-_TEMPLATES = Jinja2Templates(directory=str(Path(__file__).resolve().parents[2] / "templates"))
+_TEMPLATES = Jinja2Templates(directory=str(importlib.resources.files("aizk.conversion") / "templates"))
 
 _SORTABLE_COLUMNS: dict[str, Any] = {
     "job_id": ConversionJob.id,

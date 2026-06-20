@@ -37,11 +37,12 @@ import pandas as pd
 
 import tiktoken
 
+from aizk.utilities.path_utils import get_repo_path
+
 logger = logging.getLogger("chunking-calibration.measure")
 
-# This script lives at <repo>/scripts/chunking-calibration/measure.py; its
-# outputs land in the gitignored <repo>/data/chunking-calibration directory.
-_DEFAULT_OUT_DIR = Path(__file__).resolve().parents[2] / "data" / "chunking-calibration"
+# Outputs land in the gitignored <repo>/data/chunking-calibration directory.
+_DEFAULT_OUT_DIR = get_repo_path(__file__) / "data" / "chunking-calibration"
 
 
 # Top-level block tokens that have a `.map` covering the entire block.

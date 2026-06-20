@@ -29,11 +29,12 @@ from setproctitle import setproctitle
 import numpy as np
 import pandas as pd
 
+from aizk.utilities.path_utils import get_repo_path
+
 logger = logging.getLogger("chunking-calibration.analyze")
 
-# This script lives at <repo>/scripts/chunking-calibration/analyze.py; it reads
-# the artifacts measure.py wrote to the gitignored <repo>/data/chunking-calibration.
-_DEFAULT_IN_DIR = Path(__file__).resolve().parents[2] / "data" / "chunking-calibration"
+# Reads the artifacts measure.py wrote to the gitignored <repo>/data/chunking-calibration.
+_DEFAULT_IN_DIR = get_repo_path(__file__) / "data" / "chunking-calibration"
 
 DECILES = [0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99]
 BUDGETS = [1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384]

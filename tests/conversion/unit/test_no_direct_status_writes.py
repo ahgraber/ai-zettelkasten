@@ -33,12 +33,12 @@ literals such as ``cj.status = 'SUCCEEDED'``, never ORM status mutations).
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 import re
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_CONVERSION_ROOT = _REPO_ROOT / "src" / "aizk" / "conversion"
-_PIPELINE_ROOT = _REPO_ROOT / "src" / "aizk" / "pipeline"
+_CONVERSION_ROOT = Path(importlib.util.find_spec("aizk.conversion").origin).resolve().parent
+_PIPELINE_ROOT = Path(importlib.util.find_spec("aizk.pipeline").origin).resolve().parent
 
 #: The two functions that perform the audited, event-paired status mutation.
 #: Every other status write inside the scanned roots is forbidden.
