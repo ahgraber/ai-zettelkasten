@@ -223,26 +223,24 @@ def test_egress_denial_log_line_carries_rejected_destination(
 # ---------------------------------------------------------------------------
 
 
-def test_cmd_worker_configures_logging_before_running(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``cli._cmd_worker`` must invoke ``configure_logging`` before starting the worker loop.
+def test_worker_command_configures_logging_before_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Running ``aizk-conversion worker`` configures logging before the worker loop starts.
 
-    Without this, every WARNING raised inside the worker process emits via
-    Python's ``lastResort`` (stderr-only, default format) — losing the JSON
-    envelope and the egress ``extra`` keys. The H1 audit-log contract is
-    silently broken.
+    Logging is configured once in ``cli.main`` for every subcommand (the shared
+    procedure), so the contract is exercised through the real entrypoint rather
+    than the command function. Without it, every WARNING raised inside the worker
+    process would emit via Python's ``lastResort`` (stderr-only, default format) —
+    losing the JSON envelope and the egress ``extra`` keys, silently breaking the
+    H1 audit-log contract.
     """
-    import argparse
-
     from aizk.conversion import cli as cli_module
 
-    configure_calls: list[object] = []
+    order: list[str] = []
 
-    def _fake_configure(config: object) -> None:
-        configure_calls.append(config)
-
-    # Stub out everything else _cmd_worker does so the test isolates the
-    # configure_logging call.
-    monkeypatch.setattr(cli_module, "configure_logging", _fake_configure)
+    # ``main`` loads dotenv then configures logging before dispatching; stub the
+    # dotenv read (it would touch ``.env``) and record the logging call.
+    monkeypatch.setattr(cli_module, "load_process_dotenv_once", lambda: None)
+    monkeypatch.setattr(cli_module, "configure_logging", lambda _config: order.append("configure_logging"))
     monkeypatch.setattr(cli_module, "log_feature_summary", lambda *_a, **_kw: None)
     monkeypatch.setattr(cli_module, "configure_mlflow_tracing", lambda **_kw: None)
     monkeypatch.setattr(cli_module, "setproctitle", lambda _t: None)
@@ -262,21 +260,13 @@ def test_cmd_worker_configures_logging_before_running(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(cli_module, "LitestreamManager", _FakeLitestreamManager)
 
-    fake_run_worker_calls: list[object] = []
-
     # ``run_worker`` is imported lazily inside _cmd_worker; intercept it.
     import aizk.conversion.processing.worker as worker
 
-    def _fake_run_worker(config: object, *, shutdown: object = None) -> int:
-        fake_run_worker_calls.append(config)
-        return 0
+    monkeypatch.setattr(worker, "run_worker", lambda _config, **_kw: order.append("run_worker") or 0)
 
-    monkeypatch.setattr(worker, "run_worker", _fake_run_worker)
-
-    # Run the worker command.
-    rc = cli_module._cmd_worker(argparse.Namespace())
+    rc = cli_module.main(["worker"])
 
     assert rc == 0
-    assert len(configure_calls) == 1, "configure_logging must be called exactly once"
-    # configure_logging must run BEFORE the worker runner dispatches.
-    assert len(fake_run_worker_calls) == 1
+    # Logging is configured exactly once, before the worker runner dispatches.
+    assert order == ["configure_logging", "run_worker"]
