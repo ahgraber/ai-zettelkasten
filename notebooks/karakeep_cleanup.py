@@ -21,22 +21,29 @@ from datetime import datetime, timezone
 import logging
 import os
 from pathlib import Path
+import subprocess
 import sys
 from typing import Iterable
 
 from dotenv import load_dotenv
 from setproctitle import setproctitle
 
-# Add project src directory to import path.
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+# Add the project src directory to the import path. Resolve the repo root via git
+# (robust to where this file lives) since aizk is not yet importable here.
+_REPO_ROOT = Path(
+    subprocess.check_output(
+        ["git", "rev-parse", "--show-toplevel"], cwd=Path(__file__).resolve().parent, text=True
+    ).strip()
+)
+sys.path.insert(0, str(_REPO_ROOT / "src"))
 
-from aizk.conversion.utilities.bookmark_utils import (
+from aizk.conversion.utilities.bookmark_utils import (  # noqa: E402
     BookmarkContentError,
     get_bookmark_source_url,
 )
-from aizk.utilities.url_utils import is_social_url, normalize_url
-from karakeep_client.karakeep import KarakeepClient
-from karakeep_client.models import Bookmark as KKBookmark
+from aizk.utilities.url_utils import is_social_url, normalize_url  # noqa: E402
+from karakeep_client.karakeep import KarakeepClient  # noqa: E402
+from karakeep_client.models import Bookmark as KKBookmark  # noqa: E402
 
 # %%
 setproctitle(Path(__file__).stem)

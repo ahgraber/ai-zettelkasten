@@ -21,9 +21,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import html
+import importlib.resources
 import json
 import logging
-from pathlib import Path
 import re
 from typing import TYPE_CHECKING, Annotated, Any
 from uuid import UUID
@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ui/graph", tags=["ui"])
 
-_TEMPLATES = Jinja2Templates(directory=str(Path(__file__).resolve().parents[2] / "templates"))
+_TEMPLATES = Jinja2Templates(directory=str(importlib.resources.files("aizk.graph") / "templates"))
 
 _SORTABLE_COLUMNS: dict[str, Any] = {
     "job_id": ContextualizationJob.id,

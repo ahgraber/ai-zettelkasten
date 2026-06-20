@@ -9,6 +9,7 @@ Covers:
 from __future__ import annotations
 
 import ast
+import importlib.util
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,7 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
-_CONVERSION_ROOT = Path(__file__).parents[4] / "src" / "aizk" / "conversion"
+_CONVERSION_ROOT = Path(importlib.util.find_spec("aizk.conversion").origin).resolve().parent
 _ADAPTERS_ROOT = _CONVERSION_ROOT / "adapters"
 _WIRING_ROOT = _CONVERSION_ROOT / "wiring"
 
@@ -51,7 +52,7 @@ def _collect_imports(path: Path) -> list[str]:
 
 def _module_name_from_path(path: Path) -> str:
     """Convert a filesystem path to a dotted module name relative to src/."""
-    src_root = _CONVERSION_ROOT.parents[2]  # .../src
+    src_root = Path(importlib.util.find_spec("aizk").submodule_search_locations[0]).resolve().parent  # .../src
     rel = path.relative_to(src_root)
     parts = list(rel.with_suffix("").parts)
     return ".".join(parts)

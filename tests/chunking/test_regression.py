@@ -5,17 +5,17 @@ from __future__ import annotations
 from collections.abc import Callable
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
 
 import pytest
 
 from aizk.chunking import SPLITTER_VERSION, Chunk, split
+from aizk.utilities.path_utils import get_repo_path
 from tests.chunking.conftest import FIXTURES_DIR
 
 SNAPSHOT_PATH = FIXTURES_DIR / "expected_chunks.json"
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = get_repo_path(__file__)
 _VERSION_FILE = "src/aizk/chunking/_version.py"
 _SNAPSHOT_FILE = "tests/chunking/fixtures/expected_chunks.json"
 
