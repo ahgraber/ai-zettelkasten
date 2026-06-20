@@ -47,6 +47,12 @@ Capabilities are listed in build-dependency order: `graph-jobs-ui` first (it est
     Search returns **paired raw │ contextualized** rows with the term highlighted wherever it appears; selecting a row opens that chunk's document at its position with the detail panel populated.
     The extracted markdown is reconstructed from chunks / windowed neighbors (S3 on demand when a chunk is selected), not separately searchable.
 
+- **`service-logging` capability (new, cross-cutting ridealong).**
+
+  Standing up the operator UI requires a first-class way to serve it (`aizk-graph serve`, the graph operator app on its own listener so it runs alongside the conversion API).
+  Adding that second graph entrypoint surfaced that logging configuration was applied per-command and unevenly — workers configured it, `serve`/`db-init` did not.
+  This change centralizes logging configuration so **every** process entrypoint, in both stages' CLIs, initializes the same structured logging before doing work. (The new `aizk-graph serve` command itself is operator tooling, not a new behavioral contract beyond the shared-logging requirement.)
+
 **Out of scope:**
 
 - **Variant-history comparison** — comparing a chunk's contextualizations across runs/models.
