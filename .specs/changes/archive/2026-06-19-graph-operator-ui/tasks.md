@@ -71,3 +71,11 @@
 - [x] Test: selecting a search result opens its document at the chunk with the detail panel showing its contextualized representation. (select-opens-document)
 - [x] Test: a contextualized-only match is highlighted on the contextualized side only; a both-sides match renders one result highlighted on both. (paired-results highlight — view write-site)
 - [x] Test: in the explorer, a source mid-contextualization shows its raw chunks but no contextualized representation, and no retained intermediate revision appears. (memo exclusion — explorer surface)
+
+## Serve command and centralized logging (service-logging)
+
+- [x] Add the `aizk-graph serve` command running the graph operator app on its own listener (distinct default port from the conversion API) so the operator UI can be served alongside conversion.
+- [x] Centralize logging configuration: every CLI command in both stages initializes the shared structured logging in its `main` before doing work; remove the per-command logging calls so `serve` / `db-init` no longer fall back to the default handler.
+- [x] Test: running the worker command configures logging through the shared mechanism before the worker loop starts. (long-running entrypoint)
+- [x] Test: running a one-shot command (db-init) configures logging before its work runs. (one-shot entrypoint)
+- [x] Test: the graph CLI dispatches `serve` to the operator app on the operator-API listener and `worker` to the loop; `serve` does not run migrations. (graph entrypoints)
