@@ -26,7 +26,9 @@ class ContextualizationConfig(BaseSettings):
     Read from ``AIZK_GRAPH__CONTEXTUALIZATION__*`` environment variables. The
     ``llm_*`` triple configures the OpenAI-compatible model; the ``worker_*`` and
     ``retry_*`` fields tune the runner's lease, stale recovery, and bounded
-    retries.
+    retries; the ``operator_api_*`` fields are the listener for the graph operator
+    API (jobs monitor + content explorer) served by ``aizk-graph serve``. It is a
+    separate listener from the conversion API, so its default port differs.
     """
 
     model_config = SettingsConfigDict(
@@ -38,6 +40,10 @@ class ContextualizationConfig(BaseSettings):
     llm_base_url: str = ""
     llm_api_key: str = ""
     llm_model: str = ""
+
+    operator_api_host: str = "0.0.0.0"  # noqa: S104
+    operator_api_port: int = 8001
+    operator_api_reload: bool = False
 
     worker_concurrency: int = 1
     worker_timeout_seconds: float = 600.0
