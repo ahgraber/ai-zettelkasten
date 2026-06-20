@@ -101,14 +101,21 @@ Unit-of-work and orchestration:
 - `ContextualizationStageHandler` — the runtime `StageHandler` (claim/execute-in-own-transaction/finalize/recover/cancel; `map_result` classifies `ValueError` → permanent, other exceptions → retryable, success → succeeded; in-process, single-writer concurrency).
 - `MarkdownSource` / `S3MarkdownSource` (over a `BlobReader`), `ContextualizationConfig`, `build_llm_client`, `run_graph_worker`.
 
-Operator surface (`aizk.graph.api`): `GET /v1/contextualizations` (+ status filter), `GET /{id}`, `POST /{id}/retry`, `POST /{id}/cancel`.
-The worker runs via the `aizk-graph` console script (`aizk-graph worker`) or `python -m aizk.graph.cli`.
+Operator surface (`aizk.graph.api`): the JSON API (`GET /v1/contextualizations` (+ status filter), `GET /{id}`, `POST /{id}/retry`, `POST /{id}/cancel`) and an HTML operator UI (`/ui/graph/jobs` jobs monitor, `/ui/graph/explorer` content explorer).
+
+The `aizk-graph` console script (or `python -m aizk.graph.cli`) has two commands:
+
+- `aizk-graph worker` — the per-document write path (split → summarize → contextualize → persist).
+- `aizk-graph serve` — the operator API + UI over uvicorn, on its own listener (default `0.0.0.0:8001`) so it runs alongside the conversion API.
+
+Neither command manages Litestream: the graph stage reuses the conversion database, whose replication is owned by the conversion service (only the process matching `litestream_start_role` replicates).
+Migrations run on `worker` startup or via `aizk-conversion db-init` over the shared Alembic tree; `serve` does not migrate.
 
 ## Configuration
 
 The graph stage reuses the conversion service's `ConversionConfig` for the shared database URL and S3 settings.
-Its own settings live under `AIZK_GRAPH__CONTEXTUALIZATION__*` ([`config.py`](config.py)): the OpenAI-compatible model endpoint triple (`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`) plus the worker's lease/retry knobs.
-The worker refuses to start when the model endpoint is not fully configured.
+Its own settings live under `AIZK_GRAPH__CONTEXTUALIZATION__*` ([`config.py`](config.py)): the OpenAI-compatible model endpoint triple (`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`), the worker's lease/retry knobs, and the operator API listener (`OPERATOR_API_HOST` / `OPERATOR_API_PORT` / `OPERATOR_API_RELOAD`).
+The worker refuses to start when the model endpoint is not fully configured; `serve` needs only the shared database.
 
 ## References
 

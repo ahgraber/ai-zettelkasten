@@ -21,3 +21,29 @@ services:
       - ../data:/app/data:rw
     depends_on:
       - conversion-api
+
+  # Graph (contextualization) stage. Shares the conversion database via the
+  # ../data volume; the conversion service owns Litestream replication.
+  graph-worker:
+    image: aizk-docling:latest
+    command: ["python", "-m", "aizk.graph.cli", "worker"]
+    # Requires AIZK_GRAPH__CONTEXTUALIZATION__LLM_{BASE_URL,API_KEY,MODEL} in ../.env.
+    env_file:
+      - ../.env
+    volumes:
+      - ../data:/app/data:rw
+    depends_on:
+      - conversion-api
+
+  graph-operator:
+    image: aizk-docling:latest
+    command: ["python", "-m", "aizk.graph.cli", "serve"]
+    # Operator API + UI (/ui/graph/jobs, /ui/graph/explorer) on its own port.
+    ports:
+      - "8001:8001"
+    env_file:
+      - ../.env
+    volumes:
+      - ../data:/app/data:rw
+    depends_on:
+      - conversion-api
