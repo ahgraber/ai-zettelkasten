@@ -81,6 +81,9 @@ For multi-step tasks, state a brief plan defining the step task and associated v
 - If worktrees are warranted use a local .worktrees/ directory.
 - Use descriptive, consistent naming conventions.
 - Write docstrings or comments for public contracts and non-obvious behavior.
+- Comments and docstrings describe what exists now (or the rationale for the current design), never what the code used to be.
+  No "previously…", "no longer…", "changed from…", or "renamed from…" — that history belongs in commit messages and changelogs.
+  When editing, delete stale historical asides you encounter rather than preserving them.
 - Use type annotations where the language supports them.
 - Use structured logging where the project uses logging.
 - Run lint/format/test through project tooling when available; do not hand-format code.
@@ -100,8 +103,22 @@ For multi-step tasks, state a brief plan defining the step task and associated v
 - Use Spec-Driven Development and Test-Driven Development.
 - Any change to data schemas, embedding parameters, or retrieval scoring requires a migration/test plan and version bump of the affected artifact.
 - Code review checks for reproducibility (pinned deps, seeded operations), privacy adherence, and observability hooks (structured logs + metrics).
-- Techstack/tooling choices for external services or internal frameworks MUST reference an ADR in `docs/decision-record/` or be manually overridden with references to other documents.
-- Significant architectural decisions MUST have an ADR.
+- Techstack/tooling choices for external services or internal frameworks SHOULD reference a preliminary-research ADR in `docs/decision-record/` or be manually overridden with references to other documents.
+
+### Spec authoring
+
+- **Contract floor (weakest common denominator).**
+  When a spec defines a contract (protocol, interface, adapter) satisfied by more than one implementation or backend family, define the MANDATORY contract at the **intersection** of what every declared implementation guarantees — never the union, never the strongest one.
+  Expose capabilities only some implementations provide as **optional, queryable capabilities** (feature detection, e.g. `native_text_search() -> None`), never as mandatory clauses only some backends satisfy.
+  Name exemplar implementations in scenarios; keep exemplar-specific behavior out of contract prose.
+  This is the Liskov Substitution Principle for backends: any declared implementation MUST be substitutable without callers observing a behavioral change.
+- **Value-chain laddering.**
+  Every change's user stories (in `proposal.md`) MUST ladder to the product north star (`.specs/NORTH-STAR.md`); every delta-spec requirement that advances a story carries a `Serves: <story>` backlink.
+  A requirement that ladders to no story is scope to question, not implement.
+- **Document hierarchy (single source of truth).**
+  North star = product intent; baseline `specs/` = contracts; per-change `design.md` = decisions and rationale (there is no separate ADR store).
+  Preliminary research lives in (`docs/decision-record/`).
+  On any conflict, north star + specs win.
 
 ## Architecture Patterns
 
@@ -149,7 +166,7 @@ Keep them general: name the role a component plays, not the current stage that h
 
 - Semantic Versioning is REQUIRED (MAJOR.MINOR.PATCH).
 - Conventional Commits are REQUIRED for commit messages and/or PR titles.
-- Keep a Changelog is REQUIRED; maintain `CHANGELOG.md` following <https://keepachangelog.com>.
+- Keep a Changelog is REQUIRED; it is managed via `uv-ship` during the release process and follows <https://keepachangelog.com> format.
 - After the first MINOR release, all changes affecting data/schema/contracts MUST include a migration plan and a deprecation schedule.
 
 ## Testing
@@ -182,10 +199,8 @@ Existing examples: `test_fetcher.py`, `test_async_utils.py`, `test_limiters.py`,
 - Use `git agent-commit` (not `git commit`) to create signed commits; this alias uses the dedicated agent signing key at `~/.ssh/id_ed25519_agent_signing`.
 
 ## Sandbox Limitations
-
-- The sandbox cannot run `uv sync` or read `.env` / `.env.example` (permission errors).
-
 <!-- - `tests/conversion/conftest.py` imports `aizk.db.engine` → `pydantic_settings`, which may fail with `ModuleNotFoundError: No module named 'pydantic_settings.sources.providers.secrets'` if sandbox permissions are too strict. -->
 
-- **Delegate test runs to the user** when any of the above errors occur.
+- The sandbox may not be able to run `uv sync` or read `.env` / `.env.example` (permission errors) — attempt the command first rather than assuming failure.
+- Delegate to the user only if a command actually fails on a permission or missing-tool error.
   Describe the exact command to run (e.g., `uv run pytest tests/...`).

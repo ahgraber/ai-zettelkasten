@@ -117,6 +117,10 @@ Revise/Expand **tests only**. Critically review the associated source code and a
 
 - Add assertion context only when it materially improves diagnosis (don't over-annotate).
 
+- Comments and docstrings describe what exists now (or the rationale for the current design), never what the code used to be.
+  No "previously…", "no longer…", "changed from…", or "renamed from…" — that history belongs in commit messages and changelogs.
+  When editing, delete stale historical asides you encounter rather than preserving them.
+
 ### Fixtures and Test Data
 
 - Use fixtures to:
