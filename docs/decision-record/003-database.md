@@ -2,7 +2,7 @@
 
 ## Status
 
-21 June 2025 - Proposed 8 October 2025 – Revised
+21 June 2025 - Proposed 8 October 2025 – Revised 19 June 2026 – Revised (pluggable backend seam)
 
 <!-- Proposed/Accepted/Revised/Deprecated/Superseded -->
 
@@ -173,7 +173,7 @@ On startup, a restore step downloads the latest replica and reconstructs the dat
 This provides:
 
 - **Point-in-time recovery** without scheduled dump jobs or cron
-- **Minimal operational overhead** — Litestream runs as a sidecar subprocess managed by the application (`LitestreamManager` in `src/aizk/conversion/utilities/litestream.py`)
+- **Minimal operational overhead** — Litestream runs as a sidecar subprocess managed by the application (`LitestreamManager` in `src/aizk/db/backends/sqlite.py`)
 - **S3 as the durability layer** — the same bucket already used for conversion artifacts
 
 ### Alternatives considered
@@ -203,7 +203,7 @@ This provides:
 
 ### Configuration
 
-Litestream is controlled by environment variables surfaced through `ConversionConfig`:
+Litestream is controlled by environment variables surfaced through `SqliteDurabilityConfig` (the SQLite backend's durability config; previously on `ConversionConfig`):
 
 | Field                            | Default | Purpose                                                    |
 | -------------------------------- | ------- | ---------------------------------------------------------- |
@@ -236,7 +236,7 @@ Both processes mount the same data volume and share a single SQLite file.
 SQLite in WAL mode allows concurrent readers alongside a single writer.
 The write lock (RESERVED) serializes writers but does not block readers.
 
-All connections are configured with these PRAGMAs (see `src/aizk/conversion/db.py`):
+All connections are configured with these PRAGMAs (see `src/aizk/db/engine.py`):
 
 | PRAGMA               | Value    | Purpose                                                                          |
 | -------------------- | -------- | -------------------------------------------------------------------------------- |
@@ -299,6 +299,56 @@ Migrate to Postgres + pgvector when any of the following apply:
 - **Litestream bugs** in the known-issues list are triggered by production workload patterns.
 
 The migration path is straightforward: SQLModel/SQLAlchemy schemas map to Postgres with minimal changes, and `sqlite-vec` indexes map to pgvector HNSW indexes.
+
+## Addendum: Pluggable Database Backend Seam
+
+19 June 2026
+
+### Context
+
+The database layer originally lived under `aizk.conversion` — engine creation, the Alembic migration tree, `database_url`, and the Litestream manager — even though the graph stage (and every future stage) depends on it.
+Postgres is a near-future alternative backend: a scale-up option now, intended to be a co-equal default once the project reaches beta.
+Making the backend a deliberate choice requires lifting the database into a shared home and naming what differs between backends, without building a speculative engine-neutral framework.
+
+### Decision: A shared `aizk.db` foundation with a thin backend seam
+
+The database is a shared, stage-independent foundation at `aizk.db`, parallel to `aizk.pipeline`:
+
+- `aizk.db.engine` — engine creation and session helpers (URL-keyed engine cache).
+- `aizk.db.config.DatabaseConfig` — owns `database_url` (unchanged `AIZK_DATABASE_URL`) and exposes a derived backend identity.
+- `aizk.db.migrations` — the single Alembic tree governing every stage's tables; its `env.py` imports every stage's models.
+- `aizk.db.backends.<backend>` — the seam.
+  Each backend provides engine wiring and a durability lifecycle.
+  The **SQLite arm** (`aizk.db.backends.sqlite`) is the only implementation today and owns the Litestream manager; **PostgreSQL** is a named, near-term consumer that will add its own arm.
+
+Every stage resolves the engine, migrations, and database config from `aizk.db`; no stage reaches into another stage for them.
+
+### Decision: Deterministic, fail-closed backend selection
+
+The active backend is a pure function of the `database_url` scheme, surfaced as an explicit `DatabaseBackend` identity (single source of truth — no separate field that can drift).
+Selection **fails closed**: a URL whose backend has no implemented arm (an unknown scheme, or `postgresql://` before its arm lands) raises at configuration resolution rather than silently defaulting or running half-configured.
+
+### Decision: Durability is per-backend
+
+Durability stops being a global concern and becomes the backend's:
+
+- **SQLite** — Litestream restore/replicate, embedded and role-gated (the prior addenda's contracts, now scoped to the SQLite backend).
+  Replication participates only when the active backend is SQLite, replication is enabled, the role matches, and the database resolves to a file path.
+- **PostgreSQL** (future) — the engine handles durability; the seam's durability lifecycle becomes an engine-deferred no-op.
+
+A standalone Litestream sidecar is deliberately not built: Postgres is the scale path, which overlaps the only real benefit of decoupling the singleton replicator from scaled app processes.
+
+### Config boundary
+
+`database_url` and the `litestream_*` settings moved off `ConversionConfig`: `database_url` into `DatabaseConfig`, the `litestream_*` fields into the SQLite backend's `SqliteDurabilityConfig`.
+The shared `AIZK_S3_*` object-storage settings are **not** DB-specific (they serve conversion artifacts and graph markdown too) and stay where they are; the SQLite durability config reads the same `AIZK_S3_*` env via its own settings model.
+All environment variable names are unchanged (`AIZK_DATABASE_URL`, `AIZK_LITESTREAM_*`, `AIZK_S3_*`), so no config migration is required.
+A shared object-storage foundation owning `AIZK_S3_*` for every reader is an endorsed follow-up that would deduplicate the two settings models.
+
+### Status
+
+Only the SQLite arm is implemented.
+The seam exists to give the PostgreSQL backend a defined slot; the single-writer SQLite assumption is preserved here and revisited by the PostgreSQL change.
 
 ## Related ADRs
 

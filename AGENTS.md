@@ -184,6 +184,8 @@ Existing examples: `test_fetcher.py`, `test_async_utils.py`, `test_limiters.py`,
 ## Sandbox Limitations
 
 - The sandbox cannot run `uv sync` or read `.env` / `.env.example` (permission errors).
-<!-- - `tests/conversion/conftest.py` imports `aizk.conversion.db` → `pydantic_settings`, which may fail with `ModuleNotFoundError: No module named 'pydantic_settings.sources.providers.secrets'` if sandbox permissions are too strict. -->
+
+<!-- - `tests/conversion/conftest.py` imports `aizk.db.engine` → `pydantic_settings`, which may fail with `ModuleNotFoundError: No module named 'pydantic_settings.sources.providers.secrets'` if sandbox permissions are too strict. -->
+
 - **Delegate test runs to the user** when any of the above errors occur.
   Describe the exact command to run (e.g., `uv run pytest tests/...`).
