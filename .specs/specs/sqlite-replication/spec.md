@@ -76,26 +76,27 @@ Termination SHALL escalate from graceful to forceful on timeout, and teardown wi
 
 ---
 
-### Requirement: Replication participates only when fully eligible
+### Requirement: Replication participates only when the SQLite backend is eligible
 
-The system SHALL start replication only when all of the following hold: replication is enabled by configuration, the manager's role is included in the configured role set (`both` or explicit), and the database URL resolves to a file-based SQLite path.
-Any disqualifying condition SHALL cause the manager to remain inert without raising, so ineligible deployments degrade to no-replication cleanly.
+The system SHALL start replication only when all of the following hold: the active database backend is SQLite, replication is enabled by configuration, the manager's role is included in the configured role set (`both` or explicit), and the database resolves to a file-based path.
+Any disqualifying condition SHALL cause the manager to remain inert without raising, so an eligible-but-unconfigured SQLite deployment degrades to no-replication cleanly.
+Litestream replication is the SQLite backend's durability mechanism; a non-SQLite backend is rejected at backend selection and never reaches this manager, and the durability of any such backend is defined by that backend's own capability.
 
 #### Scenario: Replication disabled by configuration
 
-- **GIVEN** replication is configured as disabled
+- **GIVEN** the SQLite backend is active and replication is configured as disabled
 - **WHEN** the manager is started
 - **THEN** no subprocess is spawned and start returns normally
 
 #### Scenario: Role not included in configured role set
 
-- **GIVEN** replication is enabled but the configured role set excludes the manager's role and does not contain `both`
+- **GIVEN** the SQLite backend is active, replication is enabled, but the configured role set excludes the manager's role and does not contain `both`
 - **WHEN** the manager is started
 - **THEN** no subprocess is spawned and start returns normally
 
-#### Scenario: Non-file SQLite URLs are skipped
+#### Scenario: A file-less SQLite database is skipped
 
-- **GIVEN** a database URL that is in-memory, non-SQLite, or otherwise lacks a resolvable file path
+- **GIVEN** the SQLite backend is active but the database is in-memory or otherwise lacks a resolvable file path
 - **WHEN** the manager is started
 - **THEN** no subprocess is spawned and start returns normally
 
