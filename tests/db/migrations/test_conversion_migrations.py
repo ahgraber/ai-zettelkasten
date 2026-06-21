@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import sqlite3
@@ -24,14 +25,14 @@ from sqlmodel import SQLModel
 
 from aizk.conversion.core.errors import IrreversibleMigrationError
 import aizk.conversion.datamodel  # noqa: F401  (registers SQLModel metadata for create_all)
-from aizk.conversion.migrations import run_migrations
 from aizk.conversion.utilities.hashing import compute_idempotency_key
+from aizk.db.migrations import run_migrations
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-_MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "src" / "aizk" / "conversion" / "migrations"
+_MIGRATIONS_DIR = Path(importlib.util.find_spec("aizk.db.migrations").origin).resolve().parent
 
 _PREV_REVISION = "b7f8e9a0c1d2"
 _THIS_REVISION = "c1d2e3f4a5b6"
@@ -1173,7 +1174,7 @@ def test_conversion_job_events_migration_kind_enum_matches_model():
 
     from aizk.conversion.datamodel.events import ConversionEventKind
 
-    mod = importlib.import_module("aizk.conversion.migrations.versions.a8c9d0e1f2b3_add_conversion_job_events")
+    mod = importlib.import_module("aizk.db.migrations.versions.a8c9d0e1f2b3_add_conversion_job_events")
     migration_kinds = set(mod._CONVERSION_EVENT_KIND_NAMES)
     model_kinds = {k.value for k in ConversionEventKind}
     assert migration_kinds == model_kinds, (

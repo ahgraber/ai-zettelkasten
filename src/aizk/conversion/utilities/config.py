@@ -114,7 +114,6 @@ class ConversionConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="AIZK_", env_file=None, extra="ignore")
 
-    database_url: str = "sqlite:///./data/conversion_service.db"
     s3_endpoint_url: str = ""
     s3_bucket_name: str = "aizk"
     s3_access_key_id: str = ""
@@ -141,17 +140,6 @@ class ConversionConfig(BaseSettings):
 
     log_level: str = "INFO"
     log_format: str = "json"
-
-    litestream_enabled: bool = True
-    litestream_start_role: str = "api"
-    litestream_binary: str = "litestream"
-    litestream_config_path: str = "./data/litestream.yaml"
-    litestream_s3_bucket_name: str = ""
-    litestream_s3_prefix: str = "db"
-    litestream_s3_force_path_style: bool = True
-    litestream_s3_sign_payload: bool = True
-    litestream_restore_on_startup: bool = True
-    litestream_allow_empty_restore: bool = True
 
     api_host: str = "0.0.0.0"  # noqa: S104
     api_port: int = 8000

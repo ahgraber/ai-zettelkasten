@@ -3,9 +3,9 @@
 Assembles the injected dependencies — the ``pydantic-ai`` model client and the
 S3-backed Markdown source — wires them into the
 :class:`~aizk.graph.handler.ContextualizationStageHandler`, and drives it through
-the shared :class:`~aizk.pipeline.runner.StageRunner`. Reuses the conversion
-service's database engine and S3 client (the graph tables live in the conversion
-database and the Markdown it reads is a conversion output).
+the shared :class:`~aizk.pipeline.runner.StageRunner`. Resolves the engine from the
+shared database foundation and reuses the conversion S3 client (the graph tables
+share the database and the Markdown it reads is a conversion output).
 
 The model endpoint is required: :func:`build_llm_client` raises
 :class:`~aizk.conversion.utilities.startup.StartupValidationError` when the
@@ -18,9 +18,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from aizk.conversion.db import get_engine
 from aizk.conversion.storage.s3_client import S3Client
 from aizk.conversion.utilities.startup import StartupValidationError
+from aizk.db.config import DatabaseConfig
+from aizk.db.engine import get_engine
 from aizk.graph.handler import ContextualizationStageHandler
 from aizk.graph.llm import PydanticAILLMClient
 from aizk.graph.markdown_source import ConversionOutputFreshness, S3MarkdownSource
@@ -66,7 +67,7 @@ def run_graph_worker(
     client and Markdown source; runs the supervised claim/execute/finalize loop
     until shutdown. Returns the runner's exit code.
     """
-    engine = get_engine(conversion_config.database_url)
+    engine = get_engine(DatabaseConfig().database_url)
     llm_client = build_llm_client(contextualization_config)
     markdown_source = S3MarkdownSource(engine, S3Client(conversion_config))
 

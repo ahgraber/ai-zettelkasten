@@ -11,6 +11,7 @@ internal call shapes.
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 
 from alembic import command
@@ -22,7 +23,7 @@ import xxhash
 
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
 from aizk.chunking.datamodel import derive_chunk_id
-from aizk.conversion.migrations.versions.d3e4f5a6b7c8_add_graph_content_fts import (
+from aizk.db.migrations.versions.d3e4f5a6b7c8_add_graph_content_fts import (
     _assert_fts5_available,
 )
 from aizk.graph.content_index import rebuild_content_index
@@ -37,7 +38,7 @@ _HASH_A = "0011223344556677"
 _HASH_B = "aabbccddeeff0011"
 _DOC_TEXT = "# Title\n\nThe document body the summary pass reads."
 
-_MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "src" / "aizk" / "conversion" / "migrations"
+_MIGRATIONS_DIR = Path(importlib.util.find_spec("aizk.db.migrations").origin).resolve().parent
 _FTS_REVISION = "d3e4f5a6b7c8"
 _FTS_PREV_REVISION = "c2d3e4f5a6b7"
 

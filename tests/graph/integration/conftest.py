@@ -22,8 +22,8 @@ from sqlmodel import Session
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from aizk.conversion.db import _ENGINE_CACHE, get_engine
-from aizk.conversion.migrations import run_migrations
+from aizk.db.engine import _ENGINE_CACHE, get_engine
+from aizk.db.migrations import run_migrations
 from aizk.graph.api.dependencies import get_blob_reader
 from aizk.graph.api.main import create_app
 

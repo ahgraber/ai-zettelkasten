@@ -1,4 +1,11 @@
-"""Litestream lifecycle management for SQLite replication."""
+"""SQLite backend durability: Litestream restore/replication lifecycle.
+
+Litestream is the SQLite backend's durability mechanism. A non-SQLite backend is
+rejected at backend selection (:class:`~aizk.db.config.DatabaseConfig`) and never
+reaches this manager. The durability configuration reads the ``AIZK_LITESTREAM_*``
+settings plus the shared ``AIZK_S3_*`` object-storage settings from the same
+environment, independent of any application stage.
+"""
 
 from __future__ import annotations
 
@@ -13,11 +20,41 @@ from typing import Literal
 import yaml
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.db.config import DatabaseBackend, DatabaseConfig
 
 logger = logging.getLogger(__name__)
+
+
+class SqliteDurabilityConfig(BaseSettings):
+    """Durability configuration for the SQLite backend's Litestream manager.
+
+    Owns the ``AIZK_LITESTREAM_*`` settings and reads the shared ``AIZK_S3_*``
+    object-storage settings from the same environment so the manager needs no
+    application-stage configuration. The S3 fields are duplicated here pending a
+    shared object-storage foundation that will own them for every reader.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AIZK_", env_file=None, extra="ignore")
+
+    litestream_enabled: bool = True
+    litestream_start_role: str = "api"
+    litestream_binary: str = "litestream"
+    litestream_config_path: str = "./data/litestream.yaml"
+    litestream_s3_bucket_name: str = ""
+    litestream_s3_prefix: str = "db"
+    litestream_s3_force_path_style: bool = True
+    litestream_s3_sign_payload: bool = True
+    litestream_restore_on_startup: bool = True
+    litestream_allow_empty_restore: bool = True
+
+    s3_endpoint_url: str = ""
+    s3_bucket_name: str = "aizk"
+    s3_access_key_id: str = ""
+    s3_secret_access_key: str = ""
+    s3_region: str = "us-east-1"
 
 
 class LitestreamReplicaS3(BaseModel):
@@ -62,16 +99,34 @@ class LitestreamConfigFile(BaseModel):
 
 
 class LitestreamManager:
-    """Manage Litestream restore/replication for a SQLite database."""
+    """Manage Litestream restore/replication for the SQLite backend.
 
-    def __init__(self, config: ConversionConfig, role: str) -> None:
+    Args:
+        config: Durability settings (``AIZK_LITESTREAM_*`` plus shared S3).
+        role: This process's role, matched against ``litestream_start_role``.
+        database_config: Database configuration; defaults to a fresh
+            :class:`~aizk.db.config.DatabaseConfig`, which fails closed on any
+            non-SQLite backend before the manager is reached.
+    """
+
+    def __init__(
+        self,
+        config: SqliteDurabilityConfig,
+        role: str,
+        database_config: DatabaseConfig | None = None,
+    ) -> None:
         self._config = config
         self._role = role
         self._process: subprocess.Popen[str] | None = None
-        self._db_path = _resolve_sqlite_path(config.database_url)
+        db_config = database_config or DatabaseConfig()
+        self._backend = db_config.backend
+        self._db_path = _resolve_sqlite_path(db_config.database_url)
 
     def start(self) -> None:
-        """Start Litestream restore/replication if enabled."""
+        """Start Litestream restore/replication when the SQLite backend is eligible."""
+        if self._backend is not DatabaseBackend.SQLITE:
+            logger.info("Litestream skipped: active backend is %s, not SQLite.", self._backend.value)
+            return
         if not self._config.litestream_enabled:
             logger.info("Litestream disabled via configuration.")
             return
@@ -79,7 +134,7 @@ class LitestreamManager:
             logger.info("Litestream not started for role=%s.", self._role)
             return
         if self._db_path is None:
-            logger.info("Litestream skipped: database_url is not a file-based SQLite path.")
+            logger.info("Litestream skipped: database does not resolve to a file-based SQLite path.")
             return
         binary = _resolve_litestream_binary(self._config.litestream_binary)
         bucket = self._bucket_name()
@@ -210,7 +265,7 @@ def _write_config_file(
     return config_path
 
 
-def _litestream_env(config: ConversionConfig) -> dict[str, str]:
+def _litestream_env(config: SqliteDurabilityConfig) -> dict[str, str]:
     env = os.environ.copy()
     if config.s3_access_key_id:
         env.setdefault("AWS_ACCESS_KEY_ID", config.s3_access_key_id)

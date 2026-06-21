@@ -129,11 +129,11 @@ def demo_setup() -> tuple:
     os.environ["AIZK_DATABASE_URL"] = tmp_url
     os.environ["AIZK_TRUSTED_HOSTS"] = json.dumps([GRAPH_UI_HOST, "localhost"])
 
-    from aizk.conversion.db import get_engine
-    from aizk.conversion.migrations import run_migrations
-    from aizk.conversion.utilities.config import ConversionConfig
+    from aizk.db.config import DatabaseConfig
+    from aizk.db.engine import get_engine
+    from aizk.db.migrations import run_migrations
 
-    active_url = ConversionConfig().database_url
+    active_url = DatabaseConfig().database_url
     if active_url != tmp_url or active_url.endswith("conversion_service.db"):
         raise RuntimeError(f"Temp-DB isolation failed: active URL is {active_url!r}, expected {tmp_url!r}.")
 

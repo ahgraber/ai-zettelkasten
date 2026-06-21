@@ -64,7 +64,6 @@ from aizk.conversion.datamodel.events import (
     record_transition,
 )
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
-from aizk.conversion.db import get_engine
 from aizk.conversion.processing.errors import (
     ConversionCancelledError,
     ConversionSubprocessError,
@@ -82,6 +81,8 @@ from aizk.conversion.processing.uploader import _execute_upload, _prepare_upload
 from aizk.conversion.queries import claim_next_in_session, recover_stale_in_session
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.paths import metadata_path, read_text_nofollow
+from aizk.db.config import DatabaseConfig
+from aizk.db.engine import get_engine
 from aizk.pipeline.handler import Isolation, StageResult
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
 
@@ -329,7 +330,7 @@ class ConversionStageHandler:
         """
         config = self._config
         runtime = self._ensure_runtime()
-        engine = get_engine(config.database_url)
+        engine = get_engine(DatabaseConfig().database_url)
 
         # The in-process upload phase cannot be interrupted by ``cancel`` (the
         # subprocess is already gone once supervision returns), so re-bind it by
@@ -567,7 +568,7 @@ class ConversionStageHandler:
         the single-owner termination seam — the supervision loop, not ``cancel``,
         joins/terminates the Process.
         """
-        engine = get_engine(self._config.database_url)
+        engine = get_engine(DatabaseConfig().database_url)
         terminate_event = threading.Event()
 
         def _register(process: "mp.Process") -> None:

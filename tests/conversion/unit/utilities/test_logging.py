@@ -247,7 +247,7 @@ def test_worker_command_configures_logging_before_running(monkeypatch: pytest.Mo
 
     # ``run_migrations`` is imported lazily inside ``_cmd_worker``; patch the
     # source module so the lazy import resolves to a no-op.
-    import aizk.conversion.migrations as migrations_module
+    import aizk.db.migrations as migrations_module
 
     monkeypatch.setattr(migrations_module, "run_migrations", lambda: None)
 

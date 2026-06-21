@@ -143,15 +143,18 @@ def test_probe_karakeep_raises_on_connection_error() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_log_feature_summary_all_enabled(config: ConversionConfig, caplog: pytest.LogCaptureFixture) -> None:
+def test_log_feature_summary_all_enabled(
+    config: ConversionConfig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     docling_cfg = DoclingConverterConfig(
         _env_file=None,
         picture_description_base_url="http://llm.local/v1",
         picture_description_api_key="key",
     )
     config.mlflow_tracing_enabled = True
-    config.litestream_enabled = True
-    config.litestream_s3_bucket_name = "backup-bucket"
+    # Litestream state is read from the SQLite durability config's own env.
+    monkeypatch.setenv("AIZK_LITESTREAM_ENABLED", "true")
+    monkeypatch.setenv("AIZK_LITESTREAM_S3_BUCKET_NAME", "backup-bucket")
 
     with caplog.at_level(logging.INFO):
         log_feature_summary(config, docling_cfg, "worker")
@@ -159,14 +162,16 @@ def test_log_feature_summary_all_enabled(config: ConversionConfig, caplog: pytes
     assert "startup feature summary" in caplog.text
 
 
-def test_log_feature_summary_all_disabled(config: ConversionConfig, caplog: pytest.LogCaptureFixture) -> None:
+def test_log_feature_summary_all_disabled(
+    config: ConversionConfig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     docling_cfg = DoclingConverterConfig(
         _env_file=None,
         picture_description_base_url="",
         picture_description_api_key="",
     )
     config.mlflow_tracing_enabled = False
-    config.litestream_enabled = False
+    monkeypatch.setenv("AIZK_LITESTREAM_ENABLED", "false")
 
     with caplog.at_level(logging.INFO):
         log_feature_summary(config, docling_cfg, "api")
@@ -200,6 +205,7 @@ def test_log_feature_summary_all_disabled(config: ConversionConfig, caplog: pyte
 )
 def test_log_feature_summary_combinations(
     config: ConversionConfig,
+    monkeypatch: pytest.MonkeyPatch,
     base_url: str,
     api_key: str,
     mlflow: bool,
@@ -213,8 +219,8 @@ def test_log_feature_summary_combinations(
         picture_description_api_key=api_key,
     )
     config.mlflow_tracing_enabled = mlflow
-    config.litestream_enabled = litestream_enabled
-    config.litestream_s3_bucket_name = litestream_bucket
+    monkeypatch.setenv("AIZK_LITESTREAM_ENABLED", "true" if litestream_enabled else "false")
+    monkeypatch.setenv("AIZK_LITESTREAM_S3_BUCKET_NAME", litestream_bucket)
 
     with patch("aizk.conversion.utilities.startup.logger") as mock_logger:
         log_feature_summary(config, docling_cfg, "worker")
@@ -234,15 +240,15 @@ def test_probe_database_succeeds_when_reachable() -> None:
     from sqlalchemy import create_engine
 
     engine = create_engine("sqlite://")  # in-memory; SELECT 1 needs no tables
-    cfg = ConversionConfig(_env_file=None, database_url="sqlite://")
-    with patch("aizk.conversion.db.get_engine", return_value=engine):
+    cfg = ConversionConfig(_env_file=None)
+    with patch("aizk.db.engine.get_engine", return_value=engine):
         probe_database(cfg)  # must not raise
 
 
 def test_probe_database_raises_when_unreachable() -> None:
     cfg = ConversionConfig(_env_file=None)
     with (
-        patch("aizk.conversion.db.get_engine", side_effect=Exception("db boom")),
+        patch("aizk.db.engine.get_engine", side_effect=Exception("db boom")),
         pytest.raises(StartupValidationError, match="Database is unreachable"),
     ):
         probe_database(cfg)

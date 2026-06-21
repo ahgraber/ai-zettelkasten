@@ -1,4 +1,8 @@
-"""Alembic migration helpers for the conversion service."""
+"""Alembic migration helpers for the shared database foundation.
+
+One migration tree governs every stage's tables; ``env.py`` registers the full
+schema across stages so autogenerate and the equivalence check see all tables.
+"""
 
 from __future__ import annotations
 
@@ -20,7 +24,7 @@ class UnversionedSchemaError(RuntimeError):
         cfg = Config()
         cfg.set_main_option(
             "script_location",
-            str(Path("src/aizk/conversion/migrations").resolve()),
+            str(Path("src/aizk/db/migrations").resolve()),
         )
         command.stamp(cfg, "<REVISION>")
         EOF
@@ -88,8 +92,8 @@ def run_migrations(database_url: str | None = None) -> None:
     ``alembic.ini`` on disk or a specific working directory.
 
     Args:
-        database_url: Override the database URL. When *None*, ``env.py``
-            falls back to :class:`~aizk.conversion.utilities.config.ConversionConfig`.
+        database_url: Override the database URL. When *None*, falls back to
+            :class:`~aizk.db.config.DatabaseConfig`.
 
     Raises:
         UnversionedSchemaError: If the database has an existing schema with no
@@ -99,9 +103,9 @@ def run_migrations(database_url: str | None = None) -> None:
     from alembic import command
     from alembic.config import Config
 
-    from aizk.conversion.utilities.config import ConversionConfig
+    from aizk.db.config import DatabaseConfig
 
-    effective_url = database_url or ConversionConfig().database_url
+    effective_url = database_url or DatabaseConfig().database_url
 
     _assert_versioned(effective_url)
 

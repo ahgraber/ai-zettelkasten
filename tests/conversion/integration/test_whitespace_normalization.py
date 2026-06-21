@@ -21,10 +21,11 @@ from fastapi.testclient import TestClient
 from aizk.conversion.api.main import create_app
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
-from aizk.conversion.db import get_engine
 from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.processing import subproc
 from aizk.conversion.utilities.config import ConversionConfig
+from aizk.db.config import DatabaseConfig
+from aizk.db.engine import get_engine
 
 
 def _run_conversion(job_id: int, config: ConversionConfig, runtime) -> None:
@@ -34,7 +35,7 @@ def _run_conversion(job_id: int, config: ConversionConfig, runtime) -> None:
     :meth:`ConversionStageHandler.execute`, which performs spawn + supervise +
     enrich + UPLOAD_PENDING + upload→SUCCEEDED through the same conversion helpers.
     """
-    engine = get_engine(config.database_url)
+    engine = get_engine(DatabaseConfig().database_url)
     with Session(engine) as session:
         job = session.get(ConversionJob, job_id)
         if job is not None and job.status == ConversionJobStatus.QUEUED:
@@ -217,7 +218,7 @@ def test_whitespace_normalization_produces_stable_output(monkeypatch) -> None:
         "output.md is not byte-identical across two conversions with different whitespace artifacts"
     )
 
-    engine = get_engine(ConversionConfig(_env_file=None).database_url)
+    engine = get_engine(DatabaseConfig().database_url)
     with Session(engine) as session:
         outputs = session.exec(select(ConversionOutput).order_by(ConversionOutput.id)).all()
     assert len(outputs) == 2

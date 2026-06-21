@@ -5,8 +5,8 @@ environment and configures structured logging once, before any command runs, so
 every subcommand uses the identical logging procedure.
 
 - ``worker`` drives the contextualization stage through the shared runner: set a
-  descriptive process title, run migrations (the graph tables live in the
-  conversion Alembic tree), then run the loop.
+  descriptive process title, run migrations (graph tables live in the shared
+  migration tree alongside every other stage's), then run the loop.
 - ``serve`` runs the operator API (jobs monitor + content explorer) over uvicorn.
 
 Neither command manages Litestream: the graph stage reuses the conversion
@@ -26,11 +26,11 @@ import logging
 from setproctitle import setproctitle
 import uvicorn
 
-from aizk.conversion.migrations import run_migrations
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.dotenv import load_process_dotenv_once
 from aizk.conversion.utilities.logging import configure_logging
 from aizk.conversion.utilities.startup import StartupValidationError
+from aizk.db.migrations import run_migrations
 from aizk.graph.config import ContextualizationConfig
 from aizk.graph.worker import run_graph_worker
 

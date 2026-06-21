@@ -5,8 +5,9 @@ against the event table would silently corrupt it. Conversion's transition
 events now live in the shared ``pipeline_events`` table (relocated from the
 former ``conversion_job_events``), so this guard scans ``src/aizk/conversion/``
 for patterns that mutate or delete rows on either name and asserts no matches
-exist outside the migrations directory (the relocation/teardown migrations carry
-the only legitimate INSERT-back / DELETE / DROP statements) and test fixtures.
+exist in conversion production code. The shared migration tree (now under
+``src/aizk/db/migrations``, outside this scan root) carries the only legitimate
+INSERT-back / DELETE / DROP statements.
 
 The patterns checked match the typical SQLAlchemy / SQLModel write
 shapes: ``session.delete(<event-bound row>)`` and raw SQL forms
@@ -15,11 +16,14 @@ shapes: ``session.delete(<event-bound row>)`` and raw SQL forms
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 import re
 
-_CONVERSION_ROOT = Path(__file__).resolve().parents[3] / "src" / "aizk" / "conversion"
-_MIGRATIONS_DIR = _CONVERSION_ROOT / "migrations"
+_CONVERSION_ROOT = Path(importlib.util.find_spec("aizk.conversion").origin).resolve().parent
+# The shared migration tree moved out of the conversion package; this scan root no
+# longer contains it, so the exclusion below is a defensive no-op kept for clarity.
+_MIGRATIONS_DIR = Path(importlib.util.find_spec("aizk.db.migrations").origin).resolve().parent
 
 _PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"session\.delete\(\s*\w*event\w*"),  # session.delete(event) / session.delete(some_event)

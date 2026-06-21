@@ -11,6 +11,7 @@ migration suite.
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 
 from alembic import command
@@ -29,7 +30,7 @@ from aizk.graph.datamodel import (
     DocumentSummary,
 )
 
-_MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "src" / "aizk" / "conversion" / "migrations"
+_MIGRATIONS_DIR = Path(importlib.util.find_spec("aizk.db.migrations").origin).resolve().parent
 
 # The graph tables span three migrations on top of the pipeline-runtime revision:
 # f8b9c0d1e2a3 (chunk/contextualization tables), a9c0d1e2f3b4 (work-unit table),

@@ -19,7 +19,7 @@ from sqlmodel import Session, SQLModel, select
 
 from fastapi.testclient import TestClient
 
-from aizk.conversion.db import get_engine
+from aizk.db.engine import get_engine
 from aizk.graph.api.main import create_app
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.pipeline.events import PipelineEvent
