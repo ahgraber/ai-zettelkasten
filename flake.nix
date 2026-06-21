@@ -17,6 +17,85 @@
             # overlays = [ devshell.overlays.default ];
           };
           nodeEnv = import ./nix/default.nix;
+
+          # --- container app stack (containers/podman-compose.yaml) ---
+          #
+          # Primary path on macOS: Podman.
+          #   nixpkgs wraps `podman` with `vfkit` (applehv VM) and `gvproxy`
+          #   (VM networking), so `podman machine init/start` works out of the
+          #   box on Apple Silicon without Homebrew. `podman compose` is a thin
+          #   wrapper that delegates to a compose provider; we install
+          #   docker-compose (Podman's own default-precedence provider and the
+          #   Compose reference implementation, most reliable for this stack's
+          #   `depends_on`) plus podman-compose as a Docker-free fallback.
+          #
+          #   One-time setup, then bring the stack up:
+          #     podman machine init        # creates the applehv VM
+          #     podman machine start       # boots it (exposes a Docker-compat socket)
+          #     podman compose -f containers/podman-compose.yaml up -d
+          #     podman compose -f containers/podman-compose.yaml down -v
+          #
+          # Lazy bring-up (see the shims below): `podman` / `docker` are PATH shims so the
+          # FIRST command that needs the daemon ensures the machine's API socket is live —
+          # (re)starting the machine if the socket is missing. Nothing touches the daemon merely
+          # by entering the shell. On macOS the socket lives under /tmp, which the OS reaps after
+          # ~3 days (leaving the VM "running" but unreachable), so the wrapper checks the socket
+          # itself, not just `podman machine` state. The docker CLI client (pkgs.docker,
+          # client-only on darwin — no daemon pulled in) is wrapped the same way, pointed at the
+          # podman socket.
+          containerPackages = [
+            pkgs.docker-compose # primary compose provider for `podman compose`
+            pkgs.podman-compose # Docker-free compose fallback
+          ];
+
+          # Real engine binaries, referenced by absolute store path from the shims below so the
+          # shims are the only `podman`/`docker` on the devshell PATH (no collision, and the shim
+          # deterministically wins over a system install).
+          podmanReal = "${pkgs.podman}/bin/podman"; # bundles vfkit + gvproxy on darwin
+          dockerReal = "${pkgs.docker}/bin/docker"; # CLI client only on darwin (no daemon)
+
+          # Lazy machine bring-up shared by both shims: ensure the podman machine's API socket is
+          # live, (re)starting the machine when it is missing. macOS reaps the socket from /tmp
+          # after ~3 days, leaving the VM "running" but unreachable, so we check the socket itself.
+          ensureMachineSnippet = ''
+            _aizk_ensure() {
+              sock="$(${podmanReal} machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null || true)"
+              if [ -n "$sock" ] && [ -S "$sock" ]; then return 0; fi
+              state="$(${podmanReal} machine inspect --format '{{.State}}' 2>/dev/null || true)"
+              if [ -z "$state" ]; then
+                echo "aizk: no podman machine — run 'podman machine init && podman machine start' once" >&2
+                return 1
+              fi
+              echo "aizk: podman machine socket unavailable — (re)starting machine..." >&2
+              [ "$state" = "running" ] && ${podmanReal} machine stop >/dev/null 2>&1
+              ${podmanReal} machine start >/dev/null 2>&1 || { echo "aizk: 'podman machine start' failed" >&2; return 1; }
+            }
+          '';
+
+          # Darwin-only PATH shims: `podman` / `docker` ensure the machine on first use, then exec
+          # the real binary. PATH shims (not shellHook functions) so the lazy bring-up works in any
+          # login shell — direnv exports env vars to zsh, but not bash functions.
+          containerShimPkgs = pkgs.lib.optionals pkgs.stdenv.isDarwin [
+            (pkgs.writeShellScriptBin "podman" ''
+              ${ensureMachineSnippet}
+              # Pass machine management straight through (no ensure, no recursion).
+              if [ "''${1:-}" = "machine" ]; then exec ${podmanReal} "$@"; fi
+              _aizk_ensure || exit 1
+              exec ${podmanReal} "$@"
+            '')
+            (pkgs.writeShellScriptBin "docker" ''
+              ${ensureMachineSnippet}
+              _aizk_ensure || exit 1
+              sock="$(${podmanReal} machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null || true)"
+              exec env DOCKER_HOST="unix://$sock" ${dockerReal} "$@"
+            '')
+          ];
+
+          # Darwin-only: prefer Podman's compose provider. (Machine bring-up lives in the shims.)
+          containerShellHook =
+            pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+              export PODMAN_COMPOSE_PROVIDER="''${PODMAN_COMPOSE_PROVIDER:-docker-compose}"
+            '';
         in
         # pkgs.devshell.mkShell {
         pkgs.mkShell {
@@ -40,16 +119,14 @@
             #--- node ---
             pkgs.deno
             # nodejs_20 # nodejs runtime v20 for v8 javascript
-            #--- containers ---
-            # pkgs.podman
-            pkgs.colima
-            pkgs.qemu
-          ];
+          ]
+          #--- containers (see containerPackages above) ---
+          ++ containerPackages
+          #--- lazy podman/docker PATH shims (darwin) ---
+          ++ containerShimPkgs;
+
           # imports = [ (pkgs.devshell.importTOML ./devshell.toml) ];
-          # shellHook = ''
-          #   export PATH="${nodeEnv.packagePath}/bin:$PATH"
-          #   echo "Node.js environment loaded"
-          # '';
+          shellHook = containerShellHook;
         };
     });
 }
