@@ -17,7 +17,6 @@ from sqlalchemy.engine import Engine
 from sqlmodel import Session
 
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
-from aizk.conversion.db import get_engine
 from aizk.conversion.processing.errors import ConversionCancelledError
 from aizk.conversion.processing.supervision import _supervise_conversion_process
 from aizk.conversion.processing.types import SubprocessMetadata, SupervisionResult, select_source_title
@@ -29,6 +28,8 @@ from aizk.conversion.utilities.paths import (
     metadata_path,
 )
 from aizk.conversion.utilities.whitespace import normalize_whitespace
+from aizk.db.config import DatabaseConfig
+from aizk.db.engine import get_engine
 
 if TYPE_CHECKING:
     import threading
@@ -102,7 +103,7 @@ def _process_job_subprocess(
     def _do_convert():
         load_process_dotenv_once()
         config = ConversionConfig()
-        engine = get_engine(config.database_url)
+        engine = get_engine(DatabaseConfig().database_url)
 
         source_ref = TypeAdapter(_SourceRef).validate_python(json.loads(source_ref_json))
         _raise_if_cancelled(job_id, engine)

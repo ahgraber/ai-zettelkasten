@@ -19,8 +19,8 @@ from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Initialize resources needed for the API lifespan."""
-    from aizk.conversion.migrations import run_migrations
     from aizk.conversion.wiring.api import build_api_runtime
+    from aizk.db.migrations import run_migrations
 
     load_process_dotenv_once()
     config = ConversionConfig()

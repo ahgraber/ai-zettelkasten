@@ -14,9 +14,10 @@ from sqlmodel import Session, select
 from _claimify.models import EvalRecord, ExtractionRecord, LoadedDoc
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
-from aizk.conversion.db import get_engine
 from aizk.conversion.storage.s3_client import S3Client
 from aizk.conversion.utilities.config import ConversionConfig
+from aizk.db.config import DatabaseConfig
+from aizk.db.engine import get_engine
 
 
 def resolve_repo_root() -> Path:
@@ -90,7 +91,7 @@ def resolve_doc(
 def load_docs(karakeep_ids: list[str]) -> list[LoadedDoc]:
     """Batch-resolve bookmark ids using a single DB session and S3 client."""
     config = ConversionConfig()
-    engine = get_engine(config.database_url)
+    engine = get_engine(DatabaseConfig().database_url)
     s3_client = S3Client(config)
     with Session(engine) as session:
         return [resolve_doc(kid, session, s3_client=s3_client) for kid in karakeep_ids]

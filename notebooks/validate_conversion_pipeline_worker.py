@@ -65,7 +65,7 @@ import tempfile
 #
 # `AIZK_DATABASE_URL` MUST be set before any `ConversionConfig`/app/worker
 # object is constructed, because every config reads the URL at construction time
-# and `aizk.conversion.db.get_engine` caches engines by URL. We point it at a
+# and `aizk.db.engine.get_engine` caches engines by URL. We point it at a
 # fresh temp SQLite file so the real `data/conversion_service.db` is never
 # touched, then guard that the active config really resolved to the temp file.
 
@@ -91,12 +91,12 @@ def isolate_temp_database() -> tuple[Path, str]:
     os.environ["AIZK_DATABASE_URL"] = tmp_url
 
     # Import config only AFTER the env var is set so its default cannot win.
-    from aizk.conversion.utilities.config import ConversionConfig
+    from aizk.db.config import DatabaseConfig
 
-    active_url = ConversionConfig().database_url
+    active_url = DatabaseConfig().database_url
     if active_url != tmp_url:
         raise RuntimeError(
-            f"Temp-DB isolation failed: ConversionConfig().database_url is {active_url!r}, "
+            f"Temp-DB isolation failed: DatabaseConfig().database_url is {active_url!r}, "
             f"expected {tmp_url!r}. Refusing to run against a non-temp database."
         )
     if active_url == DEFAULT_DB_URL or active_url.endswith("conversion_service.db"):
@@ -280,10 +280,11 @@ def run_runner_until_drained(max_iterations: int = 100_000) -> None:
         max_iterations: Safety bound passed to ``run_until_idle`` so a wedged
             queue cannot loop forever in the notebook.
     """
-    from aizk.conversion.db import get_engine
     from aizk.conversion.handler import ConversionStageHandler
     from aizk.conversion.utilities.config import ConversionConfig
     from aizk.conversion.wiring.worker import build_worker_runtime
+    from aizk.db.config import DatabaseConfig
+    from aizk.db.engine import get_engine
     from aizk.pipeline.runner import StageRunner
 
     # ``_LEGACY_POLL_INTERVAL_SECONDS`` / ``_TERMINATION_BUDGET_SECONDS`` mirror
@@ -297,7 +298,7 @@ def run_runner_until_drained(max_iterations: int = 100_000) -> None:
     handler = ConversionStageHandler(config, runtime=runtime)
     runner = StageRunner(
         handler,
-        engine=get_engine(config.database_url),
+        engine=get_engine(DatabaseConfig().database_url),
         drain_timeout=float(config.worker_drain_timeout_seconds),
         poll_interval=legacy_poll_interval_seconds,
         stale_recovery_interval=config.worker_stale_job_check_seconds,
@@ -338,11 +339,10 @@ def report_outcomes(log: logging.Logger) -> dict[str, int]:
     from aizk.conversion.datamodel.events import events_for_job
     from aizk.conversion.datamodel.job import ConversionJob
     from aizk.conversion.datamodel.output import ConversionOutput
-    from aizk.conversion.db import get_engine
-    from aizk.conversion.utilities.config import ConversionConfig
+    from aizk.db.config import DatabaseConfig
+    from aizk.db.engine import get_engine
 
-    config = ConversionConfig()
-    engine = get_engine(config.database_url)
+    engine = get_engine(DatabaseConfig().database_url)
 
     status_counts: Counter[str] = Counter()
     with Session(engine) as session:

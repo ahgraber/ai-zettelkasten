@@ -1,4 +1,8 @@
-"""Alembic environment configuration for conversion service migrations."""
+"""Alembic environment for the shared migration tree.
+
+Imports every stage's models so ``SQLModel.metadata`` registers the full schema
+across stages for autogenerate and the schema-equivalence check.
+"""
 
 from __future__ import annotations
 
@@ -6,8 +10,8 @@ from alembic import context
 from sqlalchemy import pool
 from sqlmodel import SQLModel, create_engine
 
-import aizk.conversion.datamodel  # noqa: F401 — registers models on SQLModel.metadata
-from aizk.conversion.utilities.config import ConversionConfig
+import aizk.conversion.datamodel  # noqa: F401 — registers conversion_* tables on the shared metadata
+from aizk.db.config import DatabaseConfig
 import aizk.graph.datamodel  # noqa: F401 — registers graph_* tables on the shared metadata
 import aizk.pipeline  # noqa: F401 — registers pipeline_runs / pipeline_events on the shared metadata
 
@@ -17,7 +21,7 @@ target_metadata = SQLModel.metadata
 def _database_url() -> str:
     """Return the database URL, preferring the alembic config override."""
     alembic_cfg = context.config
-    return alembic_cfg.get_main_option("sqlalchemy.url") or ConversionConfig().database_url
+    return alembic_cfg.get_main_option("sqlalchemy.url") or DatabaseConfig().database_url
 
 
 def run_migrations_offline() -> None:

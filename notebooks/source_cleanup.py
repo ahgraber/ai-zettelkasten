@@ -30,8 +30,9 @@ from sqlmodel import Session, select
 from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source as Bookmark
-from aizk.conversion.db import get_engine
 from aizk.conversion.utilities.config import ConversionConfig
+from aizk.db.config import DatabaseConfig
+from aizk.db.engine import get_engine
 from aizk.utilities.path_utils import get_repo_path
 from karakeep_client.karakeep import KarakeepClient
 from karakeep_client.models import Bookmark as KKBookmark
@@ -422,7 +423,7 @@ async def main(run_config: CleanupRunConfig | None = None) -> None:
     active_config = run_config or _default_run_config()
 
     config = ConversionConfig()
-    database_url = _resolve_sqlite_url(config.database_url, BASE_DIR)
+    database_url = _resolve_sqlite_url(DatabaseConfig().database_url, BASE_DIR)
     s3_client = boto3.client(
         "s3",
         endpoint_url=config.s3_endpoint_url or None,

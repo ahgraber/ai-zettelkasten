@@ -22,7 +22,6 @@ from aizk.conversion.datamodel.events import (
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
-from aizk.conversion.db import get_engine
 from aizk.conversion.processing.errors import ConversionArtifactsMissingError, SubprocessMetadataInvalid
 from aizk.conversion.processing.types import SubprocessMetadata, _utcnow
 from aizk.conversion.storage.manifest import (
@@ -37,6 +36,8 @@ from aizk.conversion.utilities.paths import (
     metadata_path,
     read_text_nofollow,
 )
+from aizk.db.config import DatabaseConfig
+from aizk.db.engine import get_engine
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +131,7 @@ def _prepare_upload(job_id: int, workspace: Path, config: ConversionConfig) -> _
     Returns ``None`` when the job is already finalized (content-hash shortcut
     hit, job row missing, or job cancelled) and the retry loop should be skipped.
     """
-    engine = get_engine(config.database_url)
+    engine = get_engine(DatabaseConfig().database_url)
     subprocess_meta = _load_subprocess_metadata(workspace, job_id)
 
     markdown_filename = subprocess_meta.markdown_filename
@@ -308,7 +309,7 @@ def _execute_upload(plan: _UploadPlan, job_id: int, config: ConversionConfig) ->
     ``plan.figure_uploads`` is empty — those bytes are already in S3 from a
     prior conversion. Only the manifest is uploaded.
     """
-    engine = get_engine(config.database_url)
+    engine = get_engine(DatabaseConfig().database_url)
     s3_client = S3Client(config)
 
     if plan.markdown_local is not None:

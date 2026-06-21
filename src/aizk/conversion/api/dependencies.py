@@ -9,10 +9,11 @@ from sqlmodel import Session
 from fastapi import Depends, Request
 
 from aizk.conversion.auth import Principal
-from aizk.conversion.db import get_engine, get_session
 from aizk.conversion.storage.s3_client import S3Client
 from aizk.conversion.utilities.config import AuthSettings, ConversionConfig
 from aizk.conversion.wiring.capabilities import SubmissionCapabilities
+from aizk.db.config import DatabaseConfig
+from aizk.db.engine import get_engine, get_session
 
 
 def get_config(request: Request) -> ConversionConfig:
@@ -45,10 +46,9 @@ def get_principal(auth_settings: AuthSettings = Depends(get_auth_settings)) -> P
             raise NotImplementedError(f"auth mode {auth_settings.auth_mode!r} has no resolver branch")
 
 
-def get_db_session(request: Request) -> Iterator[Session]:
+def get_db_session() -> Iterator[Session]:
     """Provide a database session for request handling."""
-    config = get_config(request)
-    yield from get_session(get_engine(config.database_url))
+    yield from get_session(get_engine(DatabaseConfig().database_url))
 
 
 def get_s3_client(request: Request) -> S3Client:

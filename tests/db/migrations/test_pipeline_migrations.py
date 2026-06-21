@@ -10,6 +10,7 @@ conversion migration suite.
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 from uuid import uuid4
 
@@ -23,7 +24,7 @@ from sqlmodel import Session, SQLModel, select
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.run import PipelineRun
 
-_MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "src" / "aizk" / "conversion" / "migrations"
+_MIGRATIONS_DIR = Path(importlib.util.find_spec("aizk.db.migrations").origin).resolve().parent
 _PIPELINE_MIGRATION = _MIGRATIONS_DIR / "versions" / "d0e1f2a3b4c5_add_pipeline_runs_and_events.py"
 
 _PIPELINE_REVISION = "d0e1f2a3b4c5"

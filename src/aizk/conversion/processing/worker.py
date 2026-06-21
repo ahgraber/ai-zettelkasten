@@ -85,17 +85,19 @@ def run_worker(
     return runner.run()
 
 
-def _engine_for(config: ConversionConfig):
+def _engine_for(_config: ConversionConfig):
     """Return the SQLite engine the runner opens its transactions on.
 
     The runner owns the ``BEGIN IMMEDIATE`` transactions for claim / finalize /
-    recover; it needs the same engine the handler's per-call helpers build
-    from ``config.database_url``. Built here (not lazily inside the handler)
-    because the runner constructor requires the engine up front.
+    recover; it needs the same engine the handler's per-call helpers build from
+    the shared :class:`~aizk.db.config.DatabaseConfig`. Built here (not lazily
+    inside the handler) because the runner constructor requires the engine up
+    front.
     """
-    from aizk.conversion.db import get_engine
+    from aizk.db.config import DatabaseConfig
+    from aizk.db.engine import get_engine
 
-    return get_engine(config.database_url)
+    return get_engine(DatabaseConfig().database_url)
 
 
 __all__ = ["run_worker"]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 import shutil
@@ -11,8 +12,8 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 
-_MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "src" / "aizk" / "conversion" / "migrations"
-_FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "migration_snapshots"
+_MIGRATIONS_DIR = Path(importlib.util.find_spec("aizk.db.migrations").origin).resolve().parent
+_FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "migration_snapshots"
 _LEGACY_DB = _FIXTURE_DIR / "legacy_a8c9d0e1f2b3.db"
 _MANIFEST = _FIXTURE_DIR / "legacy_a8c9d0e1f2b3.manifest.json"
 _LEGACY_REVISION = "a8c9d0e1f2b3"

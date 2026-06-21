@@ -36,12 +36,14 @@ def _public_hostbyname_stub(_host: str) -> str:
 socket.getaddrinfo = _public_addr_stub  # type: ignore[assignment]
 socket.gethostbyname = _public_hostbyname_stub  # type: ignore[assignment]
 
-from aizk.conversion.db import get_engine  # noqa: E402
 from aizk.conversion.utilities.config import (  # noqa: E402
     ConversionConfig,
     DoclingConverterConfig,
     KarakeepFetcherConfig,
 )
+from aizk.db.backends.sqlite import SqliteDurabilityConfig  # noqa: E402
+from aizk.db.config import DatabaseConfig  # noqa: E402
+from aizk.db.engine import get_engine  # noqa: E402
 from karakeep_client.models import Bookmark  # noqa: E402
 
 # Env-var aliases the harness intentionally owns — kept in sync with `set_test_env` below.
@@ -65,9 +67,15 @@ _HARNESS_ENV_ALLOWLIST: frozenset[str] = frozenset(
 
 
 def _conversion_config_aliases() -> frozenset[str]:
-    """Return all env-var names read by any conversion config class."""
+    """Return all env-var names read by any conversion or shared-database config class."""
     aliases: set[str] = set()
-    for cls in (ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig):
+    for cls in (
+        ConversionConfig,
+        DoclingConverterConfig,
+        KarakeepFetcherConfig,
+        DatabaseConfig,
+        SqliteDurabilityConfig,
+    ):
         prefix = cls.model_config.get("env_prefix", "")
         for field_name in cls.model_fields:
             aliases.add((prefix + field_name).upper())
@@ -191,8 +199,8 @@ def db_engine(test_db_path: Path):
     connection-pool file handles (db + WAL + SHM) don't accumulate across the
     session and exhaust the macOS FD soft limit during long suite runs.
     """
-    from aizk.conversion.db import _ENGINE_CACHE
-    from aizk.conversion.migrations import run_migrations
+    from aizk.db.engine import _ENGINE_CACHE
+    from aizk.db.migrations import run_migrations
 
     db_url = f"sqlite:///{test_db_path}"
     run_migrations(db_url)

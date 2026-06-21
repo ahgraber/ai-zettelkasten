@@ -1,4 +1,10 @@
-"""Database utilities for the conversion service."""
+"""Engine creation and session helpers for the shared database foundation.
+
+Stage-independent: this module imports no stage's models. Callers that need the
+full schema registered on ``SQLModel.metadata`` (for example
+:func:`create_db_and_tables`) import the relevant datamodel packages themselves;
+the migration tree registers every stage's models in its own ``env.py``.
+"""
 
 from __future__ import annotations
 
@@ -6,8 +12,6 @@ from collections.abc import Iterator
 
 from sqlalchemy import Engine, event
 from sqlmodel import Session, SQLModel, create_engine
-
-import aizk.conversion.datamodel  # noqa: F401
 
 
 def _configure_sqlite_pragmas(engine: Engine) -> None:
@@ -66,5 +70,9 @@ def get_session(engine: Engine) -> Iterator[Session]:
 
 
 def create_db_and_tables(engine: Engine) -> None:
-    """Create database tables for conversion service models."""
+    """Create all tables currently registered on ``SQLModel.metadata``.
+
+    The caller is responsible for importing the datamodel packages whose tables
+    should be created before invoking this; this module registers none itself.
+    """
     SQLModel.metadata.create_all(engine)

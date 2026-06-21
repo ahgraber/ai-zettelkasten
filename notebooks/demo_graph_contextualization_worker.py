@@ -61,9 +61,10 @@ from fastapi.testclient import TestClient
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
-from aizk.conversion.db import get_engine
-from aizk.conversion.migrations import run_migrations
 from aizk.conversion.utilities.config import ConversionConfig
+from aizk.db.config import DatabaseConfig
+from aizk.db.engine import get_engine
+from aizk.db.migrations import run_migrations
 from aizk.graph.api.main import create_app
 from aizk.graph.config import ContextualizationConfig
 from aizk.graph.contextualization import (
@@ -121,10 +122,10 @@ def isolate_temp_database() -> tuple[Path, str]:
     tmp_url = f"sqlite:///{tmp_db}"
     os.environ["AIZK_DATABASE_URL"] = tmp_url
 
-    active_url = ConversionConfig().database_url
+    active_url = DatabaseConfig().database_url
     if active_url != tmp_url:
         raise RuntimeError(
-            f"Temp-DB isolation failed: ConversionConfig().database_url is {active_url!r}, "
+            f"Temp-DB isolation failed: DatabaseConfig().database_url is {active_url!r}, "
             f"expected {tmp_url!r}. Refusing to run against a non-temp database."
         )
     if active_url == DEFAULT_DB_URL or active_url.endswith("conversion_service.db"):
@@ -332,7 +333,7 @@ def seed_documents(docs: list[DemoDoc]) -> tuple[list[SeededDoc], LocalMarkdownS
         The seeded-document specs and the local :class:`MarkdownSource` to inject.
     """
     run_migrations()
-    engine = get_engine(ConversionConfig().database_url)
+    engine = get_engine(DatabaseConfig().database_url)
     source = LocalMarkdownSource()
     seeded_docs: list[SeededDoc] = []
     with Session(engine) as session:
@@ -371,13 +372,13 @@ for doc in seeded:
 # %%
 def build_handler(source: LocalMarkdownSource, llm_client) -> ContextualizationStageHandler:
     """Build the real contextualization stage handler (with the real freshness gate) over the temp DB."""
-    engine = get_engine(ConversionConfig().database_url)
+    engine = get_engine(DatabaseConfig().database_url)
     return ContextualizationStageHandler(engine, llm_client, source, ConversionOutputFreshness())
 
 
 def drain(stage_handler: ContextualizationStageHandler, *, max_iterations: int = 100_000) -> None:
     """Drive a :class:`StageRunner` over ``stage_handler`` until the queue drains."""
-    engine = get_engine(ConversionConfig().database_url)
+    engine = get_engine(DatabaseConfig().database_url)
     runner = StageRunner(
         stage_handler,
         engine=engine,
@@ -390,7 +391,7 @@ def drain(stage_handler: ContextualizationStageHandler, *, max_iterations: int =
 
 # %%
 handler = build_handler(markdown_source, client)
-print(f"built handler over {ConversionConfig().database_url}")
+print(f"built handler over {DatabaseConfig().database_url}")
 
 # %% [markdown]
 # ## Enqueue each document as a contextualization work-unit
@@ -400,7 +401,7 @@ print(f"built handler over {ConversionConfig().database_url}")
 # runs yet — this only inserts the queue rows the next cell drains.
 
 # %%
-with Session(get_engine(ConversionConfig().database_url)) as session:
+with Session(get_engine(DatabaseConfig().database_url)) as session:
     for doc in seeded:
         unit = enqueue_output(session, doc.conversion_output_id)
         print(f"enqueued {doc.label!r}: work-unit id={unit.id} status={unit.status.value}")
@@ -426,7 +427,7 @@ print("drained — all enqueued work-units reached a terminal state.")
 # surface renders. A `failed` unit shows its `error_code`/`error_message` here.
 
 # %%
-with Session(get_engine(ConversionConfig().database_url)) as session:
+with Session(get_engine(DatabaseConfig().database_url)) as session:
     for doc in seeded:
         job = session.exec(
             select(ContextualizationJob).where(ContextualizationJob.conversion_output_id == doc.conversion_output_id)
@@ -450,7 +451,7 @@ with Session(get_engine(ConversionConfig().database_url)) as session:
 # per-document work failed — the `error_*` fields above say why.
 
 # %%
-with Session(get_engine(ConversionConfig().database_url)) as session:
+with Session(get_engine(DatabaseConfig().database_url)) as session:
     succeeded = [
         doc
         for doc in seeded
@@ -476,7 +477,7 @@ print(f"inspecting {primary.label!r} (aizk_uuid={primary.aizk_uuid})")
 # proving the run read exactly the document we registered.
 
 # %%
-with Session(get_engine(ConversionConfig().database_url)) as session:
+with Session(get_engine(DatabaseConfig().database_url)) as session:
     run = active_chunking_run(session, str(primary.aizk_uuid))
     consumed = run_input(session, run.id)
     manifest = manifest_of_run(session, run.id)
@@ -504,7 +505,7 @@ with Session(get_engine(ConversionConfig().database_url)) as session:
 # decides whether a re-run may reuse it.
 
 # %%
-with Session(get_engine(ConversionConfig().database_url)) as session:
+with Session(get_engine(DatabaseConfig().database_url)) as session:
     summary_run = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == SUMMARY_STAGE,
@@ -529,7 +530,7 @@ with Session(get_engine(ConversionConfig().database_url)) as session:
 # above") get resolved in the revised side.
 
 # %%
-with Session(get_engine(ConversionConfig().database_url)) as session:
+with Session(get_engine(DatabaseConfig().database_url)) as session:
     variant_run = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == VARIANT_STAGE,
@@ -557,7 +558,7 @@ with Session(get_engine(ConversionConfig().database_url)) as session:
 # time — they must still be equal after the contextualization run.
 
 # %%
-with Session(get_engine(ConversionConfig().database_url)) as session:
+with Session(get_engine(DatabaseConfig().database_url)) as session:
     variant_run = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == VARIANT_STAGE,
@@ -584,7 +585,7 @@ with Session(get_engine(ConversionConfig().database_url)) as session:
 # resolved text to the raw chunk side by side.
 
 # %%
-with Session(get_engine(ConversionConfig().database_url)) as session:
+with Session(get_engine(DatabaseConfig().database_url)) as session:
     variant_run = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == VARIANT_STAGE,
@@ -614,7 +615,7 @@ with Session(get_engine(ConversionConfig().database_url)) as session:
 # whole chain belongs to — each edge asserted out loud so a broken link is visible.
 
 # %%
-with Session(get_engine(ConversionConfig().database_url)) as session:
+with Session(get_engine(DatabaseConfig().database_url)) as session:
     variant_run = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == VARIANT_STAGE,
@@ -656,7 +657,7 @@ with Session(get_engine(ConversionConfig().database_url)) as session:
 # `incremental.id == bulk.id` with exactly one matching unit in the table.
 
 # %%
-with Session(get_engine(ConversionConfig().database_url)) as session:
+with Session(get_engine(DatabaseConfig().database_url)) as session:
     incremental = enqueue_output(session, primary.conversion_output_id)
     (bulk,) = enqueue_backfill_outputs(session, [primary.conversion_output_id])
     session.commit()
@@ -708,7 +709,7 @@ def chunking_runs(aizk_uuid: UUID) -> list[RunState]:
     back to ``int`` here, the boundary that dereferences it, so it compares to the
     ``ConversionOutput.id`` integers the seed helpers return.
     """
-    engine = get_engine(ConversionConfig().database_url)
+    engine = get_engine(DatabaseConfig().database_url)
     with Session(engine) as session:
         runs = session.exec(
             select(PipelineRun)
@@ -746,11 +747,11 @@ def active_consumes(aizk_uuid: UUID) -> int:
 
 # %%
 show_runs("before rev 1:", chunking_runs(supersede_uuid))
-with Session(get_engine(ConversionConfig().database_url)) as session:
+with Session(get_engine(DatabaseConfig().database_url)) as session:
     old_output = seed_conversion_output(session, text=_SUPERSEDE_OLD, label="note (rev 1)", aizk_uuid=supersede_uuid)
     session.commit()
 markdown_source.register(old_output, _SUPERSEDE_OLD, compute_markdown_hash(_SUPERSEDE_OLD))
-with Session(get_engine(ConversionConfig().database_url)) as session:
+with Session(get_engine(DatabaseConfig().database_url)) as session:
     enqueue_output(session, old_output)
     session.commit()
 drain(handler)
@@ -768,11 +769,11 @@ assert active_consumes(supersede_uuid) == old_output
 # %%
 before = chunking_runs(supersede_uuid)
 show_runs("before rev 2:", before)
-with Session(get_engine(ConversionConfig().database_url)) as session:
+with Session(get_engine(DatabaseConfig().database_url)) as session:
     new_output = seed_conversion_output(session, text=_SUPERSEDE_NEW, label="note (rev 2)", aizk_uuid=supersede_uuid)
     session.commit()
 markdown_source.register(new_output, _SUPERSEDE_NEW, compute_markdown_hash(_SUPERSEDE_NEW))
-with Session(get_engine(ConversionConfig().database_url)) as session:
+with Session(get_engine(DatabaseConfig().database_url)) as session:
     enqueue_output(session, new_output)
     session.commit()
 drain(handler)
@@ -799,7 +800,7 @@ assert [r for r in after if r.run_id == rev1_run.run_id][0].status == RunStatus.
 # %%
 before = chunking_runs(supersede_uuid)
 show_runs("before late rev 1:", before)
-with Session(get_engine(ConversionConfig().database_url)) as session:
+with Session(get_engine(DatabaseConfig().database_url)) as session:
     old_job = session.exec(
         select(ContextualizationJob).where(ContextualizationJob.conversion_output_id == old_output)
     ).one()
@@ -823,7 +824,7 @@ assert active_consumes(supersede_uuid) == new_output
 # closes it.
 
 # %%
-with Session(get_engine(ConversionConfig().database_url)) as session:
+with Session(get_engine(DatabaseConfig().database_url)) as session:
     failed_unit = ContextualizationJob(
         idempotency_key=f"demo-op-failed-{uuid4().hex}",
         conversion_output_id=900001,
@@ -906,7 +907,7 @@ print(f"after cancel : status={cancelled['status']}")
 # %%
 def row_counts() -> tuple[int, int, int]:
     """Return (PipelineRun, DocumentSummary, ContextualizedChunk) row counts in the temp DB."""
-    engine = get_engine(ConversionConfig().database_url)
+    engine = get_engine(DatabaseConfig().database_url)
     with Session(engine) as session:
         return (
             len(session.exec(select(PipelineRun)).all()),
@@ -916,7 +917,7 @@ def row_counts() -> tuple[int, int, int]:
 
 
 before_counts = row_counts()
-with Session(get_engine(ConversionConfig().database_url)) as session:
+with Session(get_engine(DatabaseConfig().database_url)) as session:
     job = session.exec(
         select(ContextualizationJob).where(ContextualizationJob.conversion_output_id == primary.conversion_output_id)
     ).one()

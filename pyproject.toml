@@ -244,7 +244,6 @@ norecursedirs = [
   "dist",
   "docs",
   "build",
-  "migrations",
   "notebooks",
   "writeup",
 ]

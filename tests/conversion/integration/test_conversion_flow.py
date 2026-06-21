@@ -19,12 +19,13 @@ from aizk.conversion.core.source_ref import ArxivRef, KarakeepBookmarkRef, compu
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
-from aizk.conversion.db import get_engine
 from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.processing import subproc
 from aizk.conversion.processing.errors import ConversionCancelledError
 from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig
 from aizk.conversion.utilities.hashing import build_output_config_snapshot, compute_idempotency_key
+from aizk.db.config import DatabaseConfig
+from aizk.db.engine import get_engine
 
 
 def _run_conversion(job_id: int, config: ConversionConfig, runtime) -> None:
@@ -37,7 +38,7 @@ def _run_conversion(job_id: int, config: ConversionConfig, runtime) -> None:
     ``ConversionCancelledError``, which is caught here so it is observed as a
     clean short-circuit.
     """
-    engine = get_engine(config.database_url)
+    engine = get_engine(DatabaseConfig().database_url)
     with Session(engine) as session:
         job = session.get(ConversionJob, job_id)
         if job is not None and job.status == ConversionJobStatus.QUEUED:
@@ -137,7 +138,7 @@ def _make_cancelling_subprocess_stub():
     """Stub that cancels the job in DB mid-execution and reports cancelled."""
 
     def _stub(job_id: int, workspace_path: str, source_ref_json: str, status_queue) -> None:
-        engine = get_engine(ConversionConfig(_env_file=None).database_url)
+        engine = get_engine(DatabaseConfig().database_url)
         with Session(engine) as session:
             job_record = session.get(ConversionJob, job_id)
             if job_record:
@@ -232,7 +233,7 @@ def _process_and_get_markdown(db_session, monkeypatch, *, ref, idempotency_key: 
     config = ConversionConfig(_env_file=None)
     _run_conversion(job_id, config, _make_fake_runtime())
 
-    engine = get_engine(config.database_url)
+    engine = get_engine(DatabaseConfig().database_url)
     with Session(engine) as session:
         output = session.exec(select(ConversionOutput).where(ConversionOutput.job_id == job_id)).one()
         job_record = session.get(ConversionJob, job_id)
@@ -324,7 +325,7 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch):
 
     assert not upload_called, "Upload should not run for cancelled jobs"
 
-    engine = get_engine(ConversionConfig(_env_file=None).database_url)
+    engine = get_engine(DatabaseConfig().database_url)
     with Session(engine) as session:
         job_record = session.get(ConversionJob, job_id)
         assert job_record.status == ConversionJobStatus.CANCELLED
@@ -379,7 +380,7 @@ def test_conversion_flow_proceeds_when_source_enrichment_fails(monkeypatch, db_s
 
     _run_conversion(job_id, config, _make_fake_runtime())
 
-    engine = get_engine(config.database_url)
+    engine = get_engine(DatabaseConfig().database_url)
     with Session(engine) as session:
         output = session.exec(select(ConversionOutput).where(ConversionOutput.job_id == job_id)).one()
         job_record = session.get(ConversionJob, job_id)
@@ -470,7 +471,7 @@ def test_conversion_flow_enriches_source_and_manifest_end_to_end(monkeypatch, db
 
     _run_conversion(job_id, config, _make_fake_runtime())
 
-    engine = get_engine(config.database_url)
+    engine = get_engine(DatabaseConfig().database_url)
     with Session(engine) as session:
         job_record = session.get(ConversionJob, job_id)
         assert job_record.status == ConversionJobStatus.SUCCEEDED
@@ -519,7 +520,7 @@ def test_conversion_flow_source_title_branches_end_to_end(
 
     _run_conversion(job_id, config, _make_fake_runtime())
 
-    engine = get_engine(config.database_url)
+    engine = get_engine(DatabaseConfig().database_url)
     with Session(engine) as session:
         job_record = session.get(ConversionJob, job_id)
         assert job_record.status == ConversionJobStatus.SUCCEEDED

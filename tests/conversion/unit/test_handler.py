@@ -649,15 +649,17 @@ def _write_metadata(workspace, *, markdown_hash: str = "abc123") -> None:
 
 
 @pytest.fixture()
-def exec_db_path(tmp_path):
+def exec_db_path(tmp_path, monkeypatch):
     """Return the file-SQLite URL ``execute`` and the test seed both open.
 
-    ``execute`` resolves its engine through ``get_engine(config.database_url)``,
-    so the seed and the code under test must share one ``database_url``. A
-    file-backed SQLite makes the seed durable across the separate connections
-    ``execute`` opens internally.
+    ``execute`` resolves its engine through ``get_engine(DatabaseConfig().database_url)``,
+    so this points ``AIZK_DATABASE_URL`` at the same file the seed opens; the seed
+    and the code under test then share one database. A file-backed SQLite makes the
+    seed durable across the separate connections ``execute`` opens internally.
     """
-    return f"sqlite:///{tmp_path}/exec.db"
+    url = f"sqlite:///{tmp_path}/exec.db"
+    monkeypatch.setenv("AIZK_DATABASE_URL", url)
+    return url
 
 
 @pytest.fixture()
@@ -668,7 +670,7 @@ def exec_engine(exec_db_path):
     test seeds with is the same cached engine ``execute`` resolves. The cache
     entry is evicted at teardown so the temp DB does not leak into later tests.
     """
-    from aizk.conversion.db import _ENGINE_CACHE, get_engine
+    from aizk.db.engine import _ENGINE_CACHE, get_engine
 
     eng = get_engine(exec_db_path)
     SQLModel.metadata.create_all(eng)
@@ -684,7 +686,6 @@ def exec_config(exec_db_path) -> ConversionConfig:
     """Hermetic config pointing at the shared execute DB with zero retry delay."""
     return ConversionConfig(
         _env_file=None,
-        database_url=exec_db_path,
         retry_max_attempts=2,
         retry_base_delay_seconds=0,
     )
@@ -1019,7 +1020,6 @@ def test_execute_upload_phase_rebounds_by_deadline(
     """
     config = ConversionConfig(
         _env_file=None,
-        database_url=exec_db_path,
         worker_job_timeout_seconds=10.0,
         retry_max_attempts=2,
         retry_base_delay_seconds=0,
@@ -1270,7 +1270,6 @@ def test_finalize_failed_retryable_sets_backoff_error_fields_and_event(
     """
     config = ConversionConfig(
         _env_file=None,
-        database_url=exec_config.database_url,
         retry_base_delay_seconds=5,
     )
     job_id = _seed_job_at(exec_engine, exec_source, status=ConversionJobStatus.UPLOAD_PENDING, attempts=2)
@@ -1409,7 +1408,6 @@ def test_finalize_timed_out_routes_to_failed_retryable(
     """
     config = ConversionConfig(
         _env_file=None,
-        database_url=exec_config.database_url,
         retry_base_delay_seconds=1,
     )
     job_id = _seed_job_at(exec_engine, exec_source, status=ConversionJobStatus.UPLOAD_PENDING, attempts=1)

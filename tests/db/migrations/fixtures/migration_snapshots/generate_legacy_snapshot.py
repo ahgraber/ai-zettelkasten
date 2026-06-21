@@ -3,7 +3,7 @@
 
 Run from the handler root:
 
-    uv run python tests/conversion/fixtures/migration_snapshots/generate_legacy_snapshot.py
+    uv run python tests/db/migrations/fixtures/migration_snapshots/generate_legacy_snapshot.py
 
 The generator reads only aggregate counts from ``data/conversion_service.db``.
 It does not copy real titles, URLs, KaraKeep IDs, S3 keys, UUIDs, payloads, or
@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections import Counter
 import datetime as dt
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import sqlite3
@@ -25,8 +26,10 @@ from alembic import command
 from alembic.config import Config
 from setproctitle import setproctitle
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-MIGRATIONS_DIR = REPO_ROOT / "src" / "aizk" / "conversion" / "migrations"
+from aizk.utilities.path_utils import get_repo_path
+
+REPO_ROOT = get_repo_path(__file__)
+MIGRATIONS_DIR = Path(importlib.util.find_spec("aizk.db.migrations").origin).resolve().parent
 FIXTURE_DIR = Path(__file__).resolve().parent
 SOURCE_DB = REPO_ROOT / "data" / "conversion_service.db"
 LEGACY_REVISION = "a8c9d0e1f2b3"

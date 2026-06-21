@@ -12,6 +12,7 @@ import httpx
 
 from aizk.conversion.storage.s3_client import S3Client
 from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
+from aizk.db.backends.sqlite import SqliteDurabilityConfig
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,7 @@ def probe_picture_description(docling_cfg: DoclingConverterConfig) -> None:
         raise StartupValidationError(f"Picture description endpoint unreachable at {url}: {exc}") from exc
 
 
-def probe_database(config: ConversionConfig) -> None:
+def probe_database(_config: ConversionConfig) -> None:
     """Verify the conversion database is reachable with a trivial query.
 
     Raises:
@@ -110,10 +111,11 @@ def probe_database(config: ConversionConfig) -> None:
     """
     from sqlalchemy import text
 
-    from aizk.conversion.db import get_engine
+    from aizk.db.config import DatabaseConfig
+    from aizk.db.engine import get_engine
 
     try:
-        engine = get_engine(config.database_url)
+        engine = get_engine(DatabaseConfig().database_url)
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
     except Exception as exc:
@@ -162,11 +164,12 @@ def log_feature_summary(config: ConversionConfig, docling_cfg: DoclingConverterC
             "reason": "AIZK_MLFLOW_TRACING_ENABLED is false",
         }
 
-    # Litestream replication
-    if config.litestream_enabled and config.litestream_s3_bucket_name:
+    # Litestream replication (SQLite backend durability; reads its own settings)
+    durability = SqliteDurabilityConfig()
+    if durability.litestream_enabled and durability.litestream_s3_bucket_name:
         features["litestream_replication"] = {"status": "enabled"}
     else:
-        if not config.litestream_enabled:
+        if not durability.litestream_enabled:
             reason = "AIZK_LITESTREAM_ENABLED is false"
         else:
             reason = "AIZK_LITESTREAM_S3_BUCKET_NAME is empty"

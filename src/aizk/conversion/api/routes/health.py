@@ -13,8 +13,9 @@ from fastapi import APIRouter, Request, Response, status
 
 from aizk.conversion.api.dependencies import get_config
 from aizk.conversion.api.schemas import CheckResult, HealthResponse
-from aizk.conversion.db import get_engine
 from aizk.conversion.storage.s3_client import S3Client
+from aizk.db.config import DatabaseConfig
+from aizk.db.engine import get_engine
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ async def liveness() -> HealthResponse:
 async def readiness(request: Request, response: Response) -> HealthResponse:
     """Readiness probe — validates DB connectivity and S3 reachability."""
     config = get_config(request)
-    engine = get_engine(config.database_url)
+    engine = get_engine(DatabaseConfig().database_url)
     s3_client = S3Client(config)
 
     docling_cfg = request.app.state.docling_config

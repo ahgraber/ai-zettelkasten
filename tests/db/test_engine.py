@@ -1,8 +1,9 @@
-"""Unit tests for conversion database utilities."""
+"""Unit tests for the shared database engine helpers."""
 
 from sqlalchemy import inspect
 
-from aizk.conversion.db import create_db_and_tables, get_engine
+import aizk.conversion.datamodel  # noqa: F401 — registers conversion tables on SQLModel.metadata
+from aizk.db.engine import create_db_and_tables, get_engine
 
 
 def test_create_db_and_tables(tmp_path):

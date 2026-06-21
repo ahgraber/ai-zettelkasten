@@ -11,9 +11,9 @@ import uvicorn
 
 from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig
 from aizk.conversion.utilities.dotenv import load_process_dotenv_once
-from aizk.conversion.utilities.litestream import LitestreamManager
 from aizk.conversion.utilities.logging import configure_logging
 from aizk.conversion.utilities.startup import StartupValidationError, log_feature_summary
+from aizk.db.backends.sqlite import LitestreamManager, SqliteDurabilityConfig
 from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 def _cmd_db_init(_args: argparse.Namespace) -> int:
     """Initialize database tables via Alembic migrations."""
     setproctitle("docling-db-init")
-    from aizk.conversion.migrations import run_migrations
+    from aizk.db.migrations import run_migrations
 
     run_migrations()
     return 0
@@ -39,7 +39,7 @@ def _cmd_serve(_args: argparse.Namespace) -> int:
         tracking_uri=config.mlflow_tracking_uri,
         experiment_name=config.mlflow_experiment_name,
     )
-    LitestreamManager(config, role="api").start()
+    LitestreamManager(SqliteDurabilityConfig(), role="api").start()
     uvicorn.run(
         "aizk.conversion.api.main:app",
         host=config.api_host,
@@ -60,8 +60,8 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
         tracking_uri=config.mlflow_tracking_uri,
         experiment_name=config.mlflow_experiment_name,
     )
-    LitestreamManager(config, role="worker").start()
-    from aizk.conversion.migrations import run_migrations
+    LitestreamManager(SqliteDurabilityConfig(), role="worker").start()
+    from aizk.db.migrations import run_migrations
 
     run_migrations()
     # The worker drives the conversion stage through the pipeline runner

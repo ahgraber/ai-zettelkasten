@@ -26,7 +26,7 @@ def test_main_configures_logging_before_running_db_init(monkeypatch: pytest.Monk
     """``main`` configures logging for db-init too — every command shares one logging procedure."""
     calls: list[str] = []
     monkeypatch.setattr(cli, "configure_logging", lambda _config: calls.append("log"))
-    monkeypatch.setattr("aizk.conversion.migrations.run_migrations", lambda: calls.append("migrate"))
+    monkeypatch.setattr("aizk.db.migrations.run_migrations", lambda: calls.append("migrate"))
 
     assert cli.main(["db-init"]) == 0
     # Logging is configured, and before the command's own work runs.

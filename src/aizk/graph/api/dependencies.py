@@ -12,9 +12,10 @@ from typing import TYPE_CHECKING
 
 from fastapi import Request
 
-from aizk.conversion.db import get_engine, get_session
 from aizk.conversion.storage.s3_client import S3Client
 from aizk.conversion.utilities.config import ConversionConfig
+from aizk.db.config import DatabaseConfig
+from aizk.db.engine import get_engine, get_session
 from aizk.graph.search import Fts5SearchProvider
 
 if TYPE_CHECKING:
@@ -36,10 +37,9 @@ def get_config(request: Request) -> ConversionConfig:
     return request.app.state.config
 
 
-def get_db_session(request: Request) -> "Iterator[Session]":
-    """Yield a request-scoped session on the shared conversion database engine."""
-    config = get_config(request)
-    yield from get_session(get_engine(config.database_url))
+def get_db_session(_request: Request) -> "Iterator[Session]":
+    """Yield a request-scoped session on the shared database engine."""
+    yield from get_session(get_engine(DatabaseConfig().database_url))
 
 
 def get_blob_reader(request: Request) -> "BlobReader":
@@ -54,13 +54,12 @@ def get_blob_reader(request: Request) -> "BlobReader":
     return S3Client(get_config(request))
 
 
-def get_search_provider(request: Request) -> "SearchProvider":
+def get_search_provider(_request: Request) -> "SearchProvider":
     """Return the content search provider for the explorer's search-results view.
 
     Builds an FTS5-backed :class:`~aizk.graph.search.Fts5SearchProvider` over the
-    shared conversion database engine. Injected behind the
+    shared database engine. Injected behind the
     :class:`~aizk.graph.search.SearchProvider` protocol so a test overrides it and so
     the relevance backend is a swap with no route change.
     """
-    config = get_config(request)
-    return Fts5SearchProvider(get_engine(config.database_url))
+    return Fts5SearchProvider(get_engine(DatabaseConfig().database_url))

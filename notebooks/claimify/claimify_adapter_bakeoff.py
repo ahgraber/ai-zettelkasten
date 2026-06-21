@@ -49,8 +49,8 @@ from dotenv import load_dotenv
 import nest_asyncio
 from setproctitle import setproctitle
 
-from aizk.conversion.utilities.config import ConversionConfig  # noqa: E402
-from aizk.conversion.utilities.litestream import (  # noqa: E402
+from aizk.db.backends.sqlite import (  # noqa: E402
+    SqliteDurabilityConfig,
     _litestream_env,
     _resolve_litestream_binary,
     _write_config_file,
@@ -76,7 +76,7 @@ BAKEOFF_DIR.mkdir(parents=True, exist_ok=True)
 
 # %%
 # Restore the SQLite DB from Litestream (same dance as the extraction demo).
-_config = ConversionConfig()
+_config = SqliteDurabilityConfig()
 _db_path = (REPO_ROOT / "data" / "conversion_service.db").resolve()
 for _suffix in ("", "-wal", "-shm"):
     (_db_path.parent / f"{_db_path.name}{_suffix}").unlink(missing_ok=True)
