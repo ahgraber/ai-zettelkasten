@@ -113,7 +113,7 @@ Migrations run on `worker` startup or via `aizk-conversion db-init` over the sha
 
 ## Configuration
 
-The graph stage reuses the conversion service's `ConversionConfig` for the shared database URL and S3 settings.
+The graph stage resolves the shared database URL from `DatabaseConfig` (the stage-independent `aizk.db` foundation) and reuses the conversion service's `ConversionConfig` for shared S3/application settings.
 Its own settings live under `AIZK_GRAPH__CONTEXTUALIZATION__*` ([`config.py`](config.py)): the OpenAI-compatible model endpoint triple (`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`), the worker's lease/retry knobs, and the operator API listener (`OPERATOR_API_HOST` / `OPERATOR_API_PORT` / `OPERATOR_API_RELOAD`).
 The worker refuses to start when the model endpoint is not fully configured; `serve` needs only the shared database.
 
