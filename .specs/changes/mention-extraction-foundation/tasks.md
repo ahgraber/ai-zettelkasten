@@ -8,7 +8,7 @@
 
 - [ ] Define ORM models in `src/aizk/graph/datamodel.py`: `mention_run` (`run_id`, `extractor_version`, `reifier_version`, `input_policy`, `consumed_input_fingerprint`, `supersedes_run_id`, `status` active|superseded), `mention` (PK `mention_id`; `run_id`; `chunk_id` FK → chunk; `surface_form`, `source_chunk_span`, `input_span`, `input_kind`, `input_ref`, `blocking_keys`, `source_occurrence_key`; no embedding column), `mention_cooccurrence` (`run_id`, `mention_id_lo`, `mention_id_hi`, `chunk_id`).
 - [ ] Implement `derive_mention_id(run_id, chunk_id, source_chunk_span, surface_form)` and `derive_source_occurrence_key(chunk_id, source_chunk_span, source_anchor_text)` as deterministic, cross-process-stable hashes.
-- [ ] Add an Alembic migration creating the run, mention, and co-occurrence tables in the conversion migration tree (no vector table).
+- [ ] Add an Alembic migration creating the run, mention, and co-occurrence tables in the shared `aizk.db` migration tree (no vector table).
 - [ ] Test `tests/graph/test_mention_migrations.py`: migrated schema structurally equivalent to the ORM baseline, including the `mention.chunk_id` foreign key. **[schema fidelity, MS5 FK]**
 - [ ] Test `tests/graph/test_mention_id.py`: `mention_id` is deterministic in `(run_id, chunk_id, source_chunk_span, surface_form)`; `source_occurrence_key` is deterministic in `(chunk_id, source_chunk_span, source_anchor_text)` and run-independent. **[MS2 determinism]**
 
