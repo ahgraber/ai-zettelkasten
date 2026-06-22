@@ -46,7 +46,7 @@ The sameness-key reuse must be the **full** `(source_id, heading_path, ordinal, 
 ### Decision: The derivation key is semantic-only and embeds the upstream key
 
 **Chosen:** A run's `derivation_key` is a hash over **semantic inputs only** — content fingerprints, producer/prompt/model/config versions, and the **upstream run's `derivation_key`** — canonically serialized.
-It SHALL NOT include any database-local identifier (`run_id`, autoincrement row ids, `conversion_output_id` surrogates).
+It SHALL NOT include any database-local identifier (`run_id`, autoincrement row ids, `conversion_output_id` surrogates, and — once `chunk_id` becomes a surrogate — `chunk_id` itself: the contextualization variant derivation/memo keys embed each chunk's portable content key, the sameness-key fingerprint, not its surrogate identity).
 What a run consumed is recorded separately as explicit provenance pointers.
 
 **Rationale:** Embedding the upstream `derivation_key` (not the upstream run's local id) is what makes invalidation **propagate** down the chain automatically and **portably**: an upstream input change flips the upstream key, which flips this key, which supersedes this run — and the same logical content computes the same key on any backend.
@@ -144,7 +144,7 @@ This change affects data and contracts, so per governance it carries a migration
 **Database (one Alembic revision, ordered):**
 
 1. **`chunk_id` surrogate.**
-   Add a surrogate `chunk_id` value space (UUID); for existing rows, assign a surrogate per distinct `(source_id, heading_path, ordinal, content_hash)` and record the old-hash → new-surrogate map; repoint every FK that references `chunk_id` (contextualization variants, chunk-run manifests) through the map; add `UNIQUE(source_id, heading_path, ordinal, content_hash)`; swap the PK. (Greenfield: data volume is dev-only, but the migration is written to be correct for populated databases.)
+   Add a surrogate `chunk_id` value space (UUID); for existing rows, assign a surrogate per distinct `(source_id, heading_path, ordinal, content_hash)` and record the old-hash → new-surrogate map; repoint every reference to `chunk_id` (contextualization variants, chunk-run manifests, and the `graph_content_fts` content-index column) through the map; add `UNIQUE(source_id, heading_path, ordinal, content_hash)`; swap the PK. (Greenfield: data volume is dev-only, but the migration is written to be correct for populated databases.)
 2. **`aizk_uuid` → `source_id`.**
    Rename the `Source` identity column and every dependent FK (`ConversionJob`, `ConversionOutput`, graph-stage rows) in one revision.
 3. **`scope_key` → `scope_id`.**

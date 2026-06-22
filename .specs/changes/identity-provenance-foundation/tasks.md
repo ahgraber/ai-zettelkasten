@@ -5,11 +5,11 @@
 
 ## Pipeline-identity foundation
 
-- [ ] Implement a shared `derivation_key` helper that hashes **semantic inputs only** (content fingerprints, producer/prompt/model/config versions, and the upstream run's `derivation_key`) over a canonical serialization, with no database-local identifier (`run_id`, autoincrement ids, surrogate row ids) admitted as input.
-- [ ] Test `test_derivation_key_excludes_db_local_ids`: the same logical inputs produce an equal `derivation_key` even when surrogate/run ids differ (the portability proxy — no real Postgres needed). **[semantic-derivation-key, portable-knowledge]**
-- [ ] Test `test_derivation_key_propagates_upstream_change`: changing an upstream input flips the upstream `derivation_key`, which flips the downstream `derivation_key`. **[semantic-derivation-key]**
-- [ ] Test `test_run_level_idempotency_reuse`: re-invoking a stage for a scope whose `derivation_key` matches the active run reuses it (no new run, no duplicate). **[run-level idempotency]**
-- [ ] Add `docs/decision-record/` reference (or a `pipeline-identity` README section) documenting the identifier grammar: the five roles, the `_id`/`_key`/`_hash` suffix convention, the surrogate-identity rule, semantic derivation keys, and lazy invalidation — the standing reference future stages cite. **[canonical-name, suffix-convention]**
+- [x] Implement a shared `derivation_key` helper that hashes **semantic inputs only** (content fingerprints, producer/prompt/model/config versions, and the upstream run's `derivation_key`) over a canonical serialization, with no database-local identifier (`run_id`, autoincrement ids, surrogate row ids) admitted as input.
+- [x] Test `test_derivation_key_excludes_db_local_ids`: the same logical inputs produce an equal `derivation_key` even when surrogate/run ids differ (the portability proxy — no real Postgres needed). **[semantic-derivation-key, portable-knowledge]**
+- [x] Test `test_derivation_key_propagates_upstream_change`: changing an upstream input flips the upstream `derivation_key`, which flips the downstream `derivation_key`. **[semantic-derivation-key]**
+- [x] Test `test_run_level_idempotency_reuse`: re-invoking a stage for a scope whose `derivation_key` matches the active run reuses it (no new run, no duplicate). **[run-level idempotency]**
+- [x] Add `docs/decision-record/` reference (or a `pipeline-identity` README section) documenting the identifier grammar: the five roles, the `_id`/`_key`/`_hash` suffix convention, the surrogate-identity rule, semantic derivation keys, and lazy invalidation — the standing reference future stages cite. **[canonical-name, suffix-convention]**
 
 ## `source_id` / `scope_id` rename (models + code)
 
@@ -29,12 +29,17 @@
 - [ ] Change the `Chunk` model: `chunk_id` becomes a stable surrogate (uuid7) PK; add `UNIQUE(source_id, heading_path, ordinal, content_hash)`; keep `content_hash` as an observable column.
 - [ ] Update the splitter so it no longer assigns `chunk_id`; it deterministically produces `content_hash` and the sameness-key fields.
   Persistence assigns a new surrogate for a novel sameness-key and reuses the existing surrogate when the key is already present.
-- [ ] Author the single Alembic migration (in the shared `aizk.db` tree), ordered: (1) `chunk_id` surrogate — assign a surrogate per distinct sameness-key, repoint every `chunk_id` FK (contextualization variants, chunk-run manifests) through an old→new map, add the `UNIQUE` sameness-key constraint, swap the PK; (2) `aizk_uuid` → `source_id` column + dependent FKs; (3) `scope_key` → `scope_id` column.
+- [ ] Repurpose the chunk content fingerprint: rename `derive_chunk_id` → `derive_chunk_content_key` (same body, `doc_id` → `source_id` param) — it is the sameness-key fingerprint, no longer an identity.
+  Redirect the contextualization variant derivation keys (`_variant_run_derivation_key`'s chunk list and `_variant_row_derivation_key`'s working/prior/next fields) and the memo keys they feed from the surrogate `chunk_id` to `derive_chunk_content_key`, renaming the `*_chunk_id` derivation-key fields to `*_chunk_key` (the `_key` convention).
+  `ContextualizedChunk.chunk_id` and `_verify_chunking_provenance` keep the surrogate — identity/provenance, not a derivation input.
+  **[chunk-contextualization conformance — semantic derivation key]**
+- [ ] Author the single Alembic migration (in the shared `aizk.db` tree), ordered: (1) `chunk_id` surrogate — assign a surrogate per distinct sameness-key, repoint every `chunk_id` reference (contextualization variants, chunk-run manifests, and the `graph_content_fts` content-index column) through an old→new map, add the `UNIQUE` sameness-key constraint, swap the PK; (2) `aizk_uuid` → `source_id` column + dependent FKs; (3) `scope_key` → `scope_id` column.
 - [ ] Test `tests/.../test_chunk_identity.py::test_same_address_same_content_same_id`, `::test_same_address_diff_content_diff_id`, `::test_diff_address_same_content_diff_id`: the three identity scenarios hold under surrogate + sameness-key reuse. **[chunking: Chunk identity is a stable surrogate…]**
 - [ ] Test `::test_re_persist_reuses_identity` and `::test_novel_chunk_stored_once`: re-persisting a chunk with an existing sameness-key reuses its surrogate; a novel key is stored exactly once. **[chunking: Chunk identities are immutable stable surrogates]**
 - [ ] Test `::test_splitter_deterministic_content_hash`: the splitter produces identical `content_hash` and sameness-key fields across two invocations and two processes, and does not assign `chunk_id`. **[chunking: Splitter is a deterministic pure function]**
 - [ ] Test `::test_chunk_id_no_db_local_input`: the surrogate is content/sequence-independent — the portability proxy for `chunk_id`. **[chunking surrogate, portable-knowledge]**
-- [ ] Test `tests/.../test_chunk_id_migration.py::test_fk_integrity_after_repoint`: after the surrogate migration, every `chunk_id` FK (variants, manifests) resolves with no dangling reference, on a populated fixture. **[migration risk — FK-repoint write-site]**
+- [ ] Test `::test_variant_derivation_key_no_db_local_input`: the contextualization variant run/row derivation keys are invariant when chunks' surrogate `chunk_id`s differ but their content keys match — the portability proxy for the stochastic stage (mirrors `test_chunk_id_no_db_local_input`). **[chunk-contextualization conformance — portable-knowledge]**
+- [ ] Test `tests/.../test_chunk_id_migration.py::test_fk_integrity_after_repoint`: after the surrogate migration, every repointed `chunk_id` reference (variants, manifests, `graph_content_fts`) resolves with no dangling reference, on a populated fixture. **[migration risk — FK-repoint write-site]**
 - [ ] Test `test_orm_migration_equivalence` (via `schema-migrations`): the migrated schema is structurally equivalent to the ORM baseline after all three migration steps. **[schema fidelity]**
 
 ## Lazy invalidation + human-confirmation gate
