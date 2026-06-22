@@ -9,9 +9,11 @@ This package holds the stage-agnostic primitives a processing stage builds on:
   orchestration engine — with its per-instance
   :class:`~aizk.pipeline.shutdown.ShutdownController` (:mod:`runner`,
   :mod:`shutdown`),
-- the stage-run / dataset-version primitive (:mod:`run`), and
+- the stage-run / dataset-version primitive (:mod:`run`),
 - the shared append-only transition-event log and ``record_transition`` helper
-  (:mod:`events`).
+  (:mod:`events`), and
+- the pipeline-identity grammar and the shared semantic ``derivation_key`` helper
+  (:mod:`identity`).
 
 It is deliberately a set of primitives, not a framework: each stage owns its own
 work-unit tables and identities and consumes these primitives through the
@@ -23,6 +25,7 @@ from __future__ import annotations
 
 from aizk.pipeline.events import PipelineEvent, record_transition
 from aizk.pipeline.handler import Isolation, StageHandler, StageResult, WorkUnitHandle
+from aizk.pipeline.identity import derivation_key
 from aizk.pipeline.lifecycle import (
     TERMINAL_STATUSES,
     RetryClass,
@@ -30,7 +33,7 @@ from aizk.pipeline.lifecycle import (
     WorkUnitStatus,
     is_terminal,
 )
-from aizk.pipeline.run import PipelineRun, RunStatus, record_run
+from aizk.pipeline.run import PipelineRun, RunStatus, record_run, reuse_or_record_run
 from aizk.pipeline.runner import InMemoryMetrics, StageMetrics, StageRunner
 
 __all__ = [
@@ -48,7 +51,9 @@ __all__ = [
     "TerminalOutcome",
     "WorkUnitHandle",
     "WorkUnitStatus",
+    "derivation_key",
     "is_terminal",
     "record_run",
     "record_transition",
+    "reuse_or_record_run",
 ]
