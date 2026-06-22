@@ -7,6 +7,8 @@
 For any chunk processed by extraction within a reification run, every entity mention identified in that chunk SHALL be persisted as a mention record belonging to that run and sourced to that chunk.
 All mentions emitted within a single run SHALL carry the same extractor and reifier versions as the run records.
 
+Serves: grounded-entity-graph
+
 #### Scenario: Identified mentions are persisted under the run and sourced to the chunk
 
 - **GIVEN** a chunk processed by extraction within a reification run, containing identifiable entity mentions
@@ -25,6 +27,8 @@ For every mention it emits, extraction SHALL record an `input_span` indexing the
 When extraction reads a contextualized variant, it SHALL emit only mentions whose input span can be deterministically mapped to a raw-chunk `source_chunk_span`.
 Detections that occur only in references the revision resolved inline and cannot be mapped to a raw-chunk anchor SHALL NOT be emitted as persisted mentions.
 
+Serves: grounded-entity-graph
+
 #### Scenario: A verbatim mention's two spans coincide on the same text
 
 - **GIVEN** extraction reading raw chunk text and emitting a mention whose surface form appears verbatim
@@ -41,6 +45,8 @@ Detections that occur only in references the revision resolved inline and cannot
 
 For any two distinct mentions extracted from the same chunk within a run, each SHALL be resolvable as a co-occurrence of the other.
 A mention SHALL NOT co-occur with itself, and extraction SHALL NOT link mentions originating from different chunks.
+
+Serves: grounded-entity-graph
 
 #### Scenario: Two mentions in one chunk co-occur mutually
 
@@ -64,6 +70,8 @@ A mention SHALL NOT co-occur with itself, and extraction SHALL NOT link mentions
 
 A mention's blocking keys SHALL be derived deterministically from its surface form, such that two mentions with the same surface form receive the same blocking keys and the key set serves as a stable candidate-generation index.
 
+Serves: grounded-entity-graph
+
 #### Scenario: Equal surface forms yield equal blocking keys
 
 - **GIVEN** two mentions with identical surface forms
@@ -80,6 +88,8 @@ A mention's blocking keys SHALL be derived deterministically from its surface fo
 
 When a chunk has a contextualized variant in its document's **active** contextualization run, extraction SHALL read that variant and record `input_kind` as contextualized with `input_ref` identifying that variant; superseded variants SHALL NOT be read.
 Otherwise extraction SHALL read the chunk's raw text and record `input_kind` as raw with `input_ref` identifying the chunk.
+
+Serves: grounded-entity-graph
 
 #### Scenario: A chunk with an active-run variant is extracted from it
 
@@ -98,6 +108,8 @@ Otherwise extraction SHALL read the chunk's raw text and record `input_kind` as 
 For any chunk, a reification run SHALL produce the same mentions and the same co-occurrences whether the chunk is processed in bulk/backfill mode or incremental mode under the same versions and inputs.
 Run mode SHALL affect only batching and scheduling, never which mentions or co-occurrences are produced.
 
+Serves: replayable-duplicate-free-dataset
+
 #### Scenario: Bulk and incremental extraction produce the same mentions
 
 - **GIVEN** a chunk extracted in bulk/backfill mode and the same chunk extracted in incremental mode within runs of the same versions and inputs
@@ -109,6 +121,8 @@ Run mode SHALL affect only batching and scheduling, never which mentions or co-o
 Extraction SHALL access the extractor that identifies entity mentions as a substitutable dependency reached through a single access point.
 A substitute extractor — for example, a deterministic test double returning known spans — SHALL be usable in place of the production extractor without changing extraction's logic or any other requirement in this spec.
 Every extractor invocation the stage makes SHALL pass through that single access point.
+
+Serves: grounded-entity-graph
 
 #### Scenario: A substitute extractor is used without changing stage logic
 

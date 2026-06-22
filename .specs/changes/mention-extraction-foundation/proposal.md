@@ -14,6 +14,16 @@ This change builds the extraction step and the store it writes to:
 The deliverable is a **runnable extraction pipeline and the populated mention store it yields over the corpus** — the ready-to-go dataset the canonicalization change consumes.
 No context embeddings are produced or stored: the canonicalization resolver recomputes a mention embedding on demand from `(chunk_id, span)` at decision time, so extraction stays lexical and an encoder choice strands nothing here.
 
+## User Stories
+
+### Story: grounded-entity-graph
+
+As the graph's owner, I want every entity mention anchored to the exact text span it was extracted from in a real chunk, so that the knowledge graph is built on verifiable evidence from across my corpus rather than ungrounded guesses.
+
+### Story: replayable-duplicate-free-dataset
+
+As an operator, I want the mention dataset append-only, versioned, and idempotent with complete provenance, so that re-extraction and recovery never corrupt or duplicate the ground truth.
+
 ## Scope
 
 This change depends on `chunk-persistence-contextualization`: it reads persisted contextualized chunks as its input.

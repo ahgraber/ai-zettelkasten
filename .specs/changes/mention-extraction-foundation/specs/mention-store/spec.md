@@ -8,6 +8,8 @@ A persisted mention SHALL NOT be modified or deleted.
 Each mention SHALL belong to exactly one reification run, and a run SHALL record the versions and inputs that produced it (at minimum the extractor version, the reifier version, the input policy, and a fingerprint of the upstream inputs it consumed that changes whenever any consumed input changes) together with a `status` of active or superseded.
 At most one reification run SHALL be active for the corpus at a time; re-reification SHALL open a new run and supersede the prior one, expressed only as a run `status` transition — prior mentions SHALL remain present and unmodified.
 
+Serves: replayable-duplicate-free-dataset
+
 #### Scenario: A persisted mention is never mutated
 
 - **GIVEN** a mention persisted under a reification run
@@ -25,6 +27,8 @@ At most one reification run SHALL be active for the corpus at a time; re-reifica
 A mention's `mention_id` SHALL be a deterministic function of `(run_id, chunk_id, source_chunk_span, surface_form)`.
 Each mention SHALL also carry a `source_occurrence_key` that is a deterministic function of `(chunk_id, source_chunk_span, source_anchor_text)` and is therefore stable across runs for the same source occurrence.
 Persisting a mention whose `mention_id` already exists SHALL NOT create a duplicate.
+
+Serves: replayable-duplicate-free-dataset
 
 #### Scenario: The same occurrence in two runs gets distinct ids but one occurrence key
 
@@ -44,6 +48,8 @@ Every persisted mention SHALL carry, populated and non-null: `surface_form`, `ch
 The `source_chunk_span` SHALL locate the mention's source anchor within the raw chunk.
 A mention detected from a contextualized input SHALL be persisted only when it has a deterministic raw-chunk anchor; context-only detections from references the revision resolved inline, without a raw anchor, SHALL NOT be persisted as mention records.
 A mention SHALL NOT carry a stored context embedding; any embedding a consumer needs is recomputed on demand from the mention's chunk and span and is never persisted.
+
+Serves: grounded-entity-graph, replayable-duplicate-free-dataset
 
 #### Scenario: A persisted mention has all provenance fields populated and no embedding
 
@@ -68,6 +74,8 @@ A mention SHALL NOT carry a stored context embedding; any embedding a consumer n
 For any mention, its intra-chunk co-occurrences SHALL be resolvable from the store.
 Co-occurrence SHALL NOT be a required stored field on the mention row.
 
+Serves: grounded-entity-graph
+
 #### Scenario: A mention's co-occurrences are resolvable
 
 - **GIVEN** a chunk that produced two or more mentions in a run
@@ -77,6 +85,8 @@ Co-occurrence SHALL NOT be a required stored field on the mention row.
 ### Requirement: A mention's source chunk is resolvable
 
 Every mention's `chunk_id` SHALL reference a persisted chunk, so a mention can always be traced back to the chunk it was extracted from.
+
+Serves: grounded-entity-graph
 
 #### Scenario: A mention resolves to an existing chunk
 
