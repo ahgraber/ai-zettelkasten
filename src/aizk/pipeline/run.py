@@ -151,3 +151,57 @@ def record_run(
     # Surface a partial-unique violation here, inside the caller's transaction.
     session.flush()
     return new_run
+
+
+def reuse_or_record_run(
+    session: "Session",
+    *,
+    stage: str,
+    scope_key: str,
+    derivation_key: str,
+    version_stamps: dict[str, str] | None = None,
+) -> PipelineRun:
+    """Reuse the active run when its derivation key matches, else record a new one.
+
+    The run-level idempotency primitive: re-invoking a stage for a
+    ``(stage, scope_key)`` whose ``derivation_key`` equals the active run's
+    returns that run unchanged — no new run, no supersession, no duplicate
+    outputs — so a retry or re-ingestion with unchanged inputs is a no-op at the
+    run level. A differing (or absent) active key records a new active run that
+    supersedes the prior one via :func:`record_run`.
+
+    A stage with a stricter reuse condition than derivation-key equality (for
+    example also requiring its output rows to be present and complete) keeps that
+    check at its own layer and calls :func:`record_run` directly; this primitive
+    is the floor every stage shares.
+
+    Does **not** commit — the caller owns the surrounding transaction.
+
+    Args:
+        session: Active session; the caller owns commit/rollback.
+        stage: The stage that owns this run.
+        scope_key: The stage-defined scope the run's outputs belong to.
+        derivation_key: Deterministic key for the inputs/configuration that
+            produced the run's derived outputs; compared against the active run's.
+        version_stamps: Optional reproducibility version identifiers, used only
+            when a new run is recorded.
+
+    Returns:
+        The reused active :class:`PipelineRun`, or the newly-activated one.
+    """
+    active = session.exec(
+        select(PipelineRun).where(
+            PipelineRun.stage == stage,
+            PipelineRun.scope_key == scope_key,
+            PipelineRun.status == RunStatus.ACTIVE,
+        )
+    ).one_or_none()
+    if active is not None and active.derivation_key == derivation_key:
+        return active
+    return record_run(
+        session,
+        stage=stage,
+        scope_key=scope_key,
+        derivation_key=derivation_key,
+        version_stamps=version_stamps,
+    )
