@@ -44,14 +44,14 @@
 
 ## Lazy invalidation + human-confirmation gate
 
-- [ ] Implement staleness detection: a producer-version change marks prior generations logically stale (recorded version vs. current) without eager recompute; a stale-but-active generation remains usable until recomputed lazily on access or by an explicit operation.
-- [ ] Implement a surface-agnostic human-confirmation gate on user-initiated reprocessing with large downstream blast radius (corpus-wide backfill; base-document edit that cascades the derivation graph): the operation does not run until explicit approval (warn + approve; no cost computed).
+- [x] Implement staleness detection: a producer-version change marks prior generations logically stale (recorded version vs. current) without eager recompute; a stale-but-active generation remains usable until recomputed lazily on access or by an explicit operation.
+- [x] Implement a surface-agnostic human-confirmation gate on user-initiated reprocessing with large downstream blast radius (corpus-wide backfill; base-document edit that cascades the derivation graph): the operation does not run until explicit approval (warn + approve; no cost computed).
   Wire it into the existing reprocessing entry points.
-- [ ] Test `test_version_bump_marks_stale_no_eager_recompute`: bumping a producer version marks the active generation stale but does not recompute it. **[lazy-invalidation]**
-- [ ] Test `test_large_reprocessing_requires_confirmation`: a corpus-wide reprocessing op does not run until explicit confirmation is given. **[affordable-pipeline-evolution]**
-- [ ] Test `test_mixed_version_corpus_valid_and_queryable`: a corpus with rows on more than one producer version is valid, each row records its version, and any version's coverage is queryable. **[lazy-invalidation]**
-- [ ] Test `tests/.../test_contextualization_conformance.py`: a `context_version` bump marks contextualized variants stale without eager recompute, and a corpus-wide re-contextualization hits the confirmation gate — the `chunk-contextualization` conformance committed in `design.md`. **[conformance-not-restatement]**
-- [ ] Test `::test_variant_identity_conforms`: contextualized-variant identity is a run-scoped surrogate, and re-contextualization mints new variant identities under a superseding run (the stochastic-producer branch). **[surrogate identity — stochastic partition]**
+- [x] Test `test_version_bump_marks_stale_no_eager_recompute`: bumping a producer version marks the active generation stale but does not recompute it. **[lazy-invalidation]**
+- [x] Test `test_large_reprocessing_requires_confirmation`: a corpus-wide reprocessing op does not run until explicit confirmation is given. **[affordable-pipeline-evolution]**
+- [x] Test `test_mixed_version_corpus_valid_and_queryable`: a corpus with rows on more than one producer version is valid, each row records its version, and any version's coverage is queryable. **[lazy-invalidation]**
+- [x] Test `tests/.../test_contextualization_conformance.py`: a `context_version` bump marks contextualized variants stale without eager recompute, and a corpus-wide re-contextualization hits the confirmation gate — the `chunk-contextualization` conformance committed in `design.md`. **[conformance-not-restatement]**
+- [x] Test `::test_variant_identity_conforms`: contextualized-variant identity is a run-scoped surrogate, and re-contextualization mints new variant identities under a superseding run (the stochastic-producer branch). **[surrogate identity — stochastic partition]**
 
 ## Non-requirement sweep + final verification
 
