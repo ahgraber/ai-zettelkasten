@@ -64,6 +64,7 @@ from aizk.graph.contextualization import (
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.db import begin_immediate
 from aizk.graph.persistence import memo_delete_keys, persist_chunks
+from aizk.pipeline.invalidation import require_reprocessing_confirmation
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.utilities.hashing import compute_markdown_hash
 
@@ -420,6 +421,8 @@ def enqueue_document(
 def enqueue_backfill(
     session: "Session",
     documents: "Iterable[tuple[int, UUID]]",
+    *,
+    confirmed: bool = False,
 ) -> list[ContextualizationJob]:
     """Enqueue work-units for many documents (bulk/backfill mode) through the single path.
 
@@ -429,9 +432,23 @@ def enqueue_backfill(
     Throttling and per-document commit batching are the caller's concern; this
     function only stages the rows and does not commit.
 
+    A corpus-wide backfill has a large downstream blast radius, so it is gated
+    behind explicit confirmation: nothing is enqueued unless ``confirmed`` is True
+    (see :func:`aizk.pipeline.invalidation.require_reprocessing_confirmation`).
+
+    Args:
+        session: Active session; the caller owns commit/rollback.
+        documents: The ``(conversion_output_id, source_id)`` pairs to enqueue.
+        confirmed: Explicit human approval for the corpus-wide operation; when
+            ``False`` (the default) nothing is enqueued and the gate raises.
+
     Returns:
         The enqueued (or reused) work-units, one per input document.
+
+    Raises:
+        ReprocessingConfirmationError: When ``confirmed`` is ``False``.
     """
+    require_reprocessing_confirmation("corpus-wide contextualization backfill", confirmed=confirmed)
     return [
         enqueue_document(session, conversion_output_id=conversion_output_id, source_id=source_id)
         for conversion_output_id, source_id in documents

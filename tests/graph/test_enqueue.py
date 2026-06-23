@@ -81,10 +81,10 @@ def test_enqueue_backfill_resolves_each_and_dedupes(tmp_path: Path) -> None:
         _add_output(session, output_id=2, source_id=_UUID_B)
         session.commit()
 
-        first = enqueue_backfill_outputs(session, [1, 2])
+        first = enqueue_backfill_outputs(session, [1, 2], confirmed=True)
         session.commit()
         # A second backfill overlapping the same outputs reuses the open units.
-        second = enqueue_backfill_outputs(session, [1, 2])
+        second = enqueue_backfill_outputs(session, [1, 2], confirmed=True)
         session.commit()
 
         assert {j.source_id for j in first} == {_UUID_A, _UUID_B}

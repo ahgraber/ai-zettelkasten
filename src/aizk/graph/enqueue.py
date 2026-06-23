@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.graph.workunit import enqueue_document
+from aizk.pipeline.invalidation import require_reprocessing_confirmation
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -46,6 +47,8 @@ def enqueue_output(session: "Session", conversion_output_id: int) -> "Contextual
 def enqueue_backfill_outputs(
     session: "Session",
     conversion_output_ids: "Iterable[int]",
+    *,
+    confirmed: bool = False,
 ) -> list["ContextualizationJob"]:
     """Enqueue work-units for many conversion outputs (bulk/backfill mode).
 
@@ -54,5 +57,12 @@ def enqueue_backfill_outputs(
     resulting units are identical to incremental enqueue — only volume and
     scheduling differ. Throttling and per-document commit batching are the
     caller's concern; this only stages the rows and does not commit.
+
+    A corpus-wide backfill has a large downstream blast radius, so it is gated
+    behind explicit confirmation: nothing is enqueued unless ``confirmed`` is True.
+
+    Raises:
+        ReprocessingConfirmationError: When ``confirmed`` is ``False``.
     """
+    require_reprocessing_confirmation("corpus-wide contextualization backfill", confirmed=confirmed)
     return [enqueue_output(session, conversion_output_id) for conversion_output_id in conversion_output_ids]

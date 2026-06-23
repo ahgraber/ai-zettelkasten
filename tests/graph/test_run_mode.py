@@ -142,7 +142,7 @@ def _process(engine, *, mode: str) -> dict:
     """Enqueue the document in ``mode``, run the unit-of-work, and return its snapshot."""
     with Session(engine) as session:
         if mode == "bulk":
-            enqueue_backfill(session, [(_OTHER_OUTPUT_ID, _OTHER_AIZK_UUID), (_OUTPUT_ID, _AIZK_UUID)])
+            enqueue_backfill(session, [(_OTHER_OUTPUT_ID, _OTHER_AIZK_UUID), (_OUTPUT_ID, _AIZK_UUID)], confirmed=True)
         else:
             enqueue_document(session, conversion_output_id=_OUTPUT_ID, source_id=_AIZK_UUID)
         session.commit()
@@ -183,7 +183,7 @@ def test_enqueue_dedupes_on_idempotency_key(tmp_path: Path) -> None:
         first_id = first.id
 
         again = enqueue_document(session, conversion_output_id=_OUTPUT_ID, source_id=_AIZK_UUID)
-        (backfilled,) = enqueue_backfill(session, [(_OUTPUT_ID, _AIZK_UUID)])
+        (backfilled,) = enqueue_backfill(session, [(_OUTPUT_ID, _AIZK_UUID)], confirmed=True)
         session.commit()
 
         assert again.id == first_id
