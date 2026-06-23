@@ -136,7 +136,7 @@ def _create_running_job(db_session: Session, bookmark: Bookmark) -> ConversionJo
     """
     source_ref = KarakeepBookmarkRef(kind="karakeep_bookmark", bookmark_id=bookmark.karakeep_id or "bm_lifecycle_test")
     job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title=bookmark.title or "Test Job",
         idempotency_key="lifecycle" * 8,

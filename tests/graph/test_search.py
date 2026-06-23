@@ -72,16 +72,16 @@ def _make_chunk(
     *,
     ordinal: int,
     span_start: int = 0,
-    aizk_uuid: str = _AIZK_UUID,
+    source_id: str = _AIZK_UUID,
     markdown_hash: str = _HASH_A,
 ) -> SplitterChunk:
     """Build a content-addressed splitter chunk with an explicit ``span_start``."""
     content_hash = xxhash.xxh64(text_.encode("utf-8")).hexdigest()
-    chunk_id = derive_chunk_id(aizk_uuid, (), ordinal, content_hash)
+    chunk_id = derive_chunk_id(source_id, (), ordinal, content_hash)
     return SplitterChunk(
         chunk_id=chunk_id,
         content_hash=content_hash,
-        doc_id=aizk_uuid,
+        source_id=source_id,
         heading_path=(),
         ordinal=ordinal,
         text=text_,
@@ -97,13 +97,13 @@ def _persist_chunks(
     session: Session,
     chunks: list[SplitterChunk],
     *,
-    aizk_uuid: str = _AIZK_UUID,
+    source_id: str = _AIZK_UUID,
     markdown_hash: str = _HASH_A,
 ) -> int:
     """Persist a chunk set and return its chunking run id."""
     run = persist_chunks(
         session,
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=markdown_hash,
         splitter_version=SPLITTER_VERSION,
@@ -120,14 +120,14 @@ def _contextualize(
     revisions: list[str],
     *,
     chunking_run_id: int,
-    aizk_uuid: str = _AIZK_UUID,
+    source_id: str = _AIZK_UUID,
     markdown_hash: str = _HASH_A,
 ) -> None:
     """Summarize and contextualize ``chunks`` with the given canned ``revisions``; commit."""
     summary = summarize_document(
         session,
         StubLLMClient(),
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=markdown_hash,
         document_text=_DOC_TEXT,
@@ -135,7 +135,7 @@ def _contextualize(
     contextualize_chunks(
         session,
         StubLLMClient(),
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         summary=summary,
         chunks=chunks,
         chunking_run_id=chunking_run_id,
@@ -333,14 +333,14 @@ def test_search_orders_by_document_relevance_then_span_start(
     """
     # Document A: two short, term-dense chunks. The later span_start is given the
     # smaller ordinal so chunk_id order would disagree with document order.
-    a_late = _make_chunk("quantum quantum tail", ordinal=0, span_start=900, aizk_uuid=_AIZK_UUID)
-    a_early = _make_chunk("quantum quantum head", ordinal=1, span_start=10, aizk_uuid=_AIZK_UUID)
-    _persist_chunks(session, [a_late, a_early], aizk_uuid=_AIZK_UUID)
+    a_late = _make_chunk("quantum quantum tail", ordinal=0, span_start=900, source_id=_AIZK_UUID)
+    a_early = _make_chunk("quantum quantum head", ordinal=1, span_start=10, source_id=_AIZK_UUID)
+    _persist_chunks(session, [a_late, a_early], source_id=_AIZK_UUID)
 
     # Document B: the term once, diluted by a long body (lower bm25 relevance).
     b_text = "quantum " + " ".join(f"filler{i}" for i in range(60))
-    b_chunk = _make_chunk(b_text, ordinal=0, span_start=0, aizk_uuid=_AIZK_UUID_B)
-    _persist_chunks(session, [b_chunk], aizk_uuid=_AIZK_UUID_B)
+    b_chunk = _make_chunk(b_text, ordinal=0, span_start=0, source_id=_AIZK_UUID_B)
+    _persist_chunks(session, [b_chunk], source_id=_AIZK_UUID_B)
 
     results = provider.search("quantum", SearchKind.CHUNK)
 

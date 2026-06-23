@@ -42,18 +42,18 @@ def _make_chunk(
     *,
     ordinal: int,
     span_start: int,
-    aizk_uuid: str,
+    source_id: str,
     conversion_output_id: int,
     heading_path: tuple[str, ...] = (),
     markdown_hash: str = _HASH,
 ) -> SplitterChunk:
     """Build a content-addressed splitter chunk with an explicit ``span_start``."""
     content_hash = xxhash.xxh64(text_.encode("utf-8")).hexdigest()
-    chunk_id = derive_chunk_id(aizk_uuid, heading_path, ordinal, content_hash)
+    chunk_id = derive_chunk_id(source_id, heading_path, ordinal, content_hash)
     return SplitterChunk(
         chunk_id=chunk_id,
         content_hash=content_hash,
-        doc_id=aizk_uuid,
+        source_id=source_id,
         heading_path=heading_path,
         ordinal=ordinal,
         text=text_,
@@ -69,14 +69,14 @@ def _seed_chunks(
     db_session: Session,
     chunks: list[SplitterChunk],
     *,
-    aizk_uuid: str,
+    source_id: str,
     conversion_output_id: int,
     markdown_hash: str = _HASH,
 ) -> int:
     """Persist a chunk set via the real persist path and return its chunking run id."""
     run = persist_chunks(
         db_session,
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         conversion_output_id=str(conversion_output_id),
         markdown_hash_xx64=markdown_hash,
         splitter_version=SPLITTER_VERSION,
@@ -92,7 +92,7 @@ def _seed_contextualization(
     chunks: list[SplitterChunk],
     revisions: Sequence[str],
     *,
-    aizk_uuid: str,
+    source_id: str,
     conversion_output_id: int,
     chunking_run_id: int,
     markdown_hash: str = _HASH,
@@ -101,7 +101,7 @@ def _seed_contextualization(
     summary = summarize_document(
         db_session,
         StubLLMClient(),
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         conversion_output_id=str(conversion_output_id),
         markdown_hash_xx64=markdown_hash,
         document_text=_DOC_TEXT,
@@ -109,7 +109,7 @@ def _seed_contextualization(
     contextualize_chunks(
         db_session,
         StubLLMClient(),
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         summary=summary,
         chunks=chunks,
         chunking_run_id=chunking_run_id,
@@ -120,14 +120,14 @@ def _seed_contextualization(
 
 
 def _seed_source_and_output(db_session: Session, seed_source, seed_conversion_output, *, karakeep_id: str, title: str):
-    """Seed a source, its conversion job, and a conversion output; return ``(aizk_uuid_str, conversion_output_id)``.
+    """Seed a source, its conversion job, and a conversion output; return ``(source_id_str, conversion_output_id)``.
 
     The migration-built schema enforces the ``conversion_outputs.job_id`` →
     ``conversion_jobs.id`` foreign key, so a job is seeded before the output.
     """
     source = seed_source(db_session, karakeep_id=karakeep_id, title=title)
     job = ConversionJob(
-        aizk_uuid=source.aizk_uuid,
+        source_id=source.source_id,
         owner_id="self",
         title=title,
         idempotency_key=f"idem:{karakeep_id}",
@@ -136,9 +136,9 @@ def _seed_source_and_output(db_session: Session, seed_source, seed_conversion_ou
     db_session.commit()
     db_session.refresh(job)
     output = seed_conversion_output(
-        db_session, job_id=job.id, aizk_uuid=source.aizk_uuid, title=title, markdown_hash_xx64=_HASH
+        db_session, job_id=job.id, source_id=source.source_id, title=title, markdown_hash_xx64=_HASH
     )
-    return str(source.aizk_uuid), output.id
+    return str(source.source_id), output.id
 
 
 # --------------------------------------------------------------------------- #
@@ -150,7 +150,7 @@ def test_explorer_spine_lists_chunks_in_span_start_order_with_facts(
     explorer_client: TestClient, db_session, seed_source, seed_conversion_output
 ) -> None:
     """The spine lists active chunks in span_start order with heading path, span, char count, and the self-contained marker."""
-    doc_id, output_id = _seed_source_and_output(
+    source_id, output_id = _seed_source_and_output(
         db_session, seed_source, seed_conversion_output, karakeep_id="bm_spine", title="Spine Doc"
     )
     # The later span_start is given the smaller ordinal so chunk_id order would
@@ -159,7 +159,7 @@ def test_explorer_spine_lists_chunks_in_span_start_order_with_facts(
         "the later passage in the document",
         ordinal=0,
         span_start=900,
-        aizk_uuid=doc_id,
+        source_id=source_id,
         conversion_output_id=output_id,
         heading_path=("Results",),
     )
@@ -167,22 +167,22 @@ def test_explorer_spine_lists_chunks_in_span_start_order_with_facts(
         "the earlier introductory passage",
         ordinal=1,
         span_start=10,
-        aizk_uuid=doc_id,
+        source_id=source_id,
         conversion_output_id=output_id,
         heading_path=("Intro",),
     )
-    run_id = _seed_chunks(db_session, [late, early], aizk_uuid=doc_id, conversion_output_id=output_id)
+    run_id = _seed_chunks(db_session, [late, early], source_id=source_id, conversion_output_id=output_id)
     # early is a non-empty revision; late is self-contained (empty revision).
     _seed_contextualization(
         db_session,
         [late, early],
         ["", "the earlier introductory passage, fully spelled out"],
-        aizk_uuid=doc_id,
+        source_id=source_id,
         conversion_output_id=output_id,
         chunking_run_id=run_id,
     )
 
-    response = explorer_client.get("/ui/graph/explorer", params={"doc_id": doc_id})
+    response = explorer_client.get("/ui/graph/explorer", params={"source_id": source_id})
 
     assert response.status_code == 200
     body = response.text
@@ -207,19 +207,19 @@ def test_explorer_detail_shows_revision_distinct_from_raw_with_provenance(
     explorer_client: TestClient, db_session, seed_source, seed_conversion_output
 ) -> None:
     """A chunk with a non-empty revision shows the revision distinct from raw, with provenance and markdown."""
-    doc_id, output_id = _seed_source_and_output(
+    source_id, output_id = _seed_source_and_output(
         db_session, seed_source, seed_conversion_output, karakeep_id="bm_rev", title="Revision Doc"
     )
     chunk = _make_chunk(
-        "it improves throughput", ordinal=0, span_start=0, aizk_uuid=doc_id, conversion_output_id=output_id
+        "it improves throughput", ordinal=0, span_start=0, source_id=source_id, conversion_output_id=output_id
     )
-    run_id = _seed_chunks(db_session, [chunk], aizk_uuid=doc_id, conversion_output_id=output_id)
+    run_id = _seed_chunks(db_session, [chunk], source_id=source_id, conversion_output_id=output_id)
     revision = "scaled dot-product attention improves throughput"
     _seed_contextualization(
-        db_session, [chunk], [revision], aizk_uuid=doc_id, conversion_output_id=output_id, chunking_run_id=run_id
+        db_session, [chunk], [revision], source_id=source_id, conversion_output_id=output_id, chunking_run_id=run_id
     )
 
-    response = explorer_client.get("/ui/graph/explorer", params={"doc_id": doc_id, "chunk_id": chunk.chunk_id})
+    response = explorer_client.get("/ui/graph/explorer", params={"source_id": source_id, "chunk_id": chunk.chunk_id})
 
     assert response.status_code == 200
     body = response.text
@@ -241,22 +241,22 @@ def test_explorer_detail_self_contained_shows_raw_marked_with_same_provenance(
     explorer_client: TestClient, db_session, seed_source, seed_conversion_output
 ) -> None:
     """A self-contained chunk (empty revision) shows the raw text marked self-contained with the same provenance lineage."""
-    doc_id, output_id = _seed_source_and_output(
+    source_id, output_id = _seed_source_and_output(
         db_session, seed_source, seed_conversion_output, karakeep_id="bm_sc", title="Self Doc"
     )
     chunk = _make_chunk(
         "bioluminescence in deep-sea organisms",
         ordinal=0,
         span_start=0,
-        aizk_uuid=doc_id,
+        source_id=source_id,
         conversion_output_id=output_id,
     )
-    run_id = _seed_chunks(db_session, [chunk], aizk_uuid=doc_id, conversion_output_id=output_id)
+    run_id = _seed_chunks(db_session, [chunk], source_id=source_id, conversion_output_id=output_id)
     _seed_contextualization(
-        db_session, [chunk], [""], aizk_uuid=doc_id, conversion_output_id=output_id, chunking_run_id=run_id
+        db_session, [chunk], [""], source_id=source_id, conversion_output_id=output_id, chunking_run_id=run_id
     )
 
-    response = explorer_client.get("/ui/graph/explorer", params={"doc_id": doc_id, "chunk_id": chunk.chunk_id})
+    response = explorer_client.get("/ui/graph/explorer", params={"source_id": source_id, "chunk_id": chunk.chunk_id})
 
     assert response.status_code == 200
     body = response.text
@@ -281,19 +281,19 @@ def test_explorer_select_result_opens_document_at_chunk_with_contextualized_deta
     """Selecting a search result opens its document at the chunk with the detail showing its contextualized representation.
 
     A search row's selection is an ``hx-get`` to the document-browser route carrying
-    ``doc_id`` + ``chunk_id``; following that request must open the document at the
+    ``source_id`` + ``chunk_id``; following that request must open the document at the
     chunk with the detail panel populated by its contextualized representation.
     """
-    doc_id, output_id = _seed_source_and_output(
+    source_id, output_id = _seed_source_and_output(
         db_session, seed_source, seed_conversion_output, karakeep_id="bm_select", title="Select Doc"
     )
     chunk = _make_chunk(
-        "it improves throughput", ordinal=0, span_start=0, aizk_uuid=doc_id, conversion_output_id=output_id
+        "it improves throughput", ordinal=0, span_start=0, source_id=source_id, conversion_output_id=output_id
     )
-    run_id = _seed_chunks(db_session, [chunk], aizk_uuid=doc_id, conversion_output_id=output_id)
+    run_id = _seed_chunks(db_session, [chunk], source_id=source_id, conversion_output_id=output_id)
     revision = "scaled dot-product attention improves throughput"
     _seed_contextualization(
-        db_session, [chunk], [revision], aizk_uuid=doc_id, conversion_output_id=output_id, chunking_run_id=run_id
+        db_session, [chunk], [revision], source_id=source_id, conversion_output_id=output_id, chunking_run_id=run_id
     )
 
     # The search row exposes the select target as an hx-get to /ui/graph/explorer.
@@ -301,14 +301,14 @@ def test_explorer_select_result_opens_document_at_chunk_with_contextualized_deta
         "/ui/graph/explorer/search", data={"query": "scaled dot-product attention", "kind": "either"}
     )
     assert search.status_code == 200
-    assert "/ui/graph/explorer?doc_id=" in search.text
+    assert "/ui/graph/explorer?source_id=" in search.text
     assert chunk.chunk_id in search.text
 
     # Following the selection (HX-Request partial) opens the document at the chunk
     # with the detail panel showing the contextualized representation.
     opened = explorer_client.get(
         "/ui/graph/explorer",
-        params={"doc_id": doc_id, "chunk_id": chunk.chunk_id},
+        params={"source_id": source_id, "chunk_id": chunk.chunk_id},
         headers={"HX-Request": "true"},
     )
     assert opened.status_code == 200
@@ -327,18 +327,18 @@ def test_explorer_search_highlights_contextualized_only_and_both_sides(
     explorer_client: TestClient, db_session, seed_source, seed_conversion_output
 ) -> None:
     """A contextualized-only match is marked on the contextualized side only; a both-sides match is one row marked on both."""
-    doc_id, output_id = _seed_source_and_output(
+    source_id, output_id = _seed_source_and_output(
         db_session, seed_source, seed_conversion_output, karakeep_id="bm_hl", title="Highlight Doc"
     )
     # ctx_only: the raw says "it"; the revision introduces the searched term.
     ctx_only = _make_chunk(
-        "it improves throughput", ordinal=0, span_start=0, aizk_uuid=doc_id, conversion_output_id=output_id
+        "it improves throughput", ordinal=0, span_start=0, source_id=source_id, conversion_output_id=output_id
     )
     # both: the term is present in both raw and revision.
     both = _make_chunk(
-        "photosynthesis converts light", ordinal=1, span_start=500, aizk_uuid=doc_id, conversion_output_id=output_id
+        "photosynthesis converts light", ordinal=1, span_start=500, source_id=source_id, conversion_output_id=output_id
     )
-    run_id = _seed_chunks(db_session, [ctx_only, both], aizk_uuid=doc_id, conversion_output_id=output_id)
+    run_id = _seed_chunks(db_session, [ctx_only, both], source_id=source_id, conversion_output_id=output_id)
     _seed_contextualization(
         db_session,
         [ctx_only, both],
@@ -346,7 +346,7 @@ def test_explorer_search_highlights_contextualized_only_and_both_sides(
             "photosynthesis improves throughput",
             "photosynthesis converts sunlight into chemical energy",
         ],
-        aizk_uuid=doc_id,
+        source_id=source_id,
         conversion_output_id=output_id,
         chunking_run_id=run_id,
     )
@@ -371,18 +371,18 @@ def test_explorer_search_contextualized_only_not_marked_in_raw(
     explorer_client: TestClient, db_session, seed_source, seed_conversion_output
 ) -> None:
     """For a contextualized-only match, the raw side carries no highlight mark."""
-    doc_id, output_id = _seed_source_and_output(
+    source_id, output_id = _seed_source_and_output(
         db_session, seed_source, seed_conversion_output, karakeep_id="bm_hl2", title="Highlight Doc 2"
     )
     chunk = _make_chunk(
-        "it improves throughput", ordinal=0, span_start=0, aizk_uuid=doc_id, conversion_output_id=output_id
+        "it improves throughput", ordinal=0, span_start=0, source_id=source_id, conversion_output_id=output_id
     )
-    run_id = _seed_chunks(db_session, [chunk], aizk_uuid=doc_id, conversion_output_id=output_id)
+    run_id = _seed_chunks(db_session, [chunk], source_id=source_id, conversion_output_id=output_id)
     _seed_contextualization(
         db_session,
         [chunk],
         ["scaled dot-product attention improves throughput"],
-        aizk_uuid=doc_id,
+        source_id=source_id,
         conversion_output_id=output_id,
         chunking_run_id=run_id,
     )
@@ -412,17 +412,17 @@ def test_explorer_search_empty_query_renders_empty_partial(
     and whitespace-only queries must each return 200 with no ``result-row`` rather
     than every seeded chunk.
     """
-    doc_id, output_id = _seed_source_and_output(
+    source_id, output_id = _seed_source_and_output(
         db_session, seed_source, seed_conversion_output, karakeep_id="bm_empty", title="Empty Query Doc"
     )
     chunk = _make_chunk(
         "a searchable passage that must not leak",
         ordinal=0,
         span_start=0,
-        aizk_uuid=doc_id,
+        source_id=source_id,
         conversion_output_id=output_id,
     )
-    _seed_chunks(db_session, [chunk], aizk_uuid=doc_id, conversion_output_id=output_id)
+    _seed_chunks(db_session, [chunk], source_id=source_id, conversion_output_id=output_id)
 
     empty = explorer_client.post("/ui/graph/explorer/search", data={"query": "", "kind": "either"})
     whitespace = explorer_client.post("/ui/graph/explorer/search", data={"query": "   \t  ", "kind": "either"})
@@ -446,15 +446,15 @@ def test_explorer_search_syntax_characters_do_not_error(
     match against seeded content is returned; a non-matching special-char query
     returns the empty-results partial.
     """
-    doc_id, output_id = _seed_source_and_output(
+    source_id, output_id = _seed_source_and_output(
         db_session, seed_source, seed_conversion_output, karakeep_id="bm_syntax", title="Syntax Doc"
     )
     # The chunk literally contains the FTS5 operator characters so a literal-term
     # query for them matches rather than being interpreted as query syntax.
     chunk = _make_chunk(
-        'wildcard* and "quoted" tokens', ordinal=0, span_start=0, aizk_uuid=doc_id, conversion_output_id=output_id
+        'wildcard* and "quoted" tokens', ordinal=0, span_start=0, source_id=source_id, conversion_output_id=output_id
     )
-    _seed_chunks(db_session, [chunk], aizk_uuid=doc_id, conversion_output_id=output_id)
+    _seed_chunks(db_session, [chunk], source_id=source_id, conversion_output_id=output_id)
 
     literal = explorer_client.post("/ui/graph/explorer/search", data={"query": 'wildcard* "quoted"', "kind": "either"})
     boolean_word = explorer_client.post("/ui/graph/explorer/search", data={"query": "AND OR NEAR", "kind": "either"})
@@ -482,21 +482,21 @@ def test_explorer_source_mid_contextualization_shows_raw_no_representation_no_me
     variant run exists; a retained intermediate revision in the memo must not appear
     in the spine, the detail panel, or search.
     """
-    doc_id, output_id = _seed_source_and_output(
+    source_id, output_id = _seed_source_and_output(
         db_session, seed_source, seed_conversion_output, karakeep_id="bm_memo", title="Memo Doc"
     )
     chunk = _make_chunk(
-        "uncontextualized raw passage", ordinal=0, span_start=0, aizk_uuid=doc_id, conversion_output_id=output_id
+        "uncontextualized raw passage", ordinal=0, span_start=0, source_id=source_id, conversion_output_id=output_id
     )
-    _seed_chunks(db_session, [chunk], aizk_uuid=doc_id, conversion_output_id=output_id)
+    _seed_chunks(db_session, [chunk], source_id=source_id, conversion_output_id=output_id)
 
     # Retain an intermediate revision in the memo (scratch state for an in-progress
     # attempt) — it must never surface anywhere in the explorer.
     retained = "RETAINED-INTERMEDIATE-floccinaucinihilipilification"
-    memo_upsert_and_read(db_session.get_bind(), MEMO_KIND_REVISION, doc_id, "some-derivation-key", retained)
+    memo_upsert_and_read(db_session.get_bind(), MEMO_KIND_REVISION, source_id, "some-derivation-key", retained)
 
     # Spine: the raw chunk is present, marked as having no contextualized representation.
-    spine = explorer_client.get("/ui/graph/explorer", params={"doc_id": doc_id})
+    spine = explorer_client.get("/ui/graph/explorer", params={"source_id": source_id})
     assert spine.status_code == 200
     assert chunk.chunk_id in spine.text
     assert "no contextualized representation" in spine.text
@@ -504,7 +504,7 @@ def test_explorer_source_mid_contextualization_shows_raw_no_representation_no_me
     assert retained not in spine.text
 
     # Detail: raw text shown, no variant; the retained revision does not appear.
-    detail = explorer_client.get("/ui/graph/explorer", params={"doc_id": doc_id, "chunk_id": chunk.chunk_id})
+    detail = explorer_client.get("/ui/graph/explorer", params={"source_id": source_id, "chunk_id": chunk.chunk_id})
     assert detail.status_code == 200
     assert "uncontextualized raw passage" in detail.text
     assert 'data-has-variant="false"' in detail.text
@@ -522,4 +522,4 @@ def test_explorer_source_mid_contextualization_shows_raw_no_representation_no_me
     assert 'class="result-row"' not in memo_hit.text
 
     # Confirm the memo row truly exists (the exclusion is real, not a seeding no-op).
-    assert memo_get(db_session, MEMO_KIND_REVISION, doc_id, "some-derivation-key") == retained
+    assert memo_get(db_session, MEMO_KIND_REVISION, source_id, "some-derivation-key") == retained

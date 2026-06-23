@@ -6,7 +6,7 @@ co-commit, and observability. Each stage supplies a :class:`StageHandler`
 over its own work-unit tables that owns: startup dependency validation,
 work-unit discovery + claim, the unit-of-work execution, mapping its execution
 result to a generic terminal outcome, cancellation, transient-resource cleanup,
-the timeout/concurrency configuration, and the run ``scope_key``.
+the timeout/concurrency configuration, and the run ``scope_id``.
 
 The **runner owns the session and transaction boundary**: it opens a
 ``BEGIN IMMEDIATE`` transaction and passes the session into ``claim_next`` /
@@ -115,8 +115,8 @@ class StageHandler(Protocol[WorkUnitHandle]):
         """Cooperatively request cancellation of a running work-unit."""
         ...
 
-    def scope_key(self, handle: WorkUnitHandle) -> str:
-        """Return the run ``scope_key`` for ``handle`` (per-document, per-chunk, ...)."""
+    def scope_id(self, handle: WorkUnitHandle) -> str:
+        """Return the run ``scope_id`` for ``handle`` (per-document, per-chunk, ...)."""
         ...
 
     @property

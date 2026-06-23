@@ -196,7 +196,7 @@ class LocalMarkdownSource:
 def seed_conversion_output(engine, *, text: str, label: str, markdown_source, blob_reader) -> tuple[UUID, int, str]:
     """Seed a Source + ConversionJob + ConversionOutput and register its Markdown.
 
-    Returns ``(aizk_uuid, conversion_output_id, markdown_hash)``.
+    Returns ``(source_id, conversion_output_id, markdown_hash)``.
     """
     from sqlmodel import Session
 
@@ -205,14 +205,14 @@ def seed_conversion_output(engine, *, text: str, label: str, markdown_source, bl
     from aizk.conversion.datamodel.source import Source
     from aizk.utilities.hashing import compute_markdown_hash
 
-    aizk_uuid = uuid4()
+    source_id = uuid4()
     markdown_hash = compute_markdown_hash(text)
-    markdown_key = f"demo/{aizk_uuid}/output.md"
-    ref = f"demo://{aizk_uuid}"
+    markdown_key = f"demo/{source_id}/output.md"
+    ref = f"demo://{source_id}"
     with Session(engine) as session:
         session.add(
             Source(
-                aizk_uuid=aizk_uuid,
+                source_id=source_id,
                 source_ref=ref,
                 source_ref_hash=compute_markdown_hash(ref),
                 owner_id="demo",
@@ -221,7 +221,7 @@ def seed_conversion_output(engine, *, text: str, label: str, markdown_source, bl
         )
         session.flush()
         job = ConversionJob(
-            aizk_uuid=aizk_uuid,
+            source_id=source_id,
             owner_id="demo",
             title=label,
             idempotency_key=f"demo-conv-{uuid4().hex}",
@@ -231,13 +231,13 @@ def seed_conversion_output(engine, *, text: str, label: str, markdown_source, bl
         session.flush()
         output = ConversionOutput(
             job_id=job.id,
-            aizk_uuid=aizk_uuid,
+            source_id=source_id,
             owner_id="demo",
             title=label,
             payload_version=1,
-            s3_prefix=f"demo/{aizk_uuid}",
+            s3_prefix=f"demo/{source_id}",
             markdown_key=markdown_key,
-            manifest_key=f"demo/{aizk_uuid}/manifest.json",
+            manifest_key=f"demo/{source_id}/manifest.json",
             markdown_hash_xx64=markdown_hash,
             docling_version="demo",
             pipeline_name="docling",
@@ -248,7 +248,7 @@ def seed_conversion_output(engine, *, text: str, label: str, markdown_source, bl
         session.commit()
     markdown_source.register(output_id, text, markdown_hash)
     blob_reader.register(markdown_key, text)
-    return aizk_uuid, output_id, markdown_hash
+    return source_id, output_id, markdown_hash
 
 
 # %%
@@ -278,7 +278,7 @@ focal_uuid, focal_output_id, focal_hash = seed_conversion_output(
     markdown_source=markdown_source,
     blob_reader=blob_reader,
 )
-print(f"aizk_uuid            : {focal_uuid}")
+print(f"source_id            : {focal_uuid}")
 print(f"conversion_output_id : {focal_output_id}")
 print(f"markdown_hash        : {focal_hash}")
 
@@ -295,7 +295,7 @@ print(f"markdown_hash        : {focal_hash}")
 # %%
 chunks = split(
     FOCAL_MARKDOWN,
-    doc_id=str(focal_uuid),
+    source_id=str(focal_uuid),
     converted_artifact_id=str(focal_output_id),
     markdown_hash_xx64=focal_hash,
 )
@@ -397,7 +397,7 @@ with Session(engine) as session:
     variant_run = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == VARIANT_STAGE,
-            PipelineRun.scope_key == str(focal_uuid),
+            PipelineRun.scope_id == str(focal_uuid),
             PipelineRun.status == RunStatus.ACTIVE,
         )
     ).one()
@@ -508,13 +508,13 @@ def contextualize_more_documents() -> list[UUID]:
     """Seed + contextualize the remaining documents through the real worker."""
     ids: list[UUID] = []
     for label, text in _MORE_DOCUMENTS.items():
-        aizk_uuid, output_id, _ = seed_conversion_output(
+        source_id, output_id, _ = seed_conversion_output(
             engine, text=text, label=label, markdown_source=markdown_source, blob_reader=blob_reader
         )
         with Session(engine) as session:
             enqueue_output(session, output_id)
             session.commit()
-        ids.append(aizk_uuid)
+        ids.append(source_id)
     StageRunner(
         engine=engine, handler=handler, poll_interval=0.05, stale_recovery_interval=3600.0, cancel_grace=2.0
     ).run_until_idle(max_iterations=10_000)
@@ -534,11 +534,11 @@ def seed_assorted_job_states() -> None:
     ]
     with Session(engine) as session:
         for offset, (label, status, attempts, error_code) in enumerate(specs):
-            aizk_uuid = uuid4()
-            ref = f"demo://{aizk_uuid}"
+            source_id = uuid4()
+            ref = f"demo://{source_id}"
             session.add(
                 Source(
-                    aizk_uuid=aizk_uuid,
+                    source_id=source_id,
                     source_ref=ref,
                     source_ref_hash=compute_markdown_hash(ref),
                     owner_id="demo",
@@ -547,7 +547,7 @@ def seed_assorted_job_states() -> None:
             )
             session.add(
                 ContextualizationJob(
-                    aizk_uuid=aizk_uuid,
+                    source_id=source_id,
                     conversion_output_id=800_000 + offset,
                     idempotency_key=f"demo-state-{uuid4().hex}",
                     status=status,
@@ -573,24 +573,24 @@ def seed_chunked_not_contextualized() -> UUID:
         "The raw chunks are searchable and visible in the explorer spine, but the "
         "source has no active variant run, so no contextualized representation exists.\n"
     )
-    aizk_uuid, output_id, markdown_hash = seed_conversion_output(
+    source_id, output_id, markdown_hash = seed_conversion_output(
         engine, text=text, label="chunked-not-contextualized", markdown_source=markdown_source, blob_reader=blob_reader
     )
     gap_chunks = split(
-        text, doc_id=str(aizk_uuid), converted_artifact_id=str(output_id), markdown_hash_xx64=markdown_hash
+        text, source_id=str(source_id), converted_artifact_id=str(output_id), markdown_hash_xx64=markdown_hash
     )
     now = dt.datetime.now(dt.timezone.utc)
     with begin_immediate(engine) as session:
         persist_chunks(
             session,
-            aizk_uuid=str(aizk_uuid),
+            source_id=str(source_id),
             conversion_output_id=str(output_id),
             markdown_hash_xx64=markdown_hash,
             splitter_version=SPLITTER_VERSION,
             chunks=gap_chunks,
         )
         job = ContextualizationJob(
-            aizk_uuid=aizk_uuid,
+            source_id=source_id,
             conversion_output_id=output_id,
             idempotency_key=f"demo-gap-{uuid4().hex}",
             status=WorkUnitStatus.QUEUED,
@@ -603,7 +603,7 @@ def seed_chunked_not_contextualized() -> UUID:
             job,
             stage=CONTEXTUALIZATION_STAGE,
             work_unit_ref=str(job.id),
-            aizk_uuid=aizk_uuid,
+            source_id=source_id,
             to_status=WorkUnitStatus.RUNNING,
             kind=GraphEventKind.CLAIMED,
             attempt=1,
@@ -615,7 +615,7 @@ def seed_chunked_not_contextualized() -> UUID:
             job,
             stage=CONTEXTUALIZATION_STAGE,
             work_unit_ref=str(job.id),
-            aizk_uuid=aizk_uuid,
+            source_id=source_id,
             to_status=WorkUnitStatus.FAILED,
             kind=GraphEventKind.FAILED,
             attempt=1,
@@ -625,7 +625,7 @@ def seed_chunked_not_contextualized() -> UUID:
                 retryable=True,
             ),
         )
-    return aizk_uuid
+    return source_id
 
 
 # %%
@@ -664,11 +664,11 @@ print("     filter by status, search, select rows -> bulk Retry/Cancel, open a j
 print(f"  Explorer     : {_base}/ui/graph/explorer")
 print(f"     search 'attention' / 'luciferin' / 'levain'; '{REVISION_SENTINEL}' under the contextualized filter")
 print("\n  Open a document browser directly:")
-print(f"     transformer (focal) : {_base}/ui/graph/explorer?doc_id={focal_uuid}")
+print(f"     transformer (focal) : {_base}/ui/graph/explorer?source_id={focal_uuid}")
 for uid in more_uuids:
-    print(f"     more document       : {_base}/ui/graph/explorer?doc_id={uid}")
+    print(f"     more document       : {_base}/ui/graph/explorer?source_id={uid}")
 print(
-    f"     chunked-not-contextualized (raw chunks, no contextualized rep): {_base}/ui/graph/explorer?doc_id={gap_uuid}"
+    f"     chunked-not-contextualized (raw chunks, no contextualized rep): {_base}/ui/graph/explorer?source_id={gap_uuid}"
 )
 print("\n  Stop: run the Cleanup cell below, or restart the kernel.")
 print("  (Running this file as a plain script exits after starting the daemon server — run it interactively.)")

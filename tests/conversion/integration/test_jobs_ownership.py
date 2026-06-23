@@ -19,13 +19,13 @@ def test_list_excludes_cross_owner_jobs(db_session) -> None:
     bookmark = make_source(db_session, "bm_list_owner")
     owned = make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         idempotency_key="o" * 64,
         owner_id="self",
     )
     make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         idempotency_key="x" * 64,
         owner_id="someone_else",
     )
@@ -44,13 +44,13 @@ def test_get_returns_404_for_cross_owner_job(db_session) -> None:
     bookmark = make_source(db_session, "bm_get_owner")
     owned = make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         idempotency_key="g" * 64,
         owner_id="self",
     )
     cross = make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         idempotency_key="h" * 64,
         owner_id="someone_else",
     )
@@ -71,21 +71,21 @@ def test_status_counts_excludes_cross_owner_jobs(db_session) -> None:
     bookmark = make_source(db_session, "bm_counts_owner")
     make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         idempotency_key="a" * 64,
         status=ConversionJobStatus.QUEUED,
         owner_id="self",
     )
     make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         idempotency_key="b" * 64,
         status=ConversionJobStatus.QUEUED,
         owner_id="someone_else",
     )
     make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         idempotency_key="c" * 64,
         status=ConversionJobStatus.FAILED_RETRYABLE,
         owner_id="someone_else",
@@ -105,7 +105,7 @@ def test_retry_returns_404_for_cross_owner_job(db_session) -> None:
     bookmark = make_source(db_session, "bm_retry_owner")
     cross = make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         idempotency_key="r" * 64,
         status=ConversionJobStatus.FAILED_RETRYABLE,
         owner_id="someone_else",
@@ -126,7 +126,7 @@ def test_cancel_returns_404_for_cross_owner_job(db_session) -> None:
     bookmark = make_source(db_session, "bm_cancel_owner")
     cross = make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         idempotency_key="z" * 64,
         status=ConversionJobStatus.QUEUED,
         owner_id="someone_else",
@@ -147,14 +147,14 @@ def test_bulk_action_skips_cross_owner_jobs(db_session) -> None:
     bookmark = make_source(db_session, "bm_bulk_owner")
     owned = make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         idempotency_key="m" * 64,
         status=ConversionJobStatus.FAILED_RETRYABLE,
         owner_id="self",
     )
     cross = make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         idempotency_key="n" * 64,
         status=ConversionJobStatus.FAILED_RETRYABLE,
         owner_id="someone_else",

@@ -59,7 +59,7 @@ _VALID_FIELDS_BY_KIND: dict[ConversionEventKind, dict] = {
     ConversionEventKind.UPLOAD_PENDING: {"content_hash": "deadbeef"},
     ConversionEventKind.RECOVERED_STALE: {"stale_after_minutes": 30, "last_started_at": _NOW},
     ConversionEventKind.SOURCE_ENRICHED: {
-        "aizk_uuid": uuid4(),
+        "source_id": uuid4(),
         "columns_written": ["url", "title"],
         "update_succeeded": True,
         "failure_reason": None,

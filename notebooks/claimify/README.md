@@ -41,7 +41,7 @@ The existing `src/aizk/ai/claimify/prompts/` package is touched only to import p
 
 ### Extraction pipeline
 
-`bookmark_id` → `conversion_outputs` join → `aizk_uuid` + S3 markdown key → cached S3 fetch → `MarkdownChef.process()` (prose separated from tables / code / images) → `structuring.split_by_headings()` → `list[Section]`.
+`bookmark_id` → `conversion_outputs` join → `source_id` + S3 markdown key → cached S3 fetch → `MarkdownChef.process()` (prose separated from tables / code / images) → `structuring.split_by_headings()` → `list[Section]`.
 
 Per section, in parallel branches:
 
@@ -139,5 +139,5 @@ and no network or OpenRouter calls are made.
 Both drivers support cell-by-cell execution (VS Code's Python cells, Jupytext, or `jupytext --to notebook`).
 Each guards the expensive LLM pass behind a `RUN_FULL = False` flag — the cost-guard cell prints the projected call count per tier so you can sanity-check before flipping it.
 
-Extraction runs first and writes one JSONL per doc to `data/claimify_demo/extraction/<aizk_uuid>.jsonl`.
-The evaluation driver reads those JSONLs and writes verdicts to `data/claimify_demo/evaluation/<aizk_uuid>.jsonl`.
+Extraction runs first and writes one JSONL per doc to `data/claimify_demo/extraction/<source_id>.jsonl`.
+The evaluation driver reads those JSONLs and writes verdicts to `data/claimify_demo/evaluation/<source_id>.jsonl`.

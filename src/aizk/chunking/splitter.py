@@ -211,7 +211,7 @@ def _parse_structure(text: str) -> tuple[list[_Block], list[_Section]]:
 def split(
     markdown_text: str,
     *,
-    doc_id: str,
+    source_id: str,
     converted_artifact_id: str,
     markdown_hash_xx64: str,
     size_budget: int = DEFAULT_SIZE_BUDGET,
@@ -224,7 +224,7 @@ def split(
 
     Args:
         markdown_text: The converted, normalized Markdown artifact.
-        doc_id: Logical document identifier stamped on every chunk.
+        source_id: Logical document identifier stamped on every chunk.
         converted_artifact_id: Source-artifact identifier stamped on every chunk.
         markdown_hash_xx64: Source-artifact content hash stamped on every chunk.
         size_budget: Maximum per-chunk character count, except for a non-splittable
@@ -243,7 +243,7 @@ def split(
         logger.warning(
             "chunk exceeds size budget",
             extra={
-                "doc_id": doc_id,
+                "source_id": source_id,
                 "converted_artifact_id": converted_artifact_id,
                 "heading_path": heading_path,
                 "char_count": char_count,
@@ -258,9 +258,9 @@ def split(
         content_hash = compute_markdown_hash(chunk_text)
         chunks.append(
             Chunk(
-                chunk_id=derive_chunk_id(doc_id, heading_path, ordinal, content_hash),
+                chunk_id=derive_chunk_id(source_id, heading_path, ordinal, content_hash),
                 content_hash=content_hash,
-                doc_id=doc_id,
+                source_id=source_id,
                 heading_path=heading_path,
                 ordinal=ordinal,
                 text=chunk_text,

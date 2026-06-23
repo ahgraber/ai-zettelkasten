@@ -34,7 +34,7 @@ def _get_source_ref(job_id: int, engine: Engine):
 
 def _write_source_enrichment(
     subprocess_meta: SubprocessMetadata,
-    aizk_uuid: str,
+    source_id: str,
     engine,
     *,
     job_id: int,
@@ -58,7 +58,7 @@ def _write_source_enrichment(
     from aizk.conversion.core.source_ref import SourceRef as _SourceRef
     from aizk.conversion.core.types import SOURCE_TYPE_BY_KIND
 
-    uuid_obj = aizk_uuid if isinstance(aizk_uuid, _UUID) else _UUID(aizk_uuid)
+    uuid_obj = source_id if isinstance(source_id, _UUID) else _UUID(source_id)
 
     columns_attempted: list[str] = ["url", "normalized_url", "title", "source_type"]
     if subprocess_meta.content_type:
@@ -73,11 +73,11 @@ def _write_source_enrichment(
         source_meta = subprocess_meta.source_meta.to_source_metadata()
 
         with Session(engine) as session:
-            source = session.exec(select(SourceRecord).where(SourceRecord.aizk_uuid == uuid_obj)).one_or_none()
+            source = session.exec(select(SourceRecord).where(SourceRecord.source_id == uuid_obj)).one_or_none()
             if source is None:
                 logger.warning(
-                    "Source row not found for aizk_uuid=%s during enrichment",
-                    aizk_uuid,
+                    "Source row not found for source_id=%s during enrichment",
+                    source_id,
                 )
                 failure_reason = "source_row_not_found"
             else:
@@ -94,8 +94,8 @@ def _write_source_enrichment(
                 update_succeeded = True
     except Exception as exc:
         logger.exception(
-            "Source enrichment failed for aizk_uuid=%s (best-effort; job proceeds)",
-            aizk_uuid,
+            "Source enrichment failed for source_id=%s (best-effort; job proceeds)",
+            source_id,
         )
         failure_reason = str(exc)
 
@@ -107,7 +107,7 @@ def _write_source_enrichment(
             record_source_event(
                 event_session,
                 job_id=job_id,
-                aizk_uuid=uuid_obj,
+                source_id=uuid_obj,
                 attempt=attempt,
                 columns_written=columns_attempted,
                 update_succeeded=update_succeeded,
@@ -116,6 +116,6 @@ def _write_source_enrichment(
             event_session.commit()
     except Exception:
         logger.exception(
-            "Failed to record source_enriched event for aizk_uuid=%s (best-effort)",
-            aizk_uuid,
+            "Failed to record source_enriched event for source_id=%s (best-effort)",
+            source_id,
         )

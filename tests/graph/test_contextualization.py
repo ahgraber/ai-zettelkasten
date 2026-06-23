@@ -2,7 +2,7 @@
 
 Exercises the ``chunk-contextualization`` revision through
 :mod:`aizk.graph.contextualization` with a stubbed model: both runs are scoped to
-the durable source identity (``aizk_uuid``); the summary run records its
+the durable source identity (``source_id``); the summary run records its
 derivation key, version, and consumed ``conversion_output_id`` and supersedes on
 input change; the variant run records per-chunk ``summary_run_id`` /
 ``chunking_run_id`` provenance and folds ``splitter_version`` into its derivation
@@ -55,16 +55,16 @@ def _make_chunk(
     ordinal: int,
     markdown_hash: str = _HASH_A,
     conversion_output_id: str = _OUTPUT,
-    aizk_uuid: str = _AIZK_UUID,
+    source_id: str = _AIZK_UUID,
     splitter_version: int = SPLITTER_VERSION,
 ) -> SplitterChunk:
-    """Build a content-addressed splitter chunk for a single source (``doc_id`` = ``aizk_uuid``)."""
+    """Build a content-addressed splitter chunk for a single source (``source_id`` = ``source_id``)."""
     content_hash = xxhash.xxh64(text.encode("utf-8")).hexdigest()
-    chunk_id = derive_chunk_id(aizk_uuid, (), ordinal, content_hash)
+    chunk_id = derive_chunk_id(source_id, (), ordinal, content_hash)
     return SplitterChunk(
         chunk_id=chunk_id,
         content_hash=content_hash,
-        doc_id=aizk_uuid,
+        source_id=source_id,
         heading_path=(),
         ordinal=ordinal,
         text=text,
@@ -87,7 +87,7 @@ def _persist(
     """Persist a chunk set, returning its chunking run (its id is the variant provenance)."""
     run = persist_chunks(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=conversion_output_id,
         markdown_hash_xx64=markdown_hash,
         splitter_version=splitter_version,
@@ -114,7 +114,7 @@ def _summarize_and_contextualize(
     summary = summarize_document(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=conversion_output_id,
         markdown_hash_xx64=markdown_hash,
         document_text=_DOC_TEXT,
@@ -122,7 +122,7 @@ def _summarize_and_contextualize(
     variants = contextualize_chunks(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         summary=summary,
         chunks=chunks,
         chunking_run_id=chunking_run_id,
@@ -145,7 +145,7 @@ def test_summary_with_derivation_key_and_version(session: Session) -> None:
     summary = summarize_document(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
@@ -161,7 +161,7 @@ def test_summary_with_derivation_key_and_version(session: Session) -> None:
         select(PipelineRun).where(PipelineRun.stage == SUMMARY_STAGE, PipelineRun.status == RunStatus.ACTIVE)
     ).one()
     assert summary.run_id == active.id
-    assert active.scope_key == _AIZK_UUID, "the summary run is scoped to the durable source identity"
+    assert active.scope_id == _AIZK_UUID, "the summary run is scoped to the durable source identity"
     derivation_key = json.loads(active.derivation_key)
     version_stamps = json.loads(active.version_stamps_json)
     assert derivation_key["summary_prompt_hash"] == getattr(ctx_mod, "SUMMARY_PROMPT_HASH", None)
@@ -176,7 +176,7 @@ def test_unchanged_inputs_no_new_run(session: Session) -> None:
     first = summarize_document(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
@@ -185,7 +185,7 @@ def test_unchanged_inputs_no_new_run(session: Session) -> None:
     second = summarize_document(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
@@ -205,7 +205,7 @@ def test_changed_markdown_supersedes(session: Session) -> None:
     first = summarize_document(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
@@ -216,7 +216,7 @@ def test_changed_markdown_supersedes(session: Session) -> None:
     second = summarize_document(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT_B,
         markdown_hash_xx64=_HASH_B,
         document_text="# New\n\nchanged",
@@ -275,7 +275,7 @@ def test_variant_with_provenance_and_derivation_key(session: Session) -> None:
     active = session.exec(
         select(PipelineRun).where(PipelineRun.stage == VARIANT_STAGE, PipelineRun.status == RunStatus.ACTIVE)
     ).one()
-    assert active.scope_key == _AIZK_UUID, "the variant run is scoped to the durable source identity"
+    assert active.scope_id == _AIZK_UUID, "the variant run is scoped to the durable source identity"
     run_key = json.loads(active.derivation_key)
     version_stamps = json.loads(active.version_stamps_json)
     assert run_key["context_prompt_hash"] == getattr(ctx_mod, "CONTEXT_PROMPT_HASH", None)
@@ -364,7 +364,7 @@ def test_zero_chunk_document_does_not_resupersede_on_reprocess(session: Session)
     summary = summarize_document(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
@@ -372,7 +372,7 @@ def test_zero_chunk_document_does_not_resupersede_on_reprocess(session: Session)
     contextualize_chunks(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         summary=summary,
         chunks=[],
         chunking_run_id=chunking_run.id,
@@ -384,7 +384,7 @@ def test_zero_chunk_document_does_not_resupersede_on_reprocess(session: Session)
     contextualize_chunks(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         summary=summary,
         chunks=[],
         chunking_run_id=chunking_run.id,
@@ -484,7 +484,7 @@ def test_unchanged_inputs_no_duplicate_variant(session: Session) -> None:
     summary = summarize_document(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
@@ -492,7 +492,7 @@ def test_unchanged_inputs_no_duplicate_variant(session: Session) -> None:
     contextualize_chunks(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         summary=summary,
         chunks=chunks,
         chunking_run_id=chunking_run.id,
@@ -504,7 +504,7 @@ def test_unchanged_inputs_no_duplicate_variant(session: Session) -> None:
     contextualize_chunks(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         summary=summary,
         chunks=chunks,
         chunking_run_id=chunking_run.id,
@@ -522,8 +522,8 @@ def test_unchanged_inputs_no_duplicate_variant(session: Session) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_variant_traces_back_to_source_text_and_aizk_uuid(session: Session) -> None:
-    """A persisted variant resolves backward to chunk text/span, summary, markdown, and aizk_uuid."""
+def test_variant_traces_back_to_source_text_and_source_id(session: Session) -> None:
+    """A persisted variant resolves backward to chunk text/span, summary, markdown, and source_id."""
     prior = _make_chunk("The Transformer architecture is introduced.", ordinal=0)
     working = _make_chunk("It builds on the prior result.", ordinal=1)
     chunking_run = _persist(session, [prior, working], markdown_hash=_HASH_A)
@@ -558,10 +558,10 @@ def test_variant_traces_back_to_source_text_and_aizk_uuid(session: Session) -> N
     summary = session.get(PipelineRun, variant.summary_run_id)
     assert summary is not None and summary.stage == SUMMARY_STAGE
 
-    # 5. the whole chain belongs to one aizk_uuid.
-    assert chunking.scope_key == _AIZK_UUID
-    assert summary.scope_key == _AIZK_UUID
-    assert chunk_row.doc_id == _AIZK_UUID
+    # 5. the whole chain belongs to one source_id.
+    assert chunking.scope_id == _AIZK_UUID
+    assert summary.scope_id == _AIZK_UUID
+    assert chunk_row.source_id == _AIZK_UUID
 
 
 # --------------------------------------------------------------------------- #
@@ -649,7 +649,7 @@ def test_substitute_model_drives_run_unchanged(session: Session) -> None:
     summary = summarize_document(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
@@ -657,7 +657,7 @@ def test_substitute_model_drives_run_unchanged(session: Session) -> None:
     variants = contextualize_chunks(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         summary=summary,
         chunks=chunks,
         chunking_run_id=chunking_run.id,
@@ -680,7 +680,7 @@ def test_all_model_calls_through_single_access_point(session: Session) -> None:
     summary = summarize_document(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
@@ -688,7 +688,7 @@ def test_all_model_calls_through_single_access_point(session: Session) -> None:
     contextualize_chunks(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         summary=summary,
         chunks=chunks,
         chunking_run_id=chunking_run.id,
@@ -732,7 +732,7 @@ def test_overlong_revision_is_rejected(session: Session) -> None:
     summary = summarize_document(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
@@ -742,7 +742,7 @@ def test_overlong_revision_is_rejected(session: Session) -> None:
         contextualize_chunks(
             session,
             client,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             summary=summary,
             chunks=[chunk],
             chunking_run_id=chunking_run.id,
@@ -762,7 +762,7 @@ def test_revision_runaway_expansion_past_chunk_ratio_is_rejected(session: Sessio
     summary = summarize_document(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
@@ -772,7 +772,7 @@ def test_revision_runaway_expansion_past_chunk_ratio_is_rejected(session: Sessio
         contextualize_chunks(
             session,
             client,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             summary=summary,
             chunks=[chunk],
             chunking_run_id=chunking_run.id,
@@ -790,7 +790,7 @@ def test_overlong_summary_is_rejected(session: Session) -> None:
         summarize_document(
             session,
             client,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             conversion_output_id=_OUTPUT,
             markdown_hash_xx64=_HASH_A,
             document_text=_DOC_TEXT,
@@ -833,7 +833,7 @@ def test_contextualize_rejects_summary_from_another_source(session: Session) -> 
     foreign_summary = summarize_document(
         session,
         client,
-        aizk_uuid="22222222-2222-2222-2222-222222222222",
+        source_id="22222222-2222-2222-2222-222222222222",
         conversion_output_id="other-output",
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
@@ -844,7 +844,7 @@ def test_contextualize_rejects_summary_from_another_source(session: Session) -> 
         contextualize_chunks(
             session,
             client,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             summary=foreign_summary,
             chunks=chunks,
             chunking_run_id=chunking_run.id,
@@ -861,18 +861,18 @@ def test_contextualize_rejects_chunk_from_another_source(session: Session) -> No
     summary = summarize_document(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
     )
-    foreign_chunk = _make_chunk("foreign body", ordinal=1, aizk_uuid="22222222-2222-2222-2222-222222222222")
+    foreign_chunk = _make_chunk("foreign body", ordinal=1, source_id="22222222-2222-2222-2222-222222222222")
 
     with pytest.raises(ValueError, match="do not belong to source '11111111-1111-1111-1111-111111111111'"):
         contextualize_chunks(
             session,
             client,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             summary=summary,
             chunks=[local, foreign_chunk],
             chunking_run_id=chunking_run.id,
@@ -894,7 +894,7 @@ def test_contextualize_rejects_chunking_run_that_is_not_a_chunking_run(session: 
     summary = summarize_document(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
@@ -905,7 +905,7 @@ def test_contextualize_rejects_chunking_run_that_is_not_a_chunking_run(session: 
         contextualize_chunks(
             session,
             client,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             summary=summary,
             chunks=[chunk],
             chunking_run_id=summary.run_id,
@@ -922,7 +922,7 @@ def test_contextualize_rejects_splitter_version_mismatch_with_chunking_run(sessi
     summary = summarize_document(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
@@ -932,7 +932,7 @@ def test_contextualize_rejects_splitter_version_mismatch_with_chunking_run(sessi
         contextualize_chunks(
             session,
             client,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             summary=summary,
             chunks=[chunk],
             chunking_run_id=chunking_run.id,
@@ -949,7 +949,7 @@ def test_contextualize_rejects_chunk_absent_from_referenced_run_manifest(session
     summary = summarize_document(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
@@ -961,7 +961,7 @@ def test_contextualize_rejects_chunk_absent_from_referenced_run_manifest(session
         contextualize_chunks(
             session,
             client,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             summary=summary,
             chunks=[stray],
             chunking_run_id=chunking_run.id,
@@ -983,7 +983,7 @@ def test_variant_records_summary_run_id_outside_the_derivation_key(session: Sess
     summary = summarize_document(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
@@ -991,7 +991,7 @@ def test_variant_records_summary_run_id_outside_the_derivation_key(session: Sess
     variants = contextualize_chunks(
         session,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         summary=summary,
         chunks=chunks,
         chunking_run_id=chunking_run.id,

@@ -29,7 +29,7 @@ def test_ui_jobs_renders_table_and_filters(db_session) -> None:
     db_session.refresh(bookmark)
 
     job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title=bookmark.title,
         payload_version=1,
@@ -51,7 +51,7 @@ def test_ui_jobs_renders_table_and_filters(db_session) -> None:
     assert "htmx.org" in body
     assert 'id="jobs-panel"' in body
     assert "Job ID" in body
-    assert "aizk_uuid" in body
+    assert "source_id" in body
     assert "karakeep_id" in body
     assert "title" in body
     assert "status" in body
@@ -89,7 +89,7 @@ def test_ui_jobs_filters_across_all_jobs(db_session) -> None:
     db_session.refresh(target_bookmark)
 
     target_job = ConversionJob(
-        aizk_uuid=target_bookmark.aizk_uuid,
+        source_id=target_bookmark.source_id,
         owner_id="self",
         title="Special Target",
         payload_version=1,
@@ -118,7 +118,7 @@ def test_ui_jobs_filters_across_all_jobs(db_session) -> None:
         db_session.add(bookmark)
         queued_at = base_time + dt.timedelta(minutes=idx + 1)
         job = ConversionJob(
-            aizk_uuid=bookmark.aizk_uuid,
+            source_id=bookmark.source_id,
             owner_id="self",
             title=bookmark.title,
             payload_version=1,
@@ -167,9 +167,9 @@ def test_ui_jobs_title_column_prefers_enriched_source_title(db_session) -> None:
     db_session.commit()
     db_session.refresh(bookmark)
 
-    placeholder = str(bookmark.aizk_uuid)
+    placeholder = str(bookmark.source_id)
     job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title=placeholder,
         payload_version=1,
@@ -186,7 +186,7 @@ def test_ui_jobs_title_column_prefers_enriched_source_title(db_session) -> None:
     assert response.status_code == 200
     body = response.text
     assert enriched_title in body
-    # The aizk_uuid column always renders the UUID; with correct precedence the title
+    # The source_id column always renders the UUID; with correct precedence the title
     # column shows enriched_title instead of the placeholder, so the UUID appears once.
     assert body.count(placeholder) == 1
 
@@ -209,9 +209,9 @@ def test_ui_jobs_title_column_falls_back_to_placeholder_when_source_title_null(d
     db_session.commit()
     db_session.refresh(bookmark)
 
-    placeholder = str(bookmark.aizk_uuid)
+    placeholder = str(bookmark.source_id)
     job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title=placeholder,
         payload_version=1,
@@ -226,7 +226,7 @@ def test_ui_jobs_title_column_falls_back_to_placeholder_when_source_title_null(d
         response = client.get("/ui/jobs")
 
     assert response.status_code == 200
-    # Placeholder appears in both the aizk_uuid column and the title column when Source.title is NULL.
+    # Placeholder appears in both the source_id column and the title column when Source.title is NULL.
     assert response.text.count(placeholder) == 2
 
 
@@ -251,9 +251,9 @@ def test_ui_jobs_search_matches_enriched_source_title(db_session) -> None:
     db_session.commit()
     db_session.refresh(bookmark)
 
-    placeholder = str(bookmark.aizk_uuid)
+    placeholder = str(bookmark.source_id)
     job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title=placeholder,  # placeholder UUID — does not contain "attention"
         payload_version=1,
@@ -293,7 +293,7 @@ def test_ui_jobs_delete_action_removes_failed_and_cancelled_jobs(db_session) -> 
     db_session.refresh(bookmark)
 
     failed_job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title=bookmark.title,
         payload_version=1,
@@ -302,7 +302,7 @@ def test_ui_jobs_delete_action_removes_failed_and_cancelled_jobs(db_session) -> 
         idempotency_key="f" * 64,
     )
     cancelled_job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title=bookmark.title,
         payload_version=1,
@@ -352,7 +352,7 @@ def test_ui_jobs_delete_action_rejects_non_deletable_status(db_session) -> None:
     db_session.refresh(bookmark)
 
     queued_job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title=bookmark.title,
         payload_version=1,
@@ -408,7 +408,7 @@ def test_ui_jobs_search_with_no_matches_shows_filtered_empty_message(db_session)
     db_session.refresh(bookmark)
 
     job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title=bookmark.title,
         payload_version=1,
@@ -446,7 +446,7 @@ def test_ui_jobs_status_filter_with_no_matches_shows_filtered_empty_message(db_s
     db_session.refresh(bookmark)
 
     succeeded_job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title=bookmark.title,
         payload_version=1,
@@ -455,7 +455,7 @@ def test_ui_jobs_status_filter_with_no_matches_shows_filtered_empty_message(db_s
         idempotency_key="t" * 64,
     )
     queued_job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title=bookmark.title,
         payload_version=1,
@@ -494,7 +494,7 @@ def test_ui_jobs_bulk_cancel_mixed_eligibility_splits_applied_and_ineligible(db_
     db_session.refresh(bookmark)
 
     queued_job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title=bookmark.title,
         payload_version=1,
@@ -503,7 +503,7 @@ def test_ui_jobs_bulk_cancel_mixed_eligibility_splits_applied_and_ineligible(db_
         idempotency_key="q" * 64,
     )
     succeeded_job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title=bookmark.title,
         payload_version=1,
@@ -554,7 +554,7 @@ def test_ui_jobs_bulk_action_missing_job_counted_as_ineligible(db_session) -> No
     db_session.refresh(bookmark)
 
     queued_job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title=bookmark.title,
         payload_version=1,
@@ -599,7 +599,7 @@ def test_ui_jobs_bulk_action_all_eligible_omits_skipped_phrase(db_session) -> No
     db_session.refresh(bookmark)
 
     queued_a = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title=bookmark.title,
         payload_version=1,
@@ -608,7 +608,7 @@ def test_ui_jobs_bulk_action_all_eligible_omits_skipped_phrase(db_session) -> No
         idempotency_key="x" * 64,
     )
     queued_b = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title=bookmark.title,
         payload_version=1,

@@ -32,7 +32,7 @@ desc {%- endif -%} {%- endmacro %}
         id="text-filter"
         type="text"
         name="search"
-        placeholder="Filter by job id, aizk_uuid, title, or output id"
+        placeholder="Filter by job id, source_id, title, or output id"
         autocomplete="off"
         value="{{ search_value }}"
       />
@@ -65,7 +65,7 @@ desc {%- endif -%} {%- endmacro %}
               Job ID
             </button>
           </th>
-          <th>aizk_uuid</th>
+          <th>source_id</th>
           <th>title</th>
           <th>
             <button
@@ -105,7 +105,7 @@ desc {%- endif -%} {%- endmacro %}
             <input type="checkbox" class="row-select" name="job_ids" value="{{ job.id }}" form="jobs-form" />
           </td>
           <td class="mono">{{ job.id }}</td>
-          <td class="mono uuid">{{ job.aizk_uuid }}</td>
+          <td class="mono uuid">{{ job.source_id }}</td>
           <td class="title-cell">{{ job.title }}</td>
           <td><span class="status {{ job.status }}">{{ job.status }}</span></td>
           <td class="mono">{{ job.attempts }}</td>

@@ -148,7 +148,7 @@ def bookmark(db_session: Session) -> Source:
 def job(db_session: Session, bookmark: Source) -> ConversionJob:
     """Create and return a RUNNING test job."""
     j = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title=bookmark.title,
         status=ConversionJobStatus.RUNNING,
@@ -423,7 +423,7 @@ def test_finalize_skips_cancelled_job(
 ) -> None:
     """A CANCELLED job must not be re-mapped to FAILED_* by finalize."""
     j = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title=bookmark.title,
         status=ConversionJobStatus.CANCELLED,
@@ -450,7 +450,7 @@ def test_finalize_skips_cancelled_job(
 def test_error_detail_column_exists_after_migration(db_session: Session, bookmark: Source) -> None:
     """Verify the error_detail column is writable after migrations run."""
     j = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title="Migration Test",
         status=ConversionJobStatus.FAILED_PERM,

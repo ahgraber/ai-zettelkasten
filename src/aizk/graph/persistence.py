@@ -2,7 +2,7 @@
 
 The splitter stays a pure, I/O-free function; this module is the distinct
 component that durably stores its output. :func:`persist_chunks` opens a new
-chunking run for a **source** (its durable ``aizk_uuid``, superseding the prior
+chunking run for a **source** (its durable ``source_id``, superseding the prior
 active run via the shared :func:`aizk.pipeline.run.record_run` primitive), reuses
 or inserts each chunk row addressed by its content-derived ``chunk_id`` carrying
 **stable identity facts only**, records what the run consumed (the
@@ -87,7 +87,7 @@ def to_chunk_row(chunk: SplitterChunk) -> Chunk:
     return Chunk(
         chunk_id=chunk.chunk_id,
         content_hash=chunk.content_hash,
-        doc_id=chunk.doc_id,
+        source_id=chunk.source_id,
         heading_path_json=_heading_path_to_json(chunk.heading_path),
         ordinal=chunk.ordinal,
         text=chunk.text,
@@ -102,7 +102,7 @@ def _stable_facts(row: Chunk) -> tuple[str, str, str, int, str, int]:
     ``chunk_id``; comparing them detects an existing row whose identity conflicts
     with an incoming chunk claiming the same id.
     """
-    return (row.content_hash, row.doc_id, row.heading_path_json, row.ordinal, row.text, row.char_count)
+    return (row.content_hash, row.source_id, row.heading_path_json, row.ordinal, row.text, row.char_count)
 
 
 def reconstruct_chunk(
@@ -125,7 +125,7 @@ def reconstruct_chunk(
     return SplitterChunk(
         chunk_id=row.chunk_id,
         content_hash=row.content_hash,
-        doc_id=row.doc_id,
+        source_id=row.source_id,
         heading_path=tuple(json.loads(row.heading_path_json)),
         ordinal=row.ordinal,
         text=row.text,
@@ -140,7 +140,7 @@ def reconstruct_chunk(
 def persist_chunks(
     session: "Session",
     *,
-    aizk_uuid: str,
+    source_id: str,
     conversion_output_id: str,
     markdown_hash_xx64: str,
     splitter_version: int,
@@ -148,7 +148,7 @@ def persist_chunks(
 ) -> PipelineRun:
     """Persist a source's emitted chunks under its active chunking run.
 
-    The run is scoped by the durable source identity ``aizk_uuid`` (not the
+    The run is scoped by the durable source identity ``source_id`` (not the
     per-conversion artifact id) and keyed by a derivation key over
     ``markdown_hash_xx64`` and ``splitter_version``. If the source's active
     chunking run already carries that derivation key **and** the same manifest set,
@@ -168,8 +168,8 @@ def persist_chunks(
 
     Args:
         session: Active session; the caller owns commit/rollback.
-        aizk_uuid: The durable source identity (``str(aizk_uuid)``); the run's
-            scope and the chunks' ``doc_id``.
+        source_id: The durable source identity (``str(source_id)``); the run's
+            scope and the chunks' ``source_id``.
         conversion_output_id: Locator for the source Markdown this run consumed;
             recorded as run input provenance (not a derivation input).
         markdown_hash_xx64: Content hash of the source markdown; part of the
@@ -185,7 +185,7 @@ def persist_chunks(
         newly-opened run, or the reused prior run when inputs are unchanged.
 
     Raises:
-        ValueError: If any chunk's ``doc_id``, ``converted_artifact_id``,
+        ValueError: If any chunk's ``source_id``, ``converted_artifact_id``,
             ``markdown_hash_xx64``, or ``splitter_version`` does not match the
             run's — guarding against persisting chunks whose provenance disagrees
             with the run keyed by those values; or if a chunk's ``chunk_id``
@@ -198,13 +198,13 @@ def persist_chunks(
     mismatched = [
         c.chunk_id
         for c in chunks
-        if (c.doc_id, c.converted_artifact_id, c.markdown_hash_xx64, c.splitter_version)
-        != (aizk_uuid, conversion_output_id, markdown_hash_xx64, splitter_version)
+        if (c.source_id, c.converted_artifact_id, c.markdown_hash_xx64, c.splitter_version)
+        != (source_id, conversion_output_id, markdown_hash_xx64, splitter_version)
     ]
     if mismatched:
         raise ValueError(
             f"chunks {mismatched} do not match the run provenance "
-            f"(aizk_uuid={aizk_uuid!r}, conversion_output_id={conversion_output_id!r}, "
+            f"(source_id={source_id!r}, conversion_output_id={conversion_output_id!r}, "
             f"markdown_hash_xx64={markdown_hash_xx64!r}, splitter_version={splitter_version})"
         )
 
@@ -224,7 +224,7 @@ def persist_chunks(
 
     derivation_key = _chunking_derivation_key(markdown_hash_xx64, splitter_version)
     incoming_manifest = {(c.chunk_id, c.span[0], c.span[1]) for c in chunks}
-    active = active_chunking_run(session, aizk_uuid)
+    active = active_chunking_run(session, source_id)
     if (
         active is not None
         and active.id is not None
@@ -234,14 +234,14 @@ def persist_chunks(
         logger.debug(
             "Reusing active chunking run id=%s for source=%s (unchanged derivation key and manifest)",
             active.id,
-            aizk_uuid,
+            source_id,
         )
         return active
 
     run = record_run(
         session,
         stage=CHUNKING_STAGE,
-        scope_key=aizk_uuid,
+        scope_id=source_id,
         derivation_key=derivation_key,
         version_stamps={"splitter_version": str(splitter_version)},
     )
@@ -263,7 +263,7 @@ def persist_chunks(
                 text_=chunk.text,
                 chunk_id=chunk.chunk_id,
                 run_id=run.id,
-                doc_id=aizk_uuid,
+                source_id=source_id,
             )
         session.add(
             ChunkRunManifest(
@@ -278,18 +278,18 @@ def persist_chunks(
         "Persisted %d chunks under chunking run id=%s source=%s markdown_hash=%s",
         len(chunks),
         run.id,
-        aizk_uuid,
+        source_id,
         markdown_hash_xx64,
     )
     return run
 
 
-def active_chunking_run(session: "Session", aizk_uuid: str) -> PipelineRun | None:
-    """Return the active chunking run for a source (``aizk_uuid``), or ``None``."""
+def active_chunking_run(session: "Session", source_id: str) -> PipelineRun | None:
+    """Return the active chunking run for a source (``source_id``), or ``None``."""
     return session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == CHUNKING_STAGE,
-            PipelineRun.scope_key == aizk_uuid,
+            PipelineRun.scope_id == source_id,
             PipelineRun.status == RunStatus.ACTIVE,
         )
     ).one_or_none()
@@ -391,14 +391,14 @@ def chunks_of_run(session: "Session", run_id: int) -> list[SplitterChunk]:
     return reconstructed
 
 
-def current_chunk_ids(session: "Session", aizk_uuid: str) -> set[str]:
+def current_chunk_ids(session: "Session", source_id: str) -> set[str]:
     """Return the ``chunk_id``s current for a source: the manifest of its active run.
 
     A ``chunk_id`` is current if and only if it is in the source's active chunking
     run's manifest; chunks whose only run is superseded are not current, though
     their rows remain present and unmodified.
     """
-    run = active_chunking_run(session, aizk_uuid)
+    run = active_chunking_run(session, source_id)
     if run is None or run.id is None:
         return set()
     return set(members_of_run(session, run.id))
@@ -409,14 +409,14 @@ def current_chunk_ids(session: "Session", aizk_uuid: str) -> set[str]:
 #
 # Internal scratch state caching validated contextualization model outputs so a
 # retry of a partially-completed attempt re-invokes the model only for outputs
-# not already retained. Identity is ``(kind, scope_key, derivation_key)``; the
+# not already retained. Identity is ``(kind, scope_id, derivation_key)``; the
 # value ``''`` is a legal present-empty entry distinct from absence. These helpers
 # are the only access path to ``graph_contextualization_output_memo``; the memo is
 # never read as product state.
 # --------------------------------------------------------------------------- #
 
 
-def memo_get(session: "Session", kind: "MemoKind", scope_key: str, derivation_key: str) -> str | None:
+def memo_get(session: "Session", kind: "MemoKind", scope_id: str, derivation_key: str) -> str | None:
     """Return the retained output for a memo key, or ``None`` if absent.
 
     Distinguishes three cases the caller must treat differently: ``None`` means the
@@ -427,7 +427,7 @@ def memo_get(session: "Session", kind: "MemoKind", scope_key: str, derivation_ke
     row = session.exec(
         select(ContextualizationOutputMemo).where(
             ContextualizationOutputMemo.kind == kind,
-            ContextualizationOutputMemo.scope_key == scope_key,
+            ContextualizationOutputMemo.scope_id == scope_id,
             ContextualizationOutputMemo.derivation_key == derivation_key,
         )
     ).one_or_none()
@@ -435,12 +435,12 @@ def memo_get(session: "Session", kind: "MemoKind", scope_key: str, derivation_ke
 
 
 def memo_upsert_and_read(
-    engine: "Engine", kind: "MemoKind", scope_key: str, derivation_key: str, output_text: str
+    engine: "Engine", kind: "MemoKind", scope_id: str, derivation_key: str, output_text: str
 ) -> str:
     """Idempotently retain ``output_text`` for a memo key and return the authoritative stored value.
 
     Opens its own short ``BEGIN IMMEDIATE`` transaction (never spanning a model
-    call), inserts the row with ``ON CONFLICT(kind, scope_key, derivation_key) DO
+    call), inserts the row with ``ON CONFLICT(kind, scope_id, derivation_key) DO
     NOTHING``, then reads and returns the value now stored. On a conflict the insert
     is a no-op and the **pre-existing** value is returned, so a benign same-source
     contention (two work-units re-deriving the same key) resolves to one
@@ -455,29 +455,29 @@ def memo_upsert_and_read(
     """
     statement = (
         sqlite_insert(ContextualizationOutputMemo)
-        .values(kind=kind, scope_key=scope_key, derivation_key=derivation_key, output_text=output_text)
-        .on_conflict_do_nothing(index_elements=["kind", "scope_key", "derivation_key"])
+        .values(kind=kind, scope_id=scope_id, derivation_key=derivation_key, output_text=output_text)
+        .on_conflict_do_nothing(index_elements=["kind", "scope_id", "derivation_key"])
     )
     with begin_immediate(engine) as session:
         session.execute(statement)
-        stored = memo_get(session, kind, scope_key, derivation_key)
+        stored = memo_get(session, kind, scope_id, derivation_key)
     if stored is None:  # pragma: no cover — a row always exists after insert-or-ignore
-        raise RuntimeError(f"memo upsert for ({kind!r}, {scope_key!r}) produced no stored row")
+        raise RuntimeError(f"memo upsert for ({kind!r}, {scope_id!r}) produced no stored row")
     return stored
 
 
-def memo_delete_keys(session: "Session", scope_key: str, keys: "Sequence[tuple[MemoKind, str]]") -> None:
-    """Delete exactly the listed ``(kind, derivation_key)`` memo entries under ``scope_key``.
+def memo_delete_keys(session: "Session", scope_id: str, keys: "Sequence[tuple[MemoKind, str]]") -> None:
+    """Delete exactly the listed ``(kind, derivation_key)`` memo entries under ``scope_id``.
 
     Key-exact, not source-wide: it removes only the entries a completed generation
-    consumed, leaving any other same-``scope_key`` entry (e.g. a concurrent
+    consumed, leaving any other same-``scope_id`` entry (e.g. a concurrent
     same-source attempt working under different keys) intact. Runs in the caller's
     transaction so the prune commits atomically with the generation's persistence.
     """
     for kind, derivation_key in keys:
         session.execute(
             delete(ContextualizationOutputMemo).where(
-                ContextualizationOutputMemo.scope_key == scope_key,
+                ContextualizationOutputMemo.scope_id == scope_id,
                 ContextualizationOutputMemo.kind == kind,
                 ContextualizationOutputMemo.derivation_key == derivation_key,
             )

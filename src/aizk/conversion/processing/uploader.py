@@ -88,7 +88,7 @@ class _UploadPlan:
     manifest is uploaded, reflecting THIS job's source metadata.
     """
 
-    aizk_uuid: UUID
+    source_id: UUID
     owner_id: str
     title: str
     payload_version: int
@@ -162,14 +162,14 @@ def _prepare_upload(job_id: int, workspace: Path, config: ConversionConfig) -> _
             return None
         if job.status == ConversionJobStatus.CANCELLED:
             return None
-        source = session.exec(select(Source).where(Source.aizk_uuid == job.aizk_uuid)).one()
+        source = session.exec(select(Source).where(Source.source_id == job.source_id)).one()
 
         # Reuse existing S3 artifacts when the content hash matches a prior output for
         # the same bookmark, avoiding redundant uploads of identical content.
         new_hash = subprocess_meta.markdown_hash_xx64
         prior_output = session.exec(
             select(ConversionOutput)
-            .where(ConversionOutput.aizk_uuid == source.aizk_uuid)
+            .where(ConversionOutput.source_id == source.source_id)
             .where(ConversionOutput.markdown_hash_xx64 == new_hash)
             .order_by(ConversionOutput.created_at.desc())
         ).first()
@@ -177,7 +177,7 @@ def _prepare_upload(job_id: int, workspace: Path, config: ConversionConfig) -> _
         output_title = subprocess_meta.source_title or job.title
 
         bucket = config.s3_bucket_name
-        prefix = str(source.aizk_uuid)
+        prefix = str(source.source_id)
         manifest_local_path = workspace / "manifest.json"
 
         submitted_ref_raw = json.loads(job.source_ref) if job.source_ref else None
@@ -232,7 +232,7 @@ def _prepare_upload(job_id: int, workspace: Path, config: ConversionConfig) -> _
             save_manifest(manifest, manifest_local_path)
 
             return _UploadPlan(
-                aizk_uuid=source.aizk_uuid,
+                source_id=source.source_id,
                 owner_id=job.owner_id,
                 title=output_title,
                 payload_version=job.payload_version,
@@ -285,7 +285,7 @@ def _prepare_upload(job_id: int, workspace: Path, config: ConversionConfig) -> _
         if not job.owner_id:
             raise MissingOwnerOnJob(f"Job {job_id} has no owner_id; refusing to build upload plan")
         return _UploadPlan(
-            aizk_uuid=source.aizk_uuid,
+            source_id=source.source_id,
             owner_id=job.owner_id,
             title=output_title,
             payload_version=job.payload_version,
@@ -329,7 +329,7 @@ def _execute_upload(plan: _UploadPlan, job_id: int, config: ConversionConfig) ->
 
         output = ConversionOutput(
             job_id=job_id,
-            aizk_uuid=plan.aizk_uuid,
+            source_id=plan.source_id,
             owner_id=plan.owner_id,
             title=plan.title,
             payload_version=plan.payload_version,

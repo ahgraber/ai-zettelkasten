@@ -8,9 +8,9 @@ pydantic model per kind (``extra="forbid"`` so an unknown field is rejected on
 write).
 
 The stage name stamped on every event is :data:`CONTEXTUALIZATION_STAGE`; each
-event also carries the ``aizk_uuid`` source identity and, where a run exists, the
+event also carries the ``source_id`` source identity and, where a run exists, the
 ``run_id`` of the work-unit's chunking run, so a source's progress is resolvable
-across stages by a single ``aizk_uuid`` query.
+across stages by a single ``source_id`` query.
 """
 
 from __future__ import annotations

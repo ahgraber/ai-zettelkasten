@@ -34,7 +34,7 @@ class JobResponse(BaseModel):
     """Response schema for conversion jobs."""
 
     id: int
-    aizk_uuid: UUID
+    source_id: UUID
     karakeep_id: str | None = None
     source_ref: SourceRef
     url: AnyUrl | None = None
@@ -76,7 +76,7 @@ class OutputResponse(BaseModel):
 
     id: int
     job_id: int
-    aizk_uuid: UUID
+    source_id: UUID
     title: str
     payload_version: int
     s3_prefix: str

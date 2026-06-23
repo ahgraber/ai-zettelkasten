@@ -34,9 +34,9 @@ def _create_source(session, karakeep_id: str) -> Bookmark:
     return bookmark
 
 
-def _create_queued_job(session, *, aizk_uuid: UUID, idempotency_key: str) -> ConversionJob:
+def _create_queued_job(session, *, source_id: UUID, idempotency_key: str) -> ConversionJob:
     job = ConversionJob(
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         owner_id="self",
         title="Test",
         payload_version=1,
@@ -57,7 +57,7 @@ def _fill_queue(session, bookmark: Bookmark, count: int) -> list[ConversionJob]:
         jobs.append(
             _create_queued_job(
                 session,
-                aizk_uuid=bookmark.aizk_uuid,
+                source_id=bookmark.source_id,
                 idempotency_key=f"fill-{i:04d}",
             )
         )
@@ -100,7 +100,7 @@ def test_rejected_submission_does_not_create_orphan_job(db_session, monkeypatch)
     source = db_session.exec(select(Bookmark).where(Bookmark.karakeep_id == "bp-orphan-new")).first()
     assert source is not None, "Source row must be persisted even for rejected submissions"
     # No job is created for the rejected submission
-    jobs_for_source = db_session.exec(select(ConversionJob).where(ConversionJob.aizk_uuid == source.aizk_uuid)).all()
+    jobs_for_source = db_session.exec(select(ConversionJob).where(ConversionJob.source_id == source.source_id)).all()
     assert len(jobs_for_source) == 0, "Rejected submission must not persist a job row"
 
 
@@ -128,7 +128,7 @@ def test_duplicate_bypasses_queue_depth_check(db_session, monkeypatch) -> None:
     # Manually create a job that the API resubmission should match via idempotency_key
     existing = _create_queued_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         idempotency_key="dup-key-00",
     )
 

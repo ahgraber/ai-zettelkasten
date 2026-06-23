@@ -40,7 +40,7 @@ _SUBPROCESS_RUNNER = (
     "import sys\n"
     "from aizk.chunking import split\n"
     "text = sys.stdin.read()\n"
-    "chunks = split(text, doc_id=%r, converted_artifact_id=%r, markdown_hash_xx64=%r)\n"
+    "chunks = split(text, source_id=%r, converted_artifact_id=%r, markdown_hash_xx64=%r)\n"
     "sys.stdout.write('\\n'.join(c.chunk_id for c in chunks))\n"
 ) % (DOC_ID, CONVERTED_ARTIFACT_ID, MARKDOWN_HASH_XX64)
 

@@ -245,7 +245,7 @@ def _usage_record(
     claim_idx: int | None = None,
 ) -> UsageRecord:
     return UsageRecord(
-        doc_uuid=doc.aizk_uuid,
+        doc_uuid=doc.source_id,
         section_idx=section_idx,
         sentence_idx=sentence_idx,
         claim_idx=claim_idx,
@@ -325,7 +325,7 @@ async def _process_sentence(
         out.extend(
             ClaimRecord(
                 claim=ExtractedClaim(
-                    doc_uuid=doc.aizk_uuid,
+                    doc_uuid=doc.source_id,
                     heading_path=heading_path,
                     section_idx=ctx.section_idx,
                     sentence_idx=ctx.sentence_idx,
@@ -348,14 +348,14 @@ def _fail_record(
     logger.warning(
         "Claim extraction failed at stage=%s doc=%s section=%d sentence=%d: %s",
         stage,
-        doc.aizk_uuid,
+        doc.source_id,
         ctx.section_idx,
         ctx.sentence_idx,
         exc,
     )
     return FailedRecord(
         failure=FailedExtraction(
-            doc_uuid=doc.aizk_uuid,
+            doc_uuid=doc.source_id,
             section_idx=ctx.section_idx,
             sentence_idx=ctx.sentence_idx,
             stage=stage,
@@ -398,14 +398,14 @@ async def extract_claims(
         except Exception as exc:
             logger.warning(
                 "Contextualization failed for doc=%s section=%d: %s",
-                doc.aizk_uuid,
+                doc.source_id,
                 section_idx,
                 exc,
             )
             records.append(
                 FailedRecord(
                     failure=FailedExtraction(
-                        doc_uuid=doc.aizk_uuid,
+                        doc_uuid=doc.source_id,
                         section_idx=section_idx,
                         sentence_idx=-1,
                         stage="contextualize",

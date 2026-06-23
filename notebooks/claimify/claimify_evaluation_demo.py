@@ -86,14 +86,14 @@ EVAL_PATHS: dict[str, str] = {
 
 # %%
 docs = load_docs(KARAKEEP_IDS)
-doc_by_uuid = {d.aizk_uuid: d for d in docs}
+doc_by_uuid = {d.source_id: d for d in docs}
 
 extraction_by_doc: dict = {}
 for d in docs:
     try:
-        extraction_by_doc[d.aizk_uuid] = read_extraction_jsonl(d.aizk_uuid)
+        extraction_by_doc[d.source_id] = read_extraction_jsonl(d.source_id)
     except FileNotFoundError:
-        print(f"!! missing extraction JSONL for {d.title} ({d.aizk_uuid}); skipping")
+        print(f"!! missing extraction JSONL for {d.title} ({d.source_id}); skipping")
 
 for uuid, recs in extraction_by_doc.items():
     n_claims = sum(1 for r in recs if isinstance(r, ClaimRecord))
@@ -186,7 +186,7 @@ _is_var = 0  # variable token total for invalid_sentence
 for _d in docs:
     for _si, _sec in enumerate(split_by_headings(_d.markdown)):
         _stok = _tok(_sec.content)
-        _sec_tok[(_d.aizk_uuid, _si)] = _stok
+        _sec_tok[(_d.source_id, _si)] = _stok
         for _ctx in build_sentence_contexts(_sec, _si, p=0, f=0):
             _is_var += _Q_TOK + _stok + _tok(_ctx.sentence)
 
@@ -282,7 +282,7 @@ async def _run_eval(doc, records) -> Path:
         paths=EVAL_PATHS,
         api_key=OPENROUTER_API_KEY,
     )
-    n = sum(1 for _ in read_evaluation_jsonl(doc.aizk_uuid))
+    n = sum(1 for _ in read_evaluation_jsonl(doc.source_id))
     print(f"{doc.title[:60]:60s}  verdicts={n}  -> {path.name}")
     return path
 
@@ -291,7 +291,7 @@ if RUN_FULL:
     _sem = asyncio.Semaphore(CONCURRENCY)
 
     async def _one_doc(d):
-        recs = extraction_by_doc.get(d.aizk_uuid)
+        recs = extraction_by_doc.get(d.source_id)
         if not recs:
             return
         async with _sem:
@@ -303,9 +303,9 @@ if RUN_FULL:
 # Aggregation: load all eval verdicts, render per-model agreement table.
 all_verdicts = []
 for d in docs:
-    p = EVALUATION_DIR / f"{d.aizk_uuid}.jsonl"
+    p = EVALUATION_DIR / f"{d.source_id}.jsonl"
     if p.exists():
-        all_verdicts.extend(read_evaluation_jsonl(d.aizk_uuid))
+        all_verdicts.extend(read_evaluation_jsonl(d.source_id))
 
 print(f"loaded {len(all_verdicts)} verdicts across {len(docs)} docs")
 

@@ -79,7 +79,7 @@ def _seed_source_and_job(
     db_session.refresh(source)
 
     job = ConversionJob(
-        aizk_uuid=source.aizk_uuid,
+        source_id=source.source_id,
         owner_id=owner_id,
         title=bookmark_id,
         idempotency_key=("o" * 64),

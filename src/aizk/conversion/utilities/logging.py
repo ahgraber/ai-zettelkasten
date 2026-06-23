@@ -34,7 +34,7 @@ _RESERVED_RECORD_ATTRS: frozenset[str] = frozenset(
 ) | {"message", "asctime"}
 
 # Static context fields the structured logger always emits at top level.
-_STATIC_CONTEXT_KEYS: tuple[str, ...] = ("aizk_uuid", "job_id", "karakeep_id", "status")
+_STATIC_CONTEXT_KEYS: tuple[str, ...] = ("source_id", "job_id", "karakeep_id", "status")
 
 
 def _extract_extras(record: LogRecord, exclude: set[str]) -> dict[str, object]:
@@ -64,7 +64,7 @@ class JsonFormatter(logging.Formatter):
     Top-level fields:
 
     - ``timestamp``, ``level``, ``logger``, ``message`` — standard envelope.
-    - ``aizk_uuid``, ``job_id``, ``karakeep_id``, ``status`` — static
+    - ``source_id``, ``job_id``, ``karakeep_id``, ``status`` — static
       conversion-context keys (always present, possibly ``null``).
     - Any other ``extra`` key attached to the record (e.g. ``url``, ``host``,
       ``ip``, ``error_class``, ``hop_index``, ``configured_cap_bytes``,
@@ -101,7 +101,7 @@ class _TextFormatter(logging.Formatter):
 
     _BASE_FORMAT = (
         "%(asctime)s %(levelname)s %(name)s %(message)s "
-        "aizk_uuid=%(aizk_uuid)s job_id=%(job_id)s "
+        "source_id=%(source_id)s job_id=%(job_id)s "
         "karakeep_id=%(karakeep_id)s status=%(status)s"
     )
 

@@ -12,11 +12,11 @@ from tests.conversion._helpers import make_job, make_source
 def test_status_counts_returns_totals(db_session) -> None:
     app = create_app()
     bookmark = make_source(db_session, "bm_status_counts")
-    make_job(db_session, aizk_uuid=bookmark.aizk_uuid, status=ConversionJobStatus.QUEUED, idempotency_key="a" * 64)
-    make_job(db_session, aizk_uuid=bookmark.aizk_uuid, status=ConversionJobStatus.QUEUED, idempotency_key="b" * 64)
+    make_job(db_session, source_id=bookmark.source_id, status=ConversionJobStatus.QUEUED, idempotency_key="a" * 64)
+    make_job(db_session, source_id=bookmark.source_id, status=ConversionJobStatus.QUEUED, idempotency_key="b" * 64)
     make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         status=ConversionJobStatus.FAILED_RETRYABLE,
         idempotency_key="c" * 64,
     )

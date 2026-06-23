@@ -5,7 +5,7 @@ Turns an already-normalized Markdown artifact into ordered, deterministically-id
 
 ## Public surface
 
-- `split(markdown_text, *, doc_id, converted_artifact_id, markdown_hash_xx64, size_budget=DEFAULT_SIZE_BUDGET) -> list[Chunk]` — the deterministic, pure splitter entry point.
+- `split(markdown_text, *, source_id, converted_artifact_id, markdown_hash_xx64, size_budget=DEFAULT_SIZE_BUDGET) -> list[Chunk]` — the deterministic, pure splitter entry point.
   No I/O; no dependence on wall-clock time, environment, or process identity.
 - `Chunk` — the immutable chunk data model (identity, content hash, heading
   path, ordinal, text, span, and provenance fields).
@@ -21,7 +21,7 @@ A paragraph carrying an inline link, image, code span, or math span is kept whol
 A non-splittable block (code, table, list, blockquote, math, raw HTML) is kept whole even when it exceeds the budget.
 Frontmatter and pre-heading content are emitted under the empty heading path.
 
-`chunk_id` is derived from the chunk's address `(doc_id, heading_path, ordinal)` and its `content_hash`, so content edits and address moves are independently observable.
+`chunk_id` is derived from the chunk's address `(source_id, heading_path, ordinal)` and its `content_hash`, so content edits and address moves are independently observable.
 Identity is stable across processes.
 
 ## References

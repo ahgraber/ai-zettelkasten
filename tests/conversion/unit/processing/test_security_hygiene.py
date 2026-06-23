@@ -85,7 +85,7 @@ def source(db_session: Session) -> Source:
 def running_job(db_session: Session, source: Source) -> ConversionJob:
     """Create a RUNNING ConversionJob for the test source."""
     j = ConversionJob(
-        aizk_uuid=source.aizk_uuid,
+        source_id=source.source_id,
         owner_id="self",
         title=source.title,
         status=ConversionJobStatus.RUNNING,

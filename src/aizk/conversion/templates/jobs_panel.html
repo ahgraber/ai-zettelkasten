@@ -82,7 +82,7 @@ desc {%- endif -%} {%- endmacro %}
               Job ID
             </button>
           </th>
-          <th>aizk_uuid</th>
+          <th>source_id</th>
           <th>karakeep_id</th>
           <th>title</th>
           <th>
@@ -129,7 +129,7 @@ desc {%- endif -%} {%- endmacro %}
           <td class="mono">
             <a href="/v1/jobs/{{ job.id }}" target="_blank" rel="noopener noreferrer">{{ job.id }}</a>
           </td>
-          <td class="mono uuid">{{ job.aizk_uuid }}</td>
+          <td class="mono uuid">{{ job.source_id }}</td>
           <td>{{ job.karakeep_id }}</td>
           <td class="title-cell">{{ job.title }}</td>
           <td>

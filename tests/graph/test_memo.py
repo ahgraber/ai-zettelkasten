@@ -45,10 +45,10 @@ def engine(tmp_path: Path) -> Iterator[Engine]:
     eng.dispose()
 
 
-def _read(engine: Engine, kind: str, scope_key: str, derivation_key: str) -> str | None:
+def _read(engine: Engine, kind: str, scope_id: str, derivation_key: str) -> str | None:
     """Read a memo value through a short-lived session (no lock held across calls)."""
     with Session(engine) as session:
-        return memo_get(session, kind, scope_key, derivation_key)
+        return memo_get(session, kind, scope_id, derivation_key)
 
 
 def test_memo_get_distinguishes_absent_present_empty_and_present_text(engine: Engine) -> None:
@@ -102,7 +102,7 @@ def test_memo_delete_keys_is_scoped_to_its_source(engine: Engine) -> None:
     """A delete under one source's scope does not touch an identical key under another source."""
     other_scope = "22222222-2222-2222-2222-222222222222"
     # The summary derivation key omits the source, so two sources can share a derivation_key;
-    # scope_key is what keeps their memo entries distinct.
+    # scope_id is what keeps their memo entries distinct.
     memo_upsert_and_read(engine, _SUMMARY, _SCOPE, "shared-summary-key", "mine")
     memo_upsert_and_read(engine, _SUMMARY, other_scope, "shared-summary-key", "theirs")
 

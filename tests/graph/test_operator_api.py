@@ -51,7 +51,7 @@ def _seed(engine, *, conversion_output_id: int, status: WorkUnitStatus, attempts
         job = ContextualizationJob(
             idempotency_key=f"conversion_output:{conversion_output_id}",
             conversion_output_id=conversion_output_id,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             status=status,
             attempts=attempts,
         )
@@ -84,7 +84,7 @@ def test_detail_and_404(client: TestClient, engine) -> None:
     ok = client.get(f"/v1/contextualizations/{job_id}")
     assert ok.status_code == 200
     assert ok.json()["id"] == job_id
-    assert str(_AIZK_UUID) == ok.json()["aizk_uuid"]
+    assert str(_AIZK_UUID) == ok.json()["source_id"]
 
     assert client.get("/v1/contextualizations/9999").status_code == 404
 
@@ -105,7 +105,7 @@ def test_retry_requeues_a_terminal_unit(client: TestClient, engine) -> None:
         events = session.exec(select(PipelineEvent).where(PipelineEvent.work_unit_ref == str(job_id))).all()
         assert [e.kind for e in events] == ["requeued"]
         assert events[0].to_status == "queued"
-        assert events[0].aizk_uuid == _AIZK_UUID
+        assert events[0].source_id == _AIZK_UUID
 
 
 def test_retry_rejects_non_terminal_unit(client: TestClient, engine) -> None:

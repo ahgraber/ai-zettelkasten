@@ -38,7 +38,7 @@ def _engine_with_output(tmp_path: Path, *, markdown_hash: str):
     with Session(engine) as session:
         output = ConversionOutput(
             job_id=1,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             owner_id="owner",
             title="Doc",
             payload_version=1,

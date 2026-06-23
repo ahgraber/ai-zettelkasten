@@ -37,7 +37,7 @@ def test_raise_if_cancelled_raises(db_session: Session) -> None:
     """Raise a cancellation exception when a job is already cancelled."""
     bookmark = _create_bookmark(db_session)
     job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title=bookmark.title,
         idempotency_key="d" * 64,

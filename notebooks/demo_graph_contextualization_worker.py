@@ -255,7 +255,7 @@ class SeededDoc:
     """A seeded document's durable + locator identities for the demo."""
 
     label: str
-    aizk_uuid: UUID
+    source_id: UUID
     conversion_output_id: int
     markdown_hash: str
 
@@ -280,18 +280,18 @@ class LocalMarkdownSource:
         return self._by_output[conversion_output_id]
 
 
-def seed_conversion_output(session, *, text: str, label: str, aizk_uuid: UUID) -> int:
+def seed_conversion_output(session, *, text: str, label: str, source_id: UUID) -> int:
     """Insert (or reuse) the source, then a new ConversionJob + ConversionOutput; return the output id.
 
-    One :class:`Source` per ``aizk_uuid`` (a re-conversion of the same source adds
+    One :class:`Source` per ``source_id`` (a re-conversion of the same source adds
     a new job + output under the existing source), mirroring the real model.
     """
     markdown_hash = compute_markdown_hash(text)
-    ref = f"demo://{aizk_uuid}"
-    source = session.exec(select(Source).where(Source.aizk_uuid == aizk_uuid)).one_or_none()
+    ref = f"demo://{source_id}"
+    source = session.exec(select(Source).where(Source.source_id == source_id)).one_or_none()
     if source is None:
         source = Source(
-            aizk_uuid=aizk_uuid,
+            source_id=source_id,
             source_ref=ref,
             source_ref_hash=compute_markdown_hash(ref),
             owner_id="demo",
@@ -300,7 +300,7 @@ def seed_conversion_output(session, *, text: str, label: str, aizk_uuid: UUID) -
         session.add(source)
         session.flush()
     job = ConversionJob(
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         owner_id="demo",
         title=label,
         idempotency_key=f"demo-{uuid4().hex}",
@@ -310,13 +310,13 @@ def seed_conversion_output(session, *, text: str, label: str, aizk_uuid: UUID) -
     session.flush()
     output = ConversionOutput(
         job_id=job.id,
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         owner_id="demo",
         title=label,
         payload_version=1,
-        s3_prefix=f"demo/{aizk_uuid}",
-        markdown_key=f"demo/{aizk_uuid}/output.md",
-        manifest_key=f"demo/{aizk_uuid}/manifest.json",
+        s3_prefix=f"demo/{source_id}",
+        markdown_key=f"demo/{source_id}/output.md",
+        manifest_key=f"demo/{source_id}/manifest.json",
         markdown_hash_xx64=markdown_hash,
         docling_version="demo",
         pipeline_name="docling",
@@ -338,13 +338,13 @@ def seed_documents(docs: list[DemoDoc]) -> tuple[list[SeededDoc], LocalMarkdownS
     seeded_docs: list[SeededDoc] = []
     with Session(engine) as session:
         for doc in docs:
-            aizk_uuid = uuid4()
-            output_id = seed_conversion_output(session, text=doc.markdown_text, label=doc.label, aizk_uuid=aizk_uuid)
+            source_id = uuid4()
+            output_id = seed_conversion_output(session, text=doc.markdown_text, label=doc.label, source_id=source_id)
             source.register(output_id, doc.markdown_text, compute_markdown_hash(doc.markdown_text))
             seeded_docs.append(
                 SeededDoc(
                     label=doc.label,
-                    aizk_uuid=aizk_uuid,
+                    source_id=source_id,
                     conversion_output_id=output_id,
                     markdown_hash=compute_markdown_hash(doc.markdown_text),
                 )
@@ -356,7 +356,7 @@ def seed_documents(docs: list[DemoDoc]) -> tuple[list[SeededDoc], LocalMarkdownS
 # %%
 seeded, markdown_source = seed_documents(documents)
 for doc in seeded:
-    print(f"seeded {doc.label!r}: aizk_uuid={doc.aizk_uuid} conversion_output_id={doc.conversion_output_id}")
+    print(f"seeded {doc.label!r}: source_id={doc.source_id} conversion_output_id={doc.conversion_output_id}")
 
 # %% [markdown]
 # ## Build the worker and a runner driver
@@ -465,7 +465,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
 if not succeeded:
     raise RuntimeError("No document processed successfully — see the error_code/error_message logged above.")
 primary = succeeded[0]
-print(f"inspecting {primary.label!r} (aizk_uuid={primary.aizk_uuid})")
+print(f"inspecting {primary.label!r} (source_id={primary.source_id})")
 
 # %% [markdown]
 # ## Chunk persistence keeps stable identity, run-scoped span, and the consumed input
@@ -478,7 +478,7 @@ print(f"inspecting {primary.label!r} (aizk_uuid={primary.aizk_uuid})")
 
 # %%
 with Session(get_engine(DatabaseConfig().database_url)) as session:
-    run = active_chunking_run(session, str(primary.aizk_uuid))
+    run = active_chunking_run(session, str(primary.source_id))
     consumed = run_input(session, run.id)
     manifest = manifest_of_run(session, run.id)
     reconstructed = chunks_of_run(session, run.id)
@@ -509,7 +509,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     summary_run = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == SUMMARY_STAGE,
-            PipelineRun.scope_key == str(primary.aizk_uuid),
+            PipelineRun.scope_id == str(primary.source_id),
             PipelineRun.status == RunStatus.ACTIVE,
         )
     ).one()
@@ -534,7 +534,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     variant_run = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == VARIANT_STAGE,
-            PipelineRun.scope_key == str(primary.aizk_uuid),
+            PipelineRun.scope_id == str(primary.source_id),
             PipelineRun.status == RunStatus.ACTIVE,
         )
     ).one()
@@ -562,7 +562,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     variant_run = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == VARIANT_STAGE,
-            PipelineRun.scope_key == str(primary.aizk_uuid),
+            PipelineRun.scope_id == str(primary.source_id),
             PipelineRun.status == RunStatus.ACTIVE,
         )
     ).one()
@@ -589,7 +589,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     variant_run = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == VARIANT_STAGE,
-            PipelineRun.scope_key == str(primary.aizk_uuid),
+            PipelineRun.scope_id == str(primary.source_id),
             PipelineRun.status == RunStatus.ACTIVE,
         )
     ).one()
@@ -611,7 +611,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
 #
 # Provenance runs the other way too: from one variant recover the chunking
 # generation it read, that chunk's span and text (hash-verified), the source
-# Markdown it consumed, the summary it used, and finally the single `aizk_uuid` the
+# Markdown it consumed, the summary it used, and finally the single `source_id` the
 # whole chain belongs to — each edge asserted out loud so a broken link is visible.
 
 # %%
@@ -619,7 +619,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     variant_run = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == VARIANT_STAGE,
-            PipelineRun.scope_key == str(primary.aizk_uuid),
+            PipelineRun.scope_id == str(primary.source_id),
             PipelineRun.status == RunStatus.ACTIVE,
         )
     ).one()
@@ -627,7 +627,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     print(f"tracing variant id={variant.id} (chunk {variant.chunk_id[:12]}) backward:")
 
     chunking = session.get(PipelineRun, variant.chunking_run_id)
-    print(f"  1. chunking_run_id={chunking.id} (stage={chunking.stage}, scope={chunking.scope_key})")
+    print(f"  1. chunking_run_id={chunking.id} (stage={chunking.stage}, scope={chunking.scope_id})")
 
     entry = next(m for m in manifest_of_run(session, chunking.id) if m.chunk_id == variant.chunk_id)
     chunk = session.get(Chunk, variant.chunk_id)
@@ -644,8 +644,8 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     print(f"  4. summary_run_id={summary_run.id} stage={summary_run.stage}")
     assert summary_run.stage == SUMMARY_STAGE
 
-    chain_agrees = chunking.scope_key == str(primary.aizk_uuid) == summary_run.scope_key == chunk.doc_id
-    print(f"  5. aizk_uuid={primary.aizk_uuid}; chunk.doc_id + chunking + summary scopes all agree -> {chain_agrees}")
+    chain_agrees = chunking.scope_id == str(primary.source_id) == summary_run.scope_id == chunk.source_id
+    print(f"  5. source_id={primary.source_id}; chunk.source_id + chunking + summary scopes all agree -> {chain_agrees}")
     assert chain_agrees
 
 # %% [markdown]
@@ -699,7 +699,7 @@ class RunState:
     consumes_output: int
 
 
-def chunking_runs(aizk_uuid: UUID) -> list[RunState]:
+def chunking_runs(source_id: UUID) -> list[RunState]:
     """Snapshot every chunking run for a source, in creation order.
 
     Returns one :class:`RunState` per run — ``(run_id, status, consumed output)`` —
@@ -713,7 +713,7 @@ def chunking_runs(aizk_uuid: UUID) -> list[RunState]:
     with Session(engine) as session:
         runs = session.exec(
             select(PipelineRun)
-            .where(PipelineRun.stage == "chunking", PipelineRun.scope_key == str(aizk_uuid))
+            .where(PipelineRun.stage == "chunking", PipelineRun.scope_id == str(source_id))
             .order_by(PipelineRun.id)
         ).all()
         return [
@@ -730,9 +730,9 @@ def show_runs(label: str, runs: list[RunState]) -> None:
         print(f"  run {run.run_id}: status={run.status:<10} consumes output {run.consumes_output}")
 
 
-def active_consumes(aizk_uuid: UUID) -> int:
+def active_consumes(source_id: UUID) -> int:
     """Return the conversion_output_id the source's single active chunking run consumed."""
-    active = [run for run in chunking_runs(aizk_uuid) if run.status == RunStatus.ACTIVE.value]
+    active = [run for run in chunking_runs(source_id) if run.status == RunStatus.ACTIVE.value]
     if len(active) != 1:
         raise AssertionError(f"expected exactly one ACTIVE chunking run, found {len(active)}")
     return active[0].consumes_output
@@ -748,7 +748,7 @@ def active_consumes(aizk_uuid: UUID) -> int:
 # %%
 show_runs("before rev 1:", chunking_runs(supersede_uuid))
 with Session(get_engine(DatabaseConfig().database_url)) as session:
-    old_output = seed_conversion_output(session, text=_SUPERSEDE_OLD, label="note (rev 1)", aizk_uuid=supersede_uuid)
+    old_output = seed_conversion_output(session, text=_SUPERSEDE_OLD, label="note (rev 1)", source_id=supersede_uuid)
     session.commit()
 markdown_source.register(old_output, _SUPERSEDE_OLD, compute_markdown_hash(_SUPERSEDE_OLD))
 with Session(get_engine(DatabaseConfig().database_url)) as session:
@@ -770,7 +770,7 @@ assert active_consumes(supersede_uuid) == old_output
 before = chunking_runs(supersede_uuid)
 show_runs("before rev 2:", before)
 with Session(get_engine(DatabaseConfig().database_url)) as session:
-    new_output = seed_conversion_output(session, text=_SUPERSEDE_NEW, label="note (rev 2)", aizk_uuid=supersede_uuid)
+    new_output = seed_conversion_output(session, text=_SUPERSEDE_NEW, label="note (rev 2)", source_id=supersede_uuid)
     session.commit()
 markdown_source.register(new_output, _SUPERSEDE_NEW, compute_markdown_hash(_SUPERSEDE_NEW))
 with Session(get_engine(DatabaseConfig().database_url)) as session:
@@ -828,7 +828,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     failed_unit = ContextualizationJob(
         idempotency_key=f"demo-op-failed-{uuid4().hex}",
         conversion_output_id=900001,
-        aizk_uuid=uuid4(),
+        source_id=uuid4(),
         status=WorkUnitStatus.FAILED,
         attempts=3,
         error_code="demo_error",
@@ -836,7 +836,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     queued_unit = ContextualizationJob(
         idempotency_key=f"demo-op-queued-{uuid4().hex}",
         conversion_output_id=900002,
-        aizk_uuid=uuid4(),
+        source_id=uuid4(),
         status=WorkUnitStatus.QUEUED,
     )
     session.add(failed_unit)

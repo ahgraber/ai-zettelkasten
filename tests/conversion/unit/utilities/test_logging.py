@@ -60,7 +60,7 @@ def test_json_formatter_passes_through_arbitrary_extra_keys() -> None:
     """A WARNING with ``extra={"url": ..., "host": ..., "ip": ...}`` must serialize all keys.
 
     Regression for H1: previously the formatter only emitted a static four-field
-    set (``aizk_uuid``, ``job_id``, ``karakeep_id``, ``status``) and silently
+    set (``source_id``, ``job_id``, ``karakeep_id``, ``status``) and silently
     dropped every egress field. With persisted ``error_message`` sanitized,
     operators had no recovery path to the rejected destination.
     """
@@ -86,10 +86,10 @@ def test_json_formatter_passes_through_arbitrary_extra_keys() -> None:
 
 
 def test_json_formatter_preserves_static_context_fields_when_set() -> None:
-    """When the LoggerAdapter populates aizk_uuid / job_id, those still appear."""
-    record = _make_record(extra={"aizk_uuid": "uu-1", "job_id": 42})
+    """When the LoggerAdapter populates source_id / job_id, those still appear."""
+    record = _make_record(extra={"source_id": "uu-1", "job_id": 42})
     payload = json.loads(JsonFormatter().format(record))
-    assert payload["aizk_uuid"] == "uu-1"
+    assert payload["source_id"] == "uu-1"
     assert payload["job_id"] == 42
 
 

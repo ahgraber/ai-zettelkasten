@@ -67,7 +67,7 @@ class StubWorkUnit(_StubBase):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     status: Mapped[str] = mapped_column()
-    aizk_uuid: Mapped[str] = mapped_column()
+    source_id: Mapped[str] = mapped_column()
     label: Mapped[str] = mapped_column()
     queued_at: Mapped[dt.datetime] = mapped_column()
     earliest_next_attempt_at: Mapped[dt.datetime | None] = mapped_column(nullable=True)
@@ -187,7 +187,7 @@ class StubStageHandler:
         with Session(self._engine) as session:
             unit = StubWorkUnit(
                 status=status,
-                aizk_uuid=str(uuid4()),
+                source_id=str(uuid4()),
                 label=label,
                 queued_at=now,
                 earliest_next_attempt_at=earliest_next_attempt_at,
@@ -316,7 +316,7 @@ class StubStageHandler:
             unit,
             stage=self.stage,
             work_unit_ref=str(unit.id),
-            aizk_uuid=UUID(unit.aizk_uuid),
+            source_id=UUID(unit.source_id),
             to_status=WorkUnitStatus.RUNNING.value,
             kind="stub_transition",
             attempt=unit.attempts,
@@ -344,7 +344,7 @@ class StubStageHandler:
                 unit,
                 stage=self.stage,
                 work_unit_ref=str(unit.id),
-                aizk_uuid=UUID(unit.aizk_uuid),
+                source_id=UUID(unit.source_id),
                 to_status=WorkUnitStatus.QUEUED.value,
                 kind="stub_transition",
                 attempt=unit.attempts,
@@ -411,7 +411,7 @@ class StubStageHandler:
             unit,
             stage=self.stage,
             work_unit_ref=str(unit.id),
-            aizk_uuid=UUID(unit.aizk_uuid),
+            source_id=UUID(unit.source_id),
             to_status=outcome.status.value,
             kind="stub_transition",
             attempt=unit.attempts,
@@ -433,7 +433,7 @@ class StubStageHandler:
         if event is not None:
             event.set()
 
-    def scope_key(self, handle: int) -> str:
+    def scope_id(self, handle: int) -> str:
         """Return a per-unit scope key for ``handle``."""
         return f"unit:{handle}"
 

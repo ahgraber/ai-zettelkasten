@@ -422,7 +422,7 @@ def test_evaluate_claims_with_stubbed_bundle(tmp_path, monkeypatch):
 
     doc_uuid = uuid4()
     doc = LoadedDoc(
-        aizk_uuid=doc_uuid,
+        source_id=doc_uuid,
         karakeep_id="kk-x",
         title="Doc X",
         markdown="# Top\nAlpha sentence. Beta sentence.\n",
@@ -519,7 +519,7 @@ def test_evaluate_claims_runs_invalid_sentence_on_zero_claim_sentences(tmp_path,
 
     doc_uuid = uuid4()
     doc = LoadedDoc(
-        aizk_uuid=doc_uuid,
+        source_id=doc_uuid,
         karakeep_id="kk-x",
         title="Doc X",
         # Three sentences; only sentence_idx=1 produces a claim.

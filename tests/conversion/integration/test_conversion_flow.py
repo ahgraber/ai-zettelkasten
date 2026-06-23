@@ -197,7 +197,7 @@ def _fake_convert_pdf(content: bytes, temp_dir, config):
 
 def _create_job_for_ref(db_session, ref, *, idempotency_key: str) -> int:
     source = Source(
-        aizk_uuid=uuid4(),
+        source_id=uuid4(),
         owner_id="self",
         karakeep_id=ref.bookmark_id if isinstance(ref, KarakeepBookmarkRef) else None,
         source_ref=ref.model_dump_json(),
@@ -209,7 +209,7 @@ def _create_job_for_ref(db_session, ref, *, idempotency_key: str) -> int:
     db_session.refresh(source)
 
     job = ConversionJob(
-        aizk_uuid=source.aizk_uuid,
+        source_id=source.source_id,
         owner_id="self",
         title="Integration Job",
         payload_version=1,
@@ -476,7 +476,7 @@ def test_conversion_flow_enriches_source_and_manifest_end_to_end(monkeypatch, db
         job_record = session.get(ConversionJob, job_id)
         assert job_record.status == ConversionJobStatus.SUCCEEDED
 
-        source = session.exec(select(Source).where(Source.aizk_uuid == job_record.aizk_uuid)).one()
+        source = session.exec(select(Source).where(Source.source_id == job_record.source_id)).one()
         assert source.url == _ENRICH_BOOKMARK_URL
         assert source.normalized_url == normalize_url(_ENRICH_BOOKMARK_URL)
         assert source.title == _ENRICH_BOOKMARK_TITLE
@@ -525,7 +525,7 @@ def test_conversion_flow_source_title_branches_end_to_end(
         job_record = session.get(ConversionJob, job_id)
         assert job_record.status == ConversionJobStatus.SUCCEEDED
 
-        source = session.exec(select(Source).where(Source.aizk_uuid == job_record.aizk_uuid)).one()
+        source = session.exec(select(Source).where(Source.source_id == job_record.source_id)).one()
         assert source.title == expected_source_title
 
         output = session.exec(select(ConversionOutput).where(ConversionOutput.job_id == job_id)).one()

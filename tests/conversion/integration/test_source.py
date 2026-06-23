@@ -70,7 +70,7 @@ class TestSourceEnrichment:
     def test_identity_columns_unchanged_after_enrichment(self, db_session):
         source = _create_source_for_enrichment(db_session, bookmark_id="bm_identity_imm")
         pre = {
-            "aizk_uuid": source.aizk_uuid,
+            "source_id": source.source_id,
             "source_ref": source.source_ref,
             "source_ref_hash": source.source_ref_hash,
             "karakeep_id": source.karakeep_id,
@@ -80,14 +80,14 @@ class TestSourceEnrichment:
 
         _write_source_enrichment(
             subprocess_meta,
-            str(source.aizk_uuid),
+            str(source.source_id),
             db_session.get_bind(),
             job_id=0,  # synthetic — these tests don't have a job; FK is not enforced.
             attempt=1,
         )
 
         db_session.refresh(source)
-        assert source.aizk_uuid == pre["aizk_uuid"]
+        assert source.source_id == pre["source_id"]
         assert source.source_ref == pre["source_ref"]
         assert source.source_ref_hash == pre["source_ref_hash"]
         assert source.karakeep_id == pre["karakeep_id"]
@@ -99,7 +99,7 @@ class TestSourceEnrichment:
 
         _write_source_enrichment(
             subprocess_meta,
-            str(source.aizk_uuid),
+            str(source.source_id),
             db_session.get_bind(),
             job_id=0,
             attempt=1,
@@ -159,7 +159,7 @@ def test_source_type_set_from_terminal_ref_kind(terminal_ref, expected_source_ty
 
     _write_source_enrichment(
         subprocess_meta,
-        str(source.aizk_uuid),
+        str(source.source_id),
         db_session.get_bind(),
         job_id=0,
         attempt=1,

@@ -98,7 +98,7 @@ def _apply_filters(
                 func.lower(ConversionJob.title).like(pattern),
                 func.lower(Source.title).like(pattern),
                 func.lower(Source.karakeep_id).like(pattern),
-                func.lower(cast(ConversionJob.aizk_uuid, String)).like(pattern),
+                func.lower(cast(ConversionJob.source_id, String)).like(pattern),
                 cast(ConversionJob.id, String).like(f"%{search}%"),
             )
         )
@@ -120,7 +120,7 @@ def _load_jobs_page(
     sort_key = _SORTABLE_COLUMNS[_to_sort(sort)]
     sort_clause = sort_key.asc() if _to_direction(direction) == "asc" else sort_key.desc()
 
-    base_query = select(ConversionJob, Source).join(Source, Source.aizk_uuid == ConversionJob.aizk_uuid)
+    base_query = select(ConversionJob, Source).join(Source, Source.source_id == ConversionJob.source_id)
     total_jobs = session.exec(select(func.count()).select_from(base_query.subquery())).one()
 
     filtered_query = _apply_filters(base_query, status_filter, search)
@@ -135,7 +135,7 @@ def _load_jobs_page(
         jobs.append(
             {
                 "id": job.id,
-                "aizk_uuid": str(job.aizk_uuid),
+                "source_id": str(job.source_id),
                 "karakeep_id": source.karakeep_id,
                 "title": source.title or job.title or "",
                 "status": job.status.value,

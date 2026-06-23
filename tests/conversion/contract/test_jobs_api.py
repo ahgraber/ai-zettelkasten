@@ -53,7 +53,7 @@ def test_list_jobs_query_params_declared():
 
     get_op = app_spec["paths"]["/v1/jobs"]["get"]
     declared = {p["name"] for p in get_op.get("parameters", [])}
-    expected = {"status", "aizk_uuid", "created_after", "created_before", "limit", "offset"}
+    expected = {"status", "source_id", "created_after", "created_before", "limit", "offset"}
     assert expected.issubset(declared), f"Missing query params: {expected - declared}"
 
 

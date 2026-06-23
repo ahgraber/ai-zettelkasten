@@ -1,6 +1,6 @@
 """Unit tests for :class:`aizk.conversion.handler.ConversionStageHandler`.
 
-Covers the runner-facing surface (properties, ``scope_key``,
+Covers the runner-facing surface (properties, ``scope_id``,
 ``validate_dependencies``) and :meth:`ConversionStageHandler.map_result`.
 
 The DB-backed claim/recovery surface — ``claim_next`` and ``recover_stale`` —
@@ -119,9 +119,9 @@ def test_validate_dependencies_propagates_probe_failure() -> None:
         handler.validate_dependencies()
 
 
-def test_scope_key_is_per_job_string(handler: ConversionStageHandler) -> None:
-    """``scope_key`` renders the integer job-id handle as a string."""
-    assert handler.scope_key(42) == "42"
+def test_scope_id_is_per_job_string(handler: ConversionStageHandler) -> None:
+    """``scope_id`` renders the integer job-id handle as a string."""
+    assert handler.scope_id(42) == "42"
 
 
 def test_timeout_reflects_configured_seconds(handler: ConversionStageHandler) -> None:
@@ -344,7 +344,7 @@ def _create_source(session: Session) -> Source:
 
 @pytest.fixture()
 def source(engine) -> Source:
-    """Persist a Source row the seeded jobs reference via ``aizk_uuid``."""
+    """Persist a Source row the seeded jobs reference via ``source_id``."""
     with Session(engine) as session:
         return _create_source(session)
 
@@ -366,7 +366,7 @@ def _seed_job(
     """
     with Session(engine) as session:
         job = ConversionJob(
-            aizk_uuid=source.aizk_uuid,
+            source_id=source.source_id,
             owner_id="self",
             title="test",
             payload_version=1,
@@ -705,7 +705,7 @@ def exec_runtime():
 
 @pytest.fixture()
 def exec_source(exec_engine) -> Source:
-    """Persist a Source row the seeded RUNNING job references via ``aizk_uuid``."""
+    """Persist a Source row the seeded RUNNING job references via ``source_id``."""
     with Session(exec_engine) as session:
         return _create_source(session)
 
@@ -718,7 +718,7 @@ def _seed_running_job(exec_engine, source: Source, *, attempts: int = 1) -> int:
     """
     with Session(exec_engine) as session:
         job = ConversionJob(
-            aizk_uuid=source.aizk_uuid,
+            source_id=source.source_id,
             owner_id="self",
             title="exec test",
             payload_version=1,
@@ -1080,7 +1080,7 @@ def test_execute_missing_source_ref_raises_job_data_integrity(
     """
     with Session(exec_engine) as session:
         job = ConversionJob(
-            aizk_uuid=exec_source.aizk_uuid,
+            source_id=exec_source.source_id,
             owner_id="self",
             title="no ref",
             payload_version=1,
@@ -1237,7 +1237,7 @@ def _seed_job_at(exec_engine, source: Source, *, status: ConversionJobStatus, at
     """
     with Session(exec_engine) as session:
         job = ConversionJob(
-            aizk_uuid=source.aizk_uuid,
+            source_id=source.source_id,
             owner_id="self",
             title="finalize test",
             payload_version=1,

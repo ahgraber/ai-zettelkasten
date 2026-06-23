@@ -1,8 +1,8 @@
 """The stage-run / dataset-version primitive.
 
 A :class:`PipelineRun` records a stage's derived-output generation keyed by
-``(stage, scope_key)``. The stage defines its own ``scope_key`` (per-document,
-per-chunk, corpus-wide). At most one run per ``(stage, scope_key)`` is active,
+``(stage, scope_id)``. The stage defines its own ``scope_id`` (per-document,
+per-chunk, corpus-wide). At most one run per ``(stage, scope_id)`` is active,
 enforced by a partial unique index; :func:`record_run` activates a new run and
 supersedes the prior one atomically in the caller's transaction, so there is
 never more than one active run nor a window with none.
@@ -40,7 +40,7 @@ class RunStatus(str, Enum):
 
 
 class PipelineRun(SQLModel, table=True):
-    """A stage's derived-output generation, scoped by ``(stage, scope_key)``.
+    """A stage's derived-output generation, scoped by ``(stage, scope_id)``.
 
     Rows are immutable once recorded except for the ``active`` → ``superseded``
     status transition. ``supersedes_run_id`` is a logical reference to the run
@@ -52,22 +52,22 @@ class PipelineRun(SQLModel, table=True):
 
     __tablename__ = "pipeline_runs"
     __table_args__ = (
-        # At most one active run per (stage, scope_key). Partial unique index:
+        # At most one active run per (stage, scope_id). Partial unique index:
         # superseded rows are exempt, so history accumulates without conflict.
         Index(
             "uq_pipeline_runs_active_scope",
             "stage",
-            "scope_key",
+            "scope_id",
             unique=True,
             sqlite_where=text("status = 'active'"),
             postgresql_where=text("status = 'active'"),
         ),
-        Index("ix_pipeline_runs_stage_scope_key", "stage", "scope_key"),
+        Index("ix_pipeline_runs_stage_scope_id", "stage", "scope_id"),
     )
 
     id: int | None = Field(default=None, primary_key=True, nullable=False)
     stage: str = Field(nullable=False)
-    scope_key: str = Field(nullable=False)
+    scope_id: str = Field(nullable=False)
     # values_callable stores enum values ("active") not names ("ACTIVE"), matching the index predicate.
     status: RunStatus = Field(
         default=RunStatus.ACTIVE,
@@ -93,14 +93,14 @@ def record_run(
     session: "Session",
     *,
     stage: str,
-    scope_key: str,
+    scope_id: str,
     derivation_key: str,
     version_stamps: dict[str, str] | None = None,
 ) -> PipelineRun:
     """Activate a new run and supersede the prior active one atomically.
 
     Within the caller's transaction: demote the current active run for
-    ``(stage, scope_key)`` to ``superseded`` (if any), then insert the new run
+    ``(stage, scope_id)`` to ``superseded`` (if any), then insert the new run
     as ``active`` carrying ``supersedes_run_id`` of the demoted run. The
     intermediate ``session.flush()`` orders the demote before the insert so the
     partial unique index never sees two active rows.
@@ -114,7 +114,7 @@ def record_run(
     Args:
         session: Active session; the caller owns commit/rollback.
         stage: The stage that owns this run.
-        scope_key: The stage-defined scope the run's outputs belong to.
+        scope_id: The stage-defined scope the run's outputs belong to.
         derivation_key: Deterministic key for the inputs/configuration that
             produced the run's derived outputs.
         version_stamps: Optional reproducibility version identifiers; stored as
@@ -126,7 +126,7 @@ def record_run(
     prior = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == stage,
-            PipelineRun.scope_key == scope_key,
+            PipelineRun.scope_id == scope_id,
             PipelineRun.status == RunStatus.ACTIVE,
         )
     ).one_or_none()
@@ -141,7 +141,7 @@ def record_run(
 
     new_run = PipelineRun(
         stage=stage,
-        scope_key=scope_key,
+        scope_id=scope_id,
         status=RunStatus.ACTIVE,
         derivation_key=derivation_key,
         version_stamps_json=json.dumps(version_stamps or {}, sort_keys=True, separators=(",", ":")),
@@ -157,14 +157,14 @@ def reuse_or_record_run(
     session: "Session",
     *,
     stage: str,
-    scope_key: str,
+    scope_id: str,
     derivation_key: str,
     version_stamps: dict[str, str] | None = None,
 ) -> PipelineRun:
     """Reuse the active run when its derivation key matches, else record a new one.
 
     The run-level idempotency primitive: re-invoking a stage for a
-    ``(stage, scope_key)`` whose ``derivation_key`` equals the active run's
+    ``(stage, scope_id)`` whose ``derivation_key`` equals the active run's
     returns that run unchanged — no new run, no supersession, no duplicate
     outputs — so a retry or re-ingestion with unchanged inputs is a no-op at the
     run level. A differing (or absent) active key records a new active run that
@@ -180,7 +180,7 @@ def reuse_or_record_run(
     Args:
         session: Active session; the caller owns commit/rollback.
         stage: The stage that owns this run.
-        scope_key: The stage-defined scope the run's outputs belong to.
+        scope_id: The stage-defined scope the run's outputs belong to.
         derivation_key: Deterministic key for the inputs/configuration that
             produced the run's derived outputs; compared against the active run's.
         version_stamps: Optional reproducibility version identifiers, used only
@@ -192,7 +192,7 @@ def reuse_or_record_run(
     active = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == stage,
-            PipelineRun.scope_key == scope_key,
+            PipelineRun.scope_id == scope_id,
             PipelineRun.status == RunStatus.ACTIVE,
         )
     ).one_or_none()
@@ -201,7 +201,7 @@ def reuse_or_record_run(
     return record_run(
         session,
         stage=stage,
-        scope_key=scope_key,
+        scope_id=scope_id,
         derivation_key=derivation_key,
         version_stamps=version_stamps,
     )

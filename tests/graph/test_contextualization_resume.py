@@ -112,18 +112,18 @@ class _StubMarkdownSource:
 class _AlwaysCurrent:
     """A freshness stub treating every output as the source's latest."""
 
-    def is_current(self, session: Session, aizk_uuid: UUID, conversion_output_id: int) -> bool:
+    def is_current(self, session: Session, source_id: UUID, conversion_output_id: int) -> bool:
         """Treat every conversion output as current."""
         return True
 
 
 def _chunk(text: str, ordinal: int, *, scope: str = _SCOPE, markdown_hash: str = _HASH) -> SplitterChunk:
-    """Build a content-addressed splitter chunk for a single source (``doc_id`` = scope)."""
+    """Build a content-addressed splitter chunk for a single source (``source_id`` = scope)."""
     content_hash = xxhash.xxh64(text.encode("utf-8")).hexdigest()
     return SplitterChunk(
         chunk_id=derive_chunk_id(scope, (), ordinal, content_hash),
         content_hash=content_hash,
-        doc_id=scope,
+        source_id=scope,
         heading_path=(),
         ordinal=ordinal,
         text=text,
@@ -181,7 +181,7 @@ def _fail_after_k_context(k: int, *, summary: str = "the document summary"):
 def _memo_rows(engine: Engine, scope: str, kind: str | None = None) -> list[ContextualizationOutputMemo]:
     """Return the memo rows for a source, optionally filtered by kind."""
     with Session(engine) as session:
-        statement = select(ContextualizationOutputMemo).where(ContextualizationOutputMemo.scope_key == scope)
+        statement = select(ContextualizationOutputMemo).where(ContextualizationOutputMemo.scope_id == scope)
         if kind is not None:
             statement = statement.where(ContextualizationOutputMemo.kind == kind)
         return list(session.exec(statement).all())
@@ -193,7 +193,7 @@ def _active_runs(engine: Engine, scope: str) -> dict[str, PipelineRun]:
         return {
             r.stage: r
             for r in session.exec(
-                select(PipelineRun).where(PipelineRun.scope_key == scope, PipelineRun.status == RunStatus.ACTIVE)
+                select(PipelineRun).where(PipelineRun.scope_id == scope, PipelineRun.status == RunStatus.ACTIVE)
             ).all()
         }
 
@@ -202,7 +202,7 @@ def _process(
     engine: Engine,
     client: StubLLMClient,
     *,
-    aizk_uuid: UUID = _AIZK_UUID,
+    source_id: UUID = _AIZK_UUID,
     conversion_output_id: int = _OUTPUT_ID,
     markdown: str = _MARKDOWN,
 ) -> ProcessResult:
@@ -210,7 +210,7 @@ def _process(
     result = process_document(
         engine,
         client,
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         conversion_output_id=conversion_output_id,
         markdown_source=_StubMarkdownSource(markdown),
         freshness=_AlwaysCurrent(),
@@ -252,7 +252,7 @@ def test_first_contextualization_summary_is_memoized_and_reused_with_zero_summar
     """A first-contextualization summary is retained and reused on retry with no summary model call."""
     first = StubLLMClient(responder=_responder(summary="summary-one"))
     summary_text = resolve_summary_text(
-        engine, first, aizk_uuid=_SCOPE, markdown_hash_xx64=_HASH, document_text=_DOC_TEXT
+        engine, first, source_id=_SCOPE, markdown_hash_xx64=_HASH, document_text=_DOC_TEXT
     )
     assert summary_text == "summary-one"
     assert len(_summary_calls(first)) == 1
@@ -260,7 +260,7 @@ def test_first_contextualization_summary_is_memoized_and_reused_with_zero_summar
 
     # A retry under unchanged inputs: a client that *would* differ must not be consulted.
     retry = StubLLMClient(responder=_responder(summary="summary-two"))
-    reused = resolve_summary_text(engine, retry, aizk_uuid=_SCOPE, markdown_hash_xx64=_HASH, document_text=_DOC_TEXT)
+    reused = resolve_summary_text(engine, retry, source_id=_SCOPE, markdown_hash_xx64=_HASH, document_text=_DOC_TEXT)
     assert reused == "summary-one", "the retry reuses the retained summary, not a fresh one"
     assert retry.prompts == [], "no model call when the summary is memo-reused"
 
@@ -272,7 +272,7 @@ def test_per_chunk_revision_is_reused_from_the_memo_on_retry(engine: Engine) -> 
     first_revisions = resolve_revisions(
         engine,
         first,
-        aizk_uuid=_SCOPE,
+        source_id=_SCOPE,
         summary_text="the summary",
         markdown_hash_xx64=_HASH,
         ordered_chunks=chunks,
@@ -285,7 +285,7 @@ def test_per_chunk_revision_is_reused_from_the_memo_on_retry(engine: Engine) -> 
     reused = resolve_revisions(
         engine,
         retry,
-        aizk_uuid=_SCOPE,
+        source_id=_SCOPE,
         summary_text="the summary",
         markdown_hash_xx64=_HASH,
         ordered_chunks=chunks,
@@ -303,7 +303,7 @@ def test_active_variant_run_precheck_skips_all_generation(engine: Engine) -> Non
     # (the splitter's ordinal ties across sections, so it is not a sort key).
     ordered = split(
         _MARKDOWN,
-        doc_id=_SCOPE,
+        source_id=_SCOPE,
         converted_artifact_id=str(_OUTPUT_ID),
         markdown_hash_xx64=compute_markdown_hash(_MARKDOWN),
     )
@@ -314,7 +314,7 @@ def test_active_variant_run_precheck_skips_all_generation(engine: Engine) -> Non
     revisions = resolve_revisions(
         engine,
         probe,
-        aizk_uuid=_SCOPE,
+        source_id=_SCOPE,
         summary_text=str(summary_text),
         markdown_hash_xx64=compute_markdown_hash(_MARKDOWN),
         ordered_chunks=ordered,
@@ -337,7 +337,7 @@ def test_invalid_revision_is_not_retained_and_is_re_invoked_on_retry(engine: Eng
         resolve_revisions(
             engine,
             row_key_probe,
-            aizk_uuid=_SCOPE,
+            source_id=_SCOPE,
             summary_text="summary",
             markdown_hash_xx64=_HASH,
             ordered_chunks=[working],
@@ -350,7 +350,7 @@ def test_invalid_revision_is_not_retained_and_is_re_invoked_on_retry(engine: Eng
     revisions = resolve_revisions(
         engine,
         good,
-        aizk_uuid=_SCOPE,
+        source_id=_SCOPE,
         summary_text="summary",
         markdown_hash_xx64=_HASH,
         ordered_chunks=[working],
@@ -364,11 +364,11 @@ def test_invalid_summary_is_not_retained_and_is_re_invoked_on_retry(engine: Engi
     """An overlong summary is not memoized, so a retry re-invokes the summary pass."""
     overlong = StubLLMClient(responder=lambda _prompt: "x" * (MAX_SUMMARY_CHARS + 1))
     with pytest.raises(ValueError, match="summary is too long"):
-        resolve_summary_text(engine, overlong, aizk_uuid=_SCOPE, markdown_hash_xx64=_HASH, document_text=_DOC_TEXT)
+        resolve_summary_text(engine, overlong, source_id=_SCOPE, markdown_hash_xx64=_HASH, document_text=_DOC_TEXT)
     assert _memo_rows(engine, _SCOPE, MEMO_KIND_SUMMARY) == [], "the invalid summary was not retained"
 
     good = StubLLMClient(responder=_responder(summary="valid summary"))
-    resolved = resolve_summary_text(engine, good, aizk_uuid=_SCOPE, markdown_hash_xx64=_HASH, document_text=_DOC_TEXT)
+    resolved = resolve_summary_text(engine, good, source_id=_SCOPE, markdown_hash_xx64=_HASH, document_text=_DOC_TEXT)
     assert resolved == "valid summary"
     assert len(_summary_calls(good)) == 1, "the summary is re-invoked after the invalid attempt"
 
@@ -380,7 +380,7 @@ def test_empty_self_contained_revision_is_retained_and_reused(engine: Engine) ->
     revisions = resolve_revisions(
         engine,
         first,
-        aizk_uuid=_SCOPE,
+        source_id=_SCOPE,
         summary_text="summary",
         markdown_hash_xx64=_HASH,
         ordered_chunks=chunks,
@@ -394,7 +394,7 @@ def test_empty_self_contained_revision_is_retained_and_reused(engine: Engine) ->
     reused = resolve_revisions(
         engine,
         retry,
-        aizk_uuid=_SCOPE,
+        source_id=_SCOPE,
         summary_text="summary",
         markdown_hash_xx64=_HASH,
         ordered_chunks=chunks,
@@ -438,12 +438,12 @@ def test_no_memo_write_transaction_spans_a_model_call(engine: Engine, monkeypatc
     client = StubLLMClient(responder=asserting)
     chunks = [_chunk("alpha chunk", 0), _chunk("beta chunk", 1)]
     summary_text = resolve_summary_text(
-        engine, client, aizk_uuid=_SCOPE, markdown_hash_xx64=_HASH, document_text=_DOC_TEXT
+        engine, client, source_id=_SCOPE, markdown_hash_xx64=_HASH, document_text=_DOC_TEXT
     )
     resolve_revisions(
         engine,
         client,
-        aizk_uuid=_SCOPE,
+        source_id=_SCOPE,
         summary_text=summary_text,
         markdown_hash_xx64=_HASH,
         ordered_chunks=chunks,
@@ -506,7 +506,7 @@ def test_retry_resumes_and_matches_an_uninterrupted_run(tmp_path: Path) -> None:
         process_document(
             resume_engine,
             failing,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             conversion_output_id=_OUTPUT_ID,
             markdown_source=_StubMarkdownSource(_MARKDOWN),
             freshness=_AlwaysCurrent(),
@@ -552,16 +552,16 @@ def test_retained_work_for_one_source_is_not_reused_for_another(engine: Engine) 
         process_document(
             engine,
             failing,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             conversion_output_id=_OUTPUT_ID,
             markdown_source=_StubMarkdownSource(_MARKDOWN),
             freshness=_AlwaysCurrent(),
         )
     assert _memo_rows(engine, _SCOPE, MEMO_KIND_SUMMARY), "source A retained its summary"
 
-    # Source B: byte-identical Markdown, different aizk_uuid → must generate its own summary.
+    # Source B: byte-identical Markdown, different source_id → must generate its own summary.
     source_b = StubLLMClient(responder=_responder())
-    _process(engine, source_b, aizk_uuid=_OTHER_AIZK_UUID, conversion_output_id=99)
+    _process(engine, source_b, source_id=_OTHER_AIZK_UUID, conversion_output_id=99)
     assert len(_summary_calls(source_b)) == 1, "source B invokes the model for its own summary, not source A's"
 
 
@@ -572,7 +572,7 @@ def test_partial_failure_leaves_no_readable_generation(engine: Engine) -> None:
         process_document(
             engine,
             failing,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             conversion_output_id=_OUTPUT_ID,
             markdown_source=_StubMarkdownSource(_MARKDOWN),
             freshness=_AlwaysCurrent(),
@@ -596,7 +596,7 @@ def test_partial_failure_under_changed_inputs_leaves_prior_generation_unchanged(
         process_document(
             engine,
             failing,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             conversion_output_id=43,
             markdown_source=_StubMarkdownSource(changed_markdown),
             freshness=_AlwaysCurrent(),
@@ -611,13 +611,13 @@ def test_incremental_durability_checkpoints_each_output(engine: Engine) -> None:
     # Fail on the 3rd chunk → summary + first 2 revisions are checkpointed, the rest are not.
     failing = StubLLMClient(responder=_fail_after_k_context(2))
     summary_text = resolve_summary_text(
-        engine, failing, aizk_uuid=_SCOPE, markdown_hash_xx64=_HASH, document_text=_DOC_TEXT
+        engine, failing, source_id=_SCOPE, markdown_hash_xx64=_HASH, document_text=_DOC_TEXT
     )
     with pytest.raises(RuntimeError, match="model failed on context call"):
         resolve_revisions(
             engine,
             failing,
-            aizk_uuid=_SCOPE,
+            source_id=_SCOPE,
             summary_text=summary_text,
             markdown_hash_xx64=_HASH,
             ordered_chunks=chunks,
@@ -645,7 +645,7 @@ def test_summarize_document_reuse_with_mismatched_planned_summary_is_retryable(e
         summarize_document(
             session,
             StubLLMClient(responder=lambda _p: "summary-X"),
-            aizk_uuid=_SCOPE,
+            source_id=_SCOPE,
             conversion_output_id="out",
             markdown_hash_xx64=_HASH,
             document_text=_DOC_TEXT,
@@ -657,7 +657,7 @@ def test_summarize_document_reuse_with_mismatched_planned_summary_is_retryable(e
         summarize_document(
             session,
             StubLLMClient(),
-            aizk_uuid=_SCOPE,
+            source_id=_SCOPE,
             conversion_output_id="out",
             markdown_hash_xx64=_HASH,
             document_text=_DOC_TEXT,
@@ -677,7 +677,7 @@ def test_contextualize_chunks_reuse_only_without_active_run_is_retryable(engine:
     with Session(engine) as session:
         run = persist_chunks(
             session,
-            aizk_uuid=_SCOPE,
+            source_id=_SCOPE,
             conversion_output_id="out",
             markdown_hash_xx64=_HASH,
             splitter_version=SPLITTER_VERSION,
@@ -686,7 +686,7 @@ def test_contextualize_chunks_reuse_only_without_active_run_is_retryable(engine:
         summary = summarize_document(
             session,
             StubLLMClient(),
-            aizk_uuid=_SCOPE,
+            source_id=_SCOPE,
             conversion_output_id="out",
             markdown_hash_xx64=_HASH,
             document_text=_DOC_TEXT,
@@ -696,7 +696,7 @@ def test_contextualize_chunks_reuse_only_without_active_run_is_retryable(engine:
             contextualize_chunks(
                 session,
                 StubLLMClient(),
-                aizk_uuid=_SCOPE,
+                source_id=_SCOPE,
                 summary=summary,
                 chunks=chunks,
                 chunking_run_id=run.id,
@@ -750,7 +750,7 @@ def _revision_key(chunk: SplitterChunk) -> str:
 def _all_runs(engine: Engine, scope: str) -> Iterator[PipelineRun]:
     """Yield all runs (any status) for a source."""
     with Session(engine) as session:
-        yield from session.exec(select(PipelineRun).where(PipelineRun.scope_key == scope)).all()
+        yield from session.exec(select(PipelineRun).where(PipelineRun.scope_id == scope)).all()
 
 
 # Helpers used above for memo reads on the summary key need the summary derivation key.

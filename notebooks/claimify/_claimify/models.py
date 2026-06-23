@@ -75,7 +75,7 @@ class FailedExtraction(BaseModel):
 
 
 class LoadedDoc(BaseModel):
-    aizk_uuid: UUID
+    source_id: UUID
     karakeep_id: str
     title: str
     markdown: str

@@ -60,7 +60,7 @@ def test_job_submission_emits_queued_event(db_session) -> None:
     assert event.from_status is None
     assert event.to_status == ConversionJobStatus.QUEUED
     assert event.attempt == 0
-    assert event.aizk_uuid is not None
+    assert event.source_id is not None
 
     payload = json.loads(event.payload_json)
     assert payload["kind"] == "queued"

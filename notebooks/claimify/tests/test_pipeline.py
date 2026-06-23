@@ -54,7 +54,7 @@ async def _fake_contextualize_section(agent, doc, section):
 
 def _doc(md: str) -> LoadedDoc:
     return LoadedDoc(
-        aizk_uuid=uuid4(),
+        source_id=uuid4(),
         karakeep_id="kk-test",
         title="Test Doc",
         markdown=md,

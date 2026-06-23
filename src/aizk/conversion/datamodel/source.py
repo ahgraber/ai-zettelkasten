@@ -16,7 +16,7 @@ class Source(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True, nullable=False)
     karakeep_id: str | None = Field(default=None, max_length=255, nullable=True, unique=True, index=True)
-    aizk_uuid: UUID = Field(
+    source_id: UUID = Field(
         default_factory=uuid4,
         nullable=False,
         unique=True,

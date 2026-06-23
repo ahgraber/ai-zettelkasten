@@ -14,14 +14,14 @@ def test_bulk_retry_resets_failed_jobs(db_session) -> None:
     bookmark = make_source(db_session, "bm_bulk_retry")
     job_retryable = make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         status=ConversionJobStatus.FAILED_RETRYABLE,
         idempotency_key="a" * 64,
         attempts=1,
     )
     job_cancelled = make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         status=ConversionJobStatus.CANCELLED,
         idempotency_key="b" * 64,
         attempts=2,
@@ -56,7 +56,7 @@ def test_single_retry_increments_attempt_count(db_session) -> None:
     bookmark = make_source(db_session, "bm_single_retry")
     job = make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         status=ConversionJobStatus.FAILED_RETRYABLE,
         idempotency_key="e" * 64,
         attempts=3,
@@ -79,13 +79,13 @@ def test_bulk_cancel_marks_queued_and_running_jobs(db_session) -> None:
     bookmark = make_source(db_session, "bm_bulk_cancel")
     job_queued = make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         status=ConversionJobStatus.QUEUED,
         idempotency_key="c" * 64,
     )
     job_running = make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         status=ConversionJobStatus.RUNNING,
         idempotency_key="d" * 64,
     )
