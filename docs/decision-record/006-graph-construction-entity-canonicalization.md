@@ -273,6 +273,7 @@ Three effects follow:
   The topology analysis this ADR defers — ego-splitting, conductance, ego-net density — is batch work over the co-occurrence edge set, best run in an in-memory graph library (networkx/igraph) loaded from bulk reads rather than as recursive SQL.
   Neither SQLite nor Postgres is a graph database; keeping traversal offline means the store only has to hold edges and serve bulk reads, which both do well.
   Live retrieval needs only 1–2 hop neighbor lookups, which a single indexed edge table serves on either engine.
+  Memgraph Zero (MemGQL federated GQL engine, 2025) is worth tracking: a standards-compliant GQL layer that federates over existing relational stores could enable live graph traversal without a dedicated graph-DB migration, narrowing the gap this ADR defers to the topology-based second generation.
 
 Background repair and foreground retrieval also share the database.
 Deferred propagation — dirty sets, background edge repair, embedding invalidation — writes while users read.
@@ -304,6 +305,10 @@ The recommendation is to stay on SQLite through the MVP and the create-vs-assign
 
 Research record:
 [Graph Construction and Entity Canonicalization Draft](../../data/graph_research/graph-construction-entity-canonicalization-draft.md)
+
+Industry references:
+
+- Memgraph, "Introducing Memgraph Zero: MemGQL Federated GQL Engine," 2025. <https://memgraph.com/blog/introducing-memgraph-zero-memgql-federated-gql-engine> — federated GQL over existing stores; relevant to the "keeping traversal offline" deferral and the topology-based second-generation gate.
 
 Key references carried by the research record:
 
