@@ -296,7 +296,7 @@ class StageRunner(Generic[WorkUnitHandle]):
             return None
         if handle is not None:
             self._metrics.increment("pipeline.work_unit.claimed", tags={"stage": self._stage})
-            # aizk_uuid / run_id correlation lives on the handler's
+            # source_id / run_id correlation lives on the handler's
             # pipeline_events rows (narrow seam), not in the runner's logs.
             logger.info(
                 "Claimed work-unit",

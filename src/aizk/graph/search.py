@@ -83,7 +83,7 @@ class SearchResult:
     seam thin for a relevance-backend swap.
 
     Attributes:
-        doc_id: The source identity (``str(aizk_uuid)``) the chunk belongs to.
+        source_id: The source identity (``str(source_id)``) the chunk belongs to.
         chunk_id: The content-addressed chunk identity.
         span_start: The chunk's start offset in the active generation's markdown;
             the within-document ordering key.
@@ -94,7 +94,7 @@ class SearchResult:
             representation.
     """
 
-    doc_id: str
+    source_id: str
     chunk_id: str
     span_start: int
     score: float
@@ -160,10 +160,10 @@ def escape_fts_query(query: str) -> str | None:
 #: returned row has a ``span_start`` to order by. ``kind`` is bound to honor the
 #: type filter ('chunk', 'contextualized', or both via the OR).
 _SEARCH_SQL = (
-    "SELECT f.kind, f.chunk_id, f.doc_id, m.span_start, bm25(graph_content_fts) AS score "
+    "SELECT f.kind, f.chunk_id, f.source_id, m.span_start, bm25(graph_content_fts) AS score "
     "FROM graph_content_fts AS f "
     "JOIN pipeline_runs AS cr "
-    "  ON cr.stage = :chunking_stage AND cr.scope_key = f.doc_id AND cr.status = 'active' "
+    "  ON cr.stage = :chunking_stage AND cr.scope_id = f.source_id AND cr.status = 'active' "
     # Anchoring on the active chunking-run manifest is an intentional currency
     # decision, not merely a way to obtain a span_start. It deliberately drops a
     # kind='contextualized' hit whose chunk_id is absent from the *current* active
@@ -177,7 +177,7 @@ _SEARCH_SQL = (
     "JOIN graph_chunk_run_manifest AS m "
     "  ON m.run_id = cr.id AND m.chunk_id = f.chunk_id "
     "LEFT JOIN pipeline_runs AS vr "
-    "  ON vr.stage = :variant_stage AND vr.scope_key = f.doc_id AND vr.status = 'active' "
+    "  ON vr.stage = :variant_stage AND vr.scope_id = f.source_id AND vr.status = 'active' "
     "WHERE graph_content_fts MATCH :match "
     "  AND ( "
     "    (f.kind = 'chunk' AND :want_chunk = 1) "
@@ -245,15 +245,15 @@ def _aggregate(rows: list) -> list[SearchResult]:  # noqa: ANN001 - DBAPI Row se
     ``bm25()`` across them. Documents are ordered by their best chunk score
     ascending (lower is more relevant); within a document, chunks are ordered by
     ``span_start`` ascending. Stable, deterministic ordering for equal scores comes
-    from sorting on ``(score, doc_id)`` for documents and ``span_start`` for chunks.
+    from sorting on ``(score, source_id)`` for documents and ``span_start`` for chunks.
     """
     by_chunk: dict[str, SearchResult] = {}
-    for kind_value, chunk_id, doc_id, span_start, score in rows:
+    for kind_value, chunk_id, source_id, span_start, score in rows:
         prior = by_chunk.get(chunk_id)
         matched_in_chunk = kind_value == "chunk"
         if prior is None:
             by_chunk[chunk_id] = SearchResult(
-                doc_id=doc_id,
+                source_id=source_id,
                 chunk_id=chunk_id,
                 span_start=span_start,
                 score=score,
@@ -262,7 +262,7 @@ def _aggregate(rows: list) -> list[SearchResult]:  # noqa: ANN001 - DBAPI Row se
             )
         else:
             by_chunk[chunk_id] = SearchResult(
-                doc_id=doc_id,
+                source_id=source_id,
                 chunk_id=chunk_id,
                 span_start=span_start,
                 score=min(prior.score, score),
@@ -272,11 +272,11 @@ def _aggregate(rows: list) -> list[SearchResult]:  # noqa: ANN001 - DBAPI Row se
 
     doc_score: dict[str, float] = {}
     for result in by_chunk.values():
-        best = doc_score.get(result.doc_id)
+        best = doc_score.get(result.source_id)
         if best is None or result.score < best:
-            doc_score[result.doc_id] = result.score
+            doc_score[result.source_id] = result.score
 
     return sorted(
         by_chunk.values(),
-        key=lambda r: (doc_score[r.doc_id], r.doc_id, r.span_start),
+        key=lambda r: (doc_score[r.source_id], r.source_id, r.span_start),
     )

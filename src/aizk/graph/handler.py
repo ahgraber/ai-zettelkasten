@@ -7,7 +7,7 @@ claim/lease loop, bounded concurrency, wall-clock timeout, stale-recovery
 scheduling, and the ``BEGIN IMMEDIATE`` transaction around ``claim_next`` /
 ``recover_stale`` / ``finalize``; this handler owns the graph-specific surface:
 the claim/recovery queries, the unit-of-work execution, result classification,
-the run ``scope_key`` (the source ``aizk_uuid``), and the in-process
+the run ``scope_id`` (the source ``source_id``), and the in-process
 timeout/concurrency declarations.
 
 Transaction ownership and at-least-once (per the change's design):
@@ -24,7 +24,7 @@ Transaction ownership and at-least-once (per the change's design):
   its derivation keys — an unchanged document reuses its active runs and produces
   no duplicate chunk, summary, or variant.
 
-The work-unit's transition events carry the ``aizk_uuid`` source identity and,
+The work-unit's transition events carry the ``source_id`` source identity and,
 on the terminal success event, the ``run_id`` of the work-unit's chunking run
 (the root of the backward-trace chain), so a source's progress is resolvable
 across stages.
@@ -185,8 +185,8 @@ class ContextualizationStageHandler:
         """No external probes: the model and Markdown source are injected dependencies."""
         return None
 
-    def scope_key(self, handle: int) -> str:
-        """Return the run ``scope_key`` for ``handle``: the source ``aizk_uuid``.
+    def scope_id(self, handle: int) -> str:
+        """Return the run ``scope_id`` for ``handle``: the source ``source_id``.
 
         Reads the work-unit's durable source identity (runs are scoped per
         source, not per work-unit). Returns the bare handle as a fallback when
@@ -194,7 +194,7 @@ class ContextualizationStageHandler:
         """
         with Session(self._engine) as session:
             job = session.get(ContextualizationJob, handle)
-            return str(job.aizk_uuid) if job is not None else str(handle)
+            return str(job.source_id) if job is not None else str(handle)
 
     @property
     def timeout(self) -> datetime.timedelta:
@@ -262,7 +262,7 @@ class ContextualizationStageHandler:
             job,
             stage=CONTEXTUALIZATION_STAGE,
             work_unit_ref=str(job.id),
-            aizk_uuid=job.aizk_uuid,
+            source_id=job.source_id,
             to_status=WorkUnitStatus.RUNNING,
             kind=GraphEventKind.CLAIMED,
             attempt=job.attempts,
@@ -301,7 +301,7 @@ class ContextualizationStageHandler:
                 job,
                 stage=CONTEXTUALIZATION_STAGE,
                 work_unit_ref=str(job.id),
-                aizk_uuid=job.aizk_uuid,
+                source_id=job.source_id,
                 to_status=WorkUnitStatus.FAILED,
                 kind=GraphEventKind.RECOVERED_STALE,
                 attempt=job.attempts,
@@ -337,7 +337,7 @@ class ContextualizationStageHandler:
             if job.status is WorkUnitStatus.CANCELLED:
                 logger.info("contextualization work-unit %s already cancelled; skipping execution", handle)
                 return None
-            aizk_uuid = job.aizk_uuid
+            source_id = job.source_id
             conversion_output_id = job.conversion_output_id
 
         # A runner cancel/timeout already requested before work started: skip.
@@ -349,7 +349,7 @@ class ContextualizationStageHandler:
             result = process_document(
                 self._engine,
                 self._llm_client,
-                aizk_uuid=aizk_uuid,
+                source_id=source_id,
                 conversion_output_id=conversion_output_id,
                 markdown_source=self._markdown_source,
                 freshness=self._freshness,
@@ -419,7 +419,7 @@ class ContextualizationStageHandler:
                     job,
                     stage=CONTEXTUALIZATION_STAGE,
                     work_unit_ref=str(job.id),
-                    aizk_uuid=job.aizk_uuid,
+                    source_id=job.source_id,
                     to_status=WorkUnitStatus.SUCCEEDED,
                     kind=GraphEventKind.SKIPPED_SUPERSEDED,
                     attempt=job.attempts,
@@ -432,7 +432,7 @@ class ContextualizationStageHandler:
                 job,
                 stage=CONTEXTUALIZATION_STAGE,
                 work_unit_ref=str(job.id),
-                aizk_uuid=job.aizk_uuid,
+                source_id=job.source_id,
                 to_status=WorkUnitStatus.SUCCEEDED,
                 kind=GraphEventKind.SUCCEEDED,
                 attempt=job.attempts,
@@ -449,7 +449,7 @@ class ContextualizationStageHandler:
                 job,
                 stage=CONTEXTUALIZATION_STAGE,
                 work_unit_ref=str(job.id),
-                aizk_uuid=job.aizk_uuid,
+                source_id=job.source_id,
                 to_status=WorkUnitStatus.CANCELLED,
                 kind=GraphEventKind.CANCELLED,
                 attempt=job.attempts,
@@ -465,7 +465,7 @@ class ContextualizationStageHandler:
                 job,
                 stage=CONTEXTUALIZATION_STAGE,
                 work_unit_ref=str(job.id),
-                aizk_uuid=job.aizk_uuid,
+                source_id=job.source_id,
                 to_status=WorkUnitStatus.TIMED_OUT,
                 kind=GraphEventKind.TIMED_OUT,
                 attempt=job.attempts,
@@ -491,7 +491,7 @@ class ContextualizationStageHandler:
             job,
             stage=CONTEXTUALIZATION_STAGE,
             work_unit_ref=str(job.id),
-            aizk_uuid=job.aizk_uuid,
+            source_id=job.source_id,
             to_status=WorkUnitStatus.FAILED,
             kind=GraphEventKind.FAILED,
             attempt=job.attempts,

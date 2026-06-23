@@ -70,7 +70,7 @@ def test_ui_and_api_resolve_the_same_default_principal(
     end.
     """
     source = seed_source(db_session, karakeep_id="bm_perimeter", title="Perimeter Doc")
-    seed_contextualization_job(db_session, aizk_uuid=source.aizk_uuid, conversion_output_id=7)
+    seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=7)
 
     ui_response = client.get("/ui/graph/jobs")
     api_response = client.get("/v1/contextualizations")

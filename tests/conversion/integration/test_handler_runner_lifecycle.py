@@ -112,7 +112,7 @@ def _seed_queued_job(session: Session) -> int:
     session.refresh(bookmark)
 
     job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title="Runner Lifecycle Job",
         idempotency_key="harnesslc" * 4,

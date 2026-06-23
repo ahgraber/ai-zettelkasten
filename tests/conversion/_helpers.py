@@ -22,7 +22,7 @@ def make_source(
     session: "Session",
     karakeep_id: str,
     *,
-    aizk_uuid: UUID | None = None,
+    source_id: UUID | None = None,
     source_ref_bookmark_id: str | None = None,
     url: str | None = None,
     title: str | None = None,
@@ -49,8 +49,8 @@ def make_source(
         "content_type": content_type,
         "source_type": source_type,
     }
-    if aizk_uuid is not None:
-        kwargs["aizk_uuid"] = aizk_uuid
+    if source_id is not None:
+        kwargs["source_id"] = source_id
     source = Source(**kwargs)
     session.add(source)
     session.commit()
@@ -61,7 +61,7 @@ def make_source(
 def make_job(
     session: "Session",
     *,
-    aizk_uuid: UUID,
+    source_id: UUID,
     idempotency_key: str,
     status: ConversionJobStatus = ConversionJobStatus.QUEUED,
     title: str = "Test",
@@ -75,7 +75,7 @@ def make_job(
     NOT NULL constraint is satisfied without forcing every test to pass it.
     """
     job = ConversionJob(
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         owner_id=owner_id,
         title=title,
         payload_version=1,

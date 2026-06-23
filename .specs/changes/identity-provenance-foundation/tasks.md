@@ -13,10 +13,10 @@
 
 ## `source_id` / `scope_id` rename (models + code)
 
-- [ ] Rename `aizk_uuid` → `source_id` on the `Source` ORM model and every model that FKs it (`ConversionJob`, `ConversionOutput`, graph-stage rows), and `doc_id` → `source_id` on the chunk address/model.
-- [ ] Rename `scope_key` → `scope_id` on the run primitive (`PipelineRun` / `record_run`) and the run/event tables.
-- [ ] Update all conversion, graph, and runtime code (kwargs, queries, accessors) to the renamed fields; remove now-dead references.
-- [ ] Test `test_rename_round_trip`: persisting and querying by `source_id` / `scope_id` works across conversion, graph, and the run primitive; no `aizk_uuid`/`doc_id`/`scope_key` attribute remains on the models. **[canonical-name]**
+- [x] Rename `aizk_uuid` → `source_id` on the `Source` ORM model and every model that FKs it (`ConversionJob`, `ConversionOutput`, graph-stage rows), and `doc_id` → `source_id` on the chunk address/model.
+- [x] Rename `scope_key` → `scope_id` on the run primitive (`PipelineRun` / `record_run`) and the run/event tables.
+- [x] Update all conversion, graph, and runtime code (kwargs, queries, accessors) to the renamed fields; remove now-dead references.
+- [x] Test `test_rename_round_trip`: persisting and querying by `source_id` / `scope_id` works across conversion, graph, and the run primitive; no `aizk_uuid`/`doc_id`/`scope_key` attribute remains on the models. **[canonical-name]**
 
 ## Public API + OpenAPI rename (breaking)
 

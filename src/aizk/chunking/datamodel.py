@@ -2,7 +2,7 @@
 
 Defines the immutable :class:`Chunk` contract emitted by the splitter and
 :func:`derive_chunk_id`, the deterministic, cross-process-stable chunk identity
-function. Identity is a function of the chunk's address ``(doc_id, heading_path,
+function. Identity is a function of the chunk's address ``(source_id, heading_path,
 ordinal)`` and its ``content_hash`` so that content edits and address moves are
 independently observable downstream.
 """
@@ -19,10 +19,10 @@ class Chunk(BaseModel):
     """An immutable structural chunk carved from a converted Markdown artifact.
 
     Attributes:
-        chunk_id: Deterministic identity over ``(doc_id, heading_path, ordinal)``
+        chunk_id: Deterministic identity over ``(source_id, heading_path, ordinal)``
             and ``content_hash``; see :func:`derive_chunk_id`.
         content_hash: xxh64 digest of the chunk's normalized ``text``.
-        doc_id: Caller-supplied logical document identifier.
+        source_id: Caller-supplied logical document identifier.
         heading_path: Heading texts from outermost to innermost; ``()`` is the
             document root.
         ordinal: Position of this chunk among chunks sharing ``heading_path``,
@@ -41,7 +41,7 @@ class Chunk(BaseModel):
 
     chunk_id: str = Field(description="Deterministic identity for this chunk.")
     content_hash: str = Field(description="xxh64 digest of the normalized text.")
-    doc_id: str = Field(description="Logical document identifier.")
+    source_id: str = Field(description="Logical document identifier.")
     heading_path: tuple[str, ...] = Field(description="Heading texts outermost to innermost; () is the document root.")
     ordinal: int = Field(description="Position among chunks sharing heading_path, from 0.")
     text: str = Field(description="Chunk content as carved from the source artifact.")
@@ -53,7 +53,7 @@ class Chunk(BaseModel):
 
 
 def derive_chunk_id(
-    doc_id: str,
+    source_id: str,
     heading_path: tuple[str, ...],
     ordinal: int,
     content_hash: str,
@@ -66,7 +66,7 @@ def derive_chunk_id(
     to it requires bumping ``SPLITTER_VERSION``.
 
     Args:
-        doc_id: Logical document identifier.
+        source_id: Logical document identifier.
         heading_path: Heading texts outermost to innermost.
         ordinal: Position among chunks sharing ``heading_path``.
         content_hash: xxh64 digest of the chunk's normalized text.
@@ -75,7 +75,7 @@ def derive_chunk_id(
         Hex-encoded xxHash64 digest (16 characters).
     """
     canonical = json.dumps(
-        [doc_id, list(heading_path), ordinal, content_hash],
+        [source_id, list(heading_path), ordinal, content_hash],
         separators=(",", ":"),
         ensure_ascii=False,
     )

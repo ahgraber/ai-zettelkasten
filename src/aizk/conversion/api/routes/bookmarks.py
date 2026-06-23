@@ -17,9 +17,9 @@ from aizk.conversion.datamodel.output import ConversionOutput
 router = APIRouter(prefix="/v1/bookmarks", tags=["bookmarks"])
 
 
-@router.get("/{aizk_uuid}/outputs", response_model=list[OutputResponse])
+@router.get("/{source_id}/outputs", response_model=list[OutputResponse])
 def get_bookmark_outputs(
-    aizk_uuid: UUID,
+    source_id: UUID,
     session: Annotated[Session, Depends(get_db_session)],
     principal: Annotated[Principal, Depends(get_principal)],
     latest: Annotated[bool, Query()] = False,
@@ -32,7 +32,7 @@ def get_bookmark_outputs(
     """
     query = (
         select(ConversionOutput)
-        .where(ConversionOutput.aizk_uuid == aizk_uuid)
+        .where(ConversionOutput.source_id == source_id)
         .where(ConversionOutput.owner_id == principal.subject)
         .order_by(ConversionOutput.created_at.desc())
     )

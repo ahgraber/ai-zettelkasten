@@ -31,10 +31,10 @@ def _create_bookmark(session, karakeep_id: str):
     return make_source(session, karakeep_id, source_ref_bookmark_id=safe_bookmark_id)
 
 
-def _create_job(session, *, aizk_uuid, idempotency_key: str):
+def _create_job(session, *, source_id, idempotency_key: str):
     return make_job(
         session,
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         idempotency_key=idempotency_key,
         status=ConversionJobStatus.SUCCEEDED,
         attempts=1,
@@ -45,13 +45,13 @@ def _create_output(
     session,
     *,
     job_id: int,
-    aizk_uuid: UUID,
+    source_id: UUID,
     s3_prefix: str = "prefix/abc",
     owner_id: str = "self",
 ) -> ConversionOutput:
     output = ConversionOutput(
         job_id=job_id,
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         owner_id=owner_id,
         title="Test Output",
         payload_version=1,
@@ -70,9 +70,9 @@ def _create_output(
     return output
 
 
-def _manifest_v1_bytes(aizk_uuid: UUID, karakeep_id: str) -> bytes:
+def _manifest_v1_bytes(source_id: UUID, karakeep_id: str) -> bytes:
     manifest = ManifestV1(
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         karakeep_id=karakeep_id,
         source=ManifestSource(
             url="https://example.com/page",
@@ -137,9 +137,9 @@ def client(db_session, mock_s3) -> TestClient:
 
 def test_get_manifest_returns_json_bytes(db_session, client, mock_s3) -> None:
     bookmark = _create_bookmark(db_session, "bm_manifest")
-    job = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="a" * 64)
-    output = _create_output(db_session, job_id=job.id, aizk_uuid=bookmark.aizk_uuid)
-    manifest_bytes = _manifest_v1_bytes(bookmark.aizk_uuid, bookmark.karakeep_id)
+    job = _create_job(db_session, source_id=bookmark.source_id, idempotency_key="a" * 64)
+    output = _create_output(db_session, job_id=job.id, source_id=bookmark.source_id)
+    manifest_bytes = _manifest_v1_bytes(bookmark.source_id, bookmark.karakeep_id)
     mock_s3.get_object_bytes.return_value = manifest_bytes
 
     response = client.get(f"/v1/outputs/{output.id}/manifest")
@@ -152,8 +152,8 @@ def test_get_manifest_returns_json_bytes(db_session, client, mock_s3) -> None:
 
 def test_get_markdown_returns_text(db_session, client, mock_s3) -> None:
     bookmark = _create_bookmark(db_session, "bm_markdown")
-    job = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="d" * 64)
-    output = _create_output(db_session, job_id=job.id, aizk_uuid=bookmark.aizk_uuid)
+    job = _create_job(db_session, source_id=bookmark.source_id, idempotency_key="d" * 64)
+    output = _create_output(db_session, job_id=job.id, source_id=bookmark.source_id)
     mock_s3.get_object_bytes.return_value = b"# Title\n\nBody text."
 
     response = client.get(f"/v1/outputs/{output.id}/markdown")
@@ -166,8 +166,8 @@ def test_get_markdown_returns_text(db_session, client, mock_s3) -> None:
 
 def test_get_figure_returns_image_with_correct_content_type(db_session, client, mock_s3) -> None:
     bookmark = _create_bookmark(db_session, "bm_figure")
-    job = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="e" * 64)
-    output = _create_output(db_session, job_id=job.id, aizk_uuid=bookmark.aizk_uuid, s3_prefix="prefix/fig")
+    job = _create_job(db_session, source_id=bookmark.source_id, idempotency_key="e" * 64)
+    output = _create_output(db_session, job_id=job.id, source_id=bookmark.source_id, s3_prefix="prefix/fig")
     mock_s3.get_object_bytes.return_value = b"\x89PNG\r\n"
 
     response = client.get(f"/v1/outputs/{output.id}/figures/image-001.png")
@@ -193,8 +193,8 @@ def test_endpoint_404_unknown_output(client, suffix) -> None:
 def test_endpoint_404_when_s3_not_found(db_session, client, mock_s3, suffix) -> None:
     bookmark = _create_bookmark(db_session, f"bm_missing_{suffix.replace('/', '_')}")
     key = suffix.replace("/", "_")
-    job = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key=key.ljust(64, "0"))
-    output = _create_output(db_session, job_id=job.id, aizk_uuid=bookmark.aizk_uuid)
+    job = _create_job(db_session, source_id=bookmark.source_id, idempotency_key=key.ljust(64, "0"))
+    output = _create_output(db_session, job_id=job.id, source_id=bookmark.source_id)
     mock_s3.get_object_bytes.side_effect = S3NotFoundError("missing")
 
     response = client.get(f"/v1/outputs/{output.id}/{suffix}")
@@ -206,8 +206,8 @@ def test_endpoint_404_when_s3_not_found(db_session, client, mock_s3, suffix) -> 
 def test_endpoint_502_on_s3_error(db_session, client, mock_s3, suffix) -> None:
     bookmark = _create_bookmark(db_session, f"bm_err_{suffix.replace('/', '_')}")
     key = ("err_" + suffix.replace("/", "_")).ljust(64, "0")
-    job = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key=key)
-    output = _create_output(db_session, job_id=job.id, aizk_uuid=bookmark.aizk_uuid)
+    job = _create_job(db_session, source_id=bookmark.source_id, idempotency_key=key)
+    output = _create_output(db_session, job_id=job.id, source_id=bookmark.source_id)
     mock_s3.get_object_bytes.side_effect = S3Error("storage down", "s3_error")
 
     response = client.get(f"/v1/outputs/{output.id}/{suffix}")
@@ -232,8 +232,8 @@ def test_endpoint_404_when_output_belongs_to_different_owner(db_session, client,
     """Cross-owner artifact reads return the not-found shape, not the row."""
     bookmark = _create_bookmark(db_session, f"bm_xowner_{suffix.replace('/', '_')}")
     key = ("xo_" + suffix.replace("/", "_")).ljust(64, "0")
-    job = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key=key)
-    output = _create_output(db_session, job_id=job.id, aizk_uuid=bookmark.aizk_uuid, owner_id="someone_else")
+    job = _create_job(db_session, source_id=bookmark.source_id, idempotency_key=key)
+    output = _create_output(db_session, job_id=job.id, source_id=bookmark.source_id, owner_id="someone_else")
 
     response = client.get(f"/v1/outputs/{output.id}/{suffix}")
 
@@ -244,8 +244,8 @@ def test_endpoint_404_when_output_belongs_to_different_owner(db_session, client,
 
 def test_get_figure_404_when_no_figures(db_session, client, mock_s3) -> None:
     bookmark = _create_bookmark(db_session, "bm_no_figures")
-    job = _create_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="f" * 64)
-    output = _create_output(db_session, job_id=job.id, aizk_uuid=bookmark.aizk_uuid)
+    job = _create_job(db_session, source_id=bookmark.source_id, idempotency_key="f" * 64)
+    output = _create_output(db_session, job_id=job.id, source_id=bookmark.source_id)
     # Patch figure_count to zero so the handler rejects before any S3 lookup
     output.figure_count = 0
     db_session.add(output)

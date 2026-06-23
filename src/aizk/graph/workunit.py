@@ -22,7 +22,7 @@ open work-unit rather than creating a second.
 
 :func:`process_document` resolves its inputs by **locator** (``conversion_output_id``
 → Markdown, via the injected :class:`MarkdownSource`) but derives every run's
-reuse/supersession by **content** — the durable ``aizk_uuid``, the markdown hash,
+reuse/supersession by **content** — the durable ``source_id``, the markdown hash,
 the version stamps, the prompt/model derivation keys, and the ordered
 ``chunk_id``s — never from ``id``, ``conversion_output_id``, or any other local
 row handle. The Markdown source is injected so the graph stage stays decoupled
@@ -117,12 +117,12 @@ class OutputFreshness(Protocol):
     """The injected seam deciding whether a conversion output is still the source's latest.
 
     Production resolves this from the conversion outputs (the highest output id for
-    the ``aizk_uuid`` wins under the single serialized writer); tests supply a
+    the ``source_id`` wins under the single serialized writer); tests supply a
     deterministic double. Queried inside the persist transaction so the
     freshness check and the supersede are atomic.
     """
 
-    def is_current(self, session: "Session", aizk_uuid: "UUID", conversion_output_id: int) -> bool:
+    def is_current(self, session: "Session", source_id: "UUID", conversion_output_id: int) -> bool:
         """Return ``True`` iff ``conversion_output_id`` is the latest output for the source."""
         ...
 
@@ -169,7 +169,7 @@ def process_document(
     engine: "Engine",
     client: "LLMClient",
     *,
-    aizk_uuid: "UUID",
+    source_id: "UUID",
     conversion_output_id: int,
     markdown_source: MarkdownSource,
     freshness: OutputFreshness,
@@ -185,7 +185,7 @@ def process_document(
     summary + per-chunk revision LLM passes. **Apply (one short ``BEGIN IMMEDIATE``):**
     the same freshness gate again — authoritatively and atomically with the
     supersede (the preflight is best-effort) — then persist the chunking run +
-    chunk rows, the summary, and the variants, scoped to ``str(aizk_uuid)`` and
+    chunk rows, the summary, and the variants, scoped to ``str(source_id)`` and
     keyed by content. The chunks are contextualized in document order (the
     splitter's order), not the ``chunk_id``-ordered manifest.
 
@@ -201,7 +201,7 @@ def process_document(
     Args:
         engine: The shared engine; the apply phase opens its own ``BEGIN IMMEDIATE``.
         client: The single model access point for the summary and variant passes.
-        aizk_uuid: The durable source identity (runs scope to ``str(aizk_uuid)``).
+        source_id: The durable source identity (runs scope to ``str(source_id)``).
         conversion_output_id: The conversion artifact locator to process.
         markdown_source: The injected seam that fetches the document's Markdown.
         freshness: The injected seam deciding whether this output is still current.
@@ -217,7 +217,7 @@ def process_document(
             ``markdown_hash_xx64`` (blob/metadata drift) — guarding against
             chunking content that disagrees with the conversion stage's record.
     """
-    scope_key = str(aizk_uuid)
+    scope_id = str(source_id)
     locator = str(conversion_output_id)
 
     def _cancelled() -> bool:
@@ -230,11 +230,11 @@ def process_document(
     # is wasted. Best-effort: the authoritative, atomic gate runs again inside the
     # persist transaction below (a newer output may still land in between).
     with Session(engine) as preflight_session:
-        if not freshness.is_current(preflight_session, aizk_uuid, conversion_output_id):
+        if not freshness.is_current(preflight_session, source_id, conversion_output_id):
             logger.info(
                 "Skipping superseded/foreign conversion output %s for source %s before fetch (preflight)",
                 conversion_output_id,
-                scope_key,
+                scope_id,
             )
             return SkippedSuperseded(conversion_output_id=conversion_output_id)
 
@@ -248,7 +248,7 @@ def process_document(
         )
     chunks = split(
         loaded.text,
-        doc_id=scope_key,
+        source_id=scope_id,
         converted_artifact_id=locator,
         markdown_hash_xx64=loaded.markdown_hash_xx64,
     )
@@ -265,7 +265,7 @@ def process_document(
     summary_text = resolve_summary_text(
         engine,
         client,
-        aizk_uuid=scope_key,
+        source_id=scope_id,
         markdown_hash_xx64=loaded.markdown_hash_xx64,
         document_text=loaded.text,
     )
@@ -276,7 +276,7 @@ def process_document(
     revisions = resolve_revisions(
         engine,
         client,
-        aizk_uuid=scope_key,
+        source_id=scope_id,
         summary_text=summary_text,
         markdown_hash_xx64=loaded.markdown_hash_xx64,
         ordered_chunks=chunks,
@@ -289,17 +289,17 @@ def process_document(
         if _cancelled():
             logger.info("Cancellation observed before persist for conversion output %s", conversion_output_id)
             return Cancelled()
-        if not freshness.is_current(session, aizk_uuid, conversion_output_id):
+        if not freshness.is_current(session, source_id, conversion_output_id):
             logger.info(
                 "Skipping superseded conversion output %s for source %s (a newer output won)",
                 conversion_output_id,
-                scope_key,
+                scope_id,
             )
             return SkippedSuperseded(conversion_output_id=conversion_output_id)
 
         chunking_run = persist_chunks(
             session,
-            aizk_uuid=scope_key,
+            source_id=scope_id,
             conversion_output_id=locator,
             markdown_hash_xx64=loaded.markdown_hash_xx64,
             splitter_version=SPLITTER_VERSION,
@@ -308,7 +308,7 @@ def process_document(
         summary = summarize_document(
             session,
             client,
-            aizk_uuid=scope_key,
+            source_id=scope_id,
             conversion_output_id=locator,
             markdown_hash_xx64=loaded.markdown_hash_xx64,
             document_text=loaded.text,
@@ -317,7 +317,7 @@ def process_document(
         variants = contextualize_chunks(
             session,
             client,
-            aizk_uuid=scope_key,
+            source_id=scope_id,
             summary=summary,
             chunks=chunks,
             chunking_run_id=chunking_run.id,
@@ -331,7 +331,7 @@ def process_document(
         # concurrent same-source attempt under different keys keeps its checkpoints.
         memo_delete_keys(
             session,
-            scope_key,
+            scope_id,
             consumed_output_memo_keys(
                 summary_text,
                 markdown_hash_xx64=loaded.markdown_hash_xx64,
@@ -349,7 +349,7 @@ def process_document(
     logger.debug(
         "Processed document conversion_output_id=%s source=%s: %d chunks, %d variants",
         conversion_output_id,
-        scope_key,
+        scope_id,
         result.chunk_count,
         result.variant_count,
     )
@@ -370,7 +370,7 @@ def enqueue_document(
     session: "Session",
     *,
     conversion_output_id: int,
-    aizk_uuid: "UUID",
+    source_id: "UUID",
 ) -> ContextualizationJob:
     """Enqueue one document's work-unit (incremental mode), deduped on ``idempotency_key``.
 
@@ -384,7 +384,7 @@ def enqueue_document(
     Args:
         session: Active session; the caller owns commit/rollback.
         conversion_output_id: The conversion artifact locator to process.
-        aizk_uuid: The durable source identity, resolved by the caller from the
+        source_id: The durable source identity, resolved by the caller from the
             conversion output and carried onto the unit's runs and events.
 
     Returns:
@@ -405,7 +405,7 @@ def enqueue_document(
     job = ContextualizationJob(
         idempotency_key=key,
         conversion_output_id=conversion_output_id,
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         status=WorkUnitStatus.QUEUED,
         queued_at=_utcnow(),
     )
@@ -423,7 +423,7 @@ def enqueue_backfill(
 ) -> list[ContextualizationJob]:
     """Enqueue work-units for many documents (bulk/backfill mode) through the single path.
 
-    Each ``(conversion_output_id, aizk_uuid)`` pair is enqueued via
+    Each ``(conversion_output_id, source_id)`` pair is enqueued via
     :func:`enqueue_document`, so the same dedupe applies and the resulting units
     are identical to incremental enqueue — only volume and scheduling differ.
     Throttling and per-document commit batching are the caller's concern; this
@@ -433,6 +433,6 @@ def enqueue_backfill(
         The enqueued (or reused) work-units, one per input document.
     """
     return [
-        enqueue_document(session, conversion_output_id=conversion_output_id, aizk_uuid=aizk_uuid)
-        for conversion_output_id, aizk_uuid in documents
+        enqueue_document(session, conversion_output_id=conversion_output_id, source_id=source_id)
+        for conversion_output_id, source_id in documents
     ]

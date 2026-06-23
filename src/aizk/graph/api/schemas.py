@@ -18,7 +18,7 @@ class ContextualizationJobResponse(BaseModel):
     id: int
     idempotency_key: str
     conversion_output_id: int
-    aizk_uuid: UUID
+    source_id: UUID
     status: WorkUnitStatus
     attempts: int
     error_code: str | None = None

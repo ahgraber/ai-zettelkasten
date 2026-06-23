@@ -442,7 +442,7 @@ def test_happy_path_public_url_succeeds(monkeypatch: pytest.MonkeyPatch, db_sess
 
     # Seed already RUNNING — the adapter's ``execute`` is entered after the claim.
     job = ConversionJob(
-        aizk_uuid=source.aizk_uuid,
+        source_id=source.source_id,
         owner_id="self",
         title="Happy Path",
         status=ConversionJobStatus.RUNNING,

@@ -31,4 +31,4 @@ def test_different_address_same_content_yields_different_chunk_id() -> None:
 
     assert derive_chunk_id("doc", ("Renamed",), 0, content) != base  # heading_path axis
     assert derive_chunk_id("doc", ("Intro",), 1, content) != base  # ordinal axis
-    assert derive_chunk_id("other-doc", ("Intro",), 0, content) != base  # doc_id axis
+    assert derive_chunk_id("other-doc", ("Intro",), 0, content) != base  # source_id axis

@@ -72,7 +72,7 @@ class _StubMarkdownSource:
 class _AlwaysCurrent:
     """A freshness stub treating every output as the source's latest."""
 
-    def is_current(self, session: Session, aizk_uuid: UUID, conversion_output_id: int) -> bool:
+    def is_current(self, session: Session, source_id: UUID, conversion_output_id: int) -> bool:
         return True
 
 
@@ -85,12 +85,12 @@ def _make_engine(tmp_path: Path, name: str):
     return engine
 
 
-def _run(engine, *, conversion_output_id: int = _OUTPUT_ID, aizk_uuid: UUID = _AIZK_UUID) -> ProcessResult:
+def _run(engine, *, conversion_output_id: int = _OUTPUT_ID, source_id: UUID = _AIZK_UUID) -> ProcessResult:
     """Run the unit-of-work for one document and return its (non-skipped) result."""
     result = process_document(
         engine,
         StubLLMClient(),
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         conversion_output_id=conversion_output_id,
         markdown_source=_StubMarkdownSource(_MARKDOWN),
         freshness=_AlwaysCurrent(),
@@ -99,14 +99,14 @@ def _run(engine, *, conversion_output_id: int = _OUTPUT_ID, aizk_uuid: UUID = _A
     return result
 
 
-def _snapshot(engine, aizk_uuid: UUID = _AIZK_UUID) -> dict:
+def _snapshot(engine, source_id: UUID = _AIZK_UUID) -> dict:
     """Reduce a source's active run records to a DB-independent comparable form."""
-    scope = str(aizk_uuid)
+    scope = str(source_id)
     with Session(engine) as session:
         active = {
             r.stage: r
             for r in session.exec(
-                select(PipelineRun).where(PipelineRun.scope_key == scope, PipelineRun.status == RunStatus.ACTIVE)
+                select(PipelineRun).where(PipelineRun.scope_id == scope, PipelineRun.status == RunStatus.ACTIVE)
             ).all()
         }
         chunking, summary_run, variant_run = (
@@ -142,7 +142,7 @@ def _process(engine, *, mode: str) -> dict:
         if mode == "bulk":
             enqueue_backfill(session, [(_OTHER_OUTPUT_ID, _OTHER_AIZK_UUID), (_OUTPUT_ID, _AIZK_UUID)])
         else:
-            enqueue_document(session, conversion_output_id=_OUTPUT_ID, aizk_uuid=_AIZK_UUID)
+            enqueue_document(session, conversion_output_id=_OUTPUT_ID, source_id=_AIZK_UUID)
         session.commit()
     _run(engine)
     return _snapshot(engine)
@@ -176,11 +176,11 @@ def test_enqueue_dedupes_on_idempotency_key(tmp_path: Path) -> None:
     """Re-enqueueing the same conversion output reuses the open work-unit, in either mode."""
     engine = _make_engine(tmp_path, "dedupe.db")
     with Session(engine) as session:
-        first = enqueue_document(session, conversion_output_id=_OUTPUT_ID, aizk_uuid=_AIZK_UUID)
+        first = enqueue_document(session, conversion_output_id=_OUTPUT_ID, source_id=_AIZK_UUID)
         session.commit()
         first_id = first.id
 
-        again = enqueue_document(session, conversion_output_id=_OUTPUT_ID, aizk_uuid=_AIZK_UUID)
+        again = enqueue_document(session, conversion_output_id=_OUTPUT_ID, source_id=_AIZK_UUID)
         (backfilled,) = enqueue_backfill(session, [(_OUTPUT_ID, _AIZK_UUID)])
         session.commit()
 
@@ -219,7 +219,7 @@ def test_process_document_rejects_markdown_hash_mismatch(tmp_path: Path) -> None
         process_document(
             engine,
             StubLLMClient(),
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             conversion_output_id=_OUTPUT_ID,
             markdown_source=_DriftingSource(),
             freshness=_AlwaysCurrent(),
@@ -242,7 +242,7 @@ def test_process_document_reuses_summary_text_on_rerun(tmp_path: Path) -> None:
     process_document(
         engine,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT_ID,
         markdown_source=source,
         freshness=_AlwaysCurrent(),
@@ -252,7 +252,7 @@ def test_process_document_reuses_summary_text_on_rerun(tmp_path: Path) -> None:
     process_document(
         engine,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT_ID,
         markdown_source=source,
         freshness=_AlwaysCurrent(),
@@ -299,7 +299,7 @@ def test_variants_regenerate_under_reused_summary_use_persisted_summary(
     process_document(
         engine,
         rerun_client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT_ID,
         markdown_source=_StubMarkdownSource(_MARKDOWN),
         freshness=_AlwaysCurrent(),
@@ -333,7 +333,7 @@ def test_process_document_skips_writes_when_cancelled(tmp_path: Path) -> None:
     result = process_document(
         engine,
         StubLLMClient(),
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT_ID,
         markdown_source=_StubMarkdownSource(_MARKDOWN),
         freshness=_AlwaysCurrent(),

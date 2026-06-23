@@ -41,7 +41,7 @@ A `failed` outcome is classified `retryable` or `permanent` (`RetryClass`).
 - `map_result(result | exception) -> TerminalOutcome` — classify success/failure into the generic lifecycle.
 - `finalize(session, handle, outcome)` — write the terminal status transition, inside the runner transaction.
 - `cleanup(handle)` / `cancel(handle)` — release transient resources; cooperatively cancel a running unit.
-- `scope_key(handle)`, `timeout`, `concurrency_limit`, `isolation`, `stage` — the stage's configuration.
+- `scope_id(handle)`, `timeout`, `concurrency_limit`, `isolation`, `stage` — the stage's configuration.
 
 ### Engine — [`runner.py`](runner.py)
 
@@ -61,14 +61,14 @@ Once a unit is dispatched to the pool, the worker threads may begin in any order
 ### Run / dataset-version primitive — [`run.py`](run.py)
 
 `PipelineRun` + `record_run` version a stage's model/config-dependent derived output.
-At most one run per `(stage, scope_key)` is `active` (enforced by a partial unique index); recording a new run and superseding the prior one is atomic — never two active, never a gap.
+At most one run per `(stage, scope_id)` is `active` (enforced by a partial unique index); recording a new run and superseding the prior one is atomic — never two active, never a gap.
 Runs record a derivation key and version stamps for reproducibility, and are immutable except for the active→superseded lifecycle transition.
 _No orchestrator provides this_ — it is domain state that survives any engine.
 
 ### Transition-event log — [`events.py`](events.py)
 
 `record_transition` co-commits a work-unit's status change with an append-only `PipelineEvent` row **in the same transaction** — a committed status change never exists without its event, and vice versa.
-The shared `pipeline_events` table is keyed by the cross-stage source identity (`aizk_uuid`) plus stage / work-unit ref / run ref, so a source's progress is resolvable across stages.
+The shared `pipeline_events` table is keyed by the cross-stage source identity (`source_id`) plus stage / work-unit ref / run ref, so a source's progress is resolvable across stages.
 Treat it as the product-facing read-model/audit projection — query it, not the engine's internals.
 
 ### Shutdown — [`shutdown.py`](shutdown.py)

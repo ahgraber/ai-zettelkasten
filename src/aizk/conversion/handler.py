@@ -5,7 +5,7 @@ keyed by its integer ``ConversionJob.id``) to the generic pipeline runner. The
 runner owns the loop, concurrency bound, timeout enforcement, transaction
 boundary, and observability; this handler owns the conversion-specific
 surface: startup dependency validation, the unit-of-work execution, result
-classification, the timeout/concurrency configuration, and the run ``scope_key``.
+classification, the timeout/concurrency configuration, and the run ``scope_id``.
 
 It implements :meth:`ConversionStageHandler.execute`,
 :meth:`ConversionStageHandler.cancel`, and
@@ -159,8 +159,8 @@ class ConversionStageHandler:
         for probe in self._ensure_runtime().capabilities.startup_probes:
             probe()
 
-    def scope_key(self, handle: int) -> str:
-        """Return the run ``scope_key`` for ``handle`` (per-job scope).
+    def scope_id(self, handle: int) -> str:
+        """Return the run ``scope_id`` for ``handle`` (per-job scope).
 
         Args:
             handle: The conversion job id.
@@ -293,7 +293,7 @@ class ConversionStageHandler:
         Steps (all reusing existing helpers):
 
         1. Preflight: fetch + validate the job's ``source_ref``.
-        2. Snapshot ``(aizk_uuid, attempt)`` once at supervision entry for
+        2. Snapshot ``(source_id, attempt)`` once at supervision entry for
            phase / enrichment events that the subprocess cannot see.
         3. Spawn + supervise the conversion subprocess, registering it under the
            handle so ``cancel`` can terminate its process group.
@@ -351,7 +351,7 @@ class ConversionStageHandler:
         converter_name = config.worker_converter_name
         requires_gpu = runtime.capabilities.converter_requires_gpu(converter_name)
 
-        # Snapshot (aizk_uuid, attempt) once at supervision entry.
+        # Snapshot (source_id, attempt) once at supervision entry.
         # The subprocess cannot see the job's attempt counter, so the parent
         # captures it before phase events start arriving on the queue.
         with Session(engine) as snap_session:
@@ -359,7 +359,7 @@ class ConversionStageHandler:
             if snap_job is None:
                 raise JobDataIntegrityError(f"Job {handle} missing at supervision entry")
             attempt_snapshot = snap_job.attempts
-            aizk_uuid_snapshot = snap_job.aizk_uuid
+            source_id_snapshot = snap_job.source_id
 
         def _on_phase_event(phase: str, reported_at: datetime.datetime) -> None:
             """Persist one phase event per subprocess report; best-effort."""
@@ -370,7 +370,7 @@ class ConversionStageHandler:
                     record_phase_event(
                         phase_session,
                         job_id=handle,
-                        aizk_uuid=aizk_uuid_snapshot,
+                        source_id=source_id_snapshot,
                         attempt=attempt_snapshot,
                         current_status=ConversionJobStatus.RUNNING,
                         phase=phase,
@@ -468,7 +468,7 @@ class ConversionStageHandler:
                         if job_rec:
                             _write_source_enrichment(
                                 subprocess_meta,
-                                str(job_rec.aizk_uuid),
+                                str(job_rec.source_id),
                                 engine,
                                 job_id=handle,
                                 attempt=job_rec.attempts,

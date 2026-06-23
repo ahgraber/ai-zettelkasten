@@ -11,10 +11,10 @@ table (``pipeline_events``), not in a conversion-private table: these helpers
 validate the conversion-specific payload, then delegate to
 :func:`aizk.pipeline.events.record_transition`, recording the row with
 ``stage="conversion"``, ``work_unit_ref=str(job.id)``, the denormalized
-``aizk_uuid``, the kind/from-status/to-status rendered to text, the attempt, and
+``source_id``, the kind/from-status/to-status rendered to text, the attempt, and
 the validated payload serialized to the generic ``payload_json`` column. The
 conversion event history is therefore queryable both per-job (``stage`` +
-``work_unit_ref``) and cross-stage (``aizk_uuid``); use :func:`events_for_job`
+``work_unit_ref``) and cross-stage (``source_id``); use :func:`events_for_job`
 to read a single job's conversion events back in occurrence order.
 
 Calling conventions:
@@ -215,7 +215,7 @@ class SourceEnrichedPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["source_enriched"] = "source_enriched"
-    aizk_uuid: UUID
+    source_id: UUID
     columns_written: list[str]
     update_succeeded: bool
     failure_reason: str | None = None
@@ -363,7 +363,7 @@ def record_transition(
     :class:`~aizk.pipeline.events.PipelineEvent` row (``stage="conversion"``)
     carrying the typed ``payload`` serialized into the generic ``payload_json``
     column. The conversion-specific ``kind`` and statuses are rendered to their
-    string values; the denormalized ``aizk_uuid`` keeps the row queryable after
+    string values; the denormalized ``source_id`` keeps the row queryable after
     operator deletion of the job (there is no DB FK in the shared table).
 
     The conversion-specific payload is validated against the strict per-kind
@@ -419,7 +419,7 @@ def record_transition(
     event = PipelineEvent(
         stage=STAGE,
         work_unit_ref=_work_unit_ref(job.id),
-        aizk_uuid=job.aizk_uuid,
+        source_id=job.source_id,
         attempt=attempt,
         kind=kind.value,
         from_status=prior_status.value if prior_status is not None else None,
@@ -436,7 +436,7 @@ def record_phase_event(
     session: "Session",
     *,
     job_id: int,
-    aizk_uuid: UUID,
+    source_id: UUID,
     attempt: int,
     current_status: ConversionJobStatus,
     phase: str,
@@ -474,7 +474,7 @@ def record_phase_event(
     event = PipelineEvent(
         stage=STAGE,
         work_unit_ref=_work_unit_ref(job_id),
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         attempt=attempt,
         kind=ConversionEventKind.PHASE.value,
         from_status=current_status.value,
@@ -501,7 +501,7 @@ def record_source_event(
     session: "Session",
     *,
     job_id: int,
-    aizk_uuid: UUID,
+    source_id: UUID,
     attempt: int,
     columns_written: list[str],
     update_succeeded: bool,
@@ -524,7 +524,7 @@ def record_source_event(
     """
     try:
         payload = SourceEnrichedPayload(
-            aizk_uuid=aizk_uuid,
+            source_id=source_id,
             columns_written=columns_written,
             update_succeeded=update_succeeded,
             failure_reason=failure_reason,
@@ -542,7 +542,7 @@ def record_source_event(
     event = PipelineEvent(
         stage=STAGE,
         work_unit_ref=_work_unit_ref(job_id),
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         attempt=attempt,
         kind=ConversionEventKind.SOURCE_ENRICHED.value,
         from_status=None,

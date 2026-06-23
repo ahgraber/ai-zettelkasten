@@ -81,7 +81,7 @@ def queued_job(engine, source) -> ConversionJob:
     """Persist a ConversionJob in QUEUED with attempts=0."""
     with Session(engine) as session:
         job = ConversionJob(
-            aizk_uuid=source.aizk_uuid,
+            source_id=source.source_id,
             owner_id="self",
             title="test",
             payload_version=1,
@@ -298,7 +298,7 @@ def test_record_phase_event_does_not_mutate_status(engine, queued_job):
         record_phase_event(
             session,
             job_id=job.id,
-            aizk_uuid=job.aizk_uuid,
+            source_id=job.source_id,
             attempt=1,
             current_status=ConversionJobStatus.RUNNING,
             phase="converting",
@@ -327,7 +327,7 @@ def test_record_phase_event_persistence_failure_is_swallowed_and_logged(engine, 
         result = record_phase_event(
             _RaisingSession(),
             job_id=queued_job.id,
-            aizk_uuid=queued_job.aizk_uuid,
+            source_id=queued_job.source_id,
             attempt=1,
             current_status=ConversionJobStatus.RUNNING,
             phase="converting",
@@ -347,7 +347,7 @@ def test_record_phase_event_validation_failure_drops_row(engine, queued_job, cap
             result = record_phase_event(
                 session,
                 job_id=job.id,
-                aizk_uuid=job.aizk_uuid,
+                source_id=job.source_id,
                 attempt=1,
                 current_status=ConversionJobStatus.RUNNING,
                 phase="not_a_real_phase",
@@ -374,7 +374,7 @@ def test_record_source_event_does_not_commit(engine, queued_job):
         record_source_event(
             session,
             job_id=queued_job.id,
-            aizk_uuid=queued_job.aizk_uuid,
+            source_id=queued_job.source_id,
             attempt=1,
             columns_written=["url", "title"],
             update_succeeded=True,
@@ -396,7 +396,7 @@ def test_record_source_event_failure_indicator(engine, queued_job):
         record_source_event(
             session,
             job_id=queued_job.id,
-            aizk_uuid=queued_job.aizk_uuid,
+            source_id=queued_job.source_id,
             attempt=1,
             columns_written=["url", "title"],
             update_succeeded=False,
@@ -432,7 +432,7 @@ def test_initial_submission_event_writes_null_from_status(engine, source):
     """
     with Session(engine) as session:
         job = ConversionJob(
-            aizk_uuid=source.aizk_uuid,
+            source_id=source.source_id,
             owner_id="self",
             title="test",
             payload_version=1,

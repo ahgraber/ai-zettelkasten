@@ -14,7 +14,7 @@ by generation live on the run instead:
 
 - :class:`Chunk` — content-addressed, immutable, run-independent chunk rows
   keyed by the splitter's ``chunk_id``, carrying stable facts only (the source
-  ``doc_id`` ``= str(aizk_uuid)``, ``text``, ``content_hash``, ``char_count``,
+  ``source_id`` ``= str(source_id)``, ``text``, ``content_hash``, ``char_count``,
   ``heading_path``, ``ordinal``). An unchanged chunk keeps its identity and its
   single row across re-chunks. Ordinary processing never mutates a row.
 - :class:`ChunkRunInput` — one row per chunking run recording what the run
@@ -38,7 +38,7 @@ by generation live on the run instead:
   provenance pointers, and a derivation key for the summary, 2p/1n neighbor
   identities, ``splitter_version``, prompt identity, and model profile used.
 - :class:`ContextualizationOutputMemo` — internal scratch state caching validated
-  summary and per-chunk revision model outputs keyed by ``(kind, scope_key,
+  summary and per-chunk revision model outputs keyed by ``(kind, scope_id,
   derivation_key)`` so a retry of a partially-completed contextualization attempt
   re-invokes the model only for outputs not already retained. Never a product
   projection: a row makes no run, summary, or variant active or readable.
@@ -104,11 +104,11 @@ class Chunk(SQLModel, table=True):
     """
 
     __tablename__ = "graph_chunks"
-    __table_args__ = (Index("ix_graph_chunks_doc_id", "doc_id"),)
+    __table_args__ = (Index("ix_graph_chunks_source_id", "source_id"),)
 
     chunk_id: str = Field(primary_key=True, nullable=False)
     content_hash: str = Field(nullable=False)
-    doc_id: str = Field(nullable=False)
+    source_id: str = Field(nullable=False)
     heading_path_json: str = Field(sa_column=Column(Text, nullable=False))
     ordinal: int = Field(nullable=False)
     text: str = Field(sa_column=Column(Text, nullable=False))
@@ -176,7 +176,7 @@ class DocumentSummary(SQLModel, table=True):
     provenance (so the summary's input is retrievable as well as verifiable), and
     the ``summary_version``; the owning run carries the derivation key that
     produced it (source markdown hash, prompt identity, model profile, and
-    version) and is scoped to the durable source identity (``str(aizk_uuid)``).
+    version) and is scoped to the durable source identity (``str(source_id)``).
     Re-summarizing a document whose derivation-key inputs are unchanged reuses the
     active summary run; a change to any opens a new run that supersedes the prior,
     leaving this row present and unmodified.
@@ -262,17 +262,17 @@ class ContextualizationOutputMemo(SQLModel, table=True):
     :class:`ContextualizedChunk`, never this table — and a row never makes a run,
     summary, or variant active or readable.
 
-    Identity is ``(kind, scope_key, derivation_key)``:
+    Identity is ``(kind, scope_id, derivation_key)``:
 
     - ``kind`` discriminates the summary output (``summary``) from a per-chunk
       revision (``revision``); a single discriminated table avoids two near-identical
       tables, and the keys never collide across kinds because their JSON shapes
       differ and ``kind`` partitions them.
-    - ``scope_key`` is the durable source identity (``str(aizk_uuid)``). It is
+    - ``scope_id`` is the durable source identity (``str(source_id)``). It is
       load-bearing for the summary kind, whose derivation key does **not** embed the
       source: without it two distinct sources with byte-identical Markdown would
       share a summary entry. The revision key is already source-distinct via its
-      ``chunk_id``, so ``scope_key`` is redundant-but-harmless there and keeps the
+      ``chunk_id``, so ``scope_id`` is redundant-but-harmless there and keeps the
       schema uniform; it also makes the success-path prune key set well-defined per
       source.
     - ``derivation_key`` is the respective input-deterministic derivation key — the
@@ -290,14 +290,14 @@ class ContextualizationOutputMemo(SQLModel, table=True):
     __table_args__ = (
         UniqueConstraint(
             "kind",
-            "scope_key",
+            "scope_id",
             "derivation_key",
             name="uq_graph_contextualization_output_memo_key",
         ),
         Index(
             "ix_graph_contextualization_output_memo_key",
             "kind",
-            "scope_key",
+            "scope_id",
             "derivation_key",
         ),
         # Fail closed on an unknown kind so a typo cannot create a durable but
@@ -310,7 +310,7 @@ class ContextualizationOutputMemo(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True, nullable=False)
     kind: str = Field(nullable=False)
-    scope_key: str = Field(nullable=False)
+    scope_id: str = Field(nullable=False)
     derivation_key: str = Field(sa_column=Column(Text, nullable=False))
     output_text: str = Field(sa_column=Column(Text, nullable=False))
     created_at: datetime.datetime = Field(
@@ -323,7 +323,7 @@ class ContextualizationJob(SQLModel, table=True):
     """A claimable work-unit: chunk-persist and contextualize one converted document.
 
     Mirrors the conversion stage's ``conversion_jobs`` — one row per document to
-    process, scoped to the durable source identity ``aizk_uuid`` — so the shared
+    process, scoped to the durable source identity ``source_id`` — so the shared
     runtime's claim/lease/retry/stale-recovery machinery can drive the graph stage
     the same way it drives conversion. The runtime owns the lifecycle transitions
     (this change only enqueues rows and runs the unit-of-work); the stage adapter
@@ -337,7 +337,7 @@ class ContextualizationJob(SQLModel, table=True):
       reuses the existing row instead of creating a second.
     - ``conversion_output_id`` is the local artifact locator used to fetch the
       Markdown the unit splits and persists; it is a locator, never a derivation
-      input. ``aizk_uuid`` is the durable source identity carried onto the runs
+      input. ``source_id`` is the durable source identity carried onto the runs
       and transition events. Both are stored as plain (logical) references rather
       than cross-stage foreign keys, matching the graph stage's run-reference
       convention and keeping the work-unit table self-contained.
@@ -356,14 +356,14 @@ class ContextualizationJob(SQLModel, table=True):
             "earliest_next_attempt_at",
             "queued_at",
         ),
-        Index("ix_graph_contextualization_jobs_aizk_uuid", "aizk_uuid"),
+        Index("ix_graph_contextualization_jobs_source_id", "source_id"),
         Index("ix_graph_contextualization_jobs_conversion_output_id", "conversion_output_id"),
     )
 
     id: int | None = Field(default=None, primary_key=True, nullable=False)
     idempotency_key: str = Field(nullable=False)
     conversion_output_id: int = Field(nullable=False)
-    aizk_uuid: UUID = Field(nullable=False)
+    source_id: UUID = Field(nullable=False)
     # values_callable stores enum values ("queued") not names ("QUEUED"), matching RunStatus.
     status: WorkUnitStatus = Field(
         default=WorkUnitStatus.QUEUED,

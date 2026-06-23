@@ -195,7 +195,7 @@ class S3Client:
         """Upload conversion artifacts to S3.
 
         Args:
-            s3_prefix: S3 path prefix (e.g., "aizk_uuid").
+            s3_prefix: S3 path prefix (e.g., "source_id").
             markdown_path: Path to markdown file.
             figure_paths: List of paths to figure files.
             manifest_path: Optional path to manifest.json.

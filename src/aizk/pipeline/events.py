@@ -2,8 +2,8 @@
 
 A single ``pipeline_events`` table holds the durable transition events for every
 stage. Each row carries the ``stage``, the stage's own ``work_unit_ref``, an
-optional ``run_id``, and the ``aizk_uuid`` source identity, so a source's
-progress is resolvable across stages by a single query on ``aizk_uuid`` with no
+optional ``run_id``, and the ``source_id`` source identity, so a source's
+progress is resolvable across stages by a single query on ``source_id`` with no
 per-stage joins.
 
 :func:`record_transition` co-commits the event with the work-unit's status
@@ -77,7 +77,7 @@ class PipelineEvent(SQLModel, table=True):
     Rows are append-only. ``work_unit_ref`` and ``run_id`` are logical
     references (text / id, no database foreign keys) so the table stays
     decoupled from any single stage's schema and survives operator deletion of
-    a stage's work-unit row; ``aizk_uuid`` is the denormalized source identity
+    a stage's work-unit row; ``source_id`` is the denormalized source identity
     that keeps the audit trail queryable after such deletions.
 
     Column nullability conventions match conversion's original event log:
@@ -90,8 +90,8 @@ class PipelineEvent(SQLModel, table=True):
     __tablename__ = "pipeline_events"
     __table_args__ = (
         Index(
-            "ix_pipeline_events_aizk_uuid_occurred_at",
-            "aizk_uuid",
+            "ix_pipeline_events_source_id_occurred_at",
+            "source_id",
             "occurred_at",
         ),
         Index(
@@ -111,7 +111,7 @@ class PipelineEvent(SQLModel, table=True):
     stage: str = Field(sa_column=Column(Text, nullable=False))
     work_unit_ref: str = Field(sa_column=Column(Text, nullable=False))
     run_id: int | None = Field(default=None, nullable=True)
-    aizk_uuid: UUID = Field(nullable=False)
+    source_id: UUID = Field(nullable=False)
     from_status: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     to_status: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     kind: str = Field(sa_column=Column(Text, nullable=False))
@@ -133,7 +133,7 @@ def record_transition(
     *,
     stage: str,
     work_unit_ref: str,
-    aizk_uuid: UUID,
+    source_id: UUID,
     to_status: Any,
     kind: Any,
     payload: BaseModel,
@@ -159,7 +159,7 @@ def record_transition(
         work_unit: The stage's work-unit ORM object whose status is mutated.
         stage: Stage identifier stored on the event.
         work_unit_ref: The stage's own identity for the work-unit (text).
-        aizk_uuid: Source identity, denormalized for cross-stage queries.
+        source_id: Source identity, denormalized for cross-stage queries.
         to_status: New status to apply to the work-unit (enum or str); rendered
             to text on the event.
         kind: Event kind for the audit row; must match ``payload``'s ``kind``.
@@ -200,7 +200,7 @@ def record_transition(
         stage=stage,
         work_unit_ref=work_unit_ref,
         run_id=run_id,
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         from_status=_as_text(prior_status),
         to_status=_as_text(to_status),
         kind=str(_as_text(kind)),

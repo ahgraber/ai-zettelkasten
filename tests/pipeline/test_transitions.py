@@ -75,7 +75,7 @@ def test_status_and_event_co_committed(wu_engine: Engine) -> None:
             unit,
             stage="teststage",
             work_unit_ref=str(unit_id),
-            aizk_uuid=source,
+            source_id=source,
             to_status="running",
             kind="test_transition",
             payload=StubTransitionPayload(note="claimed"),
@@ -86,7 +86,7 @@ def test_status_and_event_co_committed(wu_engine: Engine) -> None:
         unit = session.get(StubWorkUnit, unit_id)
         assert unit.status == "running", "status change is durable"
 
-        events = list(session.exec(select(PipelineEvent).where(PipelineEvent.aizk_uuid == source)))
+        events = list(session.exec(select(PipelineEvent).where(PipelineEvent.source_id == source)))
         assert len(events) == 1, "exactly one event recorded"
         event = events[0]
         assert event.from_status == "queued"
@@ -109,7 +109,7 @@ def test_failed_transaction_leaves_neither(wu_engine: Engine) -> None:
             unit,
             stage="teststage",
             work_unit_ref=str(unit_id),
-            aizk_uuid=source,
+            source_id=source,
             to_status="running",
             kind="test_transition",
             payload=StubTransitionPayload(note="claimed"),
@@ -137,7 +137,7 @@ def test_events_resolvable_by_source_across_stages(wu_engine: Engine) -> None:
             session.get(StubWorkUnit, conv_id),
             stage="conversion",
             work_unit_ref=f"job:{conv_id}",
-            aizk_uuid=source,
+            source_id=source,
             to_status="running",
             kind="test_transition",
             payload=StubTransitionPayload(note="conv"),
@@ -147,7 +147,7 @@ def test_events_resolvable_by_source_across_stages(wu_engine: Engine) -> None:
             session.get(StubWorkUnit, chunk_id),
             stage="chunking",
             work_unit_ref=f"chunk:{chunk_id}",
-            aizk_uuid=source,
+            source_id=source,
             to_status="running",
             kind="test_transition",
             payload=StubTransitionPayload(note="chunk"),
@@ -157,7 +157,7 @@ def test_events_resolvable_by_source_across_stages(wu_engine: Engine) -> None:
             session.get(StubWorkUnit, other_id),
             stage="conversion",
             work_unit_ref=f"job:{other_id}",
-            aizk_uuid=other_source,
+            source_id=other_source,
             to_status="running",
             kind="test_transition",
             payload=StubTransitionPayload(note="other"),
@@ -167,12 +167,12 @@ def test_events_resolvable_by_source_across_stages(wu_engine: Engine) -> None:
     with Session(wu_engine) as session:
         events = list(
             session.exec(
-                select(PipelineEvent).where(PipelineEvent.aizk_uuid == source).order_by(PipelineEvent.event_id)
+                select(PipelineEvent).where(PipelineEvent.source_id == source).order_by(PipelineEvent.event_id)
             )
         )
         assert len(events) == 2, "only this source's events"
         assert {event.stage for event in events} == {"conversion", "chunking"}, "both stages returned together"
-        assert all(event.aizk_uuid == source for event in events)
+        assert all(event.source_id == source for event in events)
 
 
 def test_payload_kind_must_match_transition_kind(wu_engine: Engine) -> None:
@@ -186,7 +186,7 @@ def test_payload_kind_must_match_transition_kind(wu_engine: Engine) -> None:
                 unit,
                 stage="teststage",
                 work_unit_ref=str(unit_id),
-                aizk_uuid=uuid4(),
+                source_id=uuid4(),
                 to_status="running",
                 kind="some_other_kind",
                 payload=StubTransitionPayload(note="mismatch"),

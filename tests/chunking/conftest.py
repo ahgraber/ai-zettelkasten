@@ -22,7 +22,7 @@ MARKDOWN_HASH_XX64 = "0123456789abcdef"
 def default_provenance() -> dict[str, str]:
     """Return the keyword provenance arguments accepted by :func:`split`."""
     return {
-        "doc_id": DOC_ID,
+        "source_id": DOC_ID,
         "converted_artifact_id": CONVERTED_ARTIFACT_ID,
         "markdown_hash_xx64": MARKDOWN_HASH_XX64,
     }

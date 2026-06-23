@@ -37,7 +37,7 @@ def test_submit_persists_principal_subject_on_source_and_job(db_session, monkeyp
 
     assert resp.status_code == 201
     source = db_session.exec(select(Source).where(Source.karakeep_id == "bm_owner_alice")).one()
-    job = db_session.exec(select(ConversionJob).where(ConversionJob.aizk_uuid == source.aizk_uuid)).one()
+    job = db_session.exec(select(ConversionJob).where(ConversionJob.source_id == source.source_id)).one()
     assert source.owner_id == "alice"
     assert job.owner_id == "alice"
 
@@ -71,14 +71,14 @@ def test_source_reuse_preserves_first_writers_owner_id(db_session) -> None:
 
     assert first.status_code == 201
     assert second.status_code == 201, "cross-owner submission must create a new job, not replay alice's"
-    assert first.json()["aizk_uuid"] == second.json()["aizk_uuid"], "Source row is shared across principals"
+    assert first.json()["source_id"] == second.json()["source_id"], "Source row is shared across principals"
     assert first.json()["id"] != second.json()["id"], "Job row is per-owner"
 
     sources = db_session.exec(select(Source).where(Source.karakeep_id == bookmark_id)).all()
     assert len(sources) == 1
     assert sources[0].owner_id == "alice", "Source owner_id must be the first writer (alice), not last (bob)"
 
-    jobs = db_session.exec(select(ConversionJob).where(ConversionJob.aizk_uuid == sources[0].aizk_uuid)).all()
+    jobs = db_session.exec(select(ConversionJob).where(ConversionJob.source_id == sources[0].source_id)).all()
     owners = sorted(j.owner_id for j in jobs)
     assert owners == ["alice", "bob"]
 

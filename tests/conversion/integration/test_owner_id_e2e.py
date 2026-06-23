@@ -96,7 +96,7 @@ def test_full_pipeline_propagates_default_principal_to_all_three_tables(
     assert resp.status_code == 201
 
     source = db_session.exec(select(Source).where(Source.karakeep_id == bookmark_id)).one()
-    job = db_session.exec(select(ConversionJob).where(ConversionJob.aizk_uuid == source.aizk_uuid)).one()
+    job = db_session.exec(select(ConversionJob).where(ConversionJob.source_id == source.source_id)).one()
     assert source.owner_id == "deployment-owner"
     assert job.owner_id == "deployment-owner"
 

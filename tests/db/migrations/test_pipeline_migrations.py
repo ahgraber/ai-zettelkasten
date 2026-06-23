@@ -97,7 +97,7 @@ def test_pipeline_active_run_partial_unique_index_present(tmp_path: Path) -> Non
     active_idx = indexes.get("uq_pipeline_runs_active_scope")
     assert active_idx is not None, "partial unique index missing"
     assert bool(active_idx["unique"])
-    assert sorted(active_idx["column_names"]) == ["scope_key", "stage"]
+    assert sorted(active_idx["column_names"]) == ["scope_id", "stage"]
 
 
 def test_pipeline_active_run_index_keeps_postgres_predicate() -> None:
@@ -115,7 +115,7 @@ def _insert_run(conn, *, status: str, derivation_key: str) -> None:
     """Insert a pipeline_runs row for the fixed scope directly (bypassing record_run)."""
     conn.execute(
         text(
-            "INSERT INTO pipeline_runs (stage, scope_key, status, derivation_key,"
+            "INSERT INTO pipeline_runs (stage, scope_id, status, derivation_key,"
             " version_stamps_json, created_at)"
             " VALUES ('teststage', 'scope', :status, :fp, '{}', '2026-01-01T00:00:00')"
         ),
@@ -149,7 +149,7 @@ def test_migrated_index_is_partial_not_full(tmp_path: Path) -> None:
 
 
 def test_migrated_schema_supports_event_orm_round_trip(tmp_path: Path) -> None:
-    """A PipelineEvent inserts and is queryable by aizk_uuid against the migrated schema."""
+    """A PipelineEvent inserts and is queryable by source_id against the migrated schema."""
     url = f"sqlite:///{tmp_path / 'events.db'}"
     command.upgrade(_alembic_cfg(url), "head")
     engine = create_engine(url)
@@ -160,7 +160,7 @@ def test_migrated_schema_supports_event_orm_round_trip(tmp_path: Path) -> None:
             PipelineEvent(
                 stage="conversion",
                 work_unit_ref="job:1",
-                aizk_uuid=source,
+                source_id=source,
                 from_status=None,
                 to_status="running",
                 kind="origin",
@@ -170,9 +170,9 @@ def test_migrated_schema_supports_event_orm_round_trip(tmp_path: Path) -> None:
         session.commit()
 
     with Session(engine) as session:
-        rows = list(session.exec(select(PipelineEvent).where(PipelineEvent.aizk_uuid == source)))
+        rows = list(session.exec(select(PipelineEvent).where(PipelineEvent.source_id == source)))
         assert len(rows) == 1, "event is queryable by its source identity"
-        assert rows[0].aizk_uuid == source
+        assert rows[0].source_id == source
 
 
 def test_pipeline_revision_downgrade_drops_only_pipeline_tables(tmp_path: Path) -> None:
@@ -223,5 +223,5 @@ def test_input_fingerprint_renamed_to_derivation_key_preserving_data(tmp_path: P
     assert "derivation_key" in cols_after
     assert "input_fingerprint" not in cols_after
     with create_engine(url).connect() as conn:
-        value = conn.execute(text("SELECT derivation_key FROM pipeline_runs WHERE scope_key='scope'")).scalar_one()
+        value = conn.execute(text("SELECT derivation_key FROM pipeline_runs WHERE scope_id='scope'")).scalar_one()
     assert value == "fp-1"

@@ -4,7 +4,7 @@ This module owns the contextualization domain logic: one LLM pass per document
 produces a :class:`~aizk.graph.datamodel.DocumentSummary` under a **summary run**,
 and one LLM pass per chunk produces a :class:`~aizk.graph.datamodel.ContextualizedChunk`
 **revision** under a separate **variant run**. Both runs are scoped to the
-durable source identity (``str(aizk_uuid)``) and recorded on the shared
+durable source identity (``str(source_id)``) and recorded on the shared
 :func:`~aizk.pipeline.run.record_run` primitive; each supersedes independently:
 
 - the summary run is keyed by the markdown hash, ``summary_version``,
@@ -406,12 +406,12 @@ def _validate_contextualized_text(working_text: str, contextualized_text: str) -
     return normalized
 
 
-def _active_run(session: "Session", stage: str, scope_key: str) -> PipelineRun | None:
-    """Return the active run for ``(stage, scope_key)``, or ``None``."""
+def _active_run(session: "Session", stage: str, scope_id: str) -> PipelineRun | None:
+    """Return the active run for ``(stage, scope_id)``, or ``None``."""
     return session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == stage,
-            PipelineRun.scope_key == scope_key,
+            PipelineRun.scope_id == scope_id,
             PipelineRun.status == RunStatus.ACTIVE,
         )
     ).one_or_none()
@@ -419,7 +419,7 @@ def _active_run(session: "Session", stage: str, scope_key: str) -> PipelineRun |
 
 def _verify_chunking_provenance(
     session: "Session",
-    aizk_uuid: str,
+    source_id: str,
     chunking_run_id: int,
     splitter_version: int,
     chunks: "Sequence[SplitterChunk]",
@@ -442,8 +442,8 @@ def _verify_chunking_provenance(
     run = session.get(PipelineRun, chunking_run_id)
     if run is None or run.stage != CHUNKING_STAGE:
         raise ValueError(f"chunking run {chunking_run_id!r} is missing or is not a chunking run")
-    if run.scope_key != aizk_uuid:
-        raise ValueError(f"chunking run {chunking_run_id!r} belongs to source {run.scope_key!r}, not {aizk_uuid!r}")
+    if run.scope_id != source_id:
+        raise ValueError(f"chunking run {chunking_run_id!r} belongs to source {run.scope_id!r}, not {source_id!r}")
     recorded_version = json.loads(run.version_stamps_json).get("splitter_version")
     if recorded_version != str(splitter_version):
         raise ValueError(
@@ -471,7 +471,7 @@ def resolve_summary_text(
     engine: "Engine",
     client: "LLMClient",
     *,
-    aizk_uuid: str,
+    source_id: str,
     markdown_hash_xx64: str,
     document_text: str,
     summary_version: int = SUMMARY_VERSION,
@@ -504,8 +504,8 @@ def resolve_summary_text(
         engine: The shared engine; reads and the autonomous memo write each open
             their own short session/transaction off it.
         client: The single model access point for the summary pass.
-        aizk_uuid: The durable source identity (``str(aizk_uuid)``); the memo
-            ``scope_key``.
+        source_id: The durable source identity (``str(source_id)``); the memo
+            ``scope_id``.
         markdown_hash_xx64: Content hash of the source markdown (in the derivation key).
         document_text: The document the summary pass reads on a miss.
         summary_version: The summary behavior version.
@@ -516,16 +516,16 @@ def resolve_summary_text(
     """
     derivation_key = _summary_derivation_key(markdown_hash_xx64, summary_version, model_profile)
     with Session(engine) as read:
-        active = _active_run(read, SUMMARY_STAGE, aizk_uuid)
+        active = _active_run(read, SUMMARY_STAGE, source_id)
         if active is not None and active.derivation_key == derivation_key:
             existing = read.exec(select(DocumentSummary).where(DocumentSummary.run_id == active.id)).first()
             if existing is not None:
                 return existing.summary_text
-        memoed = memo_get(read, MEMO_KIND_SUMMARY, aizk_uuid, derivation_key)
+        memoed = memo_get(read, MEMO_KIND_SUMMARY, source_id, derivation_key)
     if memoed is not None:
         return memoed
     validated = _validate_summary_text(generate_summary_text(client, document_text))
-    return memo_upsert_and_read(engine, MEMO_KIND_SUMMARY, aizk_uuid, derivation_key, validated)
+    return memo_upsert_and_read(engine, MEMO_KIND_SUMMARY, source_id, derivation_key, validated)
 
 
 def _generate_one_revision(
@@ -570,7 +570,7 @@ def resolve_revisions(
     engine: "Engine",
     client: "LLMClient",
     *,
-    aizk_uuid: str,
+    source_id: str,
     summary_text: str,
     markdown_hash_xx64: str,
     ordered_chunks: "Sequence[SplitterChunk]",
@@ -601,8 +601,8 @@ def resolve_revisions(
         engine: The shared engine; reads and autonomous memo writes open their own
             short sessions/transactions off it.
         client: The single model access point for the per-chunk passes.
-        aizk_uuid: The durable source identity (``str(aizk_uuid)``); the memo
-            ``scope_key``.
+        source_id: The durable source identity (``str(source_id)``); the memo
+            ``scope_id``.
         summary_text: The resolved summary the revisions are conditioned on.
         markdown_hash_xx64: Content hash of the source markdown (in the summary
             identity).
@@ -625,7 +625,7 @@ def resolve_revisions(
         summary_identity, ordered, splitter_version, context_version, model_profile
     )
     with Session(engine) as read:
-        active = _active_run(read, VARIANT_STAGE, aizk_uuid)
+        active = _active_run(read, VARIANT_STAGE, source_id)
         if active is not None and active.derivation_key == run_derivation_key:
             count = len(read.exec(select(ContextualizedChunk).where(ContextualizedChunk.run_id == active.id)).all())
             if count == len(ordered):
@@ -640,13 +640,13 @@ def resolve_revisions(
             summary_identity, chunk, prior_2, prior_1, next_1, splitter_version, context_version, model_profile
         )
         with Session(engine) as read:
-            memoed = memo_get(read, MEMO_KIND_REVISION, aizk_uuid, row_key)
+            memoed = memo_get(read, MEMO_KIND_REVISION, source_id, row_key)
         if memoed is not None:
             revisions.append(memoed)
             continue
         raw = _generate_one_revision(client, summary_text, prior_2, prior_1, chunk, next_1)
         validated = _validate_contextualized_text(chunk.text, raw)
-        revisions.append(memo_upsert_and_read(engine, MEMO_KIND_REVISION, aizk_uuid, row_key, validated))
+        revisions.append(memo_upsert_and_read(engine, MEMO_KIND_REVISION, source_id, row_key, validated))
     return revisions
 
 
@@ -692,7 +692,7 @@ def summarize_document(
     session: "Session",
     client: "LLMClient",
     *,
-    aizk_uuid: str,
+    source_id: str,
     conversion_output_id: str,
     markdown_hash_xx64: str,
     document_text: str,
@@ -702,7 +702,7 @@ def summarize_document(
 ) -> DocumentSummary:
     """Produce (or reuse) the active summary for a document.
 
-    The summary run is scoped by the durable source identity ``aizk_uuid``. If an
+    The summary run is scoped by the durable source identity ``source_id``. If an
     active summary run exists whose derivation key matches
     ``(markdown_hash_xx64, summary_version, prompt hash, model profile)``, its
     summary is returned unchanged — no model call, no new run, no duplicate.
@@ -720,7 +720,7 @@ def summarize_document(
         The active :class:`DocumentSummary` for the document.
     """
     derivation_key = _summary_derivation_key(markdown_hash_xx64, summary_version, model_profile)
-    active = _active_run(session, SUMMARY_STAGE, aizk_uuid)
+    active = _active_run(session, SUMMARY_STAGE, source_id)
     if active is not None and active.derivation_key == derivation_key:
         existing = session.exec(select(DocumentSummary).where(DocumentSummary.run_id == active.id)).first()
         if existing is not None:
@@ -732,10 +732,10 @@ def summarize_document(
             # summary rather than persisting mismatched provenance.
             if precomputed_summary_text is not None and existing.summary_text != precomputed_summary_text:
                 raise StalePlanError(
-                    f"active summary for source {aizk_uuid!r} changed since the revisions were planned; "
+                    f"active summary for source {source_id!r} changed since the revisions were planned; "
                     "retry to re-resolve and regenerate against the current summary"
                 )
-            logger.debug("Reusing active summary run id=%s for source=%s", active.id, aizk_uuid)
+            logger.debug("Reusing active summary run id=%s for source=%s", active.id, source_id)
             return existing
 
     raw_summary = (
@@ -747,7 +747,7 @@ def summarize_document(
     run = record_run(
         session,
         stage=SUMMARY_STAGE,
-        scope_key=aizk_uuid,
+        scope_id=source_id,
         derivation_key=derivation_key,
         version_stamps={
             "model_profile": model_profile,
@@ -764,7 +764,7 @@ def summarize_document(
     )
     session.add(summary)
     session.flush()
-    logger.debug("Recorded summary run id=%s summary id=%s for source=%s", run.id, summary.id, aizk_uuid)
+    logger.debug("Recorded summary run id=%s summary id=%s for source=%s", run.id, summary.id, source_id)
     return summary
 
 
@@ -772,7 +772,7 @@ def contextualize_chunks(
     session: "Session",
     client: "LLMClient",
     *,
-    aizk_uuid: str,
+    source_id: str,
     summary: DocumentSummary,
     chunks: "Sequence[SplitterChunk]",
     chunking_run_id: int,
@@ -784,7 +784,7 @@ def contextualize_chunks(
 ) -> list[ContextualizedChunk]:
     """Produce (or reuse) the active contextualized variants for a source's chunks.
 
-    The variant run is scoped by the durable source identity ``aizk_uuid``.
+    The variant run is scoped by the durable source identity ``source_id``.
     ``chunks`` must be in document order, read from the chunking generation
     ``chunking_run_id``; each chunk's two prior and one next neighbors are taken
     from that order. If an active variant run exists whose derivation key matches
@@ -803,8 +803,8 @@ def contextualize_chunks(
     Args:
         session: Active session; the caller owns commit/rollback.
         client: The single model access point.
-        aizk_uuid: The durable source identity (``str(aizk_uuid)``); the run's
-            scope and the chunks' ``doc_id``.
+        source_id: The durable source identity (``str(source_id)``); the run's
+            scope and the chunks' ``source_id``.
         summary: The active document summary the variants are built from.
         chunks: The source's persisted chunks in document order.
         chunking_run_id: The chunking run whose manifest these chunks were read
@@ -835,7 +835,7 @@ def contextualize_chunks(
             matches the planned derivation key at persist (a superseding generation
             landed between plan and apply) — retryable, so the unit re-resolves and
             regenerates the revisions outside the write lock on the next attempt.
-        ValueError: If the summary or any chunk does not belong to ``aizk_uuid``,
+        ValueError: If the summary or any chunk does not belong to ``source_id``,
             or if ``chunking_run_id`` does not reference a chunking run for this
             source at this ``splitter_version`` whose manifest contains every
             supplied chunk at its supplied span. The variant records
@@ -848,17 +848,17 @@ def contextualize_chunks(
     summary_run = session.get(PipelineRun, summary.run_id)
     if summary_run is None:
         raise ValueError(f"summary run {summary.run_id!r} is missing")
-    if summary_run.scope_key != aizk_uuid:
-        raise ValueError(f"summary belongs to source {summary_run.scope_key!r}, not {aizk_uuid!r}")
-    foreign = [c.chunk_id for c in ordered if c.doc_id != aizk_uuid]
+    if summary_run.scope_id != source_id:
+        raise ValueError(f"summary belongs to source {summary_run.scope_id!r}, not {source_id!r}")
+    foreign = [c.chunk_id for c in ordered if c.source_id != source_id]
     if foreign:
-        raise ValueError(f"chunks {foreign} do not belong to source {aizk_uuid!r}")
-    _verify_chunking_provenance(session, aizk_uuid, chunking_run_id, splitter_version, ordered)
+        raise ValueError(f"chunks {foreign} do not belong to source {source_id!r}")
+    _verify_chunking_provenance(session, source_id, chunking_run_id, splitter_version, ordered)
     summary_identity = _summary_identity(summary, summary_run.derivation_key)
     run_derivation_key = _variant_run_derivation_key(
         summary_identity, ordered, splitter_version, context_version, model_profile
     )
-    active = _active_run(session, VARIANT_STAGE, aizk_uuid)
+    active = _active_run(session, VARIANT_STAGE, source_id)
     if active is not None and active.derivation_key == run_derivation_key:
         existing = list(
             session.exec(
@@ -871,7 +871,7 @@ def contextualize_chunks(
         # document has no chunks); reuse it. A short count means a partial prior
         # write, so fall through and regenerate rather than reuse a torn run.
         if len(existing) == len(ordered):
-            logger.debug("Reusing active variant run id=%s for source=%s", active.id, aizk_uuid)
+            logger.debug("Reusing active variant run id=%s for source=%s", active.id, source_id)
             return existing
 
     # The generation phase planned to reuse a complete active run but it is gone or
@@ -880,7 +880,7 @@ def contextualize_chunks(
     # set as a torn run.
     if reuse_only:
         raise StalePlanError(
-            f"variant run for source {aizk_uuid!r} planned for reuse is no longer active/complete; "
+            f"variant run for source {source_id!r} planned for reuse is no longer active/complete; "
             "retry to regenerate the revisions outside the write lock"
         )
 
@@ -906,7 +906,7 @@ def contextualize_chunks(
     run = record_run(
         session,
         stage=VARIANT_STAGE,
-        scope_key=aizk_uuid,
+        scope_id=source_id,
         derivation_key=run_derivation_key,
         version_stamps={
             "context_prompt_hash": CONTEXT_PROMPT_HASH,
@@ -948,11 +948,11 @@ def contextualize_chunks(
             text_=revision if revision != "" else chunk.text,
             chunk_id=chunk.chunk_id,
             run_id=run.id,
-            doc_id=aizk_uuid,
+            source_id=source_id,
         )
 
     session.flush()
-    logger.debug("Recorded variant run id=%s with %d variants for source=%s", run.id, len(variants), aizk_uuid)
+    logger.debug("Recorded variant run id=%s with %d variants for source=%s", run.id, len(variants), source_id)
     return variants
 
 

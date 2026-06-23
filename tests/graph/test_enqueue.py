@@ -1,7 +1,7 @@
 """Tests for the conversion-coupled enqueue resolvers.
 
 ``enqueue_output`` / ``enqueue_backfill_outputs`` resolve the durable
-``aizk_uuid`` from the conversion output and delegate to the domain enqueue
+``source_id`` from the conversion output and delegate to the domain enqueue
 (dedupe on ``idempotency_key``). FK enforcement is off, so standalone
 ``conversion_outputs`` rows suffice alongside the work-unit table.
 """
@@ -30,12 +30,12 @@ def _make_engine(tmp_path: Path):
     return engine
 
 
-def _add_output(session: Session, *, output_id: int, aizk_uuid: UUID) -> None:
+def _add_output(session: Session, *, output_id: int, source_id: UUID) -> None:
     session.add(
         ConversionOutput(
             id=output_id,
             job_id=output_id,
-            aizk_uuid=aizk_uuid,
+            source_id=source_id,
             owner_id="owner",
             title="Doc",
             payload_version=1,
@@ -49,18 +49,18 @@ def _add_output(session: Session, *, output_id: int, aizk_uuid: UUID) -> None:
     )
 
 
-def test_enqueue_output_resolves_aizk_uuid_from_the_conversion_output(tmp_path: Path) -> None:
-    """The work-unit carries the aizk_uuid resolved from its conversion output."""
+def test_enqueue_output_resolves_source_id_from_the_conversion_output(tmp_path: Path) -> None:
+    """The work-unit carries the source_id resolved from its conversion output."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        _add_output(session, output_id=42, aizk_uuid=_UUID_A)
+        _add_output(session, output_id=42, source_id=_UUID_A)
         session.commit()
 
         job = enqueue_output(session, 42)
         session.commit()
 
         assert job.conversion_output_id == 42
-        assert job.aizk_uuid == _UUID_A
+        assert job.source_id == _UUID_A
         assert job.status is WorkUnitStatus.QUEUED
 
 
@@ -77,8 +77,8 @@ def test_enqueue_backfill_resolves_each_and_dedupes(tmp_path: Path) -> None:
     """Backfill resolves and enqueues each output; re-enqueue reuses the open unit."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        _add_output(session, output_id=1, aizk_uuid=_UUID_A)
-        _add_output(session, output_id=2, aizk_uuid=_UUID_B)
+        _add_output(session, output_id=1, source_id=_UUID_A)
+        _add_output(session, output_id=2, source_id=_UUID_B)
         session.commit()
 
         first = enqueue_backfill_outputs(session, [1, 2])
@@ -87,6 +87,6 @@ def test_enqueue_backfill_resolves_each_and_dedupes(tmp_path: Path) -> None:
         second = enqueue_backfill_outputs(session, [1, 2])
         session.commit()
 
-        assert {j.aizk_uuid for j in first} == {_UUID_A, _UUID_B}
+        assert {j.source_id for j in first} == {_UUID_A, _UUID_B}
         assert [j.id for j in second] == [j.id for j in first]
         assert len(session.exec(select(ContextualizationJob)).all()) == 2

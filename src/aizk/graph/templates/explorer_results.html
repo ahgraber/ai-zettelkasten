@@ -19,7 +19,7 @@
       data-chunk-id="{{ row.chunk_id }}"
       data-matched-chunk="{{ 'true' if row.matched_in_chunk else 'false' }}"
       data-matched-contextualized="{{ 'true' if row.matched_in_contextualized else 'false' }}"
-      hx-get="/ui/graph/explorer?doc_id={{ row.doc_id | urlencode }}&chunk_id={{ row.chunk_id | urlencode }}"
+      hx-get="/ui/graph/explorer?source_id={{ row.source_id | urlencode }}&chunk_id={{ row.chunk_id | urlencode }}"
       hx-target="#explorer-panel"
       hx-swap="outerHTML"
       hx-push-url="true"

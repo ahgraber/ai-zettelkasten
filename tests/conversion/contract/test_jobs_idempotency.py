@@ -78,7 +78,7 @@ def test_cross_owner_same_key_creates_distinct_jobs_sharing_a_source(db_session)
         computed_key = compute_idempotency_key(compute_source_ref_hash(ref), converter_name, snapshot)
         cross_job = make_job(
             db_session,
-            aizk_uuid=bookmark.aizk_uuid,
+            source_id=bookmark.source_id,
             idempotency_key=computed_key,
             owner_id="someone_else",
         )

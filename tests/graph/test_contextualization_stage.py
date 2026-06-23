@@ -6,7 +6,7 @@ database, exercising the full claim → execute (own transaction) → finalize p
 with a deterministic stub model and Markdown source:
 
 - the happy path runs a queued unit to ``SUCCEEDED``, emits transition events
-  carrying ``run_id`` + ``aizk_uuid``, and persists the chunking run + chunks and
+  carrying ``run_id`` + ``source_id``, and persists the chunking run + chunks and
   the summary + variant records;
 - re-execution after stale recovery creates no duplicate runs or rows and again
   reaches ``SUCCEEDED`` (the at-least-once / own-transaction path).
@@ -75,7 +75,7 @@ class _StubMarkdownSource:
 class _AlwaysCurrent:
     """A freshness stub treating every output as the source's latest."""
 
-    def is_current(self, session: Session, aizk_uuid: UUID, conversion_output_id: int) -> bool:
+    def is_current(self, session: Session, source_id: UUID, conversion_output_id: int) -> bool:
         return True
 
 
@@ -115,7 +115,7 @@ def _seed_job(engine, *, status: WorkUnitStatus, attempts: int = 1) -> int:
         job = ContextualizationJob(
             idempotency_key=f"conversion_output:{_OUTPUT_ID}",
             conversion_output_id=_OUTPUT_ID,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             status=status,
             attempts=attempts,
         )
@@ -133,7 +133,7 @@ def test_queued_unit_runs_to_success_with_events_and_records(tmp_path: Path) -> 
     """A queued unit runs through the runner to SUCCEEDED, emitting events and persisting records."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        job = enqueue_document(session, conversion_output_id=_OUTPUT_ID, aizk_uuid=_AIZK_UUID)
+        job = enqueue_document(session, conversion_output_id=_OUTPUT_ID, source_id=_AIZK_UUID)
         session.commit()
         job_id = job.id
 
@@ -151,14 +151,14 @@ def test_queued_unit_runs_to_success_with_events_and_records(tmp_path: Path) -> 
         # The three source-scoped runs and their rows are persisted.
         active = _active_runs_by_stage(session)
         assert set(active) == {"chunking", "document_summary", "chunk_contextualization"}
-        assert all(r.scope_key == str(_AIZK_UUID) for r in active.values())
+        assert all(r.scope_id == str(_AIZK_UUID) for r in active.values())
         chunks = session.exec(select(Chunk)).all()
         variants = session.exec(select(ContextualizedChunk)).all()
         assert len(chunks) >= 1
         assert len(session.exec(select(DocumentSummary)).all()) == 1
         assert len(variants) == len(chunks)
 
-        # The work-unit's transition events carry aizk_uuid throughout, and the
+        # The work-unit's transition events carry source_id throughout, and the
         # terminal success event carries the chunking run id.
         events = session.exec(
             select(PipelineEvent)
@@ -167,7 +167,7 @@ def test_queued_unit_runs_to_success_with_events_and_records(tmp_path: Path) -> 
         ).all()
         kinds = [e.kind for e in events]
         assert kinds == ["claimed", "succeeded"]
-        assert all(e.aizk_uuid == _AIZK_UUID for e in events)
+        assert all(e.source_id == _AIZK_UUID for e in events)
         succeeded = next(e for e in events if e.kind == "succeeded")
         assert succeeded.run_id == active["chunking"].id
 
@@ -176,7 +176,7 @@ def test_reexecution_is_idempotent(tmp_path: Path) -> None:
     """A unit re-executed after stale recovery creates no duplicate runs/rows and re-succeeds."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        job = enqueue_document(session, conversion_output_id=_OUTPUT_ID, aizk_uuid=_AIZK_UUID)
+        job = enqueue_document(session, conversion_output_id=_OUTPUT_ID, source_id=_AIZK_UUID)
         session.commit()
         job_id = job.id
 

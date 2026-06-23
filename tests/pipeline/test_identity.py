@@ -64,12 +64,12 @@ def test_run_level_idempotency_reuse(engine: Engine) -> None:
     """
     key = derivation_key(inputs={"markdown_hash": "abc123", "splitter_version": 1})
     with Session(engine) as session:
-        first = record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key=key)
+        first = record_run(session, stage=_STAGE, scope_id=_SCOPE, derivation_key=key)
         session.commit()
         first_id = first.id
 
     with Session(engine) as session:
-        reused = reuse_or_record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key=key)
+        reused = reuse_or_record_run(session, stage=_STAGE, scope_id=_SCOPE, derivation_key=key)
         session.commit()
         assert reused.id == first_id, "an unchanged derivation key reuses the active run"
         total = session.exec(select(func.count()).select_from(PipelineRun)).one()
@@ -77,14 +77,14 @@ def test_run_level_idempotency_reuse(engine: Engine) -> None:
 
     changed_key = derivation_key(inputs={"markdown_hash": "abc123", "splitter_version": 2})
     with Session(engine) as session:
-        new_run = reuse_or_record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key=changed_key)
+        new_run = reuse_or_record_run(session, stage=_STAGE, scope_id=_SCOPE, derivation_key=changed_key)
         session.commit()
         assert new_run.id != first_id, "a changed derivation key records a new run"
         assert new_run.supersedes_run_id == first_id, "the new run supersedes the prior active run"
         active = session.exec(
             select(PipelineRun).where(
                 PipelineRun.stage == _STAGE,
-                PipelineRun.scope_key == _SCOPE,
+                PipelineRun.scope_id == _SCOPE,
                 PipelineRun.status == RunStatus.ACTIVE,
             )
         ).all()

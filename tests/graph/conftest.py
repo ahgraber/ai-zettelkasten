@@ -138,7 +138,7 @@ def seed_source() -> Callable[..., Source]:
         *,
         karakeep_id: str,
         title: str | None = None,
-        aizk_uuid: UUID | None = None,
+        source_id: UUID | None = None,
         owner_id: str = "self",
     ) -> Source:
         ref = KarakeepBookmarkRef(bookmark_id=karakeep_id)
@@ -153,8 +153,8 @@ def seed_source() -> Callable[..., Source]:
             "content_type": "html",
             "source_type": "other",
         }
-        if aizk_uuid is not None:
-            fields["aizk_uuid"] = aizk_uuid
+        if source_id is not None:
+            fields["source_id"] = source_id
         source = Source(**fields)
         session.add(source)
         session.commit()
@@ -172,7 +172,7 @@ def seed_conversion_output() -> Callable[..., ConversionOutput]:
         session: Session,
         *,
         job_id: int,
-        aizk_uuid: UUID,
+        source_id: UUID,
         title: str = "Untitled",
         owner_id: str = "self",
         markdown_hash_xx64: str = "0" * 16,
@@ -182,7 +182,7 @@ def seed_conversion_output() -> Callable[..., ConversionOutput]:
     ) -> ConversionOutput:
         output = ConversionOutput(
             job_id=job_id,
-            aizk_uuid=aizk_uuid,
+            source_id=source_id,
             owner_id=owner_id,
             title=title,
             payload_version=1,
@@ -208,7 +208,7 @@ def seed_contextualization_job() -> Callable[..., ContextualizationJob]:
     def _make(
         session: Session,
         *,
-        aizk_uuid: UUID,
+        source_id: UUID,
         conversion_output_id: int = 1,
         status: WorkUnitStatus = WorkUnitStatus.QUEUED,
         attempts: int = 0,
@@ -217,7 +217,7 @@ def seed_contextualization_job() -> Callable[..., ContextualizationJob]:
         job = ContextualizationJob(
             idempotency_key=idempotency_key or f"conversion_output:{conversion_output_id}",
             conversion_output_id=conversion_output_id,
-            aizk_uuid=aizk_uuid,
+            source_id=source_id,
             status=status,
             attempts=attempts,
         )

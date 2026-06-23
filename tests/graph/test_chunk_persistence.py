@@ -6,7 +6,7 @@ round-trip field-for-field when reconstructed from ``chunk ⋈ chunk_run_manifes
 chunk_run_input ⋈ chunk_run``, the full emitted set is present in the
 generation's manifest, content-addressed identities carry only stable facts and
 are reused without mutation, and re-chunking a *source* (scoped by its
-``aizk_uuid``) into a new generation supersedes the prior at the run level —
+``source_id``) into a new generation supersedes the prior at the run level —
 recording each generation's own consumed input and span — without ever touching a
 prior chunk identity or manifest entry.
 """
@@ -52,7 +52,7 @@ Content for the second section, distinct from the first.
 
 def _make_chunk(
     *,
-    aizk_uuid: str = _AIZK_UUID,
+    source_id: str = _AIZK_UUID,
     conversion_output_id: str = _OUTPUT,
     markdown_hash: str = _MARKDOWN_HASH,
     heading_path: tuple[str, ...] = (),
@@ -62,15 +62,15 @@ def _make_chunk(
 ) -> SplitterChunk:
     """Construct a splitter chunk with a content-addressed id for controlled tests.
 
-    ``doc_id`` is the source's ``aizk_uuid`` and ``converted_artifact_id`` is the
+    ``source_id`` is the source's ``source_id`` and ``converted_artifact_id`` is the
     per-conversion output locator, matching the revised model.
     """
     content_hash = xxhash.xxh64(text.encode("utf-8")).hexdigest()
-    chunk_id = derive_chunk_id(aizk_uuid, heading_path, ordinal, content_hash)
+    chunk_id = derive_chunk_id(source_id, heading_path, ordinal, content_hash)
     return SplitterChunk(
         chunk_id=chunk_id,
         content_hash=content_hash,
-        doc_id=aizk_uuid,
+        source_id=source_id,
         heading_path=heading_path,
         ordinal=ordinal,
         text=text,
@@ -86,7 +86,7 @@ def test_round_trip_fidelity(session: Session) -> None:
     """Each chunk reconstructed from identity ⋈ manifest ⋈ input ⋈ run equals the emitted chunk."""
     emitted = split(
         _SAMPLE_MARKDOWN,
-        doc_id=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         converted_artifact_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
     )
@@ -96,7 +96,7 @@ def test_round_trip_fidelity(session: Session) -> None:
 
     run = persist_chunks(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
         splitter_version=SPLITTER_VERSION,
@@ -117,13 +117,13 @@ def test_full_set_in_generation(session: Session) -> None:
     """All N emitted chunks are in the generation's manifest, none dropped or added."""
     emitted = split(
         _SAMPLE_MARKDOWN,
-        doc_id=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         converted_artifact_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
     )
     run = persist_chunks(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
         splitter_version=SPLITTER_VERSION,
@@ -141,7 +141,7 @@ def test_reinsert_reuses_identity(session: Session) -> None:
     chunk = _make_chunk(text="stable content")
     run = persist_chunks(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
         splitter_version=SPLITTER_VERSION,
@@ -152,7 +152,7 @@ def test_reinsert_reuses_identity(session: Session) -> None:
     # Re-persist the identical chunk (an accidental re-process of the same inputs).
     persist_chunks(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
         splitter_version=SPLITTER_VERSION,
@@ -173,7 +173,7 @@ def test_novel_chunk_stored_once(session: Session) -> None:
 
     run = persist_chunks(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
         splitter_version=SPLITTER_VERSION,
@@ -190,11 +190,11 @@ def test_novel_chunk_stored_once(session: Session) -> None:
 def _persist_two_generations(session: Session) -> tuple[SplitterChunk, SplitterChunk, SplitterChunk]:
     """Persist gen A {shared, prior_only} then gen B {shared, new_only}; return the three chunks.
 
-    Generation B models a re-conversion of the *same source* (same ``aizk_uuid``)
+    Generation B models a re-conversion of the *same source* (same ``source_id``)
     that produces a new conversion output and new markdown whose content leaves one
     section byte-identical (the shared chunk) while dropping one chunk and adding
     another. The splitter re-emits the unchanged section from gen B's markdown, so
-    the shared chunk — being content-addressed on ``(doc_id, heading_path,
+    the shared chunk — being content-addressed on ``(source_id, heading_path,
     ordinal, content_hash)`` — keeps gen A's ``chunk_id``. The returned ``shared``
     is gen A's emitted chunk (the version recorded in gen A's manifest/input).
     """
@@ -218,7 +218,7 @@ def _persist_two_generations(session: Session) -> tuple[SplitterChunk, SplitterC
 
     persist_chunks(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
         splitter_version=SPLITTER_VERSION,
@@ -228,7 +228,7 @@ def _persist_two_generations(session: Session) -> tuple[SplitterChunk, SplitterC
 
     persist_chunks(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT_B,
         markdown_hash_xx64=_MARKDOWN_HASH_B,
         splitter_version=SPLITTER_VERSION,
@@ -242,7 +242,7 @@ def _superseded_run(session: Session) -> PipelineRun:
     """Return the single superseded chunking run for the source under test."""
     return session.exec(
         select(PipelineRun).where(
-            PipelineRun.scope_key == _AIZK_UUID,
+            PipelineRun.scope_id == _AIZK_UUID,
             PipelineRun.status == RunStatus.SUPERSEDED,
         )
     ).one()
@@ -260,7 +260,7 @@ def test_shared_chunk_current_via_new_generation(session: Session) -> None:
     # facts (span, markdown hash, splitter version) are supplied by gen B's run.
     row = session.get(Chunk, shared.chunk_id)
     assert row is not None
-    assert (row.text, row.content_hash, row.doc_id) == (shared.text, shared.content_hash, shared.doc_id)
+    assert (row.text, row.content_hash, row.source_id) == (shared.text, shared.content_hash, shared.source_id)
     reconstructed = {c.chunk_id: c for c in chunks_of_run(session, active.id)}
     # Reconstructed under gen B, the shared chunk carries gen B's conversion output + markdown hash.
     assert reconstructed[shared.chunk_id].converted_artifact_id == _OUTPUT_B
@@ -326,7 +326,7 @@ def test_unchanged_rerun_reuses_run_without_manifest_churn(session: Session) -> 
     chunk = _make_chunk(text="stable content")
     first = persist_chunks(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
         splitter_version=SPLITTER_VERSION,
@@ -337,7 +337,7 @@ def test_unchanged_rerun_reuses_run_without_manifest_churn(session: Session) -> 
 
     second = persist_chunks(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
         splitter_version=SPLITTER_VERSION,
@@ -346,7 +346,7 @@ def test_unchanged_rerun_reuses_run_without_manifest_churn(session: Session) -> 
     session.commit()
 
     assert second.id == first.id, "the unchanged rerun reuses the active run"
-    runs = session.exec(select(PipelineRun).where(PipelineRun.scope_key == _AIZK_UUID)).all()
+    runs = session.exec(select(PipelineRun).where(PipelineRun.scope_id == _AIZK_UUID)).all()
     assert len(runs) == 1
     assert runs[0].status == RunStatus.ACTIVE
     assert len(session.exec(select(ChunkRunManifest)).all()) == manifest_after_first
@@ -357,7 +357,7 @@ def test_splitter_version_bump_supersedes_even_when_content_unchanged(session: S
     chunk_v1 = _make_chunk(text="unchanged content", splitter_version=SPLITTER_VERSION)
     first = persist_chunks(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
         splitter_version=SPLITTER_VERSION,
@@ -370,7 +370,7 @@ def test_splitter_version_bump_supersedes_even_when_content_unchanged(session: S
 
     second = persist_chunks(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
         splitter_version=SPLITTER_VERSION + 1,
@@ -380,7 +380,7 @@ def test_splitter_version_bump_supersedes_even_when_content_unchanged(session: S
 
     assert second.id != first.id
     statuses = {
-        r.id: r.status for r in session.exec(select(PipelineRun).where(PipelineRun.scope_key == _AIZK_UUID)).all()
+        r.id: r.status for r in session.exec(select(PipelineRun).where(PipelineRun.scope_id == _AIZK_UUID)).all()
     }
     assert statuses == {first.id: RunStatus.SUPERSEDED, second.id: RunStatus.ACTIVE}
 
@@ -400,7 +400,7 @@ def test_reuse_requires_matching_spans_not_just_ids(session: Session) -> None:
     chunk = _make_chunk(text="stable content")
     first = persist_chunks(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
         splitter_version=SPLITTER_VERSION,
@@ -413,7 +413,7 @@ def test_reuse_requires_matching_spans_not_just_ids(session: Session) -> None:
     assert shifted.chunk_id == chunk.chunk_id
     second = persist_chunks(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
         splitter_version=SPLITTER_VERSION,
@@ -423,7 +423,7 @@ def test_reuse_requires_matching_spans_not_just_ids(session: Session) -> None:
 
     assert second.id != first.id, "a span change is not treated as an unchanged rerun"
     statuses = {
-        r.id: r.status for r in session.exec(select(PipelineRun).where(PipelineRun.scope_key == _AIZK_UUID)).all()
+        r.id: r.status for r in session.exec(select(PipelineRun).where(PipelineRun.scope_id == _AIZK_UUID)).all()
     }
     assert statuses == {first.id: RunStatus.SUPERSEDED, second.id: RunStatus.ACTIVE}
 
@@ -438,7 +438,7 @@ def test_persist_rejects_conflicting_stable_facts_for_existing_chunk_id(session:
     original = _make_chunk(text="original content")
     persist_chunks(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
         splitter_version=SPLITTER_VERSION,
@@ -451,7 +451,7 @@ def test_persist_rejects_conflicting_stable_facts_for_existing_chunk_id(session:
     colliding = SplitterChunk(
         chunk_id=original.chunk_id,
         content_hash=xxhash.xxh64(b"different content").hexdigest(),
-        doc_id=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         heading_path=(),
         ordinal=0,
         text="different content",
@@ -465,7 +465,7 @@ def test_persist_rejects_conflicting_stable_facts_for_existing_chunk_id(session:
     with pytest.raises(ValueError, match="different stable identity facts"):
         persist_chunks(
             session,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             conversion_output_id=_OUTPUT_B,
             markdown_hash_xx64=_MARKDOWN_HASH_B,
             splitter_version=SPLITTER_VERSION,
@@ -474,7 +474,7 @@ def test_persist_rejects_conflicting_stable_facts_for_existing_chunk_id(session:
     # The existing identity is unmodified and no second generation was opened.
     row = session.get(Chunk, original.chunk_id)
     assert row is not None and row.text == "original content"
-    assert len(session.exec(select(PipelineRun).where(PipelineRun.scope_key == _AIZK_UUID)).all()) == 1
+    assert len(session.exec(select(PipelineRun).where(PipelineRun.scope_id == _AIZK_UUID)).all()) == 1
 
 
 @pytest.mark.parametrize(
@@ -483,7 +483,7 @@ def test_persist_rejects_conflicting_stable_facts_for_existing_chunk_id(session:
         pytest.param(_make_chunk(markdown_hash="ffffffffffffffff", text="x"), id="markdown_hash"),
         pytest.param(_make_chunk(text="x", splitter_version=SPLITTER_VERSION + 1), id="splitter_version"),
         pytest.param(_make_chunk(conversion_output_id="other-output", text="x"), id="conversion_output_id"),
-        pytest.param(_make_chunk(aizk_uuid="22222222-2222-2222-2222-222222222222", text="x"), id="aizk_uuid"),
+        pytest.param(_make_chunk(source_id="22222222-2222-2222-2222-222222222222", text="x"), id="source_id"),
     ],
 )
 def test_persist_rejects_chunk_provenance_mismatch(session: Session, bad_chunk: SplitterChunk) -> None:
@@ -491,10 +491,10 @@ def test_persist_rejects_chunk_provenance_mismatch(session: Session, bad_chunk: 
     with pytest.raises(ValueError, match="do not match the run provenance"):
         persist_chunks(
             session,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             conversion_output_id=_OUTPUT,
             markdown_hash_xx64=_MARKDOWN_HASH,
             splitter_version=SPLITTER_VERSION,
             chunks=[bad_chunk],
         )
-    assert session.exec(select(PipelineRun).where(PipelineRun.scope_key == _AIZK_UUID)).all() == []
+    assert session.exec(select(PipelineRun).where(PipelineRun.scope_id == _AIZK_UUID)).all() == []

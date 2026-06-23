@@ -15,7 +15,7 @@ from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 
 
-def _make_source(*, karakeep_id: str, aizk_uuid, title: str) -> Source:
+def _make_source(*, karakeep_id: str, source_id, title: str) -> Source:
     """Build a persistable Source row with a valid karakeep source_ref.
 
     `source_ref`, `source_ref_hash`, and `owner_id` are NOT NULL on the current
@@ -25,7 +25,7 @@ def _make_source(*, karakeep_id: str, aizk_uuid, title: str) -> Source:
     ref = KarakeepBookmarkRef(bookmark_id=karakeep_id)
     return Source(
         karakeep_id=karakeep_id,
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         title=title,
         source_ref=ref.model_dump_json(),
         source_ref_hash=compute_source_ref_hash(ref),
@@ -46,14 +46,14 @@ class _FakeS3Client:
 def _seed_db():
     engine = create_engine("sqlite:///:memory:")
     SQLModel.metadata.create_all(engine)
-    aizk_uuid = uuid4()
+    source_id = uuid4()
     now = datetime.now(timezone.utc)
     with Session(engine) as session:
-        session.add(_make_source(karakeep_id="kk-1", aizk_uuid=aizk_uuid, title="Doc"))
+        session.add(_make_source(karakeep_id="kk-1", source_id=source_id, title="Doc"))
         session.add(
             ConversionOutput(
                 job_id=1,
-                aizk_uuid=aizk_uuid,
+                source_id=source_id,
                 owner_id="self",
                 title="Old title",
                 payload_version=1,
@@ -69,7 +69,7 @@ def _seed_db():
         session.add(
             ConversionOutput(
                 job_id=2,
-                aizk_uuid=aizk_uuid,
+                source_id=source_id,
                 owner_id="self",
                 title="New title",
                 payload_version=1,
@@ -83,12 +83,12 @@ def _seed_db():
             )
         )
         session.commit()
-    return engine, aizk_uuid
+    return engine, source_id
 
 
 def test_resolve_doc_picks_newest_and_caches(tmp_path, monkeypatch):
     monkeypatch.setattr(claimify_io, "CACHE_DIR", tmp_path)
-    engine, aizk_uuid = _seed_db()
+    engine, source_id = _seed_db()
     s3 = _FakeS3Client(b"# New body")
 
     with Session(engine) as session:
@@ -104,7 +104,7 @@ def test_resolve_doc_picks_newest_and_caches(tmp_path, monkeypatch):
     assert second.markdown == "# New body"
     assert s3.calls == ["new.md"]
 
-    assert (tmp_path / f"{aizk_uuid}.md").read_text(encoding="utf-8") == "# New body"
+    assert (tmp_path / f"{source_id}.md").read_text(encoding="utf-8") == "# New body"
 
 
 def test_resolve_doc_missing_bookmark_raises(tmp_path, monkeypatch):
@@ -122,7 +122,7 @@ def test_resolve_doc_missing_output_raises(tmp_path, monkeypatch):
     SQLModel.metadata.create_all(engine)
 
     with Session(engine) as session:
-        session.add(_make_source(karakeep_id="kk-orphan", aizk_uuid=uuid4(), title="No outputs"))
+        session.add(_make_source(karakeep_id="kk-orphan", source_id=uuid4(), title="No outputs"))
         session.commit()
         with pytest.raises(ValueError, match="No conversion_outputs"):
             resolve_doc("kk-orphan", session, s3_client=_FakeS3Client(b""))

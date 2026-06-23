@@ -137,7 +137,7 @@ def _parse_status_filter(value: str | None) -> WorkUnitStatus | None:
 def _apply_filters(query, status_filter: WorkUnitStatus | None, search: str | None) -> Any:
     """Apply the status filter and free-text search across the full job set.
 
-    Text search matches the job identifier, the source ``aizk_uuid``, the enriched
+    Text search matches the job identifier, the source ``source_id``, the enriched
     source title, and the ``conversion_output`` identifier.
     """
     if status_filter:
@@ -148,7 +148,7 @@ def _apply_filters(query, status_filter: WorkUnitStatus | None, search: str | No
         query = query.where(
             or_(
                 func.lower(Source.title).like(pattern),
-                func.lower(cast(ContextualizationJob.aizk_uuid, String)).like(pattern),
+                func.lower(cast(ContextualizationJob.source_id, String)).like(pattern),
                 cast(ContextualizationJob.id, String).like(f"%{search}%"),
                 cast(ContextualizationJob.conversion_output_id, String).like(f"%{search}%"),
             )
@@ -172,7 +172,7 @@ def _load_jobs_page(
     sort_key = _SORTABLE_COLUMNS[_to_sort(sort)]
     sort_clause = sort_key.asc() if _to_direction(direction) == "asc" else sort_key.desc()
 
-    base_query = select(ContextualizationJob, Source).join(Source, Source.aizk_uuid == ContextualizationJob.aizk_uuid)
+    base_query = select(ContextualizationJob, Source).join(Source, Source.source_id == ContextualizationJob.source_id)
     total_jobs = session.exec(select(func.count()).select_from(base_query.subquery())).one()
 
     filtered_query = _apply_filters(base_query, status_filter, search)
@@ -187,9 +187,9 @@ def _load_jobs_page(
         jobs.append(
             {
                 "id": job.id,
-                "aizk_uuid": str(job.aizk_uuid),
+                "source_id": str(job.source_id),
                 "conversion_output_id": job.conversion_output_id,
-                "title": source.title or str(job.aizk_uuid),
+                "title": source.title or str(job.source_id),
                 "status": job.status.value,
                 "attempts": job.attempts,
                 "queued_at": _format_dt(job.queued_at),
@@ -329,17 +329,17 @@ def _load_stage_drilldown(session: Session, job: ContextualizationJob) -> dict[s
     """Compose the per-job stage drill-down: stage runs plus the work-unit event trail.
 
     Stage runs come from :class:`~aizk.pipeline.run.PipelineRun` for the source's
-    ``scope_key`` (``str(aizk_uuid)``) across the chunking, document-summary, and
+    ``scope_id`` (``str(source_id)``) across the chunking, document-summary, and
     chunk-contextualization stages; a stage with no run renders as absent. The event
     trail is the work-unit's :class:`~aizk.pipeline.events.PipelineEvent` lifecycle
     rows under the contextualization stage, keyed by the work-unit reference and
     ordered chronologically.
     """
-    scope_key = str(job.aizk_uuid)
+    scope_id = str(job.source_id)
     stage_names = [stage for stage, _ in _DRILLDOWN_STAGES]
     runs = session.exec(
         select(PipelineRun)
-        .where(PipelineRun.scope_key == scope_key)
+        .where(PipelineRun.scope_id == scope_id)
         .where(PipelineRun.stage.in_(stage_names))  # type: ignore[attr-defined]
         .order_by(PipelineRun.created_at.asc())  # type: ignore[attr-defined]
     ).all()
@@ -378,7 +378,7 @@ def _load_stage_drilldown(session: Session, job: ContextualizationJob) -> dict[s
 
     return {
         "job_id": job.id,
-        "aizk_uuid": scope_key,
+        "source_id": scope_id,
         "stages": stages,
         "events": event_views,
     }
@@ -419,23 +419,23 @@ def _heading_path(chunk) -> list[str]:  # noqa: ANN001 - Chunk row
     return list(json.loads(chunk.heading_path_json))
 
 
-def _source_title(session: Session, doc_id: str) -> str:
-    """Return the enriched source title for a ``doc_id``, falling back to the id.
+def _source_title(session: Session, source_id: str) -> str:
+    """Return the enriched source title for a ``source_id``, falling back to the id.
 
-    ``doc_id`` is the durable source identity (``str(aizk_uuid)``); the
+    ``source_id`` is the durable source identity (``str(source_id)``); the
     :class:`Source` row keys on the typed ``UUID``, so the id is parsed before the
-    lookup. A malformed id or a missing source row falls back to the ``doc_id``
+    lookup. A malformed id or a missing source row falls back to the ``source_id``
     string, mirroring the jobs page's title fallback.
     """
     try:
-        source_uuid = UUID(doc_id)
+        source_uuid = UUID(source_id)
     except ValueError:
-        return doc_id
-    source = session.exec(select(Source).where(Source.aizk_uuid == source_uuid)).first()
-    return (source.title if source is not None else None) or doc_id
+        return source_id
+    source = session.exec(select(Source).where(Source.source_id == source_uuid)).first()
+    return (source.title if source is not None else None) or source_id
 
 
-def _active_variant_run(session: Session, doc_id: str) -> PipelineRun | None:
+def _active_variant_run(session: Session, source_id: str) -> PipelineRun | None:
     """Return the source's active contextualized-variant run, or ``None``.
 
     ``None`` means the source has no committed active variant run — a source still
@@ -445,7 +445,7 @@ def _active_variant_run(session: Session, doc_id: str) -> PipelineRun | None:
     return session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == VARIANT_STAGE,
-            PipelineRun.scope_key == doc_id,
+            PipelineRun.scope_id == source_id,
             PipelineRun.status == RunStatus.ACTIVE,
         )
     ).one_or_none()
@@ -508,7 +508,7 @@ def _resolve_representation(raw_text: str, variant: ContextualizedChunk | None) 
 
 
 def _spine_chunks(
-    session: Session, doc_id: str
+    session: Session, source_id: str
 ) -> tuple[list[dict[str, Any]], PipelineRun | None, PipelineRun | None]:
     """Build the spine entries for a source's active chunking run, in reading order.
 
@@ -517,8 +517,8 @@ def _spine_chunks(
     (true iff its active variant's revision is empty). Returns the spine entries and
     the active chunking and variant runs (either may be ``None``).
     """
-    chunking_run = active_chunking_run(session, doc_id)
-    variant_run = _active_variant_run(session, doc_id)
+    chunking_run = active_chunking_run(session, source_id)
+    variant_run = _active_variant_run(session, source_id)
     variants = _active_variants_by_chunk(session, variant_run)
     entries: list[dict[str, Any]] = []
     if chunking_run is not None and chunking_run.id is not None:
@@ -542,7 +542,7 @@ def _load_detail(
     session: Session,
     blob_reader: "BlobReader",
     *,
-    doc_id: str,
+    source_id: str,
     chunk_id: str,
     search_terms: list[str],
 ) -> dict[str, Any] | None:
@@ -558,7 +558,7 @@ def _load_detail(
     a missing conversion output degrades the markdown section rather than failing the
     page. ``search_terms`` are marked on the rendered raw / contextualized text.
     """
-    chunking_run = active_chunking_run(session, doc_id)
+    chunking_run = active_chunking_run(session, source_id)
     if chunking_run is None or chunking_run.id is None:
         return None
     ordered = {
@@ -569,7 +569,7 @@ def _load_detail(
         return None
     chunk, span_start, span_end = ordered[chunk_id]
 
-    variant_run = _active_variant_run(session, doc_id)
+    variant_run = _active_variant_run(session, source_id)
     variant = _active_variants_by_chunk(session, variant_run).get(chunk_id)
     representation, has_variant, self_contained = _resolve_representation(chunk.text, variant)
 
@@ -598,7 +598,7 @@ def _load_detail(
     markdown = _load_source_markdown(session, blob_reader, chunking_run.id)
 
     return {
-        "doc_id": doc_id,
+        "source_id": source_id,
         "chunk_id": chunk_id,
         "heading_path": _heading_path(chunk),
         "span_start": span_start,
@@ -649,7 +649,7 @@ def graph_ui_explorer(
     session: Annotated[Session, Depends(get_db_session)],
     blob_reader: Annotated["BlobReader", Depends(get_blob_reader)],
     _principal: Annotated[Principal, Depends(get_principal)],
-    doc_id: Annotated[str | None, Query()] = None,
+    source_id: Annotated[str | None, Query()] = None,
     chunk_id: Annotated[str | None, Query()] = None,
 ):
     """Render the document browser: the active chunking run's spine and a detail panel.
@@ -660,15 +660,15 @@ def graph_ui_explorer(
     ``chunk_id`` is given. A full page on a normal load, or the inner partial on an
     ``HX-Request`` so a selection swaps the browser without a reload.
     """
-    spine, chunking_run, variant_run = ([], None, None) if not doc_id else _spine_chunks(session, doc_id)
-    title = _source_title(session, doc_id) if doc_id else ""
+    spine, chunking_run, variant_run = ([], None, None) if not source_id else _spine_chunks(session, source_id)
+    title = _source_title(session, source_id) if source_id else ""
 
     detail = None
-    if doc_id and chunk_id:
-        detail = _load_detail(session, blob_reader, doc_id=doc_id, chunk_id=chunk_id, search_terms=[])
+    if source_id and chunk_id:
+        detail = _load_detail(session, blob_reader, source_id=source_id, chunk_id=chunk_id, search_terms=[])
 
     context = {
-        "doc_id": doc_id or "",
+        "source_id": source_id or "",
         "title": title,
         "spine": spine,
         "selected_chunk_id": chunk_id or "",
@@ -686,13 +686,13 @@ def graph_ui_explorer_detail(
     session: Annotated[Session, Depends(get_db_session)],
     blob_reader: Annotated["BlobReader", Depends(get_blob_reader)],
     _principal: Annotated[Principal, Depends(get_principal)],
-    doc_id: Annotated[str, Query()],
+    source_id: Annotated[str, Query()],
     chunk_id: Annotated[str, Query()],
 ):
     """Render the detail panel for one chunk, or 404 if it is not in the active run."""
-    detail = _load_detail(session, blob_reader, doc_id=doc_id, chunk_id=chunk_id, search_terms=[])
+    detail = _load_detail(session, blob_reader, source_id=source_id, chunk_id=chunk_id, search_terms=[])
     if detail is None:
-        raise HTTPException(status_code=404, detail=f"chunk {chunk_id} not in the active run of {doc_id}")
+        raise HTTPException(status_code=404, detail=f"chunk {chunk_id} not in the active run of {source_id}")
     return _TEMPLATES.TemplateResponse(request, "explorer_detail.html", {"detail": detail})
 
 
@@ -732,19 +732,19 @@ def _search_rows(
         chunk = session.get(Chunk, result.chunk_id)
         if chunk is None:  # pragma: no cover - an indexed chunk_id always has a row
             continue
-        if result.doc_id not in titles:
-            titles[result.doc_id] = _source_title(session, result.doc_id)
-        if result.doc_id not in variant_caches:
-            variant_caches[result.doc_id] = _active_variants_by_chunk(
-                session, _active_variant_run(session, result.doc_id)
+        if result.source_id not in titles:
+            titles[result.source_id] = _source_title(session, result.source_id)
+        if result.source_id not in variant_caches:
+            variant_caches[result.source_id] = _active_variants_by_chunk(
+                session, _active_variant_run(session, result.source_id)
             )
-        variant = variant_caches[result.doc_id].get(result.chunk_id)
+        variant = variant_caches[result.source_id].get(result.chunk_id)
         representation, _has_variant, self_contained = _resolve_representation(chunk.text, variant)
         rows.append(
             {
-                "doc_id": result.doc_id,
+                "source_id": result.source_id,
                 "chunk_id": result.chunk_id,
-                "title": titles[result.doc_id],
+                "title": titles[result.source_id],
                 "heading_path": _heading_path(chunk),
                 "self_contained": self_contained,
                 "matched_in_chunk": result.matched_in_chunk,
@@ -781,6 +781,6 @@ def graph_ui_explorer_search(
     """
     search_kind = _parse_search_kind(kind)
     rows = _search_rows(session, provider, query=query, kind=search_kind)
-    document_count = len({row["doc_id"] for row in rows})
+    document_count = len({row["source_id"] for row in rows})
     context = {"query": query, "kind": search_kind.value, "rows": rows, "document_count": document_count}
     return _TEMPLATES.TemplateResponse(request, "explorer_results.html", context)

@@ -51,12 +51,12 @@ def _make_engine(tmp_path: Path):
     return engine
 
 
-def _add_output(session: Session, *, output_id: int, markdown: str, aizk_uuid: UUID = _AIZK_UUID) -> None:
+def _add_output(session: Session, *, output_id: int, markdown: str, source_id: UUID = _AIZK_UUID) -> None:
     session.add(
         ConversionOutput(
             id=output_id,
             job_id=output_id,
-            aizk_uuid=aizk_uuid,
+            source_id=source_id,
             owner_id="owner",
             title="Doc",
             payload_version=1,
@@ -70,13 +70,13 @@ def _add_output(session: Session, *, output_id: int, markdown: str, aizk_uuid: U
     )
 
 
-def _active_chunking_input(engine, aizk_uuid: UUID) -> str:
+def _active_chunking_input(engine, source_id: UUID) -> str:
     """Return the conversion_output_id recorded by the source's active chunking run."""
     with Session(engine) as session:
         run = session.exec(
             select(PipelineRun).where(
                 PipelineRun.stage == "chunking",
-                PipelineRun.scope_key == str(aizk_uuid),
+                PipelineRun.scope_id == str(source_id),
                 PipelineRun.status == RunStatus.ACTIVE,
             )
         ).one()
@@ -103,7 +103,7 @@ def test_stale_output_cannot_supersede_newer(tmp_path: Path) -> None:
     newer = process_document(
         engine,
         StubLLMClient(),
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=2,
         markdown_source=markdown_source,
         freshness=freshness,
@@ -115,7 +115,7 @@ def test_stale_output_cannot_supersede_newer(tmp_path: Path) -> None:
     older = process_document(
         engine,
         StubLLMClient(),
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=1,
         markdown_source=markdown_source,
         freshness=freshness,
@@ -128,7 +128,7 @@ def test_stale_output_cannot_supersede_newer(tmp_path: Path) -> None:
         active_chunking = session.exec(
             select(PipelineRun).where(
                 PipelineRun.stage == "chunking",
-                PipelineRun.scope_key == str(_AIZK_UUID),
+                PipelineRun.scope_id == str(_AIZK_UUID),
                 PipelineRun.status == RunStatus.ACTIVE,
             )
         ).all()
@@ -136,7 +136,7 @@ def test_stale_output_cannot_supersede_newer(tmp_path: Path) -> None:
         superseded = session.exec(
             select(PipelineRun).where(
                 PipelineRun.stage == "chunking",
-                PipelineRun.scope_key == str(_AIZK_UUID),
+                PipelineRun.scope_id == str(_AIZK_UUID),
                 PipelineRun.status == RunStatus.SUPERSEDED,
             )
         ).all()
@@ -175,7 +175,7 @@ def test_superseded_output_is_skipped_before_fetch_and_generation(tmp_path: Path
     result = process_document(
         engine,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=1,  # already superseded by output 2
         markdown_source=source,
         freshness=ConversionOutputFreshness(),
@@ -201,7 +201,7 @@ class _RecordingFreshness:
         self._client = client
         self.prompts_at_gate: int | None = None
 
-    def is_current(self, session: Session, aizk_uuid: UUID, conversion_output_id: int) -> bool:
+    def is_current(self, session: Session, source_id: UUID, conversion_output_id: int) -> bool:
         self.prompts_at_gate = len(self._client.prompts)
         return True
 
@@ -220,7 +220,7 @@ def test_generation_runs_before_the_write_transaction(tmp_path: Path) -> None:
     result = process_document(
         engine,
         client,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=1,
         markdown_source=_InMemorySource(_MARKDOWN_NEW),
         freshness=freshness,
@@ -232,7 +232,7 @@ def test_generation_runs_before_the_write_transaction(tmp_path: Path) -> None:
 
 
 def test_output_from_another_source_is_not_persisted_under_the_wrong_source(tmp_path: Path) -> None:
-    """A (conversion_output_id, aizk_uuid) mismatch is skipped, not written under the wrong source.
+    """A (conversion_output_id, source_id) mismatch is skipped, not written under the wrong source.
 
     Source B's output has a higher id than source A's latest; without an identity
     check the freshness gate would accept it for A (id >= A's max), persisting B's
@@ -241,8 +241,8 @@ def test_output_from_another_source_is_not_persisted_under_the_wrong_source(tmp_
     source_b = UUID("22222222-2222-2222-2222-222222222222")
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        _add_output(session, output_id=1, markdown=_MARKDOWN_OLD, aizk_uuid=_AIZK_UUID)
-        _add_output(session, output_id=2, markdown=_MARKDOWN_NEW, aizk_uuid=source_b)
+        _add_output(session, output_id=1, markdown=_MARKDOWN_OLD, source_id=_AIZK_UUID)
+        _add_output(session, output_id=2, markdown=_MARKDOWN_NEW, source_id=source_b)
         session.commit()
 
     markdown_source = S3MarkdownSource(
@@ -256,7 +256,7 @@ def test_output_from_another_source_is_not_persisted_under_the_wrong_source(tmp_
     result = process_document(
         engine,
         StubLLMClient(),
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=2,
         markdown_source=markdown_source,
         freshness=ConversionOutputFreshness(),
@@ -264,5 +264,5 @@ def test_output_from_another_source_is_not_persisted_under_the_wrong_source(tmp_
 
     assert isinstance(result, SkippedSuperseded)
     with Session(engine) as session:
-        runs_under_a = session.exec(select(PipelineRun).where(PipelineRun.scope_key == str(_AIZK_UUID))).all()
+        runs_under_a = session.exec(select(PipelineRun).where(PipelineRun.scope_id == str(_AIZK_UUID))).all()
         assert runs_under_a == [], "no runs may be written under source A from source B's output"

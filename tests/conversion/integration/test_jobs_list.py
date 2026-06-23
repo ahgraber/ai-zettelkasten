@@ -25,8 +25,8 @@ def test_list_returns_jobs_ordered_descending_by_created_at(db_session) -> None:
     bookmark = make_source(db_session, "bm_list")
     older = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
     newer = dt.datetime(2026, 2, 1, tzinfo=dt.timezone.utc)
-    j_old = make_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="o" * 64, created_at=older)
-    j_new = make_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="n" * 64, created_at=newer)
+    j_old = make_job(db_session, source_id=bookmark.source_id, idempotency_key="o" * 64, created_at=older)
+    j_new = make_job(db_session, source_id=bookmark.source_id, idempotency_key="n" * 64, created_at=newer)
 
     app = create_app()
     with TestClient(app) as client:
@@ -41,9 +41,9 @@ def test_list_returns_jobs_ordered_descending_by_created_at(db_session) -> None:
 
 def test_list_filters_by_status(db_session) -> None:
     bookmark = make_source(db_session, "bm_status")
-    make_job(db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="q" * 64, status=ConversionJobStatus.QUEUED)
+    make_job(db_session, source_id=bookmark.source_id, idempotency_key="q" * 64, status=ConversionJobStatus.QUEUED)
     j_succ = make_job(
-        db_session, aizk_uuid=bookmark.aizk_uuid, idempotency_key="s" * 64, status=ConversionJobStatus.SUCCEEDED
+        db_session, source_id=bookmark.source_id, idempotency_key="s" * 64, status=ConversionJobStatus.SUCCEEDED
     )
 
     app = create_app()
@@ -56,15 +56,15 @@ def test_list_filters_by_status(db_session) -> None:
     assert [j["id"] for j in body["jobs"]] == [j_succ.id]
 
 
-def test_list_filters_by_aizk_uuid(db_session) -> None:
+def test_list_filters_by_source_id(db_session) -> None:
     bookmark_a = make_source(db_session, "bm_uuid_a")
     bookmark_b = make_source(db_session, "bm_uuid_b")
-    j_a = make_job(db_session, aizk_uuid=bookmark_a.aizk_uuid, idempotency_key="u" * 64)
-    make_job(db_session, aizk_uuid=bookmark_b.aizk_uuid, idempotency_key="v" * 64)
+    j_a = make_job(db_session, source_id=bookmark_a.source_id, idempotency_key="u" * 64)
+    make_job(db_session, source_id=bookmark_b.source_id, idempotency_key="v" * 64)
 
     app = create_app()
     with TestClient(app) as client:
-        resp = client.get("/v1/jobs", params={"aizk_uuid": str(bookmark_a.aizk_uuid)})
+        resp = client.get("/v1/jobs", params={"source_id": str(bookmark_a.source_id)})
 
     assert resp.status_code == 200
     body = resp.json()
@@ -80,7 +80,7 @@ def test_list_paginates_with_limit_and_offset(db_session) -> None:
     for i in range(5):
         j = make_job(
             db_session,
-            aizk_uuid=bookmark.aizk_uuid,
+            source_id=bookmark.source_id,
             idempotency_key=f"p{i}".ljust(64, "0"),
             created_at=base + dt.timedelta(hours=i),
         )

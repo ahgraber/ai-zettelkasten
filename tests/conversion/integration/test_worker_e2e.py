@@ -71,7 +71,7 @@ def _seed_queued_job(session: Session, *, bookmark_id: str, idempotency_key: str
     session.refresh(bookmark)
 
     job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title="Runner E2E Job",
         idempotency_key=idempotency_key,

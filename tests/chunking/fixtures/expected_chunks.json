@@ -5,7 +5,7 @@
       {
         "chunk_id": "ba3567d59dda2e26",
         "content_hash": "7b41ab3284316862",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Mixed"
         ],
@@ -28,7 +28,7 @@
       {
         "chunk_id": "35d2f1cda427d75b",
         "content_hash": "ac1c57ee3064be14",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "A",
           "B"
@@ -52,7 +52,7 @@
       {
         "chunk_id": "fbb44d961e399072",
         "content_hash": "816ffd71da13c16b",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [],
         "ordinal": 0,
         "text": "---\ntitle: Sample\ntags: [a, b]\n# a yaml comment, not a heading\n---\n",
@@ -68,7 +68,7 @@
       {
         "chunk_id": "6f0f9dbbedce38ec",
         "content_hash": "9c96fc44fe7761c4",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Heading One"
         ],
@@ -91,7 +91,7 @@
       {
         "chunk_id": "36b4be1447461679",
         "content_hash": "bfb76d796ff5dd6b",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [],
         "ordinal": 0,
         "text": "+++\ntitle = \"Sample\"\ntags = [\"a\", \"b\"]\n# a toml comment, not a heading\n+++\n",
@@ -107,7 +107,7 @@
       {
         "chunk_id": "6f0f9dbbedce38ec",
         "content_hash": "9c96fc44fe7761c4",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Heading One"
         ],
@@ -130,7 +130,7 @@
       {
         "chunk_id": "2805701e8d5bd0e6",
         "content_hash": "bbc763c0b4c619fd",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Outer"
         ],
@@ -153,7 +153,7 @@
       {
         "chunk_id": "7fc4a802498cecb0",
         "content_hash": "8779ecc659060833",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Outer"
         ],
@@ -176,7 +176,7 @@
       {
         "chunk_id": "6e49f15491cad19a",
         "content_hash": "16aed4dd3e1ecd34",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Outer"
         ],
@@ -199,7 +199,7 @@
       {
         "chunk_id": "3d539ecd42d9484d",
         "content_hash": "756bf7c2f8063383",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [],
         "ordinal": 0,
         "text": "First paragraph with no heading.\n\nSecond paragraph also headingless.\n",
@@ -220,7 +220,7 @@
       {
         "chunk_id": "5ac41b9334a85143",
         "content_hash": "d5bacb7f674438cf",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Mixed List"
         ],
@@ -243,7 +243,7 @@
       {
         "chunk_id": "45af566a5b954dca",
         "content_hash": "22a0ebfbdd3c5c0a",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Math Section"
         ],
@@ -266,7 +266,7 @@
       {
         "chunk_id": "77fc4c567b7d4162",
         "content_hash": "4e72d4266f8e4d6f",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Alpha"
         ],
@@ -284,7 +284,7 @@
       {
         "chunk_id": "44118b0384230f0d",
         "content_hash": "be930e1e8e8d8892",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Beta"
         ],
@@ -302,7 +302,7 @@
       {
         "chunk_id": "c469422d2dbb19ed",
         "content_hash": "3696dd9b1c533d4c",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Beta",
           "Beta Child"
@@ -321,7 +321,7 @@
       {
         "chunk_id": "9b882aaeea37e4ee",
         "content_hash": "1ddbd66d43672f55",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Gamma"
         ],
@@ -344,7 +344,7 @@
       {
         "chunk_id": "0c5850be5899c0c9",
         "content_hash": "47155b994c1197e5",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Multi Para"
         ],
@@ -367,7 +367,7 @@
       {
         "chunk_id": "e58f6a13d0cd1720",
         "content_hash": "01b349a1e2fb4eca",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Code Section"
         ],
@@ -390,7 +390,7 @@
       {
         "chunk_id": "9a9cdd3de4adc298",
         "content_hash": "d28b6a8fa5accb6e",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Links"
         ],
@@ -413,7 +413,7 @@
       {
         "chunk_id": "f4cb00dd01fa82f6",
         "content_hash": "cb7f1e8627624526",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Section"
         ],
@@ -436,7 +436,7 @@
       {
         "chunk_id": "93b54bab72c42440",
         "content_hash": "5427414d59e9a0ab",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Report"
         ],
@@ -459,7 +459,7 @@
       {
         "chunk_id": "b32ffc3c238ba993",
         "content_hash": "3acb3de8c0d0b696",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Pathological"
         ],
@@ -482,7 +482,7 @@
       {
         "chunk_id": "0db47b2dc3fb540d",
         "content_hash": "a0684eb152c37573",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [],
         "ordinal": 0,
         "text": "Intro paragraph before any heading.\n",
@@ -498,7 +498,7 @@
       {
         "chunk_id": "5b4311ea04434d15",
         "content_hash": "bab4d68a78a4e980",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "First Heading"
         ],
@@ -521,7 +521,7 @@
       {
         "chunk_id": "fae83dd3bf9e4ef3",
         "content_hash": "9d1fd10b41aa2278",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Polling background responses"
         ],
@@ -539,7 +539,7 @@
       {
         "chunk_id": "5a5654dd414fe3d6",
         "content_hash": "043d52dbd68be39e",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Cancelling a background response"
         ],
@@ -557,7 +557,7 @@
       {
         "chunk_id": "23790a47d6c78f91",
         "content_hash": "b3c76f3a52df9dae",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Streaming a background response"
         ],
@@ -575,7 +575,7 @@
       {
         "chunk_id": "4d23ca5521059ca0",
         "content_hash": "3f6f0e851f467cdd",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Limits"
         ],
@@ -598,7 +598,7 @@
       {
         "chunk_id": "db42a0dc487c40ac",
         "content_hash": "959b4dd88ecd16bf",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "A"
         ],
@@ -616,7 +616,7 @@
       {
         "chunk_id": "d0edb05da30ee615",
         "content_hash": "94176dd30f88d438",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "A",
           "C"
@@ -640,7 +640,7 @@
       {
         "chunk_id": "612f0b0a097084d5",
         "content_hash": "fa3c49be9fa08d9b",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Table Section"
         ],
@@ -663,7 +663,7 @@
       {
         "chunk_id": "ad5e98160d726af2",
         "content_hash": "67fcd58822a01376",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Section"
         ],
@@ -686,7 +686,7 @@
       {
         "chunk_id": "b0138841ea48064a",
         "content_hash": "3ebd56f2bdfa5fc2",
-        "doc_id": "doc-1",
+        "source_id": "doc-1",
         "heading_path": [
           "Small Section"
         ],

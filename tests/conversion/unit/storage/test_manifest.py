@@ -31,7 +31,7 @@ _DEFAULT_AIZK_UUID = UUID("12345678-1234-5678-1234-567812345678")
 
 
 def _make_bookmark(
-    aizk_uuid: UUID = _DEFAULT_AIZK_UUID,
+    source_id: UUID = _DEFAULT_AIZK_UUID,
     karakeep_id: str = "kk-001",
     url: str = "https://example.com/page",
     normalized_url: str = "https://example.com/page",
@@ -39,7 +39,7 @@ def _make_bookmark(
     source_type: str = "other",
 ) -> MagicMock:
     bm = MagicMock()
-    bm.aizk_uuid = aizk_uuid
+    bm.source_id = source_id
     bm.karakeep_id = karakeep_id
     bm.url = url
     bm.normalized_url = normalized_url
@@ -53,14 +53,14 @@ def _make_job(
     payload_version: int = 1,
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
-    aizk_uuid: UUID = _DEFAULT_AIZK_UUID,
+    source_id: UUID = _DEFAULT_AIZK_UUID,
 ) -> MagicMock:
     job = MagicMock()
     job.id = job_id
     job.payload_version = payload_version
     job.started_at = started_at
     job.finished_at = finished_at
-    job.aizk_uuid = aizk_uuid
+    job.source_id = source_id
     return job
 
 
@@ -85,7 +85,7 @@ def _config_snapshot(
 
 def _base_manifest(*, picture_description_enabled: bool = False) -> ManifestV1:
     return ManifestV1(
-        aizk_uuid=_DEFAULT_AIZK_UUID,
+        source_id=_DEFAULT_AIZK_UUID,
         karakeep_id="kk-001",
         source=ManifestSource(
             url="https://example.com/page",
@@ -228,7 +228,7 @@ def test_load_manifest_returns_v1_for_version_1_0():
     result = load_manifest(data)
     assert isinstance(result, ManifestV1)
     assert result.version == "1.0"
-    assert result.aizk_uuid == _DEFAULT_AIZK_UUID
+    assert result.source_id == _DEFAULT_AIZK_UUID
 
 
 def test_load_manifest_returns_v2_for_version_2_0():

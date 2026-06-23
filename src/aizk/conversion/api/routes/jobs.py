@@ -84,7 +84,7 @@ def _job_to_response(
 
     return JobResponse(
         id=job.id,
-        aizk_uuid=job.aizk_uuid,
+        source_id=job.source_id,
         karakeep_id=source.karakeep_id,
         source_ref=parsed_source_ref,
         url=source_url,
@@ -240,11 +240,11 @@ def submit_job(
     session.execute(
         text(
             "INSERT OR IGNORE INTO sources "
-            "(aizk_uuid, source_ref, source_ref_hash, karakeep_id, owner_id, created_at, updated_at) "
-            "VALUES (:aizk_uuid, :source_ref, :source_ref_hash, :karakeep_id, :owner_id, :created_at, :updated_at)"
+            "(source_id, source_ref, source_ref_hash, karakeep_id, owner_id, created_at, updated_at) "
+            "VALUES (:source_id, :source_ref, :source_ref_hash, :karakeep_id, :owner_id, :created_at, :updated_at)"
         ),
         {
-            "aizk_uuid": candidate_uuid.hex,
+            "source_id": candidate_uuid.hex,
             "source_ref": source_ref_json,
             "source_ref_hash": source_ref_hash,
             "karakeep_id": karakeep_id,
@@ -295,9 +295,9 @@ def submit_job(
 
     now = _utcnow()
     job = ConversionJob(
-        aizk_uuid=source.aizk_uuid,
+        source_id=source.source_id,
         owner_id=principal.subject,
-        title=source.title or source.karakeep_id or str(source.aizk_uuid),
+        title=source.title or source.karakeep_id or str(source.source_id),
         payload_version=submission.payload_version,
         status=ConversionJobStatus.QUEUED,
         attempts=0,
@@ -361,7 +361,7 @@ def get_job(
     if not job or job.owner_id != principal.subject:
         raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
     output = _get_output_summary(session, job_id)
-    source = session.exec(select(Source).where(Source.aizk_uuid == job.aizk_uuid)).one()
+    source = session.exec(select(Source).where(Source.source_id == job.source_id)).one()
     return _job_to_response(job, source, output)
 
 
@@ -370,7 +370,7 @@ def list_jobs(
     session: Annotated[Session, Depends(get_db_session)],
     principal: Annotated[Principal, Depends(get_principal)],
     status_filter: Annotated[ConversionJobStatus | None, Query(alias="status")] = None,
-    aizk_uuid: Annotated[UUID | None, Query()] = None,
+    source_id: Annotated[UUID | None, Query()] = None,
     created_after: Annotated[dt.datetime | None, Query()] = None,
     created_before: Annotated[dt.datetime | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=1000)] = 50,
@@ -383,9 +383,9 @@ def list_jobs(
     if status_filter:
         query = query.where(ConversionJob.status == status_filter)
         count_query = count_query.where(ConversionJob.status == status_filter)
-    if aizk_uuid:
-        query = query.where(ConversionJob.aizk_uuid == aizk_uuid)
-        count_query = count_query.where(ConversionJob.aizk_uuid == aizk_uuid)
+    if source_id:
+        query = query.where(ConversionJob.source_id == source_id)
+        count_query = count_query.where(ConversionJob.source_id == source_id)
     if created_after:
         query = query.where(ConversionJob.created_at >= created_after)
         count_query = count_query.where(ConversionJob.created_at >= created_after)
@@ -438,7 +438,7 @@ def retry_job(
         ) from exc
     session.commit()
     session.refresh(job)
-    source = session.exec(select(Source).where(Source.aizk_uuid == job.aizk_uuid)).one()
+    source = session.exec(select(Source).where(Source.source_id == job.source_id)).one()
     output = _get_output_summary(session, job_id)
     return _job_to_response(job, source, output)
 
@@ -464,7 +464,7 @@ def cancel_job(
         ) from exc
     session.commit()
     session.refresh(job)
-    source = session.exec(select(Source).where(Source.aizk_uuid == job.aizk_uuid)).one()
+    source = session.exec(select(Source).where(Source.source_id == job.source_id)).one()
     output = _get_output_summary(session, job_id)
     return _job_to_response(job, source, output)
 

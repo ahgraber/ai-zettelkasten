@@ -19,14 +19,14 @@ def _create_output(
     session,
     *,
     job_id: int,
-    aizk_uuid: UUID,
+    source_id: UUID,
     created_at: dt.datetime,
     markdown_hash: str,
     owner_id: str = "self",
 ) -> ConversionOutput:
     output = ConversionOutput(
         job_id=job_id,
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         owner_id=owner_id,
         title="Test Output",
         payload_version=1,
@@ -54,14 +54,14 @@ def test_get_bookmark_outputs_returns_all_ordered_descending(db_session, app) ->
     bookmark = make_source(db_session, "bm_outputs_all")
     job1 = make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         idempotency_key="a" * 64,
         status=ConversionJobStatus.SUCCEEDED,
         attempts=1,
     )
     job2 = make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         idempotency_key="b" * 64,
         status=ConversionJobStatus.SUCCEEDED,
         attempts=1,
@@ -71,14 +71,14 @@ def test_get_bookmark_outputs_returns_all_ordered_descending(db_session, app) ->
     older = now - dt.timedelta(hours=1)
 
     out1 = _create_output(
-        db_session, job_id=job1.id, aizk_uuid=bookmark.aizk_uuid, created_at=older, markdown_hash="aaa"
+        db_session, job_id=job1.id, source_id=bookmark.source_id, created_at=older, markdown_hash="aaa"
     )
     out2 = _create_output(
-        db_session, job_id=job2.id, aizk_uuid=bookmark.aizk_uuid, created_at=now, markdown_hash="bbb"
+        db_session, job_id=job2.id, source_id=bookmark.source_id, created_at=now, markdown_hash="bbb"
     )
 
     with TestClient(app) as client:
-        response = client.get(f"/v1/bookmarks/{bookmark.aizk_uuid}/outputs")
+        response = client.get(f"/v1/bookmarks/{bookmark.source_id}/outputs")
 
     assert response.status_code == 200
     data = response.json()
@@ -91,14 +91,14 @@ def test_get_bookmark_outputs_latest_returns_one(db_session, app) -> None:
     bookmark = make_source(db_session, "bm_outputs_latest")
     job1 = make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         idempotency_key="c" * 64,
         status=ConversionJobStatus.SUCCEEDED,
         attempts=1,
     )
     job2 = make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         idempotency_key="d" * 64,
         status=ConversionJobStatus.SUCCEEDED,
         attempts=1,
@@ -107,13 +107,13 @@ def test_get_bookmark_outputs_latest_returns_one(db_session, app) -> None:
     now = dt.datetime.now(dt.timezone.utc)
     older = now - dt.timedelta(hours=1)
 
-    _create_output(db_session, job_id=job1.id, aizk_uuid=bookmark.aizk_uuid, created_at=older, markdown_hash="ccc")
+    _create_output(db_session, job_id=job1.id, source_id=bookmark.source_id, created_at=older, markdown_hash="ccc")
     out2 = _create_output(
-        db_session, job_id=job2.id, aizk_uuid=bookmark.aizk_uuid, created_at=now, markdown_hash="ddd"
+        db_session, job_id=job2.id, source_id=bookmark.source_id, created_at=now, markdown_hash="ddd"
     )
 
     with TestClient(app) as client:
-        response = client.get(f"/v1/bookmarks/{bookmark.aizk_uuid}/outputs", params={"latest": "true"})
+        response = client.get(f"/v1/bookmarks/{bookmark.source_id}/outputs", params={"latest": "true"})
 
     assert response.status_code == 200
     data = response.json()
@@ -122,11 +122,11 @@ def test_get_bookmark_outputs_latest_returns_one(db_session, app) -> None:
 
 
 def test_get_bookmark_outputs_returns_only_owned_when_source_is_shared(db_session, app) -> None:
-    """Shared aizk_uuid: caller sees only outputs whose owner_id matches the principal."""
+    """Shared source_id: caller sees only outputs whose owner_id matches the principal."""
     bookmark = make_source(db_session, "bm_outputs_owner_scope")
     owned_job = make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         idempotency_key="e" * 64,
         status=ConversionJobStatus.SUCCEEDED,
         attempts=1,
@@ -134,7 +134,7 @@ def test_get_bookmark_outputs_returns_only_owned_when_source_is_shared(db_sessio
     )
     cross_job = make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         idempotency_key="f" * 64,
         status=ConversionJobStatus.SUCCEEDED,
         attempts=1,
@@ -142,19 +142,19 @@ def test_get_bookmark_outputs_returns_only_owned_when_source_is_shared(db_sessio
     )
     now = dt.datetime.now(dt.timezone.utc)
     owned_out = _create_output(
-        db_session, job_id=owned_job.id, aizk_uuid=bookmark.aizk_uuid, created_at=now, markdown_hash="own"
+        db_session, job_id=owned_job.id, source_id=bookmark.source_id, created_at=now, markdown_hash="own"
     )
     _create_output(
         db_session,
         job_id=cross_job.id,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         created_at=now,
         markdown_hash="cro",
         owner_id="someone_else",
     )
 
     with TestClient(app) as client:
-        response = client.get(f"/v1/bookmarks/{bookmark.aizk_uuid}/outputs")
+        response = client.get(f"/v1/bookmarks/{bookmark.source_id}/outputs")
 
     assert response.status_code == 200
     data = response.json()
@@ -166,7 +166,7 @@ def test_get_bookmark_outputs_returns_empty_when_all_cross_owner(db_session, app
     bookmark = make_source(db_session, "bm_outputs_only_cross_owner")
     cross_job = make_job(
         db_session,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         idempotency_key="g" * 64,
         status=ConversionJobStatus.SUCCEEDED,
         attempts=1,
@@ -176,14 +176,14 @@ def test_get_bookmark_outputs_returns_empty_when_all_cross_owner(db_session, app
     _create_output(
         db_session,
         job_id=cross_job.id,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         created_at=now,
         markdown_hash="zzz",
         owner_id="someone_else",
     )
 
     with TestClient(app) as client:
-        response = client.get(f"/v1/bookmarks/{bookmark.aizk_uuid}/outputs")
+        response = client.get(f"/v1/bookmarks/{bookmark.source_id}/outputs")
 
     assert response.status_code == 200
     assert response.json() == []

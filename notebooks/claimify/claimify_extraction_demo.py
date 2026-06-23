@@ -192,7 +192,7 @@ async def _run_extraction(doc) -> Path:
         f=5,
         question_for=extraction_question,
     )
-    path = write_extraction_jsonl(doc.aizk_uuid, records)
+    path = write_extraction_jsonl(doc.source_id, records)
     n_claim = sum(1 for r in records if isinstance(r, ClaimRecord))
     n_fail = sum(1 for r in records if isinstance(r, FailedRecord))
     # SkippedRecord (non-text artifacts) is deferred — see pipeline TODOs.
@@ -215,9 +215,9 @@ if RUN_FULL:
 def _load_all() -> dict:
     by_doc: dict[str, list] = {}
     for d in docs:
-        path = EXTRACTION_DIR / f"{d.aizk_uuid}.jsonl"
+        path = EXTRACTION_DIR / f"{d.source_id}.jsonl"
         if path.exists():
-            by_doc[d.title] = read_extraction_jsonl(d.aizk_uuid)
+            by_doc[d.title] = read_extraction_jsonl(d.source_id)
     return by_doc
 
 

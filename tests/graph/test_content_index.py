@@ -52,18 +52,18 @@ def _make_chunk(
     text_: str,
     *,
     ordinal: int,
-    aizk_uuid: str = _AIZK_UUID,
+    source_id: str = _AIZK_UUID,
     markdown_hash: str = _HASH_A,
     conversion_output_id: str = _OUTPUT,
     splitter_version: int = SPLITTER_VERSION,
 ) -> SplitterChunk:
-    """Build a content-addressed splitter chunk for a single source (``doc_id`` = ``aizk_uuid``)."""
+    """Build a content-addressed splitter chunk for a single source (``source_id`` = ``source_id``)."""
     content_hash = xxhash.xxh64(text_.encode("utf-8")).hexdigest()
-    chunk_id = derive_chunk_id(aizk_uuid, (), ordinal, content_hash)
+    chunk_id = derive_chunk_id(source_id, (), ordinal, content_hash)
     return SplitterChunk(
         chunk_id=chunk_id,
         content_hash=content_hash,
-        doc_id=aizk_uuid,
+        source_id=source_id,
         heading_path=(),
         ordinal=ordinal,
         text=text_,
@@ -95,7 +95,7 @@ def _alembic_cfg(database_url: str) -> Config:
 def _seed_chunk_and_variant(
     session: Session,
     *,
-    aizk_uuid: str,
+    source_id: str,
     chunk_text: str,
     revision: str,
     ordinal: int = 0,
@@ -106,10 +106,10 @@ def _seed_chunk_and_variant(
     ``revision`` is the model output: an empty string means a self-contained chunk
     (whose contextualized representation is the raw text). Commits.
     """
-    chunk = _make_chunk(chunk_text, ordinal=ordinal, aizk_uuid=aizk_uuid, markdown_hash=markdown_hash)
+    chunk = _make_chunk(chunk_text, ordinal=ordinal, source_id=source_id, markdown_hash=markdown_hash)
     chunking_run = persist_chunks(
         session,
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=markdown_hash,
         splitter_version=SPLITTER_VERSION,
@@ -118,7 +118,7 @@ def _seed_chunk_and_variant(
     summary = summarize_document(
         session,
         StubLLMClient(),
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=markdown_hash,
         document_text=_DOC_TEXT,
@@ -127,7 +127,7 @@ def _seed_chunk_and_variant(
     contextualize_chunks(
         session,
         StubLLMClient(responder=lambda _prompt: revision),
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         summary=summary,
         chunks=[chunk],
         chunking_run_id=chunking_run.id,
@@ -195,20 +195,20 @@ def test_backfill_indexes_content_persisted_before_index_existed(tmp_path: Path)
     """
     url = f"sqlite:///{tmp_path / 'backfill_pre.db'}"
     cfg = _alembic_cfg(url)
-    command.upgrade(cfg, _FTS_REVISION)
+    command.upgrade(cfg, "head")
     engine = create_engine(url, connect_args={"check_same_thread": False})
     with Session(engine) as session:
         _seed_chunk_and_variant(
             session,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             chunk_text="transformers use attention mechanisms",
             revision="the transformer architecture relies on attention mechanisms",
         )
 
     # Tear down and re-establish the index so only the migration backfill (from the
     # source tables) repopulates it — the live inserts contribute nothing this time.
-    command.downgrade(cfg, _FTS_PREV_REVISION)
-    command.upgrade(cfg, _FTS_REVISION)
+    command.downgrade(cfg, _FTS_REVISION)
+    command.upgrade(cfg, "head")
     with Session(engine) as session:
         kinds = {kind for kind, _ in _search(session, "attention")}
     assert kinds == {"chunk", "contextualized"}, "pre-existing raw and contextualized text must be searchable"
@@ -223,14 +223,14 @@ def test_backfill_indexes_superseded_then_reactivated_chunk(tmp_path: Path) -> N
     """
     url = f"sqlite:///{tmp_path / 'backfill_super.db'}"
     cfg = _alembic_cfg(url)
-    command.upgrade(cfg, _FTS_REVISION)
+    command.upgrade(cfg, "head")
     engine = create_engine(url, connect_args={"check_same_thread": False})
 
     target = _make_chunk("quasar luminosity spectra", ordinal=0)
     with Session(engine) as session:
         persist_chunks(
             session,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             conversion_output_id=_OUTPUT,
             markdown_hash_xx64=_HASH_A,
             splitter_version=SPLITTER_VERSION,
@@ -244,7 +244,7 @@ def test_backfill_indexes_superseded_then_reactivated_chunk(tmp_path: Path) -> N
         target_in_gen2 = _make_chunk("quasar luminosity spectra", ordinal=0, markdown_hash=_HASH_B)
         persist_chunks(
             session,
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             conversion_output_id=_OUTPUT,
             markdown_hash_xx64=_HASH_B,
             splitter_version=SPLITTER_VERSION,
@@ -254,8 +254,8 @@ def test_backfill_indexes_superseded_then_reactivated_chunk(tmp_path: Path) -> N
 
     # Rebuild from source tables (the all-committed-rows backfill) after both
     # generations exist; the reused chunk_id must still be searchable.
-    command.downgrade(cfg, _FTS_PREV_REVISION)
-    command.upgrade(cfg, _FTS_REVISION)
+    command.downgrade(cfg, _FTS_REVISION)
+    command.upgrade(cfg, "head")
     with Session(engine) as session:
         chunk_ids = {chunk_id for kind, chunk_id in _search(session, "quasar") if kind == "chunk"}
     assert target.chunk_id in chunk_ids, "the reused chunk_id must be in the index regardless of run currency"
@@ -275,7 +275,7 @@ def test_rebuild_reproduces_content(session: Session) -> None:
     """
     chunk = _seed_chunk_and_variant(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         chunk_text="photosynthesis converts light into chemical energy",
         revision="plants use photosynthesis to convert sunlight into chemical energy",
     )
@@ -300,7 +300,7 @@ def test_persisted_chunk_is_searchable(session: Session) -> None:
     chunk = _make_chunk("mitochondria are the powerhouse of the cell", ordinal=0)
     persist_chunks(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         splitter_version=SPLITTER_VERSION,
@@ -320,7 +320,7 @@ def test_reused_chunk_id_is_not_indexed_twice(session: Session) -> None:
     """
     chunk = _make_chunk("the distinctive antidisestablishment token", ordinal=0)
     args = {
-        "aizk_uuid": _AIZK_UUID,
+        "source_id": _AIZK_UUID,
         "conversion_output_id": _OUTPUT,
         "markdown_hash_xx64": _HASH_A,
         "splitter_version": SPLITTER_VERSION,
@@ -340,7 +340,7 @@ def test_persisted_variant_is_searchable(session: Session) -> None:
     """A newly persisted variant's revision is searchable under kind=contextualized."""
     _seed_chunk_and_variant(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         chunk_text="it improves throughput",
         revision="scaled dot-product attention improves throughput",
     )
@@ -355,7 +355,7 @@ def test_self_contained_chunk_indexes_raw_text_as_contextualized(session: Sessio
     """A self-contained chunk (empty revision) is searchable by its raw text under kind=contextualized."""
     chunk = _seed_chunk_and_variant(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         chunk_text="bioluminescence in deep-sea organisms",
         revision="",  # empty revision => self-contained
     )
@@ -374,7 +374,7 @@ def test_reused_variant_run_does_not_reindex(session: Session) -> None:
     chunk = _make_chunk("a stable self-contained passage", ordinal=0)
     chunking_run = persist_chunks(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         splitter_version=SPLITTER_VERSION,
@@ -385,7 +385,7 @@ def test_reused_variant_run_does_not_reindex(session: Session) -> None:
     summary = summarize_document(
         session,
         StubLLMClient(),
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
@@ -395,7 +395,7 @@ def test_reused_variant_run_does_not_reindex(session: Session) -> None:
         contextualize_chunks(
             session,
             StubLLMClient(responder=lambda _prompt: ""),
-            aizk_uuid=_AIZK_UUID,
+            source_id=_AIZK_UUID,
             summary=summary,
             chunks=[chunk],
             chunking_run_id=chunking_run.id,
@@ -412,20 +412,20 @@ def test_reused_variant_run_does_not_reindex(session: Session) -> None:
 
 
 def test_index_excludes_other_source(session: Session) -> None:
-    """A term is scoped to the source whose content contains it (doc_id discrimination)."""
-    chunk_a = _make_chunk("alpha distinctive term", ordinal=0, aizk_uuid=_AIZK_UUID)
+    """A term is scoped to the source whose content contains it (source_id discrimination)."""
+    chunk_a = _make_chunk("alpha distinctive term", ordinal=0, source_id=_AIZK_UUID)
     persist_chunks(
         session,
-        aizk_uuid=_AIZK_UUID,
+        source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         splitter_version=SPLITTER_VERSION,
         chunks=[chunk_a],
     )
-    chunk_b = _make_chunk("beta distinctive term", ordinal=0, aizk_uuid=_AIZK_UUID_B)
+    chunk_b = _make_chunk("beta distinctive term", ordinal=0, source_id=_AIZK_UUID_B)
     persist_chunks(
         session,
-        aizk_uuid=_AIZK_UUID_B,
+        source_id=_AIZK_UUID_B,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         splitter_version=SPLITTER_VERSION,
@@ -436,7 +436,7 @@ def test_index_excludes_other_source(session: Session) -> None:
     rows = (
         session.connection()
         .execute(
-            text("SELECT doc_id, chunk_id FROM graph_content_fts WHERE graph_content_fts MATCH :t"),
+            text("SELECT source_id, chunk_id FROM graph_content_fts WHERE graph_content_fts MATCH :t"),
             {"t": "alpha"},
         )
         .all()

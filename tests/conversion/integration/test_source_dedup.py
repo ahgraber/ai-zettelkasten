@@ -43,8 +43,8 @@ def test_source_dedup_same_bookmark_id(db_session) -> None:
     assert resp2.status_code in (200, 201)
     sources = db_session.exec(select(Source).where(Source.karakeep_id == "bm_dedup")).all()
     assert len(sources) == 1
-    # Both jobs reference the same aizk_uuid
-    assert resp1.json()["aizk_uuid"] == resp2.json()["aizk_uuid"]
+    # Both jobs reference the same source_id
+    assert resp1.json()["source_id"] == resp2.json()["source_id"]
 
 
 def test_source_response_includes_source_ref(db_session) -> None:
@@ -86,7 +86,7 @@ def test_idempotency_key_differs_for_different_source_ref(db_session) -> None:
 def test_concurrent_source_dedup_single_row(db_session) -> None:
     """Two threads POSTing the same bookmark_id concurrently produce exactly one Source row.
 
-    Both requests must succeed (201 or 200) and reference the same aizk_uuid.
+    Both requests must succeed (201 or 200) and reference the same source_id.
     A Barrier synchronises thread dispatch to maximise the chance of a genuine
     concurrent INSERT OR IGNORE collision.
 
@@ -116,7 +116,7 @@ def test_concurrent_source_dedup_single_row(db_session) -> None:
     assert responses[1].status_code in (200, 201)
 
     # Both jobs must reference the same source UUID
-    assert responses[0].json()["aizk_uuid"] == responses[1].json()["aizk_uuid"]
+    assert responses[0].json()["source_id"] == responses[1].json()["source_id"]
 
     # Exactly one Source row exists for this bookmark_id
     sources = db_session.exec(select(Source).where(Source.karakeep_id == "bm_concurrent_dedup")).all()

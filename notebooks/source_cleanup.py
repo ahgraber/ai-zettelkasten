@@ -272,23 +272,23 @@ def _delete_s3_prefix(client, bucket: str, prefix: str, dry_run: bool) -> int:
 
 def _collect_related_records(
     session: Session,
-    aizk_uuids: Iterable[UUID],
+    source_ids: Iterable[UUID],
 ) -> tuple[dict[UUID, list[ConversionJob]], dict[UUID, list[ConversionOutput]]]:
     """Load jobs and outputs grouped by bookmark UUID."""
-    uuid_list = list(aizk_uuids)
+    uuid_list = list(source_ids)
     if not uuid_list:
         return {}, {}
 
-    jobs = session.exec(select(ConversionJob).where(ConversionJob.aizk_uuid.in_(uuid_list))).all()
-    outputs = session.exec(select(ConversionOutput).where(ConversionOutput.aizk_uuid.in_(uuid_list))).all()
+    jobs = session.exec(select(ConversionJob).where(ConversionJob.source_id.in_(uuid_list))).all()
+    outputs = session.exec(select(ConversionOutput).where(ConversionOutput.source_id.in_(uuid_list))).all()
 
     jobs_by_uuid: dict[UUID, list[ConversionJob]] = defaultdict(list)
     outputs_by_uuid: dict[UUID, list[ConversionOutput]] = defaultdict(list)
 
     for job in jobs:
-        jobs_by_uuid[job.aizk_uuid].append(job)
+        jobs_by_uuid[job.source_id].append(job)
     for output in outputs:
-        outputs_by_uuid[output.aizk_uuid].append(output)
+        outputs_by_uuid[output.source_id].append(output)
 
     return jobs_by_uuid, outputs_by_uuid
 
@@ -341,14 +341,14 @@ def _build_target_rows(
     """Create rows for the targets + reasons review table."""
     rows: list[TargetRow] = []
     for bookmark in targets:
-        outputs = outputs_by_uuid.get(bookmark.aizk_uuid, [])
+        outputs = outputs_by_uuid.get(bookmark.source_id, [])
         unique_prefixes = {output.s3_prefix for output in outputs if output.s3_prefix}
         rows.append(
             TargetRow(
                 karakeep_id=bookmark.karakeep_id,
                 url=bookmark.url or "",
                 reasons=",".join(reasons_by_id.get(bookmark.karakeep_id, [])),
-                job_count=len(jobs_by_uuid.get(bookmark.aizk_uuid, [])),
+                job_count=len(jobs_by_uuid.get(bookmark.source_id, [])),
                 output_count=len(outputs),
                 s3_prefix_count=len(unique_prefixes),
             )
@@ -464,7 +464,7 @@ async def main(run_config: CleanupRunConfig | None = None) -> None:
             print("No target bookmarks matched current selection rules.")
             return
 
-        target_uuids = [bookmark.aizk_uuid for bookmark in targets]
+        target_uuids = [bookmark.source_id for bookmark in targets]
         jobs_by_uuid, outputs_by_uuid = _collect_related_records(session, target_uuids)
         rows = _build_target_rows(targets, reasons_by_id, jobs_by_uuid, outputs_by_uuid)
 

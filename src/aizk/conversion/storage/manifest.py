@@ -93,7 +93,7 @@ class ManifestV1(BaseModel):
     model_config = ConfigDict(extra="forbid", json_encoders={datetime: lambda v: v.isoformat()})
 
     version: str = "1.0"
-    aizk_uuid: UUID
+    source_id: UUID
     karakeep_id: str
     source: ManifestSource
     conversion: ManifestConversionMetadata
@@ -126,7 +126,7 @@ class ManifestV2(BaseModel):
     model_config = ConfigDict(extra="forbid", json_encoders={datetime: lambda v: v.isoformat()})
 
     version: str = "2.0"
-    aizk_uuid: UUID
+    source_id: UUID
     submitted_ref: SourceRef
     terminal_ref: SourceRef
     source: ManifestSourceV2
@@ -193,7 +193,7 @@ def generate_manifest_v2(
     figures = [ManifestArtifactFigure(key=uri, created_at=finished_at) for uri in figure_s3_uris]
 
     return ManifestV2(
-        aizk_uuid=job.aizk_uuid,
+        source_id=job.source_id,
         submitted_ref=submitted_ref,
         terminal_ref=terminal_ref,
         source=ManifestSourceV2(

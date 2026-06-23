@@ -1,10 +1,10 @@
 """Enqueue contextualization work-units from conversion outputs.
 
 The graph work-unit's domain enqueue functions (:mod:`aizk.graph.workunit`) take
-the durable ``aizk_uuid`` explicitly, keeping them decoupled from the conversion
+the durable ``source_id`` explicitly, keeping them decoupled from the conversion
 stage. These wrappers are the conversion-coupled entry points: they resolve the
-``aizk_uuid`` source identity from the conversion output
-(``conversion_output_id → ConversionOutput.aizk_uuid``) once at enqueue, so it is
+``source_id`` source identity from the conversion output
+(``conversion_output_id → ConversionOutput.source_id``) once at enqueue, so it is
 carried onto the work-unit's runs and transition events and a source's progress
 stays resolvable across stages.
 
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 def enqueue_output(session: "Session", conversion_output_id: int) -> "ContextualizationJob":
     """Enqueue one document's work-unit, resolving its source identity from the output.
 
-    Looks up the conversion output to resolve ``aizk_uuid``, then enqueues (or
+    Looks up the conversion output to resolve ``source_id``, then enqueues (or
     reuses, on ``idempotency_key``) the work-unit. Does not commit.
 
     Raises:
@@ -40,7 +40,7 @@ def enqueue_output(session: "Session", conversion_output_id: int) -> "Contextual
     output = session.get(ConversionOutput, conversion_output_id)
     if output is None:
         raise ValueError(f"conversion output {conversion_output_id} not found")
-    return enqueue_document(session, conversion_output_id=conversion_output_id, aizk_uuid=output.aizk_uuid)
+    return enqueue_document(session, conversion_output_id=conversion_output_id, source_id=output.source_id)
 
 
 def enqueue_backfill_outputs(

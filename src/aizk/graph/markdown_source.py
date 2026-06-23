@@ -72,7 +72,7 @@ class ConversionOutputFreshness:
 
     An output is current iff it **belongs to** the supplied source and is that
     source's latest (highest-id, monotonic under the single serialized writer)
-    ``ConversionOutput``. Verifying the output row's own ``aizk_uuid`` closes an
+    ``ConversionOutput``. Verifying the output row's own ``source_id`` closes an
     identity hole: without it, an output id from a *different* source that happens
     to exceed the supplied source's max id would pass, letting another source's
     Markdown be persisted under the wrong source. The query runs on the persist
@@ -80,12 +80,12 @@ class ConversionOutputFreshness:
     atomic.
     """
 
-    def is_current(self, session: Session, aizk_uuid: "UUID", conversion_output_id: int) -> bool:
-        """Return ``True`` iff the output belongs to ``aizk_uuid`` and is its latest."""
+    def is_current(self, session: Session, source_id: "UUID", conversion_output_id: int) -> bool:
+        """Return ``True`` iff the output belongs to ``source_id`` and is its latest."""
         output = session.get(ConversionOutput, conversion_output_id)
-        if output is None or output.aizk_uuid != aizk_uuid:
+        if output is None or output.source_id != source_id:
             return False
         latest_id = session.exec(
-            select(func.max(ConversionOutput.id)).where(ConversionOutput.aizk_uuid == aizk_uuid)
+            select(func.max(ConversionOutput.id)).where(ConversionOutput.source_id == source_id)
         ).one()
         return conversion_output_id >= latest_id

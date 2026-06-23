@@ -103,7 +103,7 @@ def test_sanitized_legacy_snapshot_upgrades_to_head(tmp_path: Path) -> None:
         )
         assert (
             conn.execute(
-                text("SELECT COUNT(*) FROM pipeline_events WHERE stage = 'conversion' AND aizk_uuid = :uuid"),
+                text("SELECT COUNT(*) FROM pipeline_events WHERE stage = 'conversion' AND source_id = :uuid"),
                 {"uuid": manifest["audit_source_uuid"]},
             ).scalar_one()
             == manifest["audit_source_event_count"]

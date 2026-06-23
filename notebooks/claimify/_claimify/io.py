@@ -1,4 +1,4 @@
-"""Document loader + disk cache (karakeep_id -> aizk_uuid -> newest conversion_outputs)."""
+"""Document loader + disk cache (karakeep_id -> source_id -> newest conversion_outputs)."""
 
 from __future__ import annotations
 
@@ -60,14 +60,14 @@ def resolve_doc(
 
     output = session.exec(
         select(ConversionOutput)
-        .where(ConversionOutput.aizk_uuid == bookmark.aizk_uuid)
+        .where(ConversionOutput.source_id == bookmark.source_id)
         .order_by(ConversionOutput.created_at.desc())
         .limit(1)
     ).one_or_none()
     if output is None:
-        raise ValueError(f"No conversion_outputs for karakeep_id={karakeep_id!r} (aizk_uuid={bookmark.aizk_uuid})")
+        raise ValueError(f"No conversion_outputs for karakeep_id={karakeep_id!r} (source_id={bookmark.source_id})")
 
-    cache_path = CACHE_DIR / f"{bookmark.aizk_uuid}.md"
+    cache_path = CACHE_DIR / f"{bookmark.source_id}.md"
     source: Literal["cache", "s3"]
     if cache_path.exists():
         markdown = cache_path.read_text(encoding="utf-8")
@@ -80,7 +80,7 @@ def resolve_doc(
         source = "s3"
 
     return LoadedDoc(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         karakeep_id=karakeep_id,
         title=output.title,
         markdown=markdown,

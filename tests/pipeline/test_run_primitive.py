@@ -1,7 +1,7 @@
 """Tests for the stage-run / dataset-version primitive (atomic supersession).
 
 Covers the spec requirement that a stage's derived outputs belong to a run
-identified by ``(stage, scope_key)`` with at most one active run per scope,
+identified by ``(stage, scope_id)`` with at most one active run per scope,
 invalidated atomically: recording a new run and superseding the prior happen in
 one transaction, never leaving two active runs nor a window with none.
 """
@@ -22,14 +22,14 @@ _STAGE = "contextualization"
 _SCOPE = "document:abc"
 
 
-def _active_runs(session: Session, stage: str, scope_key: str) -> list[PipelineRun]:
+def _active_runs(session: Session, stage: str, scope_id: str) -> list[PipelineRun]:
     """Return active runs for a scope, newest first."""
     return list(
         session.exec(
             select(PipelineRun)
             .where(
                 PipelineRun.stage == stage,
-                PipelineRun.scope_key == scope_key,
+                PipelineRun.scope_id == scope_id,
                 PipelineRun.status == RunStatus.ACTIVE,
             )
             .order_by(PipelineRun.id.desc())
@@ -44,13 +44,13 @@ def test_atomic_supersede(engine: Engine) -> None:
     pure status transition, leaving the prior run's recorded outputs untouched.
     """
     with Session(engine) as session:
-        first = record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key="fp-1")
+        first = record_run(session, stage=_STAGE, scope_id=_SCOPE, derivation_key="fp-1")
         session.commit()
         first_id = first.id
         first_derivation_key = first.derivation_key
 
     with Session(engine) as session:
-        second = record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key="fp-2")
+        second = record_run(session, stage=_STAGE, scope_id=_SCOPE, derivation_key="fp-2")
         session.commit()
         second_id = second.id
         assert second.supersedes_run_id == first_id
@@ -64,16 +64,16 @@ def test_atomic_supersede(engine: Engine) -> None:
         assert prior.derivation_key == first_derivation_key, "prior run's recorded outputs are unmodified"
 
 
-def test_supersession_is_scoped_per_stage_scope_key(engine: Engine) -> None:
-    """One active run per ``(stage, scope_key)`` — a different scope stays active."""
+def test_supersession_is_scoped_per_stage_scope_id(engine: Engine) -> None:
+    """One active run per ``(stage, scope_id)`` — a different scope stays active."""
     other_scope = "document:xyz"
     with Session(engine) as session:
-        record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key="a")
-        record_run(session, stage=_STAGE, scope_key=other_scope, derivation_key="b")
+        record_run(session, stage=_STAGE, scope_id=_SCOPE, derivation_key="a")
+        record_run(session, stage=_STAGE, scope_id=other_scope, derivation_key="b")
         session.commit()
 
     with Session(engine) as session:
-        record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key="a2")
+        record_run(session, stage=_STAGE, scope_id=_SCOPE, derivation_key="a2")
         session.commit()
 
     with Session(engine) as session:
@@ -89,12 +89,12 @@ def test_failed_supersession_changes_nothing(engine: Engine) -> None:
     partial new run is present.
     """
     with Session(engine) as session:
-        first = record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key="fp-1")
+        first = record_run(session, stage=_STAGE, scope_id=_SCOPE, derivation_key="fp-1")
         session.commit()
         first_id = first.id
 
     with Session(engine) as session:
-        record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key="fp-2")
+        record_run(session, stage=_STAGE, scope_id=_SCOPE, derivation_key="fp-2")
         session.rollback()  # transaction fails before commit
 
     with Session(engine) as session:
@@ -113,7 +113,7 @@ def test_concurrent_runs_one_active(serialized_engine: Engine) -> None:
     no run beyond the active one is left active.
     """
     with Session(serialized_engine) as session:
-        record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key="initial")
+        record_run(session, stage=_STAGE, scope_id=_SCOPE, derivation_key="initial")
         session.commit()
 
     barrier = threading.Barrier(2)
@@ -123,7 +123,7 @@ def test_concurrent_runs_one_active(serialized_engine: Engine) -> None:
         barrier.wait()
         try:
             with Session(serialized_engine) as session:
-                record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key=derivation_key)
+                record_run(session, stage=_STAGE, scope_id=_SCOPE, derivation_key=derivation_key)
                 session.commit()
         except (IntegrityError, OperationalError) as exc:  # lost the race; expected
             errors.append(exc)
@@ -149,7 +149,7 @@ def test_status_stored_as_lowercase_value(engine: Engine) -> None:
     member name ('ACTIVE') and the index would never match.
     """
     with Session(engine) as session:
-        record_run(session, stage=_STAGE, scope_key=_SCOPE, derivation_key="fp")
+        record_run(session, stage=_STAGE, scope_id=_SCOPE, derivation_key="fp")
         session.commit()
 
     with engine.connect() as conn:
@@ -163,7 +163,7 @@ def test_direct_active_insert_violates_unique_index(engine: Engine) -> None:
     with engine.connect() as conn:
         conn.execute(
             text(
-                "INSERT INTO pipeline_runs (stage, scope_key, status, derivation_key,"
+                "INSERT INTO pipeline_runs (stage, scope_id, status, derivation_key,"
                 " version_stamps_json, created_at)"
                 " VALUES (:stage, :scope, 'active', 'fp-1', '{}', :now)"
             ),
@@ -174,7 +174,7 @@ def test_direct_active_insert_violates_unique_index(engine: Engine) -> None:
     with pytest.raises(IntegrityError), engine.connect() as conn:
         conn.execute(
             text(
-                "INSERT INTO pipeline_runs (stage, scope_key, status, derivation_key,"
+                "INSERT INTO pipeline_runs (stage, scope_id, status, derivation_key,"
                 " version_stamps_json, created_at)"
                 " VALUES (:stage, :scope, 'active', 'fp-2', '{}', :now)"
             ),

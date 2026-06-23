@@ -30,11 +30,11 @@ def _seed_run(
     session: Session,
     *,
     stage: str,
-    aizk_uuid: UUID,
+    source_id: UUID,
     status: RunStatus = RunStatus.ACTIVE,
 ) -> PipelineRun:
     """Insert one stage run scoped to the source identity and return it."""
-    run = PipelineRun(stage=stage, scope_key=str(aizk_uuid), status=status, derivation_key="dk")
+    run = PipelineRun(stage=stage, scope_id=str(source_id), status=status, derivation_key="dk")
     session.add(run)
     session.commit()
     session.refresh(run)
@@ -45,7 +45,7 @@ def _seed_event(
     session: Session,
     *,
     job_id: int,
-    aizk_uuid: UUID,
+    source_id: UUID,
     kind: str,
     from_status: str | None,
     to_status: str | None,
@@ -56,7 +56,7 @@ def _seed_event(
     event = PipelineEvent(
         stage=CONTEXTUALIZATION_STAGE,
         work_unit_ref=str(job_id),
-        aizk_uuid=aizk_uuid,
+        source_id=source_id,
         from_status=from_status,
         to_status=to_status,
         kind=kind,
@@ -77,7 +77,7 @@ def test_jobs_table_renders_all_columns_on_load(
     """The jobs page renders a row with every contracted column on a plain load."""
     source = seed_source(db_session, karakeep_id="bm_render", title="Render Doc")
     job = seed_contextualization_job(
-        db_session, aizk_uuid=source.aizk_uuid, conversion_output_id=11, status=WorkUnitStatus.FAILED
+        db_session, source_id=source.source_id, conversion_output_id=11, status=WorkUnitStatus.FAILED
     )
 
     response = client.get("/ui/graph/jobs")
@@ -86,7 +86,7 @@ def test_jobs_table_renders_all_columns_on_load(
     body = response.text
     for header in (
         "Job ID",
-        "aizk_uuid",
+        "source_id",
         "title",
         "status",
         "attempts",
@@ -105,7 +105,7 @@ def test_jobs_table_title_uses_source_title_when_present(
 ) -> None:
     """The title cell shows the enriched ``Source.title`` when it is set."""
     source = seed_source(db_session, karakeep_id="bm_titled", title="Attention Is All You Need")
-    seed_contextualization_job(db_session, aizk_uuid=source.aizk_uuid, conversion_output_id=12)
+    seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=12)
 
     response = client.get("/ui/graph/jobs")
 
@@ -113,17 +113,17 @@ def test_jobs_table_title_uses_source_title_when_present(
     assert '<td class="title-cell">Attention Is All You Need</td>' in response.text
 
 
-def test_jobs_table_title_falls_back_to_aizk_uuid_when_title_null(
+def test_jobs_table_title_falls_back_to_source_id_when_title_null(
     client: TestClient, db_session, seed_source, seed_contextualization_job
 ) -> None:
-    """The title cell falls back to the source ``aizk_uuid`` when ``Source.title`` is NULL."""
+    """The title cell falls back to the source ``source_id`` when ``Source.title`` is NULL."""
     source = seed_source(db_session, karakeep_id="bm_untitled", title=None)
-    seed_contextualization_job(db_session, aizk_uuid=source.aizk_uuid, conversion_output_id=13)
+    seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=13)
 
     response = client.get("/ui/graph/jobs")
 
     assert response.status_code == 200
-    assert f'<td class="title-cell">{source.aizk_uuid}</td>' in response.text
+    assert f'<td class="title-cell">{source.source_id}</td>' in response.text
 
 
 # --- filter + search across the full job set --------------------------------
@@ -136,13 +136,13 @@ def test_status_filter_spans_full_set_and_excludes_other_statuses(
     source = seed_source(db_session, karakeep_id="bm_filter", title="Filter Doc")
     failed_ids = {
         seed_contextualization_job(
-            db_session, aizk_uuid=source.aizk_uuid, conversion_output_id=cid, status=WorkUnitStatus.FAILED
+            db_session, source_id=source.source_id, conversion_output_id=cid, status=WorkUnitStatus.FAILED
         ).id
         for cid in (1, 2, 3, 4, 5)
     }
     succeeded_ids = {
         seed_contextualization_job(
-            db_session, aizk_uuid=source.aizk_uuid, conversion_output_id=cid, status=WorkUnitStatus.SUCCEEDED
+            db_session, source_id=source.source_id, conversion_output_id=cid, status=WorkUnitStatus.SUCCEEDED
         ).id
         for cid in (100, 101, 102)
     }
@@ -172,7 +172,7 @@ def test_search_by_source_title_finds_job(
 ) -> None:
     """A text search on the source title returns the matching job."""
     source = seed_source(db_session, karakeep_id="bm_search", title="Attention Is All You Need")
-    job = seed_contextualization_job(db_session, aizk_uuid=source.aizk_uuid, conversion_output_id=21)
+    job = seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=21)
 
     response = client.get("/ui/graph/jobs", params={"search": "attention"})
 
@@ -186,7 +186,7 @@ def test_search_with_no_match_renders_empty_state(
 ) -> None:
     """A search term matching nothing renders the empty state, not a stale list."""
     source = seed_source(db_session, karakeep_id="bm_nomatch", title="Attention Is All You Need")
-    seed_contextualization_job(db_session, aizk_uuid=source.aizk_uuid, conversion_output_id=22)
+    seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=22)
 
     response = client.get("/ui/graph/jobs", params={"search": "zzz-no-such-term"})
 
@@ -203,10 +203,10 @@ def test_bulk_retry_requeues_eligible_jobs_with_summary(
     """Bulk retry returns the selected eligible jobs to queued and reports a summary."""
     source = seed_source(db_session, karakeep_id="bm_retry", title="Retry Doc")
     job_a = seed_contextualization_job(
-        db_session, aizk_uuid=source.aizk_uuid, conversion_output_id=31, status=WorkUnitStatus.FAILED
+        db_session, source_id=source.source_id, conversion_output_id=31, status=WorkUnitStatus.FAILED
     )
     job_b = seed_contextualization_job(
-        db_session, aizk_uuid=source.aizk_uuid, conversion_output_id=32, status=WorkUnitStatus.FAILED
+        db_session, source_id=source.source_id, conversion_output_id=32, status=WorkUnitStatus.FAILED
     )
 
     response = client.post("/ui/graph/jobs/actions", data={"action": "retry", "job_ids": [job_a.id, job_b.id]})
@@ -224,10 +224,10 @@ def test_bulk_cancel_cancels_eligible_jobs_with_summary(
     """Bulk cancel attempts cancellation on the selected jobs and reports a summary."""
     source = seed_source(db_session, karakeep_id="bm_cancel", title="Cancel Doc")
     job_a = seed_contextualization_job(
-        db_session, aizk_uuid=source.aizk_uuid, conversion_output_id=41, status=WorkUnitStatus.QUEUED
+        db_session, source_id=source.source_id, conversion_output_id=41, status=WorkUnitStatus.QUEUED
     )
     job_b = seed_contextualization_job(
-        db_session, aizk_uuid=source.aizk_uuid, conversion_output_id=42, status=WorkUnitStatus.RUNNING
+        db_session, source_id=source.source_id, conversion_output_id=42, status=WorkUnitStatus.RUNNING
     )
 
     response = client.post("/ui/graph/jobs/actions", data={"action": "cancel", "job_ids": [job_a.id, job_b.id]})
@@ -245,10 +245,10 @@ def test_bulk_action_mixed_eligibility_distinguishes_applied_and_skipped(
     """A mixed-eligibility bulk retry applies the eligible job and skips the ineligible one untouched."""
     source = seed_source(db_session, karakeep_id="bm_mixed", title="Mixed Doc")
     eligible = seed_contextualization_job(
-        db_session, aizk_uuid=source.aizk_uuid, conversion_output_id=51, status=WorkUnitStatus.FAILED
+        db_session, source_id=source.source_id, conversion_output_id=51, status=WorkUnitStatus.FAILED
     )
     ineligible = seed_contextualization_job(
-        db_session, aizk_uuid=source.aizk_uuid, conversion_output_id=52, status=WorkUnitStatus.SUCCEEDED
+        db_session, source_id=source.source_id, conversion_output_id=52, status=WorkUnitStatus.SUCCEEDED
     )
 
     response = client.post("/ui/graph/jobs/actions", data={"action": "retry", "job_ids": [eligible.id, ineligible.id]})
@@ -271,15 +271,15 @@ def test_completed_job_drilldown_shows_all_runs_and_succeeded_trail(
     """A completed job's drill-down shows all three stage runs and an event trail ending in succeeded."""
     source = seed_source(db_session, karakeep_id="bm_done", title="Done Doc")
     job = seed_contextualization_job(
-        db_session, aizk_uuid=source.aizk_uuid, conversion_output_id=61, status=WorkUnitStatus.SUCCEEDED
+        db_session, source_id=source.source_id, conversion_output_id=61, status=WorkUnitStatus.SUCCEEDED
     )
     for stage in (CHUNKING_STAGE, SUMMARY_STAGE, VARIANT_STAGE):
-        _seed_run(db_session, stage=stage, aizk_uuid=source.aizk_uuid, status=RunStatus.ACTIVE)
+        _seed_run(db_session, stage=stage, source_id=source.source_id, status=RunStatus.ACTIVE)
     base = dt.datetime(2026, 6, 13, 12, 0, 0, tzinfo=dt.timezone.utc)
     _seed_event(
         db_session,
         job_id=job.id,
-        aizk_uuid=source.aizk_uuid,
+        source_id=source.source_id,
         kind="claimed",
         from_status="queued",
         to_status="running",
@@ -288,7 +288,7 @@ def test_completed_job_drilldown_shows_all_runs_and_succeeded_trail(
     _seed_event(
         db_session,
         job_id=job.id,
-        aizk_uuid=source.aizk_uuid,
+        source_id=source.source_id,
         kind="succeeded",
         from_status="running",
         to_status="succeeded",
@@ -316,14 +316,14 @@ def test_chunked_not_contextualized_drilldown_shows_gap_and_failure(
     """A job chunked but not contextualized shows chunking present, the variant absent, and the failure event."""
     source = seed_source(db_session, karakeep_id="bm_gap", title="Gap Doc")
     job = seed_contextualization_job(
-        db_session, aizk_uuid=source.aizk_uuid, conversion_output_id=71, status=WorkUnitStatus.FAILED
+        db_session, source_id=source.source_id, conversion_output_id=71, status=WorkUnitStatus.FAILED
     )
-    _seed_run(db_session, stage=CHUNKING_STAGE, aizk_uuid=source.aizk_uuid, status=RunStatus.ACTIVE)
+    _seed_run(db_session, stage=CHUNKING_STAGE, source_id=source.source_id, status=RunStatus.ACTIVE)
     base = dt.datetime(2026, 6, 13, 12, 0, 0, tzinfo=dt.timezone.utc)
     _seed_event(
         db_session,
         job_id=job.id,
-        aizk_uuid=source.aizk_uuid,
+        source_id=source.source_id,
         kind="claimed",
         from_status="queued",
         to_status="running",
@@ -332,7 +332,7 @@ def test_chunked_not_contextualized_drilldown_shows_gap_and_failure(
     _seed_event(
         db_session,
         job_id=job.id,
-        aizk_uuid=source.aizk_uuid,
+        source_id=source.source_id,
         kind="failed",
         from_status="running",
         to_status="failed",

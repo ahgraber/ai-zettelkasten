@@ -106,7 +106,7 @@ def _make_subprocess_metadata(
 def _make_running_job(session: Session, source: Source, *, attempts: int = 1) -> ConversionJob:
     job = make_job(
         session,
-        aizk_uuid=source.aizk_uuid,
+        source_id=source.source_id,
         idempotency_key=uuid4().hex,
         status=ConversionJobStatus.RUNNING,
         attempts=attempts,
@@ -122,7 +122,7 @@ def _make_running_job(session: Session, source: Source, *, attempts: int = 1) ->
 def _make_queued_job(session: Session, source: Source) -> ConversionJob:
     job = make_job(
         session,
-        aizk_uuid=source.aizk_uuid,
+        source_id=source.source_id,
         idempotency_key=uuid4().hex,
         status=ConversionJobStatus.QUEUED,
     )
@@ -284,7 +284,7 @@ def test_transition_rollback_leaves_job_in_prior_status(monkeypatch, db_session:
     source = make_source(db_session, "bm_rollback", url="https://example.com", title="Rollback")
     job = make_job(
         db_session,
-        aizk_uuid=source.aizk_uuid,
+        source_id=source.source_id,
         idempotency_key=uuid4().hex,
         status=ConversionJobStatus.QUEUED,
     )
@@ -320,7 +320,7 @@ def test_source_enriched_event_emitted_on_success(monkeypatch, db_session: Sessi
 
     _write_source_enrichment(
         subprocess_meta,
-        str(source.aizk_uuid),
+        str(source.source_id),
         engine,
         job_id=job.id,
         attempt=job.attempts,
@@ -366,7 +366,7 @@ def test_source_enriched_event_emitted_on_failure(monkeypatch, db_session: Sessi
 
     _write_source_enrichment(
         subprocess_meta,
-        str(source.aizk_uuid),
+        str(source.source_id),
         engine,
         job_id=job.id,
         attempt=job.attempts,
@@ -475,13 +475,13 @@ def test_successful_job_emits_full_event_sequence(monkeypatch, db_session: Sessi
                 return
             output = ConversionOutput(
                 job_id=job_id,
-                aizk_uuid=j.aizk_uuid,
+                source_id=j.source_id,
                 owner_id=j.owner_id,
                 title=j.title,
                 payload_version=j.payload_version,
                 s3_prefix="s3://test/",
-                markdown_key=f"{j.aizk_uuid}/output.md",
-                manifest_key=f"{j.aizk_uuid}/manifest.json",
+                markdown_key=f"{j.source_id}/output.md",
+                manifest_key=f"{j.source_id}/manifest.json",
                 markdown_hash_xx64="deadbeefcafef00d",
                 figure_count=0,
                 docling_version="2.0.0",
@@ -607,7 +607,7 @@ def test_phase_event_with_unrecognized_phase_is_dropped(monkeypatch, db_session:
         result = record_phase_event(
             s,
             job_id=job.id,
-            aizk_uuid=job.aizk_uuid,
+            source_id=job.source_id,
             attempt=job.attempts,
             current_status=ConversionJobStatus.RUNNING,
             phase="not_a_real_phase",

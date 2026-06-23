@@ -463,7 +463,7 @@ async def _evaluate_sentence(
     def emit(dimension: str, claim_idx: int | None, result: BaseModel, usage: UsageSample) -> None:
         records.append(
             EvalRecord(
-                doc_uuid=doc.aizk_uuid,
+                doc_uuid=doc.source_id,
                 section_idx=section_idx,
                 sentence_idx=sentence_idx,
                 claim_idx=claim_idx,
@@ -591,7 +591,7 @@ async def evaluate_claims(
         for group in batched:
             all_eval.extend(group)
 
-    return write_evaluation_jsonl(doc.aizk_uuid, all_eval)
+    return write_evaluation_jsonl(doc.source_id, all_eval)
 
 
 # ---------- aggregation (pure) ----------

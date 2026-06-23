@@ -67,7 +67,7 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
     db_session.refresh(bookmark)
 
     prior_job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title="Hash Reuse",
         idempotency_key="p" * 64,
@@ -81,12 +81,12 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
     prior_output = ConversionOutput(
         owner_id="self",
         job_id=prior_job.id,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         title="Hash Reuse",
         payload_version=1,
-        s3_prefix=f"s3://bucket/{bookmark.aizk_uuid}/",
-        markdown_key=f"{bookmark.aizk_uuid}/output.md",
-        manifest_key=f"{bookmark.aizk_uuid}/manifest.json",
+        s3_prefix=f"s3://bucket/{bookmark.source_id}/",
+        markdown_key=f"{bookmark.source_id}/output.md",
+        manifest_key=f"{bookmark.source_id}/manifest.json",
         markdown_hash_xx64=known_hash,
         figure_count=0,
         docling_version="1.0.0",
@@ -96,7 +96,7 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
     db_session.commit()
 
     new_job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title="Hash Reuse",
         idempotency_key="n" * 64,
@@ -179,7 +179,7 @@ def test_upload_converted_shortcut_writes_fresh_manifest_with_current_source_met
     db_session.refresh(bookmark)
 
     prior_job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title="Old Title",
         idempotency_key="d" * 64,
@@ -193,12 +193,12 @@ def test_upload_converted_shortcut_writes_fresh_manifest_with_current_source_met
     prior_output = ConversionOutput(
         owner_id="self",
         job_id=prior_job.id,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         title="Old Title",
         payload_version=1,
-        s3_prefix=f"s3://bucket/{bookmark.aizk_uuid}/",
-        markdown_key=f"{bookmark.aizk_uuid}/output.md",
-        manifest_key=f"{bookmark.aizk_uuid}/manifest.json",
+        s3_prefix=f"s3://bucket/{bookmark.source_id}/",
+        markdown_key=f"{bookmark.source_id}/output.md",
+        manifest_key=f"{bookmark.source_id}/manifest.json",
         markdown_hash_xx64=known_hash,
         figure_count=0,
         docling_version="1.0.0",
@@ -208,7 +208,7 @@ def test_upload_converted_shortcut_writes_fresh_manifest_with_current_source_met
     db_session.commit()
 
     new_job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title="placeholder-uuid-fallback",
         idempotency_key="e" * 64,
@@ -323,7 +323,7 @@ def test_upload_converted_shortcut_manifest_upload_is_retryable(
     db_session.refresh(bookmark)
 
     prior_job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title="Retry Shortcut",
         idempotency_key="r" * 64,
@@ -337,12 +337,12 @@ def test_upload_converted_shortcut_manifest_upload_is_retryable(
     prior_output = ConversionOutput(
         owner_id="self",
         job_id=prior_job.id,
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         title="Retry Shortcut",
         payload_version=1,
-        s3_prefix=f"s3://bucket/{bookmark.aizk_uuid}/",
-        markdown_key=f"{bookmark.aizk_uuid}/output.md",
-        manifest_key=f"{bookmark.aizk_uuid}/manifest.json",
+        s3_prefix=f"s3://bucket/{bookmark.source_id}/",
+        markdown_key=f"{bookmark.source_id}/output.md",
+        manifest_key=f"{bookmark.source_id}/manifest.json",
         markdown_hash_xx64=known_hash,
         figure_count=0,
         docling_version="1.0.0",
@@ -352,7 +352,7 @@ def test_upload_converted_shortcut_manifest_upload_is_retryable(
     db_session.commit()
 
     new_job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title="Retry Shortcut",
         idempotency_key="s" * 64,
@@ -436,7 +436,7 @@ def test_upload_converted_uploads_when_hash_differs(monkeypatch, db_session: Ses
     db_session.refresh(bookmark)
 
     new_job = ConversionJob(
-        aizk_uuid=bookmark.aizk_uuid,
+        source_id=bookmark.source_id,
         owner_id="self",
         title="Hash Upload",
         idempotency_key="u" * 64,
@@ -477,6 +477,6 @@ def test_upload_converted_uploads_when_hash_differs(monkeypatch, db_session: Ses
 
     outputs = db_session.exec(_select(ConversionOutput).where(ConversionOutput.job_id == new_job.id)).all()
     assert len(outputs) == 1
-    assert outputs[0].markdown_key == f"{bookmark.aizk_uuid}/output.md", "markdown_key must be a bare S3 key"
-    assert outputs[0].manifest_key == f"{bookmark.aizk_uuid}/manifest.json", "manifest_key must be a bare S3 key"
+    assert outputs[0].markdown_key == f"{bookmark.source_id}/output.md", "markdown_key must be a bare S3 key"
+    assert outputs[0].manifest_key == f"{bookmark.source_id}/manifest.json", "manifest_key must be a bare S3 key"
 

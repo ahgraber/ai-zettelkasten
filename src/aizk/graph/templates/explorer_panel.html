@@ -20,7 +20,7 @@
           class="spine-chunk{% if chunk.chunk_id == selected_chunk_id %} selected{% endif %}"
           data-chunk-id="{{ chunk.chunk_id }}"
           data-self-contained="{{ 'true' if chunk.self_contained else 'false' }}"
-          hx-get="/ui/graph/explorer?doc_id={{ doc_id | urlencode }}&chunk_id={{ chunk.chunk_id | urlencode }}"
+          hx-get="/ui/graph/explorer?source_id={{ source_id | urlencode }}&chunk_id={{ chunk.chunk_id | urlencode }}"
           hx-target="#explorer-panel"
           hx-swap="outerHTML"
           hx-push-url="true"
@@ -42,7 +42,7 @@
         {% endfor %}
         {% else %}
         <div class="spine-empty">
-          {% if doc_id %}No active chunking run for this document.{% else %}Select a document to browse its chunks.{% endif %}
+          {% if source_id %}No active chunking run for this document.{% else %}Select a document to browse its chunks.{% endif %}
         </div>
         {% endif %}
       </div>

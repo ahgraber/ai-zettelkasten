@@ -45,7 +45,7 @@ class ConversionJob(SQLModel, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True, nullable=False)
-    aizk_uuid: UUID = Field(foreign_key="sources.aizk_uuid", nullable=False, index=True)
+    source_id: UUID = Field(foreign_key="sources.source_id", nullable=False, index=True)
     owner_id: str = Field(nullable=False, index=True)
     title: str = Field(max_length=500, nullable=False)
     payload_version: int = Field(default=1, nullable=False)
