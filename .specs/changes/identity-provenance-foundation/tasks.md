@@ -26,21 +26,21 @@
 
 ## `chunk_id` surrogate (chunking) + Alembic migration
 
-- [ ] Change the `Chunk` model: `chunk_id` becomes a stable surrogate (uuid7) PK; add `UNIQUE(source_id, heading_path, ordinal, content_hash)`; keep `content_hash` as an observable column.
-- [ ] Update the splitter so it no longer assigns `chunk_id`; it deterministically produces `content_hash` and the sameness-key fields.
+- [x] Change the `Chunk` model: `chunk_id` becomes a stable surrogate (uuid7) PK; add `UNIQUE(source_id, heading_path, ordinal, content_hash)`; keep `content_hash` as an observable column.
+- [x] Update the splitter so it no longer assigns `chunk_id`; it deterministically produces `content_hash` and the sameness-key fields.
   Persistence assigns a new surrogate for a novel sameness-key and reuses the existing surrogate when the key is already present.
-- [ ] Repurpose the chunk content fingerprint: rename `derive_chunk_id` → `derive_chunk_content_key` (same body, `doc_id` → `source_id` param) — it is the sameness-key fingerprint, no longer an identity.
+- [x] Repurpose the chunk content fingerprint: rename `derive_chunk_id` → `derive_chunk_content_key` (same body, `doc_id` → `source_id` param) — it is the sameness-key fingerprint, no longer an identity.
   Redirect the contextualization variant derivation keys (`_variant_run_derivation_key`'s chunk list and `_variant_row_derivation_key`'s working/prior/next fields) and the memo keys they feed from the surrogate `chunk_id` to `derive_chunk_content_key`, renaming the `*_chunk_id` derivation-key fields to `*_chunk_key` (the `_key` convention).
   `ContextualizedChunk.chunk_id` and `_verify_chunking_provenance` keep the surrogate — identity/provenance, not a derivation input.
   **[chunk-contextualization conformance — semantic derivation key]**
-- [ ] Author the single Alembic migration (in the shared `aizk.db` tree), ordered: (1) `chunk_id` surrogate — assign a surrogate per distinct sameness-key, repoint every `chunk_id` reference (contextualization variants, chunk-run manifests, and the `graph_content_fts` content-index column) through an old→new map, add the `UNIQUE` sameness-key constraint, swap the PK; (2) `aizk_uuid` → `source_id` column + dependent FKs; (3) `scope_key` → `scope_id` column.
-- [ ] Test `tests/.../test_chunk_identity.py::test_same_address_same_content_same_id`, `::test_same_address_diff_content_diff_id`, `::test_diff_address_same_content_diff_id`: the three identity scenarios hold under surrogate + sameness-key reuse. **[chunking: Chunk identity is a stable surrogate…]**
-- [ ] Test `::test_re_persist_reuses_identity` and `::test_novel_chunk_stored_once`: re-persisting a chunk with an existing sameness-key reuses its surrogate; a novel key is stored exactly once. **[chunking: Chunk identities are immutable stable surrogates]**
-- [ ] Test `::test_splitter_deterministic_content_hash`: the splitter produces identical `content_hash` and sameness-key fields across two invocations and two processes, and does not assign `chunk_id`. **[chunking: Splitter is a deterministic pure function]**
-- [ ] Test `::test_chunk_id_no_db_local_input`: the surrogate is content/sequence-independent — the portability proxy for `chunk_id`. **[chunking surrogate, portable-knowledge]**
-- [ ] Test `::test_variant_derivation_key_no_db_local_input`: the contextualization variant run/row derivation keys are invariant when chunks' surrogate `chunk_id`s differ but their content keys match — the portability proxy for the stochastic stage (mirrors `test_chunk_id_no_db_local_input`). **[chunk-contextualization conformance — portable-knowledge]**
-- [ ] Test `tests/.../test_chunk_id_migration.py::test_fk_integrity_after_repoint`: after the surrogate migration, every repointed `chunk_id` reference (variants, manifests, `graph_content_fts`) resolves with no dangling reference, on a populated fixture. **[migration risk — FK-repoint write-site]**
-- [ ] Test `test_orm_migration_equivalence` (via `schema-migrations`): the migrated schema is structurally equivalent to the ORM baseline after all three migration steps. **[schema fidelity]**
+- [x] Author the single Alembic migration (in the shared `aizk.db` tree), ordered: (1) `chunk_id` surrogate — assign a surrogate per distinct sameness-key, repoint every `chunk_id` reference (contextualization variants, chunk-run manifests, and the `graph_content_fts` content-index column) through an old→new map, add the `UNIQUE` sameness-key constraint, swap the PK; (2) `aizk_uuid` → `source_id` column + dependent FKs; (3) `scope_key` → `scope_id` column.
+- [x] Test `tests/.../test_chunk_identity.py::test_same_address_same_content_same_id`, `::test_same_address_diff_content_diff_id`, `::test_diff_address_same_content_diff_id`: the three identity scenarios hold under surrogate + sameness-key reuse. **[chunking: Chunk identity is a stable surrogate…]**
+- [x] Test `::test_re_persist_reuses_identity` and `::test_novel_chunk_stored_once`: re-persisting a chunk with an existing sameness-key reuses its surrogate; a novel key is stored exactly once. **[chunking: Chunk identities are immutable stable surrogates]**
+- [x] Test `::test_splitter_deterministic_content_hash`: the splitter produces identical `content_hash` and sameness-key fields across two invocations and two processes, and does not assign `chunk_id`. **[chunking: Splitter is a deterministic pure function]**
+- [x] Test `::test_chunk_id_no_db_local_input`: the surrogate is content/sequence-independent — the portability proxy for `chunk_id`. **[chunking surrogate, portable-knowledge]**
+- [x] Test `::test_variant_derivation_key_no_db_local_input`: the contextualization variant run/row derivation keys are invariant when chunks' surrogate `chunk_id`s differ but their content keys match — the portability proxy for the stochastic stage (mirrors `test_chunk_id_no_db_local_input`). **[chunk-contextualization conformance — portable-knowledge]**
+- [x] Test `tests/.../test_chunk_id_migration.py::test_fk_integrity_after_repoint`: after the surrogate migration, every repointed `chunk_id` reference (variants, manifests, `graph_content_fts`) resolves with no dangling reference, on a populated fixture. **[migration risk — FK-repoint write-site]**
+- [x] Test `test_orm_migration_equivalence` (via `schema-migrations`): the migrated schema is structurally equivalent to the ORM baseline after all three migration steps. **[schema fidelity]**
 
 ## Lazy invalidation + human-confirmation gate
 

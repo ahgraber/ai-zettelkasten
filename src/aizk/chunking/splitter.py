@@ -32,7 +32,7 @@ from mdit_py_plugins.dollarmath import dollarmath_plugin
 from mdit_py_plugins.front_matter import front_matter_plugin
 
 from aizk.chunking._version import DEFAULT_SIZE_BUDGET, SPLITTER_VERSION
-from aizk.chunking.datamodel import Chunk, derive_chunk_id
+from aizk.chunking.datamodel import Chunk
 from aizk.utilities.hashing import compute_markdown_hash
 
 logger = logging.getLogger(__name__)
@@ -258,7 +258,6 @@ def split(
         content_hash = compute_markdown_hash(chunk_text)
         chunks.append(
             Chunk(
-                chunk_id=derive_chunk_id(source_id, heading_path, ordinal, content_hash),
                 content_hash=content_hash,
                 source_id=source_id,
                 heading_path=heading_path,

@@ -35,21 +35,23 @@ def test_two_invocations_field_equal(
     assert first == second
 
 
-# Runs in a fresh interpreter: reads markdown on stdin, prints chunk_ids one per line.
+# Runs in a fresh interpreter: reads markdown on stdin, prints each chunk's
+# sameness-key fields (content_hash, heading_path, ordinal) one per line. The
+# splitter does not assign chunk_id, so determinism is asserted on what it emits.
 _SUBPROCESS_RUNNER = (
     "import sys\n"
     "from aizk.chunking import split\n"
     "text = sys.stdin.read()\n"
     "chunks = split(text, source_id=%r, converted_artifact_id=%r, markdown_hash_xx64=%r)\n"
-    "sys.stdout.write('\\n'.join(c.chunk_id for c in chunks))\n"
+    "sys.stdout.write('\\n'.join(f'{c.content_hash}|{c.heading_path}|{c.ordinal}' for c in chunks))\n"
 ) % (DOC_ID, CONVERTED_ARTIFACT_ID, MARKDOWN_HASH_XX64)
 
 
-def test_cross_process_chunk_ids_equal(
+def test_cross_process_content_hashes_equal(
     load_fixture: Callable[[str], str],
     default_provenance: dict[str, str],
 ) -> None:
-    """Independent processes derive identical chunk_id values from the same input."""
+    """Independent processes derive identical content_hash and sameness-key fields from the same input."""
     text = load_fixture("multi_section.md")
 
     def run_subprocess() -> str:
@@ -64,10 +66,20 @@ def test_cross_process_chunk_ids_equal(
 
     out_a = run_subprocess()
     out_b = run_subprocess()
-    in_process = "\n".join(c.chunk_id for c in split(text, **default_provenance))
+    in_process = "\n".join(f"{c.content_hash}|{c.heading_path}|{c.ordinal}" for c in split(text, **default_provenance))
 
     assert out_a == out_b
     assert out_a == in_process
+
+
+def test_splitter_does_not_assign_chunk_id(
+    do_split: Callable[..., list[Chunk]],
+) -> None:
+    """The splitter leaves chunk_id unassigned; identity is a surrogate minted at persistence."""
+    chunks = do_split("multi_section.md")
+
+    assert chunks, "sample markdown should yield chunks"
+    assert all(c.chunk_id is None for c in chunks), "split() does not produce chunk identities"
 
 
 @pytest.mark.parametrize("fixture_name", ["multi_section.md", "oversize_paragraph.md"])

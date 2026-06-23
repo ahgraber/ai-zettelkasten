@@ -8,5 +8,5 @@ calibrated per-chunk character budget; see ``data/chunking-calibration/findings.
 
 from __future__ import annotations
 
-SPLITTER_VERSION: int = 1
+SPLITTER_VERSION: int = 2
 DEFAULT_SIZE_BUDGET: int = 4096

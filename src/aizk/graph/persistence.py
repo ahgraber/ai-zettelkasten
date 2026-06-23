@@ -1,18 +1,22 @@
 """Persist splitter-emitted chunks under a source-scoped chunking run.
 
 The splitter stays a pure, I/O-free function; this module is the distinct
-component that durably stores its output. :func:`persist_chunks` opens a new
-chunking run for a **source** (its durable ``source_id``, superseding the prior
-active run via the shared :func:`aizk.pipeline.run.record_run` primitive), reuses
-or inserts each chunk row addressed by its content-derived ``chunk_id`` carrying
-**stable identity facts only**, records what the run consumed (the
+component that durably stores its output and assigns each chunk its identity.
+:func:`persist_chunks` opens a new chunking run for a **source** (its durable
+``source_id``, superseding the prior active run via the shared
+:func:`aizk.pipeline.run.record_run` primitive), reuses the existing surrogate
+``chunk_id`` for a chunk whose sameness-key ``(source_id, heading_path, ordinal,
+content_hash)`` is already present and mints a new surrogate otherwise — each row
+carrying **stable identity facts only** — records what the run consumed (the
 ``conversion_output_id`` locator and ``markdown_hash_xx64``) in an append-only
 :class:`~aizk.graph.datamodel.ChunkRunInput`, and records what it produced (each
 chunk's ``span``) in an append-only :class:`~aizk.graph.datamodel.ChunkRunManifest`.
+It returns the persisted chunks carrying their assigned surrogate so the caller
+can contextualize them without re-reading the manifest.
 
-Facts are split by what they are about. A chunk row is content-addressed and
-shared across every generation that re-emits it, so it carries only facts
-invariant for that ``chunk_id``. The generation-varying facts — the source
+Facts are split by what they are about. A chunk row is identified by a stable
+surrogate and shared across every generation that re-emits it, so it carries only
+facts invariant for that ``chunk_id``. The generation-varying facts — the source
 markdown hash, the splitter version, and each chunk's ``span`` — live on the run
 (``ChunkRunInput``) and its manifest (``ChunkRunManifest``). Round-trip fidelity
 of the emitted :class:`aizk.chunking.Chunk` is therefore reconstructed by joining
@@ -30,6 +34,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from sqlalchemy import delete
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -77,15 +82,16 @@ def _heading_path_to_json(heading_path: tuple[str, ...]) -> str:
     return json.dumps(list(heading_path), ensure_ascii=False, separators=(",", ":"))
 
 
-def to_chunk_row(chunk: SplitterChunk) -> Chunk:
+def to_chunk_row(chunk: SplitterChunk, *, chunk_id: str) -> Chunk:
     """Map an in-memory splitter chunk to its persisted stable-identity row (no I/O).
 
-    Only the chunk's stable identity facts are carried onto the row; the
-    generation-varying facts (``markdown_hash_xx64``, ``splitter_version``,
+    The ``chunk_id`` is the persistence-assigned surrogate (the splitter does not
+    produce one). Only the chunk's stable identity facts are carried onto the row;
+    the generation-varying facts (``markdown_hash_xx64``, ``splitter_version``,
     ``span``) are recorded against the emitting run, not here.
     """
     return Chunk(
-        chunk_id=chunk.chunk_id,
+        chunk_id=chunk_id,
         content_hash=chunk.content_hash,
         source_id=chunk.source_id,
         heading_path_json=_heading_path_to_json(chunk.heading_path),
@@ -98,11 +104,41 @@ def to_chunk_row(chunk: SplitterChunk) -> Chunk:
 def _stable_facts(row: Chunk) -> tuple[str, str, str, int, str, int]:
     """Return a chunk row's stable identity facts as a comparable tuple.
 
-    These are the facts that must be invariant for a content-addressed
-    ``chunk_id``; comparing them detects an existing row whose identity conflicts
-    with an incoming chunk claiming the same id.
+    These are the facts that must be invariant for a given sameness-key; comparing
+    them against an incoming chunk detects an existing row whose remaining facts
+    (``text`` / ``char_count``) conflict under an equal ``content_hash`` — a hash
+    collision that surrogate reuse must not silently absorb.
     """
     return (row.content_hash, row.source_id, row.heading_path_json, row.ordinal, row.text, row.char_count)
+
+
+def _incoming_facts(chunk: SplitterChunk) -> tuple[str, str, str, int, str, int]:
+    """Return an incoming splitter chunk's stable identity facts, comparable to :func:`_stable_facts`."""
+    return (
+        chunk.content_hash,
+        chunk.source_id,
+        _heading_path_to_json(chunk.heading_path),
+        chunk.ordinal,
+        chunk.text,
+        chunk.char_count,
+    )
+
+
+def _chunk_by_sameness_key(session: "Session", chunk: SplitterChunk) -> Chunk | None:
+    """Return the persisted chunk whose sameness-key matches ``chunk``, or ``None``.
+
+    The sameness-key ``(source_id, heading_path, ordinal, content_hash)`` is the
+    reuse key (backed by ``ix_graph_chunks_sameness_key``): a match carries the
+    surrogate ``chunk_id`` to reuse, its absence means a new surrogate is minted.
+    """
+    return session.exec(
+        select(Chunk).where(
+            Chunk.source_id == chunk.source_id,
+            Chunk.heading_path_json == _heading_path_to_json(chunk.heading_path),
+            Chunk.ordinal == chunk.ordinal,
+            Chunk.content_hash == chunk.content_hash,
+        )
+    ).one_or_none()
 
 
 def reconstruct_chunk(
@@ -145,7 +181,7 @@ def persist_chunks(
     markdown_hash_xx64: str,
     splitter_version: int,
     chunks: "Sequence[SplitterChunk]",
-) -> PipelineRun:
+) -> tuple[PipelineRun, list[SplitterChunk]]:
     """Persist a source's emitted chunks under its active chunking run.
 
     The run is scoped by the durable source identity ``source_id`` (not the
@@ -156,13 +192,18 @@ def persist_chunks(
     unchanged inputs neither opens a new run nor churns rows. Otherwise a new run
     is opened (demoting the prior active run to ``superseded`` in the same
     transaction); the run's consumed Markdown is recorded once in
-    :class:`~aizk.graph.datamodel.ChunkRunInput`, and each chunk is persisted by
-    its content-addressed ``chunk_id`` (an existing row is reused unmodified, a
-    novel one inserted exactly once) with its ``span`` recorded in
-    :class:`~aizk.graph.datamodel.ChunkRunManifest`. Prior runs, chunk rows,
-    inputs, and manifests are never mutated or deleted, so a ``chunk_id`` shared
-    across re-chunks stays a single immutable row made current by its manifest
-    entry in the active run.
+    :class:`~aizk.graph.datamodel.ChunkRunInput`, and each chunk is persisted under
+    its stable surrogate ``chunk_id`` — reused when the chunk's sameness-key
+    ``(source_id, heading_path, ordinal, content_hash)`` is already present, newly
+    minted (a UUID) and inserted exactly once otherwise — with its ``span``
+    recorded in :class:`~aizk.graph.datamodel.ChunkRunManifest`. Prior runs, chunk
+    rows, inputs, and manifests are never mutated or deleted, so a chunk shared
+    across re-chunks stays a single immutable row, keeping its surrogate identity,
+    made current by its manifest entry in the active run.
+
+    Returns the run together with the persisted chunks, each carrying its assigned
+    surrogate ``chunk_id``, in the order supplied (document order) — the
+    contextualization stage consumes these directly.
 
     Does **not** commit; the caller owns the surrounding transaction.
 
@@ -181,62 +222,74 @@ def persist_chunks(
         chunks: The chunks emitted by the splitter for this source.
 
     Returns:
-        The active chunking :class:`~aizk.pipeline.run.PipelineRun` — the
-        newly-opened run, or the reused prior run when inputs are unchanged.
+        A ``(run, persisted_chunks)`` tuple. ``run`` is the active chunking
+        :class:`~aizk.pipeline.run.PipelineRun` — the newly-opened run, or the
+        reused prior run when inputs are unchanged. ``persisted_chunks`` are the
+        supplied chunks each carrying its assigned surrogate ``chunk_id``, in the
+        supplied (document) order.
 
     Raises:
         ValueError: If any chunk's ``source_id``, ``converted_artifact_id``,
             ``markdown_hash_xx64``, or ``splitter_version`` does not match the
             run's — guarding against persisting chunks whose provenance disagrees
-            with the run keyed by those values; or if a chunk's ``chunk_id``
-            already exists with different stable identity facts — guarding the
-            content-addressed invariant (every stable fact must be a function of
-            ``chunk_id``) against a hash collision or a caller that fabricates a
-            colliding id, which would otherwise repoint the manifest at the wrong
-            source text.
+            with the run keyed by those values; or if a chunk's sameness-key
+            already exists on a row with different stable identity facts
+            (``text`` / ``char_count``) under an equal ``content_hash`` — a hash
+            collision that surrogate reuse must not silently absorb, which would
+            otherwise repoint the manifest at the wrong source text.
     """
     mismatched = [
-        c.chunk_id
+        c.content_hash
         for c in chunks
         if (c.source_id, c.converted_artifact_id, c.markdown_hash_xx64, c.splitter_version)
         != (source_id, conversion_output_id, markdown_hash_xx64, splitter_version)
     ]
     if mismatched:
         raise ValueError(
-            f"chunks {mismatched} do not match the run provenance "
+            f"chunks with content_hash {mismatched} do not match the run provenance "
             f"(source_id={source_id!r}, conversion_output_id={conversion_output_id!r}, "
             f"markdown_hash_xx64={markdown_hash_xx64!r}, splitter_version={splitter_version})"
         )
 
-    # The content-addressed identity must be invariant for a chunk_id: an existing
-    # row may be reused only if its stable facts match what this chunk would write.
+    # Resolve each chunk to its existing surrogate by sameness-key (None when novel).
+    # A sameness-key match whose remaining stable facts differ is a content_hash
+    # collision: reusing the row would repoint the manifest at the wrong text.
+    existing_rows = [_chunk_by_sameness_key(session, c) for c in chunks]
     conflicting = [
-        c.chunk_id
-        for c in chunks
-        if (existing := session.get(Chunk, c.chunk_id)) is not None
-        and _stable_facts(existing) != _stable_facts(to_chunk_row(c))
+        c.content_hash
+        for row, c in zip(existing_rows, chunks, strict=True)
+        if row is not None and _stable_facts(row) != _incoming_facts(c)
     ]
     if conflicting:
         raise ValueError(
-            f"chunks {conflicting} reuse an existing chunk_id with different stable identity facts "
-            "(content-addressed identity must be invariant for a chunk_id)"
+            f"chunks with content_hash {conflicting} reuse an existing sameness-key with different "
+            "stable identity facts (a content_hash collision)"
         )
 
     derivation_key = _chunking_derivation_key(markdown_hash_xx64, splitter_version)
-    incoming_manifest = {(c.chunk_id, c.span[0], c.span[1]) for c in chunks}
     active = active_chunking_run(session, source_id)
+    # Unchanged-rerun fast path: reuse the active run only when every chunk already
+    # exists (so it carries a surrogate) and the active manifest is exactly this
+    # (surrogate, span) set. A novel chunk means the content changed, so it falls
+    # through to a superseding run.
     if (
         active is not None
         and active.id is not None
         and active.derivation_key == derivation_key
-        and {(m.chunk_id, m.span_start, m.span_end) for m in manifest_of_run(session, active.id)} == incoming_manifest
+        and all(row is not None for row in existing_rows)
     ):
-        logger.debug(
-            "Reusing active chunking run id=%s for source=%s (unchanged derivation key and manifest)",
-            active.id,
-            source_id,
-        )
-        return active
+        incoming_manifest = {
+            (row.chunk_id, c.span[0], c.span[1]) for row, c in zip(existing_rows, chunks, strict=True)
+        }
+        if {(m.chunk_id, m.span_start, m.span_end) for m in manifest_of_run(session, active.id)} == incoming_manifest:
+            logger.debug(
+                "Reusing active chunking run id=%s for source=%s (unchanged derivation key and manifest)",
+                active.id,
+                source_id,
+            )
+            return active, [
+                c.model_copy(update={"chunk_id": row.chunk_id}) for row, c in zip(existing_rows, chunks, strict=True)
+            ]
 
     run = record_run(
         session,
@@ -253,26 +306,31 @@ def persist_chunks(
         )
     )
 
-    for chunk in chunks:
-        if session.get(Chunk, chunk.chunk_id) is None:
-            session.add(to_chunk_row(chunk))
-            # Index the raw text once, on chunk-row creation: a reused chunk_id is
-            # not re-created here and was already indexed from its first creation.
+    persisted: list[SplitterChunk] = []
+    for row, chunk in zip(existing_rows, chunks, strict=True):
+        if row is None:
+            # Mint a stable surrogate for this novel sameness-key and index its raw
+            # text once, on creation; a reused chunk is not re-created or re-indexed.
+            chunk_id = str(uuid4())
+            session.add(to_chunk_row(chunk, chunk_id=chunk_id))
             index_chunk_content(
                 session,
                 text_=chunk.text,
-                chunk_id=chunk.chunk_id,
+                chunk_id=chunk_id,
                 run_id=run.id,
                 source_id=source_id,
             )
+        else:
+            chunk_id = row.chunk_id
         session.add(
             ChunkRunManifest(
                 run_id=run.id,
-                chunk_id=chunk.chunk_id,
+                chunk_id=chunk_id,
                 span_start=chunk.span[0],
                 span_end=chunk.span[1],
             )
         )
+        persisted.append(chunk.model_copy(update={"chunk_id": chunk_id}))
 
     logger.debug(
         "Persisted %d chunks under chunking run id=%s source=%s markdown_hash=%s",
@@ -281,7 +339,7 @@ def persist_chunks(
         source_id,
         markdown_hash_xx64,
     )
-    return run
+    return run, persisted
 
 
 def active_chunking_run(session: "Session", source_id: str) -> PipelineRun | None:

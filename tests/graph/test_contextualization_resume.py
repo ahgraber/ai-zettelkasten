@@ -28,7 +28,6 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk, split
-from aizk.chunking.datamodel import derive_chunk_id
 from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.contextualization import (
     MAX_SUMMARY_CHARS,
@@ -118,10 +117,9 @@ class _AlwaysCurrent:
 
 
 def _chunk(text: str, ordinal: int, *, scope: str = _SCOPE, markdown_hash: str = _HASH) -> SplitterChunk:
-    """Build a content-addressed splitter chunk for a single source (``source_id`` = scope)."""
+    """Build a splitter chunk for a single source (no chunk_id — identity is assigned at persistence)."""
     content_hash = xxhash.xxh64(text.encode("utf-8")).hexdigest()
     return SplitterChunk(
-        chunk_id=derive_chunk_id(scope, (), ordinal, content_hash),
         content_hash=content_hash,
         source_id=scope,
         heading_path=(),
@@ -229,9 +227,11 @@ def _variant_snapshot(engine: Engine, scope: str) -> dict[str, object]:
     )
     with Session(engine) as session:
         summary = session.exec(select(DocumentSummary).where(DocumentSummary.run_id == summary_run.id)).one()
+        # Sort and key by the portable derivation key, never the surrogate chunk_id,
+        # so the snapshot is comparable across databases (each mints its own surrogates).
         variants = sorted(
             session.exec(select(ContextualizedChunk).where(ContextualizedChunk.run_id == variant_run.id)).all(),
-            key=lambda v: v.chunk_id,
+            key=lambda v: v.derivation_key,
         )
         return {
             "summary_text": summary.summary_text,
@@ -239,7 +239,7 @@ def _variant_snapshot(engine: Engine, scope: str) -> dict[str, object]:
             "variant_run_derivation_key": variant_run.derivation_key,
             "chunking_derivation_key": chunking.derivation_key,
             "variant_count": len(variants),
-            "variant_keys": [(v.chunk_id, v.derivation_key, v.contextualized_text) for v in variants],
+            "variant_keys": [(v.derivation_key, v.contextualized_text) for v in variants],
         }
 
 
@@ -525,7 +525,8 @@ def test_retry_resumes_and_matches_an_uninterrupted_run(tmp_path: Path) -> None:
     assert resumed["variant_count"] == baseline["variant_count"]
     assert resumed["summary_derivation_key"] == baseline["summary_derivation_key"]
     assert resumed["variant_run_derivation_key"] == baseline["variant_run_derivation_key"]
-    assert [k[:2] for k in resumed["variant_keys"]] == [k[:2] for k in baseline["variant_keys"]]  # type: ignore[index]
+    # Compare the portable per-variant derivation keys (the texts differ by design).
+    assert [k[0] for k in resumed["variant_keys"]] == [k[0] for k in baseline["variant_keys"]]  # type: ignore[index]
     resume_engine.dispose()
 
 
@@ -675,7 +676,7 @@ def test_contextualize_chunks_reuse_only_without_active_run_is_retryable(engine:
     """
     chunks = [_chunk("body one", 0)]
     with Session(engine) as session:
-        run = persist_chunks(
+        run, persisted = persist_chunks(
             session,
             source_id=_SCOPE,
             conversion_output_id="out",
@@ -698,7 +699,7 @@ def test_contextualize_chunks_reuse_only_without_active_run_is_retryable(engine:
                 StubLLMClient(),
                 source_id=_SCOPE,
                 summary=summary,
-                chunks=chunks,
+                chunks=persisted,
                 chunking_run_id=run.id,
                 splitter_version=SPLITTER_VERSION,
                 precomputed_revisions=None,

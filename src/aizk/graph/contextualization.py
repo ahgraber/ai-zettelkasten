@@ -57,6 +57,7 @@ from typing import TYPE_CHECKING
 
 from sqlmodel import Session, select
 
+from aizk.chunking.datamodel import derive_chunk_content_key
 from aizk.graph._version import CONTEXT_VERSION, SUMMARY_VERSION
 from aizk.graph.content_index import index_contextualized_content
 from aizk.graph.datamodel import (
@@ -216,6 +217,17 @@ class ResolvedChunkText:
     source: ContextSource
 
 
+def _chunk_content_key(chunk: "SplitterChunk") -> str:
+    """Return a chunk's portable sameness-key fingerprint for variant derivation keys.
+
+    The variant run/row derivation keys embed this content key, not the chunk's
+    database-local surrogate ``chunk_id``, so the keys recompute identically on any
+    backend (the same logical chunk set yields the same key). The surrogate
+    identity is still recorded as variant provenance, just never as a key input.
+    """
+    return derive_chunk_content_key(chunk.source_id, chunk.heading_path, chunk.ordinal, chunk.content_hash)
+
+
 def _summary_derivation_key(
     markdown_hash_xx64: str,
     summary_version: int,
@@ -274,18 +286,20 @@ def _variant_run_derivation_key(
 ) -> str:
     """Canonical derivation key for a variant run.
 
-    Combines the summary identity, ordered chunk-set identities, the
+    Combines the summary identity, the ordered chunk-set content keys, the
     ``splitter_version`` of the chunking generation read, the 2p/1n context
     policy, prompt identity, model profile, and ``context_version`` — so any
     neighbor change, splitter-version change, prompt/profile change, new summary,
     or version bump changes the derivation key. ``splitter_version`` participates
     so a re-chunk under a new splitter supersedes the variants even when the
-    markdown (hence the chunk set) is unchanged.
+    markdown (hence the chunk set) is unchanged. The chunk set is identified by
+    each chunk's portable content key, not its surrogate ``chunk_id``, so the key
+    is backend-portable.
     """
     return json.dumps(
         {
             "summary_identity": summary_identity,
-            "chunk_ids": [c.chunk_id for c in ordered_chunks],
+            "chunk_keys": [_chunk_content_key(c) for c in ordered_chunks],
             "context_prompt_hash": CONTEXT_PROMPT_HASH,
             "context_version": context_version,
             "context_window_policy": CONTEXT_WINDOW_POLICY,
@@ -307,19 +321,24 @@ def _variant_row_derivation_key(
     context_version: int,
     model_profile: str,
 ) -> str:
-    """Per-variant derivation key: summary, chunk, 2p/1n window, splitter, prompt, and profile used."""
+    """Per-variant derivation key: summary, chunk, 2p/1n window, splitter, prompt, and profile used.
+
+    The working chunk and its neighbors are identified by their portable content
+    keys, not their surrogate ``chunk_id``s, so the key recomputes identically on
+    any backend.
+    """
     return json.dumps(
         {
             "context_prompt_hash": CONTEXT_PROMPT_HASH,
             "context_version": context_version,
             "context_window_policy": CONTEXT_WINDOW_POLICY,
             "model_profile": model_profile,
-            "next_chunk_1_id": next_1.chunk_id if next_1 is not None else None,
-            "prior_chunk_1_id": prior_1.chunk_id if prior_1 is not None else None,
-            "prior_chunk_2_id": prior_2.chunk_id if prior_2 is not None else None,
+            "next_chunk_1_key": _chunk_content_key(next_1) if next_1 is not None else None,
+            "prior_chunk_1_key": _chunk_content_key(prior_1) if prior_1 is not None else None,
+            "prior_chunk_2_key": _chunk_content_key(prior_2) if prior_2 is not None else None,
             "splitter_version": splitter_version,
             "summary_identity": summary_identity,
-            "working_chunk_id": working.chunk_id,
+            "working_chunk_key": _chunk_content_key(working),
         },
         sort_keys=True,
         separators=(",", ":"),

@@ -23,9 +23,9 @@ open work-unit rather than creating a second.
 :func:`process_document` resolves its inputs by **locator** (``conversion_output_id``
 → Markdown, via the injected :class:`MarkdownSource`) but derives every run's
 reuse/supersession by **content** — the durable ``source_id``, the markdown hash,
-the version stamps, the prompt/model derivation keys, and the ordered
-``chunk_id``s — never from ``id``, ``conversion_output_id``, or any other local
-row handle. The Markdown source is injected so the graph stage stays decoupled
+the version stamps, the prompt/model derivation keys, and the ordered chunk
+content keys — never from ``id``, ``conversion_output_id``, the surrogate
+``chunk_id``, or any other local row handle. The Markdown source is injected so the graph stage stays decoupled
 from the conversion stage's blob storage and is deterministically testable.
 
 **Two phases, one short write lock.** The Markdown fetch (S3) and the LLM passes
@@ -297,7 +297,7 @@ def process_document(
             )
             return SkippedSuperseded(conversion_output_id=conversion_output_id)
 
-        chunking_run = persist_chunks(
+        chunking_run, persisted_chunks = persist_chunks(
             session,
             source_id=scope_id,
             conversion_output_id=locator,
@@ -319,7 +319,7 @@ def process_document(
             client,
             source_id=scope_id,
             summary=summary,
-            chunks=chunks,
+            chunks=persisted_chunks,
             chunking_run_id=chunking_run.id,
             splitter_version=SPLITTER_VERSION,
             precomputed_revisions=revisions,
