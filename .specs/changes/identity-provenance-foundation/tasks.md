@@ -20,9 +20,9 @@
 
 ## Public API + OpenAPI rename (breaking)
 
-- [ ] Capture the OpenAPI `before/` snapshot into `.specs/changes/identity-provenance-foundation/schemas/before/` and write `schemas/expected.md` describing the `aizk_uuid` → `source_id` rename diff.
-- [ ] Rename the API surface: path parameter `GET /v1/bookmarks/{source_id}/outputs`, the job-list `source_id` query parameter, and `source_id` schema fields; regenerate the OpenAPI snapshot.
-- [ ] Test `tests/conversion/test_api_source_id.py`: the bookmark-outputs route and job-list filter accept and return `source_id`; the materialize-Source flow persists the `source_id` identity while keying Source reuse on `source_ref_hash` (identity distinct from the dedup key). **[conversion-api MODIFIED]**
+- [x] Capture the OpenAPI `before/` snapshot into `.specs/changes/identity-provenance-foundation/schemas/before/` and write `schemas/expected.md` describing the `aizk_uuid` → `source_id` rename diff.
+- [x] Rename the API surface: path parameter `GET /v1/bookmarks/{source_id}/outputs`, the job-list `source_id` query parameter, and `source_id` schema fields; regenerate the OpenAPI snapshot.
+- [x] Test `tests/conversion/integration/test_api_source_id.py`: the bookmark-outputs route and job-list filter accept and return `source_id`; the materialize-Source flow persists the `source_id` identity while keying Source reuse on `source_ref_hash` (identity distinct from the dedup key). **[conversion-api MODIFIED]**
 
 ## `chunk_id` surrogate (chunking) + Alembic migration
 
