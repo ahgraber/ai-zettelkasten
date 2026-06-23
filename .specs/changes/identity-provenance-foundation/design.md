@@ -150,6 +150,10 @@ This change affects data and contracts, so per governance it carries a migration
 3. **`scope_key` → `scope_id`.**
    Rename the column on the run/event tables of the run primitive.
 
+Within the single revision the surrogate step is emitted **after** the column renames so it references the final `source_id` column directly; the revision's end-state is independent of that internal statement order.
+Because the prior `chunk_id` was already `xxh64(source_id, heading_path, ordinal, content_hash)`, every existing row already carries a distinct sameness-key, so "a surrogate per distinct sameness-key" is one surrogate per row; the `chunk_id` PK column is unchanged structurally (only its values become surrogates) and the sameness-key uniqueness is a named unique index (`ix_graph_chunks_sameness_key`) so `create_all` and the migration match without a table rebuild.
+The surrogate is minted with `uuid4` — matching the conversion stage's `source_id` surrogate and adding no dependency; uuid7's index-locality is an unmeasured preference, deferred.
+
 The `schema-migrations` ORM-vs-migration equivalence test covers structural fidelity after the revision.
 
 **Public API (breaking):** rename the `{aizk_uuid}` path parameter, the `aizk_uuid` job-list query parameter, and `aizk_uuid` schema fields to `source_id`.

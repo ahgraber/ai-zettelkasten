@@ -29,10 +29,10 @@ The locator (`conversion_output_id`) is used only to fetch the Markdown; it is n
 
 ## Stable-identity chunk store
 
-Facts are split by what they are _about_, so a content-addressed `chunk` row stays honest across every generation that re-emits it:
+Facts are split by what they are _about_, so a `chunk` row identified by a stable surrogate stays honest across every generation that re-emits it:
 
-- **`graph_chunks`** — content-addressed, immutable, run-independent identities carrying **stable facts only**: `chunk_id`, `content_hash`, `source_id` (`= str(source_id)`), `heading_path`, `ordinal`, `text`, `char_count`.
-  An unchanged chunk keeps one row across re-chunks; persisting an existing `chunk_id` reuses it (and rejects a colliding id whose stable facts differ).
+- **`graph_chunks`** — immutable, run-independent identities carrying **stable facts only**: `chunk_id` (a stable surrogate assigned at persistence — a UUID, never content-derived), `content_hash`, `source_id` (`= str(source_id)`), `heading_path`, `ordinal`, `text`, `char_count`.
+  Cross-generation reuse is keyed on the sameness-key `(source_id, heading_path, ordinal, content_hash)` (the unique `ix_graph_chunks_sameness_key`): an unchanged chunk keeps one row and one surrogate across re-chunks, and a `content_hash` collision whose stable facts differ is rejected.
 - **`graph_chunk_run_inputs`** — one row per chunking run: what it _consumed_ (the `conversion_output_id` locator + the `markdown_hash_xx64` that verifies it).
 - **`graph_chunk_run_manifest`** — append-only `(run_id, chunk_id, span)`: what a run _produced_, and where each chunk sat in _that generation's_ markdown.
 

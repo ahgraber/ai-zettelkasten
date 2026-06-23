@@ -116,19 +116,21 @@ def _snapshot(engine, source_id: UUID = _AIZK_UUID) -> dict:
         )
         consumed = run_input(session, chunking.id)
         summary = session.exec(select(DocumentSummary).where(DocumentSummary.run_id == summary_run.id)).one()
+        # Sort and key by the portable derivation key, never the surrogate chunk_id,
+        # which is DB-local (each database mints its own UUIDs).
         variants = sorted(
             session.exec(select(ContextualizedChunk).where(ContextualizedChunk.run_id == variant_run.id)).all(),
-            key=lambda v: v.chunk_id,
+            key=lambda v: v.derivation_key,
         )
         return {
             "chunking_derivation_key": chunking.derivation_key,
             "chunking_version_stamps": chunking.version_stamps_json,
             "consumed_input": (consumed.conversion_output_id, consumed.markdown_hash_xx64),
-            "manifest": sorted((m.chunk_id, m.span_start, m.span_end) for m in manifest_of_run(session, chunking.id)),
+            "manifest": sorted((m.span_start, m.span_end) for m in manifest_of_run(session, chunking.id)),
             "summary_derivation_key": summary_run.derivation_key,
             "summary_record": (summary.conversion_output_id, summary.markdown_hash_xx64, summary.summary_version),
             "variant_run_derivation_key": variant_run.derivation_key,
-            "variant_rows": [(v.chunk_id, v.derivation_key) for v in variants],
+            "variant_rows": [v.derivation_key for v in variants],
             "variant_count": len(variants),
             "provenance_linked": all(
                 v.summary_run_id == summary_run.id and v.chunking_run_id == chunking.id for v in variants

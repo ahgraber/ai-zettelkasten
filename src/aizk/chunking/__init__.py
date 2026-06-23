@@ -2,8 +2,9 @@
 
 This package implements the foundational splitter described by the chunking spec
 (``.specs/specs/chunking/spec.md``). It turns an already-normalized Markdown
-artifact into ordered, deterministically-identified structural chunks suitable
-for downstream embedding and retrieval.
+artifact into ordered, deterministically-produced structural chunks suitable
+for downstream embedding and retrieval. Chunk identity is a stable surrogate
+assigned at persistence, not a splitter output.
 
 Public surface:
 

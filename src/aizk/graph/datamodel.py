@@ -7,16 +7,18 @@ primitive and the transition-event log are reused from :mod:`aizk.pipeline`, so
 nothing here redefines a run record — these models carry only the graph-specific
 content.
 
-Facts are split by what they are *about*. A :class:`Chunk` is content-addressed
-and shared across every chunking generation that re-emits it, so it carries only
-**stable identity facts** — facts invariant for a ``chunk_id``. Facts that vary
-by generation live on the run instead:
+Facts are split by what they are *about*. A :class:`Chunk` is identified by a
+stable surrogate and shared across every chunking generation that re-emits it, so
+it carries only **stable identity facts** — facts invariant for a ``chunk_id``.
+Facts that vary by generation live on the run instead:
 
-- :class:`Chunk` — content-addressed, immutable, run-independent chunk rows
-  keyed by the splitter's ``chunk_id``, carrying stable facts only (the source
-  ``source_id`` ``= str(source_id)``, ``text``, ``content_hash``, ``char_count``,
-  ``heading_path``, ``ordinal``). An unchanged chunk keeps its identity and its
-  single row across re-chunks. Ordinary processing never mutates a row.
+- :class:`Chunk` — immutable, run-independent chunk rows whose ``chunk_id`` is a
+  stable surrogate assigned once at persistence (reused across generations when
+  the sameness-key ``(source_id, heading_path, ordinal, content_hash)`` matches),
+  carrying stable facts only (the source ``source_id`` ``= str(source_id)``,
+  ``text``, ``content_hash``, ``char_count``, ``heading_path``, ``ordinal``). An
+  unchanged chunk keeps its identity and its single row across re-chunks. Ordinary
+  processing never mutates a row.
 - :class:`ChunkRunInput` — one row per chunking run recording what the run
   **consumed**: a locator to the exact Markdown (``conversion_output_id``) and
   that Markdown's ``markdown_hash_xx64`` so the input is retrievable and
@@ -46,7 +48,7 @@ by generation live on the run instead:
 ``run_id`` columns are logical references to ``pipeline_runs.id`` with no
 database foreign key, matching the runtime's convention so superseded-run
 compaction can delete freely. ``chunk_id`` foreign keys into :class:`Chunk`
-because it is a genuine same-database content relationship that downstream
+because it is a genuine same-database identity relationship that downstream
 stages (mention extraction) also reference.
 """
 
@@ -86,12 +88,16 @@ def _utcnow() -> datetime.datetime:
 
 
 class Chunk(SQLModel, table=True):
-    """A persisted, content-addressed structural chunk emitted by the splitter.
+    """A persisted structural chunk emitted by the splitter, identified by a stable surrogate.
 
-    One row per distinct ``chunk_id`` carrying **stable identity facts only**.
-    Rows are immutable and run-independent: persisting a ``chunk_id`` that already
-    exists reuses the row unchanged, and the same ``chunk_id`` is shared across
-    every chunking run it appears in via :class:`ChunkRunManifest`.
+    One row per distinct sameness-key ``(source_id, heading_path, ordinal,
+    content_hash)`` — enforced by the ``ix_graph_chunks_sameness_key`` unique
+    index — carrying **stable identity facts only**. ``chunk_id`` is a surrogate
+    assigned once at persistence, never content-derived; the ``content_hash``
+    survives as a separate observable column. Rows are immutable and
+    run-independent: persisting a chunk whose sameness-key already exists reuses
+    the row (and its surrogate) unchanged, and the same ``chunk_id`` is shared
+    across every chunking run it appears in via :class:`ChunkRunManifest`.
 
     Generation-varying facts — the source ``markdown_hash_xx64``, the
     ``splitter_version``, and the chunk's ``span`` in that generation's markdown —
@@ -104,7 +110,20 @@ class Chunk(SQLModel, table=True):
     """
 
     __tablename__ = "graph_chunks"
-    __table_args__ = (Index("ix_graph_chunks_source_id", "source_id"),)
+    __table_args__ = (
+        Index("ix_graph_chunks_source_id", "source_id"),
+        # The sameness-key: persistence reuses the existing surrogate ``chunk_id``
+        # when this tuple is already present and mints a new one otherwise, so the
+        # uniqueness is the database-level backing of run-independent identity reuse.
+        Index(
+            "ix_graph_chunks_sameness_key",
+            "source_id",
+            "heading_path_json",
+            "ordinal",
+            "content_hash",
+            unique=True,
+        ),
+    )
 
     chunk_id: str = Field(primary_key=True, nullable=False)
     content_hash: str = Field(nullable=False)
@@ -213,10 +232,11 @@ class ContextualizedChunk(SQLModel, table=True):
     source-faithful unit.
 
     ``derivation_key`` records the contextualization inputs — the summary
-    identity, the working chunk identity, the 2p/1n neighboring chunk identities,
-    the ``splitter_version`` of the chunking generation read, the context-window
-    policy, prompt identity, and model profile used to build the variant —
-    alongside ``context_version``. A change to any derivation-key input or to
+    identity, the working chunk's content key, the 2p/1n neighboring chunks'
+    content keys (the portable sameness-key fingerprints, not the surrogate
+    ``chunk_id``s), the ``splitter_version`` of the chunking generation read, the
+    context-window policy, prompt identity, and model profile used to build the
+    variant — alongside ``context_version``. A change to any derivation-key input or to
     ``context_version`` opens a new run whose variant supersedes the prior;
     unchanged inputs and version reuse the active run.
 

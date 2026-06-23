@@ -26,7 +26,9 @@ def _build_snapshot(fixture_names: list[str], default_provenance: dict[str, str]
     for name in fixture_names:
         text = (FIXTURES_DIR / name).read_text(encoding="utf-8")
         chunks = split(text, **default_provenance)
-        snapshot.append({"fixture": name, "chunks": [json.loads(c.model_dump_json()) for c in chunks]})
+        # chunk_id is no longer a splitter output (identity is a persistence-assigned
+        # surrogate), so the content snapshot captures only the fields split() produces.
+        snapshot.append({"fixture": name, "chunks": [c.model_dump(mode="json", exclude={"chunk_id"}) for c in chunks]})
     return snapshot
 
 

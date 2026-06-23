@@ -22,7 +22,6 @@ from sqlmodel import Session
 import xxhash
 
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
-from aizk.chunking.datamodel import derive_chunk_id
 from aizk.db.migrations.versions.d3e4f5a6b7c8_add_graph_content_fts import (
     _assert_fts5_available,
 )
@@ -57,11 +56,9 @@ def _make_chunk(
     conversion_output_id: str = _OUTPUT,
     splitter_version: int = SPLITTER_VERSION,
 ) -> SplitterChunk:
-    """Build a content-addressed splitter chunk for a single source (``source_id`` = ``source_id``)."""
+    """Build a splitter chunk for a single source (identity is assigned at persistence)."""
     content_hash = xxhash.xxh64(text_.encode("utf-8")).hexdigest()
-    chunk_id = derive_chunk_id(source_id, (), ordinal, content_hash)
     return SplitterChunk(
-        chunk_id=chunk_id,
         content_hash=content_hash,
         source_id=source_id,
         heading_path=(),
@@ -101,13 +98,13 @@ def _seed_chunk_and_variant(
     ordinal: int = 0,
     markdown_hash: str = _HASH_A,
 ) -> SplitterChunk:
-    """Persist one chunk and one contextualized variant; return the chunk.
+    """Persist one chunk and one contextualized variant; return the surrogate-bearing chunk.
 
     ``revision`` is the model output: an empty string means a self-contained chunk
     (whose contextualized representation is the raw text). Commits.
     """
     chunk = _make_chunk(chunk_text, ordinal=ordinal, source_id=source_id, markdown_hash=markdown_hash)
-    chunking_run = persist_chunks(
+    chunking_run, persisted = persist_chunks(
         session,
         source_id=source_id,
         conversion_output_id=_OUTPUT,
@@ -115,6 +112,7 @@ def _seed_chunk_and_variant(
         splitter_version=SPLITTER_VERSION,
         chunks=[chunk],
     )
+    chunk_p = persisted[0]
     summary = summarize_document(
         session,
         StubLLMClient(),
@@ -129,13 +127,13 @@ def _seed_chunk_and_variant(
         StubLLMClient(responder=lambda _prompt: revision),
         source_id=source_id,
         summary=summary,
-        chunks=[chunk],
+        chunks=[chunk_p],
         chunking_run_id=chunking_run.id,
         splitter_version=SPLITTER_VERSION,
         precomputed_revisions=[revision],
     )
     session.commit()
-    return chunk
+    return chunk_p
 
 
 # --------------------------------------------------------------------------- #
@@ -218,8 +216,8 @@ def test_backfill_indexes_superseded_then_reactivated_chunk(tmp_path: Path) -> N
     """A chunk superseded when the index was built but reused in a later active run is searchable.
 
     The backfill indexes *all* committed chunks, not just the active generation, so
-    a content-addressed ``chunk_id`` that is reused (not re-created) by a later
-    active run is in the index after a rebuild regardless of which run is current.
+    a surrogate ``chunk_id`` that is reused (not re-created) by a later active run is
+    in the index after a rebuild regardless of which run is current.
     """
     url = f"sqlite:///{tmp_path / 'backfill_super.db'}"
     cfg = _alembic_cfg(url)
@@ -228,7 +226,7 @@ def test_backfill_indexes_superseded_then_reactivated_chunk(tmp_path: Path) -> N
 
     target = _make_chunk("quasar luminosity spectra", ordinal=0)
     with Session(engine) as session:
-        persist_chunks(
+        _run1, persisted1 = persist_chunks(
             session,
             source_id=_AIZK_UUID,
             conversion_output_id=_OUTPUT,
@@ -237,12 +235,13 @@ def test_backfill_indexes_superseded_then_reactivated_chunk(tmp_path: Path) -> N
             chunks=[target],
         )
         session.commit()
+        target_id = persisted1[0].chunk_id
         # Generation 2 under a different markdown supersedes run 1, but the manifest
         # set differs (an extra chunk), so run 1 is demoted to superseded. The target
-        # chunk_id is reused (not re-created), so its only index row is from run 1.
+        # chunk_id is reused (not re-created), so its only chunk row is from run 1.
         other = _make_chunk("unrelated body text", ordinal=1, markdown_hash=_HASH_B)
         target_in_gen2 = _make_chunk("quasar luminosity spectra", ordinal=0, markdown_hash=_HASH_B)
-        persist_chunks(
+        _run2, persisted2 = persist_chunks(
             session,
             source_id=_AIZK_UUID,
             conversion_output_id=_OUTPUT,
@@ -251,14 +250,26 @@ def test_backfill_indexes_superseded_then_reactivated_chunk(tmp_path: Path) -> N
             chunks=[target_in_gen2, other],
         )
         session.commit()
+        # Byte-identical content reuses the surrogate identity across generations: a
+        # single immutable chunk row, not a duplicate per generation.
+        assert persisted2[0].chunk_id == target_id
 
     # Rebuild from source tables (the all-committed-rows backfill) after both
-    # generations exist; the reused chunk_id must still be searchable.
+    # generations exist. A downgrade past the surrogate-minting migration re-mints the
+    # chunk surrogates, so id stability across the round trip is not asserted; the
+    # contract is that the reused chunk's *content* is reproduced in the rebuilt index
+    # regardless of run currency.
     command.downgrade(cfg, _FTS_REVISION)
     command.upgrade(cfg, "head")
     with Session(engine) as session:
-        chunk_ids = {chunk_id for kind, chunk_id in _search(session, "quasar") if kind == "chunk"}
-    assert target.chunk_id in chunk_ids, "the reused chunk_id must be in the index regardless of run currency"
+        indexed_chunk_ids = {chunk_id for kind, chunk_id in _search(session, "quasar") if kind == "chunk"}
+        row_id_to_text = {
+            row[0]: row[1]
+            for row in session.connection().execute(text("SELECT chunk_id, text FROM graph_chunks")).all()
+        }
+    # Exactly the reused chunk's content is searchable as kind=chunk (one row, not a
+    # per-generation duplicate), and the indexed id resolves to that content.
+    assert {row_id_to_text[cid] for cid in indexed_chunk_ids} == {"quasar luminosity spectra"}
 
 
 # --------------------------------------------------------------------------- #
@@ -298,7 +309,7 @@ def test_rebuild_reproduces_content(session: Session) -> None:
 def test_persisted_chunk_is_searchable(session: Session) -> None:
     """A newly persisted chunk is indexed and searchable by its raw text."""
     chunk = _make_chunk("mitochondria are the powerhouse of the cell", ordinal=0)
-    persist_chunks(
+    _run, persisted = persist_chunks(
         session,
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
@@ -309,7 +320,7 @@ def test_persisted_chunk_is_searchable(session: Session) -> None:
     session.commit()
 
     hits = _search(session, "mitochondria")
-    assert hits == [("chunk", chunk.chunk_id)], "the new chunk's raw text is searchable as kind=chunk"
+    assert hits == [("chunk", persisted[0].chunk_id)], "the new chunk's raw text is searchable as kind=chunk"
 
 
 def test_reused_chunk_id_is_not_indexed_twice(session: Session) -> None:
@@ -326,14 +337,14 @@ def test_reused_chunk_id_is_not_indexed_twice(session: Session) -> None:
         "splitter_version": SPLITTER_VERSION,
         "chunks": [chunk],
     }
-    persist_chunks(session, **args)
+    _run, persisted = persist_chunks(session, **args)
     session.commit()
     # Identical inputs: persist_chunks reuses the active run and re-creates nothing.
     persist_chunks(session, **args)
     session.commit()
 
     hits = _search(session, "antidisestablishment", kind="chunk")
-    assert hits == [("chunk", chunk.chunk_id)], "exactly one chunk index row despite the re-persist"
+    assert hits == [("chunk", persisted[0].chunk_id)], "exactly one chunk index row despite the re-persist"
 
 
 def test_persisted_variant_is_searchable(session: Session) -> None:
@@ -372,7 +383,7 @@ def test_reused_variant_run_does_not_reindex(session: Session) -> None:
     indexes, so a self-contained chunk keeps exactly one contextualized index row.
     """
     chunk = _make_chunk("a stable self-contained passage", ordinal=0)
-    chunking_run = persist_chunks(
+    chunking_run, persisted = persist_chunks(
         session,
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
@@ -380,6 +391,7 @@ def test_reused_variant_run_does_not_reindex(session: Session) -> None:
         splitter_version=SPLITTER_VERSION,
         chunks=[chunk],
     )
+    chunk_p = persisted[0]
     session.commit()
     assert chunking_run.id is not None
     summary = summarize_document(
@@ -397,7 +409,7 @@ def test_reused_variant_run_does_not_reindex(session: Session) -> None:
             StubLLMClient(responder=lambda _prompt: ""),
             source_id=_AIZK_UUID,
             summary=summary,
-            chunks=[chunk],
+            chunks=[chunk_p],
             chunking_run_id=chunking_run.id,
             splitter_version=SPLITTER_VERSION,
             precomputed_revisions=[""],
@@ -408,13 +420,13 @@ def test_reused_variant_run_does_not_reindex(session: Session) -> None:
     _contextualize()  # unchanged inputs => active run reused, no new variant, no new index row
 
     hits = _search(session, "passage", kind="contextualized")
-    assert hits == [("contextualized", chunk.chunk_id)], "exactly one contextualized index row after reuse"
+    assert hits == [("contextualized", chunk_p.chunk_id)], "exactly one contextualized index row after reuse"
 
 
 def test_index_excludes_other_source(session: Session) -> None:
     """A term is scoped to the source whose content contains it (source_id discrimination)."""
     chunk_a = _make_chunk("alpha distinctive term", ordinal=0, source_id=_AIZK_UUID)
-    persist_chunks(
+    _run_a, persisted_a = persist_chunks(
         session,
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
@@ -422,6 +434,7 @@ def test_index_excludes_other_source(session: Session) -> None:
         splitter_version=SPLITTER_VERSION,
         chunks=[chunk_a],
     )
+    chunk_a_p = persisted_a[0]
     chunk_b = _make_chunk("beta distinctive term", ordinal=0, source_id=_AIZK_UUID_B)
     persist_chunks(
         session,
@@ -441,4 +454,4 @@ def test_index_excludes_other_source(session: Session) -> None:
         )
         .all()
     )
-    assert [(r[0], r[1]) for r in rows] == [(_AIZK_UUID, chunk_a.chunk_id)]
+    assert [(r[0], r[1]) for r in rows] == [(_AIZK_UUID, chunk_a_p.chunk_id)]
