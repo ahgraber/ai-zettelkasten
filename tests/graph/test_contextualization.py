@@ -353,12 +353,15 @@ def test_variant_derivation_key_ignores_local_summary_ids(tmp_path: Path) -> Non
             active_run = local_session.exec(
                 select(PipelineRun).where(PipelineRun.stage == VARIANT_STAGE, PipelineRun.status == RunStatus.ACTIVE)
             ).one()
+            # Order by the portable derivation key, never the surrogate chunk_id,
+            # which is a random UUID minted per database — sorting by it would make
+            # the cross-database comparison below order-dependent (flaky).
             variant_keys = [
                 json.loads(variant.derivation_key)
                 for variant in local_session.exec(
                     select(ContextualizedChunk)
                     .where(ContextualizedChunk.run_id == active_run.id)
-                    .order_by(ContextualizedChunk.chunk_id)
+                    .order_by(ContextualizedChunk.derivation_key)
                 ).all()
             ]
             return json.loads(active_run.derivation_key), variant_keys

@@ -645,7 +645,9 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     assert summary_run.stage == SUMMARY_STAGE
 
     chain_agrees = chunking.scope_id == str(primary.source_id) == summary_run.scope_id == chunk.source_id
-    print(f"  5. source_id={primary.source_id}; chunk.source_id + chunking + summary scopes all agree -> {chain_agrees}")
+    print(
+        f"  5. source_id={primary.source_id}; chunk.source_id + chunking + summary scopes all agree -> {chain_agrees}"
+    )
     assert chain_agrees
 
 # %% [markdown]
@@ -659,7 +661,9 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
 # %%
 with Session(get_engine(DatabaseConfig().database_url)) as session:
     incremental = enqueue_output(session, primary.conversion_output_id)
-    (bulk,) = enqueue_backfill_outputs(session, [primary.conversion_output_id])
+    # A corpus-wide backfill has a large blast radius, so it is gated behind explicit
+    # confirmation; this is the approved bulk example.
+    (bulk,) = enqueue_backfill_outputs(session, [primary.conversion_output_id], confirmed=True)
     session.commit()
     units = session.exec(
         select(ContextualizationJob).where(ContextualizationJob.conversion_output_id == primary.conversion_output_id)

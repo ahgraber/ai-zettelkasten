@@ -92,7 +92,7 @@ Capabilities in build-dependency order: the cross-cutting **`pipeline-identity`*
 - **The grammar is the deliverable.**
   The five identifier roles (source identity, run, derivation key, output identity, provenance pointers) and the rules above are written once as the `pipeline-identity` contract; the two shipped graph producers are migrated to conform, demonstrating substitutability and giving the next stage a pattern to copy rather than re-invent.
 - **Identity becomes a surrogate; content becomes a column.**
-  `chunk_id` moves to a surrogate PK with `content_hash` retained as an indexed observable column; the run-independent shared-chunk-row reuse currently keyed on the content-addressed id is re-expressed as a `UNIQUE(content_hash)` lookup-and-reuse.
+  `chunk_id` moves to a surrogate PK with `content_hash` retained as an observable column; the run-independent shared-chunk-row reuse currently keyed on the content-addressed id is re-expressed as a `UNIQUE(source_id, heading_path, ordinal, content_hash)` sameness-key lookup-and-reuse (the full address-plus-content key, not `content_hash` alone, which would collapse distinct addresses with identical content).
   The early-cutoff/change-detection behavior the chunking spec relies on is preserved through the column, not the id.
 - **Idempotency lives in the schema.**
   The run primitive's existing single-active-run uniqueness is named as the idempotency invariant; row-level defensive `UNIQUE` constraints are added wherever a stable sameness-key exists.

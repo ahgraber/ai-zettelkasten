@@ -85,7 +85,7 @@ def _config_snapshot(
 
 def _base_manifest(*, picture_description_enabled: bool = False) -> ManifestV1:
     return ManifestV1(
-        source_id=_DEFAULT_AIZK_UUID,
+        aizk_uuid=_DEFAULT_AIZK_UUID,
         karakeep_id="kk-001",
         source=ManifestSource(
             url="https://example.com/page",
@@ -228,7 +228,7 @@ def test_load_manifest_returns_v1_for_version_1_0():
     result = load_manifest(data)
     assert isinstance(result, ManifestV1)
     assert result.version == "1.0"
-    assert result.source_id == _DEFAULT_AIZK_UUID
+    assert result.aizk_uuid == _DEFAULT_AIZK_UUID
 
 
 def test_load_manifest_returns_v2_for_version_2_0():

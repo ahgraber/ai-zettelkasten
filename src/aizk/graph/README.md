@@ -44,11 +44,11 @@ Round-trip fidelity of the emitted `Chunk` is reconstructed by joining `chunk â‹
 A **run** is a [`PipelineRun`](../pipeline/run.py) keyed `(stage, scope_id)` with a `derivation_key`, version stamps, `supersedes_run_id`, and `status âˆˆ {active, superseded}`.
 This stage records three run kinds per document, each superseding independently:
 
-| Stage                     | `derivation_key` (reuse/supersede signal)                                                                                                | Output                               |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `chunking`                | `markdown_hash_xx64` + `splitter_version`                                                                                                | chunk identities + manifest + input  |
-| `document_summary`        | markdown hash + `summary_version` + summary-prompt hash + model profile                                                                  | one `document_summary`               |
-| `chunk_contextualization` | summary identity + ordered `chunk_id`s + **`splitter_version`** + 2p/1n window + context-prompt hash + model profile + `context_version` | one `contextualized_chunk` per chunk |
+| Stage                     | `derivation_key` (reuse/supersede signal)                                                                                                       | Output                               |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `chunking`                | `markdown_hash_xx64` + `splitter_version`                                                                                                       | chunk identities + manifest + input  |
+| `document_summary`        | markdown hash + `summary_version` + summary-prompt hash + model profile                                                                         | one `document_summary`               |
+| `chunk_contextualization` | summary identity + ordered chunk content keys + **`splitter_version`** + 2p/1n window + context-prompt hash + model profile + `context_version` | one `contextualized_chunk` per chunk |
 
 The variant stores the model's **self-contained revision** (or an empty string when the chunk is already self-contained); the raw chunk row is never written and stays the cited, source-faithful unit.
 

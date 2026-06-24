@@ -71,8 +71,9 @@ def _create_output(
 
 
 def _manifest_v1_bytes(source_id: UUID, karakeep_id: str) -> bytes:
+    # v1.0 manifests name the source identity aizk_uuid (frozen on-disk schema).
     manifest = ManifestV1(
-        source_id=source_id,
+        aizk_uuid=source_id,
         karakeep_id=karakeep_id,
         source=ManifestSource(
             url="https://example.com/page",
