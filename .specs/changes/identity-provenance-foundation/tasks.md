@@ -55,6 +55,6 @@
 
 ## Non-requirement sweep + final verification
 
-- [ ] Sweep non-requirement text to `source_id`/`scope_id`: the conversion specs' Technical Notes (S3 layout `s3://…/<source_id>/`, route list, idempotency-key note), `chunk-contextualization`'s run note (`str(source_id)`), and `pipeline-stage-runtime`'s Purpose line (`scope_id`).
-- [ ] Sweep the whole tree for stray `aizk_uuid` / `doc_id` / `scope_key`: code, fixtures, `caplog`/patch-target strings, notebooks, scripts, and docs; rename to `source_id`/`scope_id`.
-- [ ] Run the full suite (`uv run pytest -n auto -m "not integration_lifecycle"` then `-m integration_lifecycle`) and confirm green; confirm a repo-wide search shows no remaining `aizk_uuid`/`doc_id`/`scope_key` outside intentional historical references (commit messages, this change's `> Previously` notes).
+- [x] Sweep non-requirement text to `source_id`/`scope_id`: the conversion specs' Technical Notes (S3 layout `s3://…/<source_id>/`, route list, idempotency-key note), `chunk-contextualization`'s run note (`str(source_id)`), and `pipeline-stage-runtime`'s Purpose line (`scope_id`).
+- [x] Sweep the whole tree for stray `aizk_uuid` / `doc_id` / `scope_key`: code, fixtures, `caplog`/patch-target strings, notebooks, scripts, and docs; rename to `source_id`/`scope_id`.
+- [x] Run the full suite (`uv run pytest -n auto -m "not integration_lifecycle"` then `-m integration_lifecycle`) and confirm green; confirm a repo-wide search shows no remaining `aizk_uuid`/`doc_id`/`scope_key` outside intentional historical references (commit messages, this change's `> Previously` notes).

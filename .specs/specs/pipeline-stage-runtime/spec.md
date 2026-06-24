@@ -5,7 +5,7 @@
 ## Purpose
 
 The pipeline-stage runtime is a primitives package (`aizk.pipeline`) — not a framework — for running queued work in any processing stage.
-It provides a claim/drain/cancel/timeout runner that drives discovery, claim, status transition, and cleanup through a stage-supplied **handler protocol**; a separable run/dataset-version primitive keyed by `(stage, scope_key)`; and a shared, append-only transition-event log written through a same-transaction co-commit helper.
+It provides a claim/drain/cancel/timeout runner that drives discovery, claim, status transition, and cleanup through a stage-supplied **handler protocol**; a separable run/dataset-version primitive keyed by `(stage, scope_id)`; and a shared, append-only transition-event log written through a same-transaction co-commit helper.
 Each stage owns its own work-unit tables and identities — the runtime never requires a shared work-unit table or knowledge of any stage's schema.
 The current runner is one orchestration-engine implementation; the handler protocol keeps the domain core (execute, classify, stage-owned state writes) narrow enough to survive an engine swap.
 Conversion is the first adapter; the graph stages (contextualization, mention extraction) are the next consumers.

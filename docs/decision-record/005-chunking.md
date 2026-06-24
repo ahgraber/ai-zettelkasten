@@ -5,6 +5,7 @@
 - 22 June 2025 — Proposed
 - 18 May 2026 — Revised
 - 18 May 2026 — Amended (docling-native input alternatives evaluated)
+- 23 June 2026 — Partly superseded by the `identity-provenance-foundation` change: chunk identity is now a stable surrogate assigned at persistence (no longer content-addressed), and `doc_id` is renamed `source_id`.
 
 ## Context
 
@@ -31,22 +32,32 @@ Key properties:
 - **Heading-aware splitting.**
   The Markdown heading tree (`H1 → H2 → H3 → …`) defines the primary boundaries.
   A chunk never crosses a heading boundary or merges sibling headings.
+
 - **Paragraph fallback within a heading.**
   If a heading's body exceeds the size budget, the body is split on paragraph boundaries.
   No overlap between paragraph chunks.
+
 - **No cross-heading merging or overlap.**
   Atomicity is preferred over RAG-style overlap; downstream enrichment can supply missing context if needed.
+
 - **Deterministic identity.**
+
+  > Superseded by the `identity-provenance-foundation` change (June 2026): `chunk_id` is now a stable surrogate assigned at persistence and reused across generations by the sameness-key `(source_id, heading_path, ordinal, content_hash)`; `doc_id` is renamed `source_id`.
+  The content-addressed scheme described below is the original decision, retained as history — the same observable behavior (a content edit and a structural move are independently observable) now rests on the `content_hash` column and the sameness-key, not on the identity itself.
+
   Each chunk has a `chunk_id` deterministically derived from **both** its address `(doc_id, heading_path, ordinal)` and its `content_hash`.
   Chunking is a pure function of the converted artifact: same input + same `splitter_version` → same `chunk_id`s.
   Any change — address or content — yields a new `chunk_id`.
   Old `chunk_id`s that no longer appear in the output are the unambiguous signal that downstream artifacts (embeddings, contextualizations, graph nodes/edges) tied to them are stale and must be invalidated/cleaned up.
+
 - **Document-level change gate.**
   Re-chunking is skipped entirely when the conversion stage's `markdown_hash_xx64` is unchanged for a document AND `splitter_version` is unchanged.
   This makes re-runs cheap and idempotent in the common case (re-conversion produced the same Markdown).
+
 - **Reconstruction metadata.**
   `heading_path` and `ordinal` are first-class fields on every chunk.
   The full document can be reconstructed in order from chunk metadata alone.
+
 - **Event-sourced state transitions.**
   The chunking pipeline mirrors the conversion stage: state transitions are recorded through a single write path (e.g., `record_transition`) and persisted as an append-only event log, so chunking is replayable, observable, and resumable.
 

@@ -141,7 +141,7 @@ def fetch_markdown(s3_client, bucket: str, s3_key_full: str) -> str | None:
 def sample_rows(db_path: str, batch_size: int, offset: int) -> list[dict]:
     """Sample rows stratified by pipeline, diversified by domain.
 
-    Returns list of {aizk_uuid, title, pipeline_name, markdown_key}.
+    Returns list of {source_id, title, pipeline_name, markdown_key}.
     """
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
@@ -153,10 +153,10 @@ def sample_rows(db_path: str, batch_size: int, offset: int) -> list[dict]:
     for pipeline in ("html", "pdf"):
         c.execute(
             """
-            SELECT aizk_uuid, title, pipeline_name, markdown_key
+            SELECT source_id, title, pipeline_name, markdown_key
             FROM conversion_outputs
             WHERE pipeline_name = ?
-            ORDER BY aizk_uuid  -- deterministic but pseudo-random by UUID
+            ORDER BY source_id  -- deterministic but pseudo-random by UUID
             LIMIT ? OFFSET ?
             """,
             (pipeline, half, offset),
@@ -164,7 +164,7 @@ def sample_rows(db_path: str, batch_size: int, offset: int) -> list[dict]:
         for row in c.fetchall():
             results.append(
                 {
-                    "aizk_uuid": row[0],
+                    "source_id": row[0],
                     "title": row[1] or "",
                     "pipeline": row[2],
                     "markdown_key": row[3],
@@ -207,7 +207,7 @@ def main():
     for i, row in enumerate(rows):
         content = fetch_markdown(s3, bucket, row["markdown_key"])
         if content is None:
-            print(f"  [{i + 1}/{len(rows)}] SKIP {row['aizk_uuid']} (fetch failed)", file=sys.stderr)
+            print(f"  [{i + 1}/{len(rows)}] SKIP {row['source_id']} (fetch failed)", file=sys.stderr)
             continue
 
         patterns = score_document(content)
@@ -217,7 +217,7 @@ def main():
 
         excerpts = extract_excerpts(content)
         result = {
-            "aizk_uuid": row["aizk_uuid"],
+            "source_id": row["source_id"],
             "title": row["title"],
             "pipeline": row["pipeline"],
             "markdown_key": row["markdown_key"],
@@ -237,7 +237,7 @@ def main():
 
     if args.repr:
         for result in results:
-            header = f"# {result['title'][:70]} ({result['pipeline']}, score={result['patterns']['score']}, uuid={result['aizk_uuid']})"
+            header = f"# {result['title'][:70]} ({result['pipeline']}, score={result['patterns']['score']}, uuid={result['source_id']})"
             for excerpt in result["excerpts"]:
                 print(header)
                 print(repr(excerpt))

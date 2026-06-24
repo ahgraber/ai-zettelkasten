@@ -5,7 +5,7 @@
 ## Purpose
 
 The chunking capability splits converted Markdown artifacts into ordered, structurally-faithful chunks for downstream embedding, retrieval, and knowledge-graph construction.
-The splitter is a deterministic pure function that derives stable, content-addressable chunk identities, so a content edit and a structural move are independently observable downstream and re-processing is cheap and reproducible.
+The splitter is a deterministic pure function; chunk identity is a stable surrogate assigned at persistence (reused across generations by a sameness-key), and the `content_hash` is a separate observable fingerprint, so a content edit and a structural move are independently observable downstream and re-processing is cheap and reproducible.
 
 ## Requirements
 
