@@ -602,13 +602,13 @@ The normative requirements above (`Validate auth mode at API startup`, `Resolve 
 - **Implementation**: `src/aizk/conversion/api/`
 - **Routes**:
   - `POST /v1/jobs` — submit job
-  - `GET /v1/jobs` — list jobs (filters: status, aizk_uuid, created_after, created_before; pagination: limit, offset)
+  - `GET /v1/jobs` — list jobs (filters: status, source_id, created_after, created_before; pagination: limit, offset)
   - `GET /v1/jobs/status-counts` — aggregate counts by status
   - `GET /v1/jobs/{job_id}` — get single job
   - `POST /v1/jobs/{job_id}/retry` — retry failed/cancelled job
   - `POST /v1/jobs/{job_id}/cancel` — cancel queued/running job
   - `POST /v1/jobs/actions` — bulk retry or cancel (1–100 job IDs)
-  - `GET /v1/bookmarks/{aizk_uuid}/outputs` — list conversion outputs for a bookmark
+  - `GET /v1/bookmarks/{source_id}/outputs` — list conversion outputs for a bookmark
   - `GET /v1/outputs/{output_id}/manifest` — raw manifest JSON from S3
   - `GET /v1/outputs/{output_id}/markdown` — markdown text from S3
   - `GET /v1/outputs/{output_id}/figures/{filename}` — figure image from S3
