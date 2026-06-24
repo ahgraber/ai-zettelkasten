@@ -21,8 +21,8 @@ A paragraph carrying an inline link, image, code span, or math span is kept whol
 A non-splittable block (code, table, list, blockquote, math, raw HTML) is kept whole even when it exceeds the budget.
 Frontmatter and pre-heading content are emitted under the empty heading path.
 
-`chunk_id` is derived from the chunk's address `(source_id, heading_path, ordinal)` and its `content_hash`, so content edits and address moves are independently observable.
-Identity is stable across processes.
+`chunk_id` is a stable surrogate assigned at persistence, reused across generations by the sameness-key `(source_id, heading_path, ordinal, content_hash)`; the `content_hash` is a separate observable fingerprint, so content edits and address moves are independently observable.
+A chunk re-emitted unchanged keeps its identity across re-chunks; the splitter does not assign it.
 
 ## References
 

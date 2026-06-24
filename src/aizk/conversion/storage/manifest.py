@@ -88,12 +88,20 @@ class ManifestConfigSnapshot(BaseModel):
 
 
 class ManifestV1(BaseModel):
-    """Reader class for v1.0 manifests."""
+    """Reader class for v1.0 manifests.
+
+    The v1.0 on-disk schema is frozen: it names the durable source identity
+    ``aizk_uuid``, so this reader keeps that field name (with ``extra="forbid"``)
+    to load historical v1.0 manifests faithfully. Current manifests are written as
+    :class:`ManifestV2`, which names the identity ``source_id`` per the canonical
+    convention — do not rename ``aizk_uuid`` here to match, or this reader can no
+    longer parse the bytes it exists to read.
+    """
 
     model_config = ConfigDict(extra="forbid", json_encoders={datetime: lambda v: v.isoformat()})
 
     version: str = "1.0"
-    source_id: UUID
+    aizk_uuid: UUID
     karakeep_id: str
     source: ManifestSource
     conversion: ManifestConversionMetadata

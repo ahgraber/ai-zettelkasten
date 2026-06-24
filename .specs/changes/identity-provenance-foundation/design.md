@@ -86,6 +86,13 @@ Any user-initiated reprocessing with large downstream blast radius — a corpus-
 The confirmation is **surface-agnostic** (any entry point that initiates such an op) and **does not compute a cost**.
 Each derived row records its producer version, so a version-heterogeneous corpus is valid and any version's coverage is queryable.
 
+**Gate scope (what is and is not gated now).**
+The qualifier is _large_ blast radius.
+The one such operation this change ships is the corpus-wide contextualization backfill, so the gate is wired into the `enqueue_backfill` / `enqueue_backfill_outputs` entry points.
+A single-document re-ingest (a new `conversion_output_id` for an existing source) is **not** gated: re-deriving one document's chunks/summary/variants is bounded — the normal cost of one document, not a wallet event — and the per-document graph `enqueue_document` / `enqueue_output` paths are automatic pipeline steps, not user-initiated reprocessing surfaces (the user-initiated trigger for a base-document edit lives upstream, at the conversion stage's re-submit).
+The "base-document edit that cascades the derivation graph" becomes _large_ only once cross-source derivations exist (the planned `mention-extraction-foundation` entity graph, where one base edit can fan out across many sources); the gate primitive (`require_reprocessing_confirmation`) is ready for that stage to call.
+A future refinement worth considering: dedicated gated `reprocess_*` entry points (e.g. `reprocess_source` / `reprocess_corpus`) that distinguish user-initiated reprocessing from first-ingest enqueue, so the gate attaches to the reprocessing surface explicitly rather than being inferred.
+
 **Rationale:** A prompt/model version bump can imply a multi-thousand-dollar corpus re-contextualization; eager invalidation would make a version bump a wallet event.
 Decoupling staleness (a cheap key comparison) from recompute (a deliberate, gated action) keeps version bumps free by default.
 Per-row version stamps make the resulting mixed-version corpus safe because heterogeneity is _recorded_, not silent — a homogeneous slice is always queryable for clean measurement.

@@ -85,10 +85,13 @@ def derivation_key(
             fingerprints (e.g. a ``content_hash``), producer/prompt/model/config
             versions, and any other content-derived discriminators. Values must
             be JSON-serializable; nested mappings are canonicalized by key.
-            MUST NOT contain any database-local identifier (a ``run_id``, an
-            autoincrement row id, or a surrogate row identity) — admitting one
-            would make the key non-portable and is the defect this helper exists
-            to prevent.
+            **Caller obligation:** MUST NOT contain any database-local identifier
+            (a ``run_id``, an autoincrement row id, or a surrogate row identity) —
+            admitting one would make the key non-portable. The helper hashes what
+            it is given and cannot enforce this by inspection (a ``run_id`` is
+            indistinguishable by value from a version int); use an upstream run's
+            ``derivation_key`` via ``upstream_keys`` rather than its id, and keep
+            ids out of ``inputs``.
         upstream_keys: The ``derivation_key`` of each upstream run this
             derivation consumed, in a caller-defined stable order. Embedding the
             upstream key (rather than the upstream run's local id) is what makes
