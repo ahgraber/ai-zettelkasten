@@ -17,6 +17,7 @@ from sqlmodel import Session, create_engine, select
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.enqueue import enqueue_backfill_outputs, enqueue_output
+from aizk.pipeline.invalidation import ReprocessingConfirmationError
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
 _UUID_A = UUID("11111111-1111-1111-1111-111111111111")
@@ -90,3 +91,15 @@ def test_enqueue_backfill_resolves_each_and_dedupes(tmp_path: Path) -> None:
         assert {j.source_id for j in first} == {_UUID_A, _UUID_B}
         assert [j.id for j in second] == [j.id for j in first]
         assert len(session.exec(select(ContextualizationJob)).all()) == 2
+
+
+def test_enqueue_backfill_outputs_requires_confirmation(tmp_path: Path) -> None:
+    """The corpus-wide backfill resolver refuses to enqueue until explicitly confirmed."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        _add_output(session, output_id=1, source_id=_UUID_A)
+        session.commit()
+
+        with pytest.raises(ReprocessingConfirmationError, match="will not run until it is explicitly confirmed"):
+            enqueue_backfill_outputs(session, [1])
+        assert session.exec(select(ContextualizationJob)).all() == [], "nothing is enqueued without confirmation"
