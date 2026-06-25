@@ -24,6 +24,10 @@ Serves: coherent-pipeline-foundation
 
 > Previously: `source_ref_hash` was described as "Source identity" and its contract as a "versioned identity contract"; it is the source **dedup/sameness key** (a content fingerprint), distinct from the durable surrogate identity `source_id`. No token is renamed — the prose is corrected to stop calling a hash an identity.
 
+<!-- modified-removes: Identity-defining field differs -->
+
+<!-- Renamed to "Sameness-defining field differs" below (same content) under this prose correction; not dropped. -->
+
 #### Scenario: Dedup payload fixture-lock guards against accidental drift
 
 - **GIVEN** a curated fixture of `SourceRef` instances with their expected `source_ref_hash` values (one per variant, each including at least one non-trivial normalization case)
@@ -90,6 +94,10 @@ When the normalizer raises a recognized error, the fallback SHALL apply determin
 Serves: coherent-pipeline-foundation
 
 > Previously: `to_dedup_payload()` output was described as being "used for identity hashing", and excluded fields were said not to "affect identity"; corrected to name it the dedup key (a content fingerprint), distinct from the durable surrogate identity `source_id`. No token is renamed.
+
+<!-- modified-removes: Accepted-but-ignored field round-trips without affecting identity -->
+
+<!-- Renamed to "Accepted-but-ignored field round-trips without affecting the dedup key" below (same content) under this prose correction; not dropped. -->
 
 #### Scenario: Accepted-but-ignored field round-trips without affecting the dedup key
 

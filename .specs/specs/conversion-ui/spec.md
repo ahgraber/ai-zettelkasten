@@ -13,7 +13,7 @@ It is an HTMX-powered single-page interface served alongside the conversion API.
 ### Requirement: Display job monitoring table
 
 The system SHALL render a job table at the `/ui/jobs` path showing all conversion jobs with their key attributes.
-The title column SHALL display the enriched `Source.title` whenever it is non-`NULL`, falling back to `ConversionJob.title` (the submit-time placeholder — KaraKeep id, or `aizk_uuid` string) only when `Source.title` is `NULL`. (Previously: the requirement listed `title` as a column without specifying its source; the implementation rendered `ConversionJob.title or Source.title`, which always resolved to the placeholder because `ConversionJob.title` is non-null.)
+The title column SHALL display the enriched `Source.title` whenever it is non-`NULL`, falling back to `ConversionJob.title` (the submit-time placeholder — KaraKeep id, or `source_id` string) only when `Source.title` is `NULL`. (Previously: the requirement listed `title` as a column without specifying its source; the implementation rendered `ConversionJob.title or Source.title`, which always resolved to the placeholder because `ConversionJob.title` is non-null.)
 
 #### Scenario: Job table renders on page load
 
@@ -31,7 +31,7 @@ The title column SHALL display the enriched `Source.title` whenever it is non-`N
 
 - **GIVEN** a job whose `Source.title` is `NULL`
 - **WHEN** an operator loads the jobs page
-- **THEN** the title column displays the `ConversionJob.title` placeholder (KaraKeep id when present, otherwise `aizk_uuid`)
+- **THEN** the title column displays the `ConversionJob.title` placeholder (KaraKeep id when present, otherwise `source_id`)
 
 #### Scenario: Page loads within acceptable time for large job lists
 
@@ -42,7 +42,7 @@ The title column SHALL display the enriched `Source.title` whenever it is non-`N
 ### Requirement: Filter and search jobs across the full job set
 
 The system SHALL provide status and text filters that operate across all jobs in the system, not only those visible on the current page.
-The text search SHALL match against the enriched `Source.title` in addition to job-level fields (`ConversionJob.title`, `Source.karakeep_id`, `aizk_uuid`, job id), so that searching by document title finds jobs whose only meaningful title lives on the Source row rather than the placeholder on the job row. (Previously: the text search clause read only `ConversionJob.title`, so searches by document title returned no matches even after enrichment populated `Source.title`.)
+The text search SHALL match against the enriched `Source.title` in addition to job-level fields (`ConversionJob.title`, `Source.karakeep_id`, `source_id`, job id), so that searching by document title finds jobs whose only meaningful title lives on the Source row rather than the placeholder on the job row. (Previously: the text search clause read only `ConversionJob.title`, so searches by document title returned no matches even after enrichment populated `Source.title`.)
 
 #### Scenario: Search by enriched document title
 

@@ -79,7 +79,7 @@ All other constraints from the prior requirement (immutability of identity colum
 
 #### Scenario: Immutable columns never rewritten
 
-- **GIVEN** a Source row with existing `aizk_uuid`, `source_ref`, `source_ref_hash`, and `karakeep_id`
+- **GIVEN** a Source row with existing `source_id`, `source_ref`, `source_ref_hash`, and `karakeep_id`
 - **WHEN** the worker enriches the row after a fetch
 - **THEN** those four columns are unchanged regardless of fetcher output
 
@@ -87,7 +87,7 @@ All other constraints from the prior requirement (immutability of identity colum
 
 - **GIVEN** a fetcher chain completes successfully but the Source-row UPDATE fails (e.g., transient database error)
 - **WHEN** the worker attempts to persist the enriched metadata
-- **THEN** the failure is logged with `aizk_uuid`, the column set attempted, and the underlying error, and the conversion job proceeds to completion with a valid manifest
+- **THEN** the failure is logged with `source_id`, the column set attempted, and the underlying error, and the conversion job proceeds to completion with a valid manifest
 
 #### Scenario: source_type derived from terminal ref kind
 
@@ -444,7 +444,7 @@ All other constraints from the prior requirement (`owner_id` copied from `Job.ow
 
 #### Scenario: Output title falls back to job placeholder when subprocess selected None
 
-- **GIVEN** a conversion completes producing `SubprocessMetadata.source_title = None` and the parent `ConversionJob.title` is the submit-time placeholder (e.g. a Karakeep id or `aizk_uuid` string)
+- **GIVEN** a conversion completes producing `SubprocessMetadata.source_title = None` and the parent `ConversionJob.title` is the submit-time placeholder (e.g. a Karakeep id or `source_id` string)
 - **WHEN** the worker creates the `ConversionOutput` row
 - **THEN** `ConversionOutput.title` equals that placeholder, the row insert succeeds, and the column's NOT NULL constraint is not violated
 

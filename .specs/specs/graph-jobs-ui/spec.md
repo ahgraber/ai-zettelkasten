@@ -24,7 +24,7 @@ A UI route SHALL NOT be reachable under conditions where the corresponding API r
 ### Requirement: Display the contextualization jobs table
 
 The system SHALL render a jobs page listing all contextualization work-units, each showing its job identifier, status, attempt count, queued/started/finished times, and error code.
-For each job it SHALL display a human-readable document title — the enriched `Source.title` for the job's source when that is non-`NULL`, falling back to the durable source identity (`aizk_uuid`) when it is not.
+For each job it SHALL display a human-readable document title — the enriched `Source.title` for the job's source when that is non-`NULL`, falling back to the durable source identity (`source_id`) when it is not.
 
 #### Scenario: Jobs table renders on page load
 
@@ -42,12 +42,12 @@ For each job it SHALL display a human-readable document title — the enriched `
 
 - **GIVEN** a job whose `Source.title` is `NULL`
 - **WHEN** an operator loads the jobs page
-- **THEN** the title for that row displays the source `aizk_uuid`
+- **THEN** the title for that row displays the source `source_id`
 
 ### Requirement: Filter and search jobs across the full job set
 
 The system SHALL provide a status filter and a text search that operate across all contextualization jobs, not only those on the current page.
-The text search SHALL match the job identifier, the source `aizk_uuid`, the source title, and the `conversion_output` identifier.
+The text search SHALL match the job identifier, the source `source_id`, the source title, and the `conversion_output` identifier.
 
 #### Scenario: Filter by status spans the whole job set
 
