@@ -125,7 +125,7 @@
             }
           },
           {
-            "name": "aizk_uuid",
+            "name": "source_id",
             "in": "query",
             "required": false,
             "schema": {
@@ -138,7 +138,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Aizk Uuid"
+              "title": "Source Id"
             }
           },
           {
@@ -416,23 +416,23 @@
         }
       }
     },
-    "/v1/bookmarks/{aizk_uuid}/outputs": {
+    "/v1/bookmarks/{source_id}/outputs": {
       "get": {
         "tags": [
           "bookmarks"
         ],
         "summary": "Get Bookmark Outputs",
         "description": "Return conversion outputs for a bookmark ordered by creation time descending.\n\nPass ``?latest=true`` to receive only the most recently created output.\nOutput rows are scoped to ``ConversionOutput.owner_id`` so a shared Source\ncannot leak another principal's outputs.",
-        "operationId": "get_bookmark_outputs_v1_bookmarks__aizk_uuid__outputs_get",
+        "operationId": "get_bookmark_outputs_v1_bookmarks__source_id__outputs_get",
         "parameters": [
           {
-            "name": "aizk_uuid",
+            "name": "source_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
               "format": "uuid",
-              "title": "Aizk Uuid"
+              "title": "Source Id"
             }
           },
           {
@@ -456,7 +456,7 @@
                   "items": {
                     "$ref": "#/components/schemas/OutputResponse"
                   },
-                  "title": "Response Get Bookmark Outputs V1 Bookmarks  Aizk Uuid  Outputs Get"
+                  "title": "Response Get Bookmark Outputs V1 Bookmarks  Source Id  Outputs Get"
                 }
               }
             }
@@ -1224,10 +1224,10 @@
             "type": "integer",
             "title": "Id"
           },
-          "aizk_uuid": {
+          "source_id": {
             "type": "string",
             "format": "uuid",
-            "title": "Aizk Uuid"
+            "title": "Source Id"
           },
           "karakeep_id": {
             "anyOf": [
@@ -1418,7 +1418,7 @@
         "type": "object",
         "required": [
           "id",
-          "aizk_uuid",
+          "source_id",
           "source_ref",
           "status",
           "attempts",
@@ -1525,10 +1525,10 @@
             "type": "integer",
             "title": "Job Id"
           },
-          "aizk_uuid": {
+          "source_id": {
             "type": "string",
             "format": "uuid",
-            "title": "Aizk Uuid"
+            "title": "Source Id"
           },
           "title": {
             "type": "string",
@@ -1576,7 +1576,7 @@
         "required": [
           "id",
           "job_id",
-          "aizk_uuid",
+          "source_id",
           "title",
           "payload_version",
           "s3_prefix",

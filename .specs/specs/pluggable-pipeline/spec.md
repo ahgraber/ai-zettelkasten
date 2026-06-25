@@ -437,14 +437,14 @@ At cutover, `IngressPolicy.accepted_submission_kinds` SHALL contain exactly `{"k
 
 The system SHALL represent the source of content to be fetched as a `SourceRef` — a pydantic discriminated union keyed on a `kind` field.
 Each variant SHALL carry only the data needed to fetch its content and SHALL be serializable to and from JSON for persistence.
-Each variant SHALL expose a `to_dedup_payload() -> dict` method returning a canonical, normalized representation used for identity hashing (see "Compute source_ref_hash from a canonical dedup payload").
+Each variant SHALL expose a `to_dedup_payload() -> dict` method returning a canonical, normalized representation used for dedup-key hashing (see "Compute source_ref_hash from a canonical dedup payload").
 Exception: `InlineHtmlRef` MAY embed content bytes directly, subject to a hard size cap of 64 KiB measured on the raw body bytes (not the serialized JSON form), as a documented exception for small inline-text payloads.
 Serialized-JSON bloat from escaping is accepted; typical expansion is ~1.3× for HTML-shaped content.
 
 Variants MAY carry cosmetic or forward-compatibility fields that are excluded from `to_dedup_payload()` and MAY also be ignored by the current fetcher implementation.
 At cutover the following fields are accepted at deserialization but intentionally non-load-bearing:
 
-- `ArxivRef.arxiv_pdf_url` — cosmetic fetcher hint preserved for observability; does not affect fetch behavior or identity.
+- `ArxivRef.arxiv_pdf_url` — cosmetic fetcher hint preserved for observability; does not affect fetch behavior or the dedup key.
 - `GithubReadmeRef.branch` — accepted for forward compatibility but currently ignored by `GithubReadmeFetcher`, which hardcodes a `main`/`master` fallback.
   Wiring branch through to the fetcher is deferred until `IngressPolicy` widens to admit `github_readme` for public submission.
 
@@ -457,7 +457,7 @@ Values that do not match SHALL be rejected with a validation error before any do
 The `_normalize` validator SHALL catch only the documented error types of the URL normalizer (`ValueError`, `validators.ValidationError`); it SHALL NOT use bare `except Exception`.
 When the normalizer raises a recognized error, the fallback SHALL apply deterministic normalization (`strip` + `casefold` + `rstrip("/")`) rather than bare `strip()`, so the fallback output is stable across environments.
 
-#### Scenario: Accepted-but-ignored field round-trips without affecting identity
+#### Scenario: Accepted-but-ignored field round-trips without affecting the dedup key
 
 - **GIVEN** two `GithubReadmeRef` instances with identical `owner` and `repo` but different `branch` values (one `"main"`, one `"develop"`)
 - **WHEN** `source_ref_hash` is computed for each
@@ -504,17 +504,17 @@ When the normalizer raises a recognized error, the fallback SHALL apply determin
 
 ### Requirement: Compute source_ref_hash from a canonical dedup payload
 
-The system SHALL compute `source_ref_hash` by invoking each `SourceRef` variant's `to_dedup_payload()` method to obtain a canonical, normalized dict containing only the fields that define semantic identity for that variant, then hashing the JSON-encoded payload with stable key ordering and separators.
-The hash SHALL NOT be derived from `model_dump_json()` of the full ref, so cosmetic changes (field ordering, default values, non-identity fields) do not produce different hashes for the same logical source.
+The system SHALL compute `source_ref_hash` by invoking each `SourceRef` variant's `to_dedup_payload()` method to obtain a canonical, normalized dict containing only the fields that define dedup sameness for that variant, then hashing the JSON-encoded payload with stable key ordering and separators.
+The hash SHALL NOT be derived from `model_dump_json()` of the full ref, so cosmetic changes (field ordering, default values, non-sameness fields) do not produce different hashes for the same logical source.
 
-The canonical dedup payload constitutes a versioned identity contract.
-Any change that alters the `to_dedup_payload()` output for previously-accepted refs (key rename, normalization rule change, field added to or removed from the payload) SHALL be treated as a breaking change to Source identity and SHALL be accompanied by a data migration that recomputes `source_ref_hash` for affected rows.
+The canonical dedup payload constitutes a versioned dedup-key contract.
+Any change that alters the `to_dedup_payload()` output for previously-accepted refs (key rename, normalization rule change, field added to or removed from the payload) SHALL be treated as a breaking change to the Source **dedup key** (`source_ref_hash`) — the content fingerprint that determines which submissions resolve to the same `source_id`, not the durable identity itself — and SHALL be accompanied by a data migration that recomputes `source_ref_hash` for affected rows.
 Additive `SourceRef` fields that do not participate in `to_dedup_payload()` are not breaking.
 A fixture-lock test SHALL pin a curated set of `(variant_instance, expected_sha256)` pairs so accidental drift in `to_dedup_payload()` output (e.g., whitespace, key ordering, normalization) fails CI before shipping.
 
-All `SourceRef` variants' `to_dedup_payload()` implementations SHALL apply consistent normalization to string identity fields before including them in the payload:
+All `SourceRef` variants' `to_dedup_payload()` implementations SHALL apply consistent normalization to string sameness-key fields before including them in the payload:
 
-- String fields used as identity SHALL have leading/trailing whitespace stripped.
+- String fields used in the sameness key SHALL have leading/trailing whitespace stripped.
 - Fields on case-insensitive external namespaces SHALL be casefolded.
   Specifically: `GithubReadmeRef.owner` and `GithubReadmeRef.repo` SHALL be lowercased (GitHub org/repo names are case-insensitive); `KarakeepBookmarkRef.bookmark_id` SHALL have whitespace stripped (pattern constraint prevents embedded whitespace; strip guards against edge cases at the boundary).
 
@@ -524,7 +524,7 @@ A fixture-lock test SHALL pin one normalization-sensitive instance per variant (
 
 - **GIVEN** a curated fixture of `SourceRef` instances with their expected `source_ref_hash` values (one per variant, each including at least one non-trivial normalization case)
 - **WHEN** `compute_source_ref_hash` is run against each fixture instance
-- **THEN** the computed hash equals the pinned expected hash; a change to `to_dedup_payload()` that alters any output fails this test and signals a breaking-identity change requiring a migration
+- **THEN** the computed hash equals the pinned expected hash; a change to `to_dedup_payload()` that alters any output fails this test and signals a breaking dedup-key change requiring a migration
 
 #### Scenario: Equivalent refs produce identical hash
 
@@ -532,7 +532,7 @@ A fixture-lock test SHALL pin one normalization-sensitive instance per variant (
 - **WHEN** `source_ref_hash` is computed for each
 - **THEN** the hashes are identical
 
-#### Scenario: Identity-defining field differs
+#### Scenario: Sameness-defining field differs
 
 - **GIVEN** two `ArxivRef` instances with different `arxiv_id` values
 - **WHEN** `source_ref_hash` is computed for each

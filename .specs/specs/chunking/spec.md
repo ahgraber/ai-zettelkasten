@@ -11,46 +11,46 @@ The splitter is a deterministic pure function; chunk identity is a stable surrog
 
 ### Requirement: Splitter is a deterministic pure function
 
-The splitter SHALL be a pure function of its inputs (`markdown_text`, `doc_id`, `converted_artifact_id`, `markdown_hash_xx64`) and the splitter's current behavior version (`splitter_version`).
-Repeated invocations with identical inputs SHALL produce identical output: the same number of chunks in the same order, each chunk carrying identical values across every field (including `chunk_id`, `content_hash`, `heading_path`, `ordinal`, `text`, `char_count`, and all provenance fields).
+The splitter SHALL be a pure function of its inputs (`markdown_text`, `source_id`, `converted_artifact_id`, `markdown_hash_xx64`) and the splitter's current behavior version (`splitter_version`).
+Repeated invocations with identical inputs SHALL produce identical output: the same number of chunks in the same order, each chunk carrying identical values across every field it produces (including `content_hash`, `heading_path`, `ordinal`, `text`, `char_count`, and all provenance fields).
+The splitter does not assign `chunk_id`; chunk identity is a stable surrogate assigned at persistence (see «Chunk identity is a stable surrogate reused by a sameness-key»).
 
 The splitter SHALL NOT perform I/O of any kind — no database reads or writes, no network calls, no filesystem access, no subprocess invocation, no LLM calls.
 The splitter SHALL NOT depend on per-process state (random seeds, wall-clock time, environment variables, process identity).
 
 #### Scenario: Two invocations on the same input produce identical chunks
 
-- **GIVEN** a Markdown artifact and its provenance context (`doc_id`, `converted_artifact_id`, `markdown_hash_xx64`)
+- **GIVEN** a Markdown artifact and its provenance context (`source_id`, `converted_artifact_id`, `markdown_hash_xx64`)
 - **WHEN** the splitter is invoked twice on those inputs within a single process
-- **THEN** the two outputs are equal: same chunk count, same chunk ordering, and field-for-field equality on every chunk
+- **THEN** the two outputs are equal: same chunk count, same chunk ordering, and field-for-field equality on every produced field of every chunk
 
 #### Scenario: Invocations across separate processes produce identical chunks
 
 - **GIVEN** a Markdown artifact and its provenance context, persisted to a deterministic form
 - **WHEN** the splitter is invoked on those inputs in two independent processes built from the same `splitter_version`
-- **THEN** the two outputs are equal field-for-field on every chunk, including `chunk_id` values
+- **THEN** the two outputs are equal field-for-field on every produced field, including `content_hash` values
 
-### Requirement: Chunk identity is derived from address and content
+### Requirement: Chunk identity is a stable surrogate reused by a sameness-key
 
-The `chunk_id` of every emitted chunk SHALL be a deterministic function of the chunk's address `(doc_id, heading_path, ordinal)` and its `content_hash`.
-Two chunks whose address and `content_hash` are pairwise equal SHALL have equal `chunk_id`s; two chunks differing on either axis SHALL have different `chunk_id`s.
-
-The `content_hash` SHALL be persisted as a separately observable field on every chunk so that consumers comparing two outputs can determine whether a differing `chunk_id` reflects an address change, a content change, or both.
+A chunk's `chunk_id` SHALL be a stable surrogate identity: assigned once at persistence, never recomputed, not derived from the chunk's content, and not embedding any database-local identifier.
+A chunk's sameness-key SHALL be `(source_id, heading_path, ordinal, content_hash)`; persistence SHALL reuse the existing `chunk_id` for a chunk whose sameness-key is already present and SHALL assign a new `chunk_id` for one whose sameness-key is not present.
+The `content_hash` SHALL be persisted as a separately observable field on every chunk so that consumers comparing two chunks can determine whether a difference reflects an address change, a content change, or both.
 
 #### Scenario: Same address and same content yield the same chunk_id
 
-- **GIVEN** two splitter invocations producing chunks at the identical address `(doc_id, heading_path, ordinal)` with identical normalized text
+- **GIVEN** two persisted chunks at the identical address `(source_id, heading_path, ordinal)` with identical normalized text
 - **WHEN** the resulting chunks are compared
 - **THEN** their `chunk_id` values are equal and their `content_hash` values are equal
 
 #### Scenario: Same address with different content yields a different chunk_id
 
-- **GIVEN** two splitter invocations producing chunks at the identical address but with different normalized text
+- **GIVEN** two persisted chunks at the identical address but with different normalized text
 - **WHEN** the resulting chunks are compared
 - **THEN** their `chunk_id` values differ and their `content_hash` values differ
 
 #### Scenario: Different address with the same content yields a different chunk_id
 
-- **GIVEN** two splitter invocations producing chunks at different addresses (for example, an unchanged section moved under a renamed heading) whose normalized text is identical
+- **GIVEN** two persisted chunks at different addresses (for example, an unchanged section moved under a renamed heading) whose normalized text is identical
 - **WHEN** the resulting chunks are compared
 - **THEN** their `chunk_id` values differ even though their `content_hash` values are equal
 
@@ -192,16 +192,18 @@ All chunks emitted from a single splitter invocation SHALL carry identical `conv
 
 ### Requirement: Emitted chunks are persisted with complete fidelity
 
-Every chunk emitted by the splitter for a document SHALL be persisted to a durable store, and each emitted chunk SHALL be recoverable with every field equal to the emitted chunk — `chunk_id`, `content_hash`, `heading_path`, `ordinal`, `text`, `char_count`, the source identity, `markdown_hash_xx64`, `span`, and `splitter_version`.
-Persistence SHALL NOT alter, normalize, truncate, or drop any chunk field.
-Stable identity facts (`chunk_id`, `content_hash`, `heading_path`, `ordinal`, `text`, `char_count`, source identity) SHALL be recorded on the content-addressed chunk identity, while facts that vary by chunking generation — the source `markdown_hash_xx64`, the `splitter_version`, and the chunk's `span` in that generation's markdown — SHALL be recorded against the generation that emitted the chunk, not as mutable facts on the shared identity.
+Every chunk emitted by the splitter for a document SHALL be persisted to a durable store.
+The splitter emits `content_hash`, `heading_path`, `ordinal`, `text`, `char_count`, `source_id`, `markdown_hash_xx64`, `span`, and `splitter_version`; it does not emit `chunk_id`, which persistence assigns as a stable surrogate (reused or newly minted per the chunk's sameness-key).
+Each persisted chunk SHALL be recoverable with every emitted field equal to what the splitter emitted, plus its persistence-assigned `chunk_id`.
+Persistence SHALL NOT alter, normalize, truncate, or drop any field.
+Stable identity facts (the assigned `chunk_id`, `content_hash`, `heading_path`, `ordinal`, `text`, `char_count`, `source_id`) SHALL be recorded on the stable chunk identity, while facts that vary by chunking generation — the source `markdown_hash_xx64`, the `splitter_version`, and the chunk's `span` in that generation's markdown — SHALL be recorded against the generation that emitted the chunk, not as mutable facts on the shared identity.
 Recovering an emitted chunk MAY therefore require joining its identity to the generation that emitted it.
 
 #### Scenario: A persisted chunk round-trips field-for-field
 
 - **GIVEN** a splitter invocation that emits a set of chunks for a document
 - **WHEN** those chunks are persisted and then reconstructed from their identity and the emitting generation
-- **THEN** each reconstructed chunk equals its emitted chunk on every field, with no field altered, normalized, or missing
+- **THEN** each reconstructed chunk equals its emitted chunk on every emitted field and additionally carries its persistence-assigned `chunk_id`, with no field altered, normalized, or missing
 
 #### Scenario: The full emitted set is present in the generation
 
@@ -213,30 +215,30 @@ Recovering an emitted chunk MAY therefore require joining its identity to the ge
 
 - **GIVEN** a chunk that is byte-identical across two chunking generations of the same source but sits at a different offset because preceding content changed length
 - **WHEN** both generations are persisted
-- **THEN** the chunk keeps a single content-addressed identity, and each generation's manifest records that chunk's own `span` for that generation
+- **THEN** the chunk keeps a single stable identity, and each generation's manifest records that chunk's own `span` for that generation
 
-### Requirement: Chunk identities are immutable and content-addressed
+### Requirement: Chunk identities are immutable stable surrogates
 
-A persisted chunk's stable identity facts SHALL NOT be modified or deleted by ordinary processing; `chunk_id` SHALL remain content-addressed (a function of the chunk's address and `content_hash`) and SHALL NOT be scoped to the generation that produced it.
+A persisted chunk's stable identity facts SHALL NOT be modified or deleted by ordinary processing; `chunk_id` SHALL be a stable surrogate (not content-derived, not embedding any database-local identifier) and SHALL NOT be scoped to the generation that produced it.
 The chunk identity SHALL carry only stable facts; generation-varying facts SHALL live on the emitting generation, so a chunk emitted unmodified by more than one generation keeps a single, unchanged identity shared across them.
-Persisting a chunk whose `chunk_id` already exists SHALL reuse the existing identity rather than create a duplicate or modify it; a chunk with a `chunk_id` not present SHALL be stored as exactly one new identity.
+Persisting a chunk whose sameness-key already exists SHALL reuse the existing identity rather than create a duplicate or modify it; a chunk whose sameness-key is not present SHALL be stored as exactly one new identity.
 
 #### Scenario: Re-persisting an existing chunk reuses the identity
 
-- **GIVEN** a chunk already persisted with a given `chunk_id`
-- **WHEN** a chunk with the same `chunk_id` is persisted again
+- **GIVEN** a chunk already persisted with a given sameness-key
+- **WHEN** a chunk with the same sameness-key is persisted again
 - **THEN** no duplicate identity is created and the existing identity is unmodified
 
 #### Scenario: A novel chunk is stored once
 
-- **GIVEN** a `chunk_id` not present in the store
+- **GIVEN** a chunk whose sameness-key is not present in the store
 - **WHEN** that chunk is persisted
 - **THEN** exactly one new chunk identity is created carrying that chunk's stable facts
 
 ### Requirement: Chunking generations are source-scoped, record what they consumed and produced, and supersede at the generation level
 
 Each persisted chunk SHALL be associated, through an append-only manifest entry, with the chunking generation that produced it; that manifest entry SHALL capture the chunk's `span` in the generation's source markdown.
-A source SHALL have at most one active chunking generation at a time, scoped by its **durable source identity (`aizk_uuid`)** — not by a per-conversion artifact id — so that re-conversion of the same source supersedes within one scope rather than forking a parallel current generation.
+A source SHALL have at most one active chunking generation at a time, scoped by its **durable source identity (`source_id`)** — not by a per-conversion artifact id — so that re-conversion of the same source supersedes within one scope rather than forking a parallel current generation.
 Each chunking generation SHALL record what it consumed: a locator to the exact source markdown it read (so the input is retrievable) and that markdown's hash (so the input is verifiable).
 Re-chunking a source — after a `splitter_version` change or a re-conversion that changes its content — SHALL create a new chunking generation and SHALL NOT mutate or delete any prior chunk identity or prior manifest entry.
 Superseding the prior generation SHALL be expressed only as a transition of its status from active to superseded; a `chunk_id` SHALL be current if and only if it is in the source's active generation's manifest.
