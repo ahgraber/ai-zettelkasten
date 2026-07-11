@@ -7,18 +7,18 @@ That dataset is the prerequisite for designing entity canonicalization on eviden
 
 This change builds the extraction step and the store it writes to:
 
-- Run NER over each chunk's selected input (contextualized when available, raw otherwise) to emit entity mentions with their surface form and raw-chunk source span.
+- Run NER over each chunk's selected input (contextualized when available, raw otherwise) to emit entity mentions with their surface form and a deterministic anchor: an exact raw-chunk span per occurrence when the name appears in the source text, or explicit revision-derived, chunk-granularity provenance when only the revision surfaced it.
 - Link mentions that share a chunk via co-occurrence — the raw substrate later edge and canonicalization work reads.
-- Persist mentions to an append-only store, never mutated, carrying the lexical evidence (aliases, blocking keys) and provenance (source chunk, span, extractor version) needed for replayable canonicalization.
+- Persist mentions to an append-only store, never mutated, carrying the lexical evidence (aliases, blocking keys) and provenance (source chunk, anchor class and spans, extractor version) needed for replayable canonicalization.
 
 The deliverable is a **runnable extraction pipeline and the populated mention store it yields over the corpus** — the ready-to-go dataset the canonicalization change consumes.
-No context embeddings are produced or stored: the canonicalization resolver recomputes a mention embedding on demand from `(chunk_id, span)` at decision time, so extraction stays lexical and an encoder choice strands nothing here.
+No context embeddings are produced or stored: the canonicalization resolver recomputes a mention embedding on demand from the mention's recorded input text and `input_span` at decision time, so extraction stays lexical and an encoder choice strands nothing here.
 
 ## User Stories
 
 ### Story: grounded-entity-graph
 
-As the graph's owner, I want every entity mention anchored to the exact text span it was extracted from in a real chunk, so that the knowledge graph is built on verifiable evidence from across my corpus rather than ungrounded guesses.
+As the graph's owner, I want every entity mention anchored to a real chunk — with the exact source-text span for each occurrence when the name appears in the source text, and an explicit revision-derived marking when only the contextualized revision surfaced it — so that the knowledge graph is built on verifiable, trust-classified evidence from across my corpus rather than ungrounded guesses.
 
 ### Story: replayable-duplicate-free-dataset
 
@@ -34,17 +34,17 @@ Capabilities are listed in build-dependency order: `mention-store` (the data con
 - **`mention-store` capability (new).**
 
   - An append-only persisted store of mention records.
-    Each mention carries: surface form, normalized aliases, redundant blocking keys (normalized / phonetic / acronym / token-shingle), source `chunk_id`, a `source_chunk_span` (offsets into the raw chunk) and an `input_span` (offsets into the text read), `input_kind`/`input_ref`, and a `source_occurrence_key`.
-    Context-only names introduced by the contextualization blurb may guide extraction and disambiguation, but are not persisted as mentions unless the reifier can map them to a deterministic raw-chunk anchor.
+    Each mention carries: surface form, normalized aliases, redundant blocking keys (normalized / phonetic / acronym / token-shingle), source `chunk_id`, an `anchor_kind` (`source` | `revision`), an `input_span` (offsets into the text read), `input_kind`/`input_ref`, and — for source-anchored mentions — a `source_chunk_span` (offsets into the raw chunk) with a `source_occurrence_key`.
+    A detected surface that occurs in the raw chunk yields one source-anchored mention per occurrence; a name that exists only because the revision resolved a reference inline is persisted as a revision-anchored mention whose raw provenance is the chunk plus the recorded input.
     Co-occurrence is resolvable through a link table, not stored on the mention row.
   - **No embedding field** — the context vector is recomputed on demand at canonicalization time, never persisted.
   - The append-only invariant (records are never mutated or deleted after write) and provenance-completeness invariant (every required provenance field populated).
-  - Mentions are produced by **reification runs** (the unified run/dataset-version model): a `mention_run` carries the extractor/reifier versions, input policy, a fingerprint of the upstream inputs consumed, and `status` (active|superseded); `mention_id = hash(run_id, chunk_id, source_chunk_span, surface_form)` is run-scoped, with `source_occurrence_key = hash(chunk_id, source_chunk_span, source_anchor_text)` as a stable cross-run diagnostic key.
-    Invalidation is run-level ("one active mention dataset at a time"); rows are immutable.
+  - Mentions are produced by **reification runs** (the unified run/dataset-version model): one run per source on the shared run primitive, recording the extractor/reifier versions and input policy with a derivation key over the consumed upstream inputs, and `status` (active|superseded); a mention is a run-scoped surrogate-id row unique per `(run_id, chunk_id, source_chunk_span, surface_form)`, with `source_occurrence_key = hash(chunk_id, source_chunk_span, source_anchor_text)` as a stable cross-run diagnostic key.
+    Invalidation is run-level and per-source ("one active reification run per source"; the corpus dataset is the union of active runs); rows are immutable.
 
 - **`entity-extraction` capability (new).**
 
-  - NER over each selected chunk input emitting entity mentions (surface form + character span), written to the mention store only when the mention can be anchored to a deterministic raw-chunk span.
+  - NER over each selected chunk input emitting entity mentions (surface form + character span), classified deterministically by raw-occurrence search into source-anchored (one mention per raw occurrence) or revision-anchored (no raw span) records.
   - **Intra-chunk co-occurrence**: mentions sharing a chunk are linked in a flat co-occurrence link table — the substrate canonicalization will read; this change records the links, it does not materialize an entity-level graph.
   - Redundant blocking-key derivation per mention (the lexical candidate-generation index canonicalization will use).
   - An `extractor_version` captured on every mention.
@@ -72,12 +72,12 @@ Extraction runs in the graph-stage package, reading persisted contextualized chu
 - **Blocking keys** (normalized / phonetic / acronym / token-shingle + MinHash via `rensa`) are derived at extraction time so the mention store doubles as the canonicalization candidate-generation index.
 - **No embeddings.**
   Extraction produces purely lexical records.
-- **Idempotency:** `mention_id = hash(run_id, chunk_id, source_chunk_span, surface_form)`; re-extraction of the same chunk within the same run is a no-op, and a changed extractor/input opens a new run rather than colliding with prior immutable rows.
+- **Idempotency:** mentions are unique per `(run_id, chunk_id, source_chunk_span, surface_form)`; re-extraction of the same chunk within the same run is a no-op, and a changed extractor/input opens a new run for that source rather than colliding with prior immutable rows.
 - **DB-ops profile.**
   Extraction inverts the pipeline's write profile: ~10 mentions plus their co-occurrence links per chunk is roughly two orders of magnitude more rows than chunking, written in bursts during ingest and backfill.
   Batch mention and co-occurrence inserts into a few transactions per chunk or per document against the serialized SQLite writer; run corpus-wide backfill as throttled background work, not foreground ingest.
 
-Because NER is a noisy sensor, the testable contracts assert **structure, provenance, span coordinates, and run-scoped identity** — every emitted mention has a `chunk_id`, a raw-chunk `source_chunk_span` and an `input_span`, context-only detections without raw anchors are not persisted, and each mention belongs to a versioned run; co-occurrence is resolvable within a chunk; re-extraction within a run produces no duplicates — not exact mention sets.
+Because NER is a noisy sensor, the testable contracts assert **structure, provenance, span coordinates, and run-scoped identity** — every emitted mention has a `chunk_id`, an `input_span`, and a deterministic anchor class (source-anchored with a raw-chunk `source_chunk_span` per occurrence, or revision-anchored with chunk-granularity raw provenance), and each mention belongs to a versioned run; co-occurrence is resolvable within a chunk; re-extraction within a run produces no duplicates — not exact mention sets.
 Tests stub the extractor; the real spaCy / GLiNER2 models are exercised only by the offline gold-set evaluation.
 
 ## Decisions Carried Into Design
@@ -107,7 +107,7 @@ Concrete table shapes and migration-tree placement are decided in `design.md`.
 
 ## Open Questions
 
-Most earlier questions are now settled in `design.md`: identity is run-scoped (`mention_run` + run-scoped `mention_id`, with `source_occurrence_key` for cross-run continuity); `mention.chunk_id` is a foreign key into the persisted chunk table; co-occurrence is a flat link table (resolvable, not stored on the row); extraction reads the contextualized variant when available and records `input_kind`/`input_ref`, falling back to raw text otherwise; and both spaCy and GLiNER2 are pinned pluggable extractors.
+Most earlier questions are now settled in `design.md`: identity is run-scoped (per-source reification runs on the shared run primitive, surrogate mention ids unique within a run, with `source_occurrence_key` for cross-run continuity); `mention.chunk_id` is a foreign key into the persisted chunk table; co-occurrence is a flat link table (resolvable, not stored on the row); extraction reads the contextualized variant when available and records `input_kind`/`input_ref`, falling back to raw text otherwise; and both spaCy and GLiNER2 are pinned pluggable extractors.
 Remaining:
 
 - **GLiNER2 package/version availability.**

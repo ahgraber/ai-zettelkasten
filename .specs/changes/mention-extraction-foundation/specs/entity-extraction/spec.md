@@ -21,25 +21,31 @@ Serves: grounded-entity-graph
 - **WHEN** the emitted mentions' versions are compared
 - **THEN** they all equal the run's recorded extractor and reifier versions
 
-### Requirement: Extraction emits an input span and a raw-chunk anchor span for every mention
+### Requirement: Extraction emits an input span and a deterministic anchor class for every mention
 
-For every mention it emits, extraction SHALL record an `input_span` indexing the text it actually read and a `source_chunk_span` anchoring the mention into the raw chunk text.
-When extraction reads a contextualized variant, it SHALL emit only mentions whose input span can be deterministically mapped to a raw-chunk `source_chunk_span`.
-Detections that occur only in references the revision resolved inline and cannot be mapped to a raw-chunk anchor SHALL NOT be emitted as persisted mentions.
+For every mention it emits, extraction SHALL record an `input_span` indexing the text it actually read and an `anchor_kind` classifying the mention's raw anchor as source or revision.
+For each detected surface form, extraction SHALL search the raw chunk text for occurrences of that surface form: when one or more occurrences exist, extraction SHALL emit one source-anchored mention per occurrence, each carrying that occurrence's `source_chunk_span`; when none exist, extraction SHALL emit one revision-anchored mention with no `source_chunk_span`.
+Classification SHALL be deterministic in the raw chunk text and the detected surface form alone; extraction SHALL NOT assign detections to occurrences positionally or by fuzzy matching.
 
 Serves: grounded-entity-graph
 
-#### Scenario: A verbatim mention's two spans coincide on the same text
+#### Scenario: A source-anchored mention's two spans coincide on the same text
 
-- **GIVEN** extraction reading raw chunk text and emitting a mention whose surface form appears verbatim
+- **GIVEN** extraction reading raw chunk text and emitting a mention whose surface form appears once
 - **WHEN** the mention's `input_span` and `source_chunk_span` are resolved against the raw chunk
 - **THEN** both resolve to the mention's surface form in the raw chunk
 
-#### Scenario: A context-only detection without a raw anchor is not emitted
+#### Scenario: A revision-resolved name absent from the raw chunk is emitted as revision-anchored
 
-- **GIVEN** extraction reading a contextualized variant whose revision resolves in an entity name not anchored in the raw chunk
-- **WHEN** the extractor identifies that context-only entity
-- **THEN** extraction skips or reports it as unmappable and does not emit a persisted mention for it
+- **GIVEN** extraction reading a contextualized variant whose revision resolves a reference into an entity name that does not occur in the raw chunk
+- **WHEN** the extractor identifies that entity
+- **THEN** extraction emits one revision-anchored mention for it, carrying its `input_span` and no `source_chunk_span`
+
+#### Scenario: A surface form repeated in the raw chunk expands to one mention per occurrence
+
+- **GIVEN** extraction detecting a surface form that occurs at several positions in the raw chunk text
+- **WHEN** mentions are emitted for that chunk
+- **THEN** one source-anchored mention is emitted per occurrence, each with the `source_chunk_span` of its own occurrence
 
 ### Requirement: Co-occurrence links are intra-chunk, symmetric, and exclude self
 
@@ -114,7 +120,7 @@ Serves: replayable-duplicate-free-dataset
 
 - **GIVEN** a chunk extracted in bulk/backfill mode and the same chunk extracted in incremental mode within runs of the same versions and inputs
 - **WHEN** the persisted mentions and their co-occurrences are compared
-- **THEN** both yield the same mentions (equal `source_occurrence_key`s) and the same co-occurrence links
+- **THEN** both yield the same mentions (equal `source_occurrence_key`s for source-anchored mentions; equal `(chunk_id, surface_form)` for revision-anchored ones) and the same co-occurrence links
 
 ### Requirement: The entity extractor is a substitutable dependency
 
