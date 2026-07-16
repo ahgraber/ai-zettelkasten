@@ -58,6 +58,7 @@ AKS = "AKS"
 ## When the correction is the key, the word is *always* valid.
 [default.extend-words]
 "arange" = "arange"  # e.g. `numpy.arange`
+DOUB = "DOUB"  # SQLite type-affinity token (datatype3.html); see tests/db/migrations/_schema_equivalence.py
 keypair = "keypair"
 raison = "raison"
 ba = "ba"
