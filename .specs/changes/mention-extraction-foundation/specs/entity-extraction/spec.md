@@ -2,16 +2,16 @@
 
 ## ADDED Requirements
 
-### Requirement: Each reified chunk yields its identified mentions within the run, with uniform versions
+### Requirement: Each extracted chunk yields its identified mentions within the run, with uniform versions
 
-For any chunk processed by extraction within a reification run, every entity mention identified in that chunk SHALL be persisted as a mention record belonging to that run and sourced to that chunk.
-All mentions emitted within a single run SHALL carry the same extractor and reifier versions as the run records.
+For any chunk processed by extraction within an extraction run, every entity mention identified in that chunk SHALL be persisted as a mention record belonging to that run and sourced to that chunk.
+All mentions emitted within a single run SHALL carry the same extractor and materializer versions as the run records.
 
 Serves: grounded-entity-graph
 
 #### Scenario: Identified mentions are persisted under the run and sourced to the chunk
 
-- **GIVEN** a chunk processed by extraction within a reification run, containing identifiable entity mentions
+- **GIVEN** a chunk processed by extraction within an extraction run, containing identifiable entity mentions
 - **WHEN** extraction completes for that chunk
 - **THEN** each identified mention is persisted as a record belonging to that run whose `chunk_id` is the chunk's id
 
@@ -19,7 +19,7 @@ Serves: grounded-entity-graph
 
 - **GIVEN** an extraction run that emits mentions from multiple chunks
 - **WHEN** the emitted mentions' versions are compared
-- **THEN** they all equal the run's recorded extractor and reifier versions
+- **THEN** they all equal the run's recorded extractor and materializer versions
 
 ### Requirement: Extraction emits an input span and a deterministic anchor class for every mention
 
@@ -72,27 +72,10 @@ Serves: grounded-entity-graph
 - **WHEN** their co-occurrences are resolved
 - **THEN** neither returns the other
 
-### Requirement: Blocking keys are a deterministic function of the surface form
-
-A mention's blocking keys SHALL be derived deterministically from its surface form, such that two mentions with the same surface form receive the same blocking keys and the key set serves as a stable candidate-generation index.
-
-Serves: grounded-entity-graph
-
-#### Scenario: Equal surface forms yield equal blocking keys
-
-- **GIVEN** two mentions with identical surface forms
-- **WHEN** their blocking keys are compared
-- **THEN** the key sets are equal
-
-#### Scenario: Blocking keys are reproducible across runs
-
-- **GIVEN** a surface form extracted in two separate runs of the same extractor version
-- **WHEN** the blocking keys from each run are compared
-- **THEN** they are identical
-
 ### Requirement: Extraction reads the variant from the active contextualization run and records the input used
 
 When a chunk has a contextualized variant in its document's **active** contextualization run, extraction SHALL read that variant and record `input_kind` as contextualized with `input_ref` identifying that variant; superseded variants SHALL NOT be read.
+A variant that is present but empty is the already-self-contained case — its consumed contextualized text equals the raw chunk text — so for such a chunk extraction SHALL read the raw chunk text and record `input_kind` as raw with `input_ref` identifying the chunk.
 Otherwise extraction SHALL read the chunk's raw text and record `input_kind` as raw with `input_ref` identifying the chunk.
 
 Serves: grounded-entity-graph
@@ -109,9 +92,15 @@ Serves: grounded-entity-graph
 - **WHEN** extraction processes the chunk
 - **THEN** extraction reads the raw chunk text and the resulting mentions record raw `input_kind` and the chunk as `input_ref`
 
+#### Scenario: A present-empty variant is consumed as raw text
+
+- **GIVEN** a chunk whose variant in the active contextualization run is present but empty because the chunk was already self-contained
+- **WHEN** extraction processes the chunk
+- **THEN** extraction reads the raw chunk text and the resulting mentions record raw `input_kind` and the chunk as `input_ref`
+
 ### Requirement: Extraction output is independent of run mode
 
-For any chunk, a reification run SHALL produce the same mentions and the same co-occurrences whether the chunk is processed in bulk/backfill mode or incremental mode under the same versions and inputs.
+For any chunk, an extraction run SHALL produce the same mentions and the same co-occurrences whether the chunk is processed in bulk/backfill mode or incremental mode under the same versions and inputs.
 Run mode SHALL affect only batching and scheduling, never which mentions or co-occurrences are produced.
 
 Serves: replayable-duplicate-free-dataset

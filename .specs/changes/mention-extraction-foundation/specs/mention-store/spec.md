@@ -5,33 +5,33 @@
 ### Requirement: Mentions are append-only and invalidated at the run level
 
 A persisted mention SHALL NOT be modified or deleted.
-Each mention SHALL belong to exactly one reification run, and a run SHALL record the versions and inputs that produced it (at minimum the extractor version, the reifier version, the input policy, and a deterministic derivation key over the consumed upstream inputs and producing versions that changes whenever any of them changes) together with a `status` of active or superseded.
-At most one reification run SHALL be active per source at a time, and the corpus mention dataset SHALL be resolvable as the union of the sources' active runs; re-reifying a source SHALL open a new run and supersede that source's prior run, expressed only as a run `status` transition — prior mentions SHALL remain present and unmodified.
-A reification run SHALL become observable only together with its mentions: a failed or interrupted reification SHALL leave no newly-active run and no readable mentions for its source.
+Each mention SHALL belong to exactly one extraction run, and a run SHALL record the versions and inputs that produced it (at minimum the extractor version, the materializer version, the input policy, and a deterministic derivation key over the consumed upstream inputs and producing versions that changes whenever any of them changes) together with a `status` of active or superseded.
+At most one extraction run SHALL be active per source at a time, and the corpus mention dataset SHALL be resolvable as the union of the sources' active runs; re-extracting a source SHALL open a new run and supersede that source's prior run, expressed only as a run `status` transition — prior mentions SHALL remain present and unmodified.
+An extraction run SHALL become observable only together with its mentions: a failed or interrupted extraction SHALL leave no newly-active run and no readable mentions for its source.
 
 Serves: replayable-duplicate-free-dataset
 
 #### Scenario: A persisted mention is never mutated
 
-- **GIVEN** a mention persisted under a reification run
-- **WHEN** the mention's source is re-reified
+- **GIVEN** a mention persisted under an extraction run
+- **WHEN** the mention's source is re-extracted
 - **THEN** the original mention record remains present and unchanged
 
-#### Scenario: Re-reification opens a superseding run and retains prior mentions
+#### Scenario: Re-extraction opens a superseding run and retains prior mentions
 
-- **GIVEN** a source with an active reification run and persisted mentions
-- **WHEN** a new reification run is produced for that source (changed extractor, reifier, input policy, or contextualization inputs)
+- **GIVEN** a source with an active extraction run and persisted mentions
+- **WHEN** a new extraction run is produced for that source (changed extractor, materializer, input policy, or contextualization inputs)
 - **THEN** the new run becomes active, the prior run is marked superseded, and the prior run's mentions remain present and unmodified
 
-#### Scenario: Re-reifying one source leaves other sources' runs untouched
+#### Scenario: Re-extracting one source leaves other sources' runs untouched
 
-- **GIVEN** two sources, each with an active reification run and persisted mentions
-- **WHEN** one source is re-reified
+- **GIVEN** two sources, each with an active extraction run and persisted mentions
+- **WHEN** one source is re-extracted
 - **THEN** the other source's run remains active and its mentions remain unchanged
 
-#### Scenario: A failed reification exposes no active run
+#### Scenario: A failed extraction exposes no active run
 
-- **GIVEN** a source whose reification fails partway through persisting its mentions
+- **GIVEN** a source whose extraction fails partway through persisting its mentions
 - **WHEN** the store is observed after the failure
 - **THEN** no newly-active run exists for that source, the prior active run (if any) remains active, and no mentions from the failed attempt are readable
 
@@ -45,19 +45,19 @@ Serves: replayable-duplicate-free-dataset
 
 #### Scenario: The same occurrence in two runs gets distinct records but one occurrence key
 
-- **GIVEN** the same source occurrence (same `chunk_id`, `source_chunk_span`, and anchor text) reified as a source-anchored mention under two different runs
+- **GIVEN** the same source occurrence (same `chunk_id`, `source_chunk_span`, and anchor text) extracted as a source-anchored mention under two different runs
 - **WHEN** the two persisted mentions are compared
 - **THEN** they are distinct mention records, each belonging to its own run, while their `source_occurrence_key`s are equal
 
-#### Scenario: Re-running the same reification does not duplicate within a run
+#### Scenario: Re-running the same extraction does not duplicate within a run
 
-- **GIVEN** a chunk reified within a run
-- **WHEN** the same chunk is reified again within that same run
+- **GIVEN** a chunk extracted within a run
+- **WHEN** the same chunk is extracted again within that same run
 - **THEN** no duplicate mention record is created
 
 ### Requirement: Every mention carries complete lexical provenance with declared span coordinates and no embedding
 
-Every persisted mention SHALL carry, populated and non-null: `surface_form`, `chunk_id`, `anchor_kind` (source or revision), `input_kind` (raw or contextualized), `input_ref` (the input text the mention was read from), `input_span` (character offsets into that input text), and `blocking_keys`.
+Every persisted mention SHALL carry, populated and non-null: `surface_form`, `chunk_id`, `anchor_kind` (source or revision), `input_kind` (raw or contextualized), `input_ref` (the input text the mention was read from), and `input_span` (character offsets into that input text).
 A source-anchored mention SHALL additionally carry a `source_chunk_span` locating one occurrence of its surface form in the raw chunk text; a revision-anchored mention SHALL carry no `source_chunk_span` — its raw provenance is the chunk itself plus its recorded input.
 A mention read from raw input SHALL be source-anchored.
 A mention SHALL NOT carry a stored context embedding; any embedding a consumer needs is recomputed on demand from the mention's recorded input text and `input_span` and is never persisted.
@@ -68,7 +68,7 @@ Serves: grounded-entity-graph, replayable-duplicate-free-dataset
 
 - **GIVEN** any mention emitted by extraction and persisted
 - **WHEN** the mention record is inspected
-- **THEN** `surface_form`, `chunk_id`, `anchor_kind`, `input_kind`, `input_ref`, `input_span`, and `blocking_keys` are present and non-null, `source_chunk_span` is present iff the mention is source-anchored, and no context-embedding field is stored
+- **THEN** `surface_form`, `chunk_id`, `anchor_kind`, `input_kind`, `input_ref`, and `input_span` are present and non-null, `source_chunk_span` is present iff the mention is source-anchored, and no context-embedding field is stored
 
 #### Scenario: A source-anchored mention's span resolves to its surface form
 
