@@ -44,6 +44,17 @@ Facts that vary by generation live on the run instead:
   derivation_key)`` so a retry of a partially-completed contextualization attempt
   re-invokes the model only for outputs not already retained. Never a product
   projection: a row makes no run, summary, or variant active or readable.
+- :class:`Mention` — an append-only, run-scoped entity-mention record produced by
+  an extraction run. Carries a surrogate ``mention_id``, the logical ``run_id``,
+  a real ``chunk_id`` foreign key into :class:`Chunk`, an ``anchor_kind`` of
+  ``source`` (a raw-chunk occurrence, with ``source_span_start``/``source_span_end``
+  and ``source_occurrence_key``) or ``revision`` (a contextualization-only
+  reference, with no raw span), and the input provenance (``input_kind``,
+  ``input_ref``, ``input_span_start``/``input_span_end``) the mention was read from.
+- :class:`MentionCooccurrence` — a flat link table recording one row per
+  unordered intra-chunk mention pair within a run, with both endpoints foreign
+  keying into :class:`Mention` and a canonical ``mention_id_lo < mention_id_hi``
+  ordering.
 
 ``run_id`` columns are logical references to ``pipeline_runs.id`` with no
 database foreign key, matching the runtime's convention so superseded-run
@@ -68,6 +79,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlmodel import Field, SQLModel
 
@@ -80,6 +92,23 @@ from aizk.pipeline.lifecycle import WorkUnitStatus
 MemoKind = Literal["summary", "revision"]
 MEMO_KIND_SUMMARY: MemoKind = "summary"
 MEMO_KIND_REVISION: MemoKind = "revision"
+
+#: A mention's raw-provenance class: ``source`` for a mention whose surface form
+#: occurs in the raw chunk text (carrying ``source_span_start``/``source_span_end``),
+#: ``revision`` for a mention resolved only by the contextualized revision (no raw
+#: span). A ``CHECK`` constraint on the table and this typed boundary together keep
+#: a typo from creating a durable but unreachable anchor class.
+AnchorKind = Literal["source", "revision"]
+ANCHOR_KIND_SOURCE: AnchorKind = "source"
+ANCHOR_KIND_REVISION: AnchorKind = "revision"
+
+#: The text a mention was read from: ``raw`` for the persisted chunk text,
+#: ``contextualized`` for an active contextualized variant. A mention read from
+#: ``raw`` input is always ``source``-anchored (validated at the persistence
+#: boundary, not by ``CHECK``).
+InputKind = Literal["raw", "contextualized"]
+INPUT_KIND_RAW: InputKind = "raw"
+INPUT_KIND_CONTEXTUALIZED: InputKind = "contextualized"
 
 
 def _utcnow() -> datetime.datetime:
@@ -408,3 +437,148 @@ class ContextualizationJob(SQLModel, table=True):
         default_factory=_utcnow,
         sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
     )
+
+
+class Mention(SQLModel, table=True):
+    """An append-only, run-scoped entity-mention record produced by an extraction run.
+
+    ``mention_id`` is a surrogate assigned at persistence (a fresh UUID, never
+    content-derived), matching the :class:`Chunk` ``chunk_id`` convention: a
+    content-derived identity would collide across extraction runs, and a run-local
+    identity would not be portable across a logical migration. ``run_id`` is a
+    logical reference to ``pipeline_runs.id`` (no foreign key, so superseded-run
+    compaction can delete freely); ``chunk_id`` is a real foreign key into
+    :class:`Chunk`, making "a mention's source chunk is resolvable" a database
+    invariant.
+
+    ``anchor_kind`` partitions mentions into two classes. A ``source``-anchored
+    mention's surface form occurs in the raw chunk text: it carries
+    ``source_span_start`` / ``source_span_end`` (the occurrence's offsets in the raw
+    chunk) and ``source_occurrence_key`` (a cross-run-stable diagnostic hash of that
+    occurrence). A ``revision``-anchored mention was resolved only by the
+    contextualized revision and does not occur verbatim in the raw chunk: it carries
+    no raw span or occurrence key, and its raw provenance is the chunk itself plus
+    its recorded input. A mention read from raw input (``input_kind = raw``) is
+    always ``source``-anchored; this implication is validated at the persistence
+    boundary, not by a ``CHECK`` constraint, since it spans two columns' legal value
+    sets rather than one row's internal consistency.
+
+    ``input_kind`` / ``input_ref`` / ``input_span_start`` / ``input_span_end``
+    record the exact text the mention was read from (the raw chunk or an active
+    contextualized variant) — the **working span** a disambiguation-context
+    embedding is recomputed over on demand. ``input_ref`` is canonical JSON: for raw
+    input, ``{"chunk_id": ...}``; for contextualized input,
+    ``{"chunk_id": ..., "context_version": ..., "run_id": ...}`` where ``run_id`` is
+    the contextualization run the variant was read from — a provenance-only local
+    locator, like :attr:`ContextualizedChunk.summary_run_id`. The persistence layer
+    writes this JSON; this model only stores the ``Text`` column.
+
+    Two per-anchor-class partial unique indexes back within-run idempotency, rather
+    than one index over the nullable source span: SQL ``UNIQUE`` treats ``NULL`` as
+    distinct from every other ``NULL``, so a single index spanning
+    ``source_span_start`` / ``source_span_end`` would never deduplicate
+    revision-anchored rows (whose spans are always ``NULL``).
+    """
+
+    __tablename__ = "graph_mentions"
+    __table_args__ = (
+        Index("ix_graph_mentions_run_id", "run_id"),
+        Index("ix_graph_mentions_chunk_id", "chunk_id"),
+        CheckConstraint(
+            f"anchor_kind IN ('{ANCHOR_KIND_SOURCE}', '{ANCHOR_KIND_REVISION}')",
+            name="ck_graph_mentions_anchor_kind",
+        ),
+        CheckConstraint(
+            f"input_kind IN ('{INPUT_KIND_RAW}', '{INPUT_KIND_CONTEXTUALIZED}')",
+            name="ck_graph_mentions_input_kind",
+        ),
+        CheckConstraint(
+            f"anchor_kind != '{ANCHOR_KIND_SOURCE}' OR "
+            "(source_span_start IS NOT NULL AND source_span_end IS NOT NULL "
+            "AND source_occurrence_key IS NOT NULL)",
+            name="ck_graph_mentions_source_anchor_fields",
+        ),
+        CheckConstraint(
+            f"anchor_kind != '{ANCHOR_KIND_REVISION}' OR "
+            "(source_span_start IS NULL AND source_span_end IS NULL "
+            "AND source_occurrence_key IS NULL)",
+            name="ck_graph_mentions_revision_anchor_fields",
+        ),
+        # Source-anchored within-run identity: one mention per raw occurrence.
+        Index(
+            "uq_graph_mentions_source_identity",
+            "run_id",
+            "chunk_id",
+            "source_span_start",
+            "source_span_end",
+            "surface_form",
+            unique=True,
+            sqlite_where=text(f"anchor_kind = '{ANCHOR_KIND_SOURCE}'"),
+            postgresql_where=text(f"anchor_kind = '{ANCHOR_KIND_SOURCE}'"),
+        ),
+        # Revision-anchored within-run identity: one mention per (chunk, surface).
+        # A separate index (not the source one above) because a nullable-span index
+        # would not deduplicate these rows — see the class docstring.
+        Index(
+            "uq_graph_mentions_revision_identity",
+            "run_id",
+            "chunk_id",
+            "surface_form",
+            unique=True,
+            sqlite_where=text(f"anchor_kind = '{ANCHOR_KIND_REVISION}'"),
+            postgresql_where=text(f"anchor_kind = '{ANCHOR_KIND_REVISION}'"),
+        ),
+    )
+
+    mention_id: str = Field(primary_key=True, nullable=False)
+    run_id: int = Field(nullable=False)
+    chunk_id: str = Field(sa_column=Column(ForeignKey("graph_chunks.chunk_id"), nullable=False))
+    anchor_kind: str = Field(nullable=False)
+    surface_form: str = Field(sa_column=Column(Text, nullable=False))
+    input_kind: str = Field(nullable=False)
+    input_ref: str = Field(sa_column=Column(Text, nullable=False))
+    input_span_start: int = Field(nullable=False)
+    input_span_end: int = Field(nullable=False)
+    source_span_start: int | None = Field(default=None, nullable=True)
+    source_span_end: int | None = Field(default=None, nullable=True)
+    source_occurrence_key: str | None = Field(default=None, nullable=True)
+    created_at: datetime.datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
+    )
+
+
+class MentionCooccurrence(SQLModel, table=True):
+    """A flat link recording one unordered intra-chunk mention pair within a run.
+
+    The pair key is schema-enforced: composite primary key
+    ``(run_id, mention_id_lo, mention_id_hi)``, a ``CHECK`` constraint enforcing
+    ``mention_id_lo < mention_id_hi`` (canonical order, which also excludes
+    self-pairs), and both endpoints foreign-keying into :attr:`Mention.mention_id`.
+    Storing the pair once (not two directed rows) avoids double-counting while still
+    serving symmetric lookups: querying either endpoint's column reaches the pair,
+    and :attr:`mention_id_hi` carries its own index so a lookup rooted at the
+    higher-ordered endpoint is indexed as directly as one rooted at the lower
+    (covered by the primary key's leading columns).
+
+    ``chunk_id`` is the chunk both endpoints share — a plain column, since the
+    schema-enforced part of "same chunk" is that persistence validates it before
+    insert, not a table-level constraint tying it to the endpoints' own
+    ``chunk_id``s.
+    """
+
+    __tablename__ = "graph_mention_cooccurrences"
+    __table_args__ = (
+        CheckConstraint("mention_id_lo < mention_id_hi", name="ck_graph_mention_cooccurrences_ordered"),
+        Index("ix_graph_mention_cooccurrences_chunk_id", "chunk_id"),
+        Index("ix_graph_mention_cooccurrences_hi", "mention_id_hi"),
+    )
+
+    run_id: int = Field(primary_key=True, nullable=False)
+    mention_id_lo: str = Field(
+        sa_column=Column(ForeignKey("graph_mentions.mention_id"), primary_key=True, nullable=False)
+    )
+    mention_id_hi: str = Field(
+        sa_column=Column(ForeignKey("graph_mentions.mention_id"), primary_key=True, nullable=False)
+    )
+    chunk_id: str = Field(nullable=False)
