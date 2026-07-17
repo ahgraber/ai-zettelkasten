@@ -4,6 +4,8 @@
 
 ### Requirement: Applied migrations produce a schema equivalent to the ORM model baseline
 
+> Previously: equivalence covered only the set of tables, the column name set and nullability per table, and the sets of indexes, foreign keys, and unique constraints — not CHECK-constraint expressions, index partial-predicates, or column type affinity.
+
 After upgrading to head, the database's observable schema SHALL be structurally equivalent to the schema that `SQLModel.metadata.create_all()` would produce from the current ORM models, modulo the `alembic_version` tracking table.
 Equivalence covers the set of tables; the set, nullability, and type affinity of columns per table; the set of indexes, foreign keys, and unique constraints; each CHECK constraint's expression; and each index's uniqueness and partial-index predicate — expressions and predicates compared after whitespace and quoting normalization.
 Column default-value expressions and comments are outside the equivalence contract because SQLite and Alembic normalize them differently.
