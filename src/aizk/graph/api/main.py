@@ -18,6 +18,8 @@ from fastapi import FastAPI
 
 from aizk.conversion.utilities.config import AuthSettings, ConversionConfig
 from aizk.graph.api.routes import router
+from aizk.graph.api.routes.extraction import router as extraction_router
+from aizk.graph.api.routes.extraction_ui import router as extraction_ui_router
 from aizk.graph.api.routes.ui import router as ui_router
 
 if TYPE_CHECKING:
@@ -41,7 +43,9 @@ def create_app() -> FastAPI:
     # Reads the shared ConversionConfig allowlist; reverse proxies must rewrite Host.
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=ConversionConfig().trusted_hosts)
     app.include_router(router)
+    app.include_router(extraction_router)
     # HTML operator UI: behind the same trusted-host perimeter and resolving the same
     # principal as the JSON API. Kept out of the generated OpenAPI — it serves HTML.
     app.include_router(ui_router, include_in_schema=False)
+    app.include_router(extraction_ui_router, include_in_schema=False)
     return app

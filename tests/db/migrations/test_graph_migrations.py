@@ -1,12 +1,13 @@
 """Schema-fidelity tests for the graph-stage chunk tables migration.
 
 Asserts the migrated schema for the four graph tables is structurally
-equivalent to the ORM baseline (``create_all``) — columns and nullability,
-indexes, foreign keys, and unique constraints — and that the revision downgrades
-cleanly without disturbing the conversion or pipeline tables. Scoped to the
-graph tables so it is independent of any models other test modules register on
-``SQLModel.metadata``; the full cross-table parity check lives in the conversion
-migration suite.
+equivalent to the ORM baseline (``create_all``) — columns, nullability, and type
+affinity; indexes (including uniqueness and partial predicates); foreign keys;
+unique constraints; and CHECK constraint expressions — and that the revision
+downgrades cleanly without disturbing the conversion or pipeline tables. Scoped
+to the graph tables so it is independent of any models other test modules
+register on ``SQLModel.metadata``; the full cross-table parity check lives in
+the conversion migration suite.
 """
 
 from __future__ import annotations
@@ -28,13 +29,18 @@ from aizk.graph.datamodel import (
     ContextualizationOutputMemo,
     ContextualizedChunk,
     DocumentSummary,
+    ExtractionJob,
 )
+from tests.db.migrations._schema_equivalence import assert_table_schema_equivalent
 
 _MIGRATIONS_DIR = Path(importlib.util.find_spec("aizk.db.migrations").origin).resolve().parent
 
-# The graph tables span three migrations on top of the pipeline-runtime revision:
+# The graph tables span four migrations on top of the pipeline-runtime revision:
 # f8b9c0d1e2a3 (chunk/contextualization tables), a9c0d1e2f3b4 (work-unit table),
-# and c2d3e4f5a6b7 (output memo). Downgrading to _PREV_REVISION removes all of them.
+# c2d3e4f5a6b7 (output memo), and b3c4d5e6f7a8 (extraction work-unit table, on top
+# of the mention tables at a2b3c4d5e6f7). Downgrading to _PREV_REVISION removes
+# every graph table but the extraction work-unit table (added later, on top of the
+# mention tables) — see _EXTRACTION_JOBS_PREV_REVISION for its own downgrade check.
 _PREV_REVISION = "e1f2a3b4c5d6"
 _GRAPH_TABLES = (
     "graph_chunks",
@@ -44,6 +50,7 @@ _GRAPH_TABLES = (
     "graph_contextualized_chunks",
     "graph_contextualization_jobs",
     "graph_contextualization_output_memo",
+    "graph_extraction_jobs",
 )
 _GRAPH_ORM_TABLES = [
     Chunk.__table__,
@@ -53,6 +60,7 @@ _GRAPH_ORM_TABLES = [
     ContextualizedChunk.__table__,
     ContextualizationJob.__table__,
     ContextualizationOutputMemo.__table__,
+    ExtractionJob.__table__,
 ]
 
 
@@ -61,18 +69,6 @@ def _alembic_cfg(database_url: str) -> Config:
     cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
     cfg.set_main_option("sqlalchemy.url", database_url)
     return cfg
-
-
-def _normalize_index(idx: dict) -> tuple:
-    return (idx["name"], tuple(sorted(idx["column_names"])), bool(idx.get("unique", False)))
-
-
-def _normalize_fk(fk: dict) -> tuple:
-    return (
-        tuple(sorted(fk["constrained_columns"])),
-        fk["referred_table"],
-        tuple(sorted(fk["referred_columns"])),
-    )
 
 
 def test_graph_tables_match_create_all(tmp_path: Path) -> None:
@@ -92,25 +88,7 @@ def test_graph_tables_match_create_all(tmp_path: Path) -> None:
     assert set(_GRAPH_TABLES) <= migrated_tables, f"missing graph tables: {migrated_tables}"
 
     for table in _GRAPH_TABLES:
-        baseline_cols = {c["name"]: c["nullable"] for c in baseline.get_columns(table)}
-        migrated_cols = {c["name"]: c["nullable"] for c in migrated.get_columns(table)}
-        assert migrated_cols == baseline_cols, f"{table} column/nullable mismatch"
-
-        assert {_normalize_index(i) for i in migrated.get_indexes(table)} == {
-            _normalize_index(i) for i in baseline.get_indexes(table)
-        }, f"{table} index mismatch"
-
-        assert {_normalize_fk(fk) for fk in migrated.get_foreign_keys(table)} == {
-            _normalize_fk(fk) for fk in baseline.get_foreign_keys(table)
-        }, f"{table} foreign key mismatch"
-
-        baseline_pk = sorted(baseline.get_pk_constraint(table)["constrained_columns"])
-        migrated_pk = sorted(migrated.get_pk_constraint(table)["constrained_columns"])
-        assert migrated_pk == baseline_pk, f"{table} primary key mismatch"
-
-        baseline_uniques = {tuple(sorted(uc["column_names"])) for uc in baseline.get_unique_constraints(table)}
-        migrated_uniques = {tuple(sorted(uc["column_names"])) for uc in migrated.get_unique_constraints(table)}
-        assert migrated_uniques == baseline_uniques, f"{table} unique constraint mismatch"
+        assert_table_schema_equivalent(migrated, baseline, table)
 
 
 def test_graph_manifest_has_composite_primary_key(tmp_path: Path) -> None:
@@ -141,6 +119,55 @@ def test_graph_chunk_id_foreign_keys_into_chunks(tmp_path: Path) -> None:
             and fk["constrained_columns"] == ["chunk_id"]
             for fk in fks
         ), f"{table} missing chunk_id foreign key into graph_chunks"
+
+
+_EXTRACTION_JOBS_REVISION = "b3c4d5e6f7a8"
+_EXTRACTION_JOBS_PREV_REVISION = "a2b3c4d5e6f7"
+
+
+def test_extraction_jobs_migration_round_trips(tmp_path: Path) -> None:
+    """The extraction work-unit revision creates and drops its table cleanly on a scratch DB."""
+    url = f"sqlite:///{tmp_path / 'extraction_jobs_round_trip.db'}"
+    cfg = _alembic_cfg(url)
+
+    command.upgrade(cfg, _EXTRACTION_JOBS_REVISION)
+    assert "graph_extraction_jobs" in inspect(create_engine(url)).get_table_names()
+
+    command.downgrade(cfg, _EXTRACTION_JOBS_PREV_REVISION)
+    tables_after = set(inspect(create_engine(url)).get_table_names())
+    assert "graph_extraction_jobs" not in tables_after
+    # The mention tables (added just before this revision) are untouched by the downgrade.
+    assert "graph_mentions" in tables_after
+    assert "graph_mention_cooccurrences" in tables_after
+
+
+def test_extraction_jobs_idempotency_key_unique(tmp_path: Path) -> None:
+    """A duplicate ``idempotency_key`` on ``graph_extraction_jobs`` is rejected.
+
+    Re-enqueueing the same source must reuse its open work-unit rather than
+    creating a second row; the unique constraint is the database-level backing
+    of that idempotency guarantee.
+    """
+    url = f"sqlite:///{tmp_path / 'extraction_jobs_unique.db'}"
+    command.upgrade(_alembic_cfg(url), "head")
+    engine = create_engine(url)
+
+    insert = text(
+        "INSERT INTO graph_extraction_jobs (idempotency_key, source_id, status, attempts) "
+        "VALUES (:key, :source_id, 'queued', 0)"
+    )
+    params = {
+        "key": "source:11111111-1111-1111-1111-111111111111",
+        "source_id": "11111111-1111-1111-1111-111111111111",
+    }
+    with engine.begin() as conn:
+        conn.execute(insert, params)
+
+    with (
+        pytest.raises(Exception, match="UNIQUE|unique"),  # noqa: PT011 — driver-specific IntegrityError message
+        engine.begin() as conn,
+    ):
+        conn.execute(insert, params)
 
 
 _MEMO_REVISION = "c2d3e4f5a6b7"
@@ -209,7 +236,8 @@ def test_output_memo_kind_check_rejects_unknown_kind(tmp_path: Path) -> None:
         "VALUES (:kind, :scope, :key, :out, :now)"
     )
     params = {
-        "kind": "sumary",  # deliberate typo — not a legal kind
+        # deliberately misspelled event kind — not a legal value
+        "kind": "sumary",  # typos:disable
         "scope": "11111111-1111-1111-1111-111111111111",
         "key": '{"markdown_hash":"abc"}',
         "out": "an output",
