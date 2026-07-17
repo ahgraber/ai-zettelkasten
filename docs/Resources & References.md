@@ -193,6 +193,7 @@ If building a concept graph, it would be useful to be able to use it as a human 
 - [Octarine - Take back control of your writing](https://octarine.app/)
 - [refactoringhq/tolaria](https://github.com/refactoringhq/tolaria)
 - [Atomic — Everything You Know, Connected](https://atomicapp.ai/)
+- [inkeep/open-knowledge: Beautiful, AI-native markdown editor and LLM Wiki](https://github.com/inkeep/open-knowledge)
 
 ## analysis
 
