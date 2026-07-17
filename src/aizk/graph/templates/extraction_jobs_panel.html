@@ -1,0 +1,190 @@
+{% set status_value = page.status_filter.value if page.status_filter else "" %} {% set search_value = page.search or ""
+%} {% macro qs(offset=None, sort=None, direction=None) -%} ?status={{ status_value|urlencode }}&search={{
+search_value|urlencode }}&limit={{ page.limit }}&offset={{ offset if offset is not none else page.offset }}&sort={{
+(sort or page.sort)|urlencode }}&direction={{ (direction or page.direction)|urlencode }} {%- endmacro %} {% macro
+next_dir(column) -%} {%- if page.sort == column -%} {{ "asc" if page.direction == "desc" else "desc" }} {%- else -%}
+desc {%- endif -%} {%- endmacro %}
+
+<section class="panel" id="extraction-jobs-panel">
+  <form
+    id="extraction-filters"
+    class="toolbar"
+    hx-get="/ui/graph/extraction-jobs"
+    hx-target="#extraction-jobs-panel"
+    hx-swap="outerHTML"
+    hx-trigger="change delay:150ms, keyup delay:250ms from:#extraction-text-filter, submit"
+    hx-push-url="true"
+  >
+    <div class="control">
+      <label for="extraction-status-filter">Status</label>
+      <select id="extraction-status-filter" name="status">
+        <option value="" {% if not status_value %}selected{% endif %}>All statuses</option>
+        {% for status in status_options %}
+        <option value="{{ status }}" {% if status_value == status %}selected{% endif %}>
+          {{ status.replace("_", " ").title() }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="control" style="min-width: 260px">
+      <label for="extraction-text-filter">Search</label>
+      <input
+        id="extraction-text-filter"
+        type="text"
+        name="search"
+        placeholder="Filter by job id, source_id, or title"
+        autocomplete="off"
+        value="{{ search_value }}"
+      />
+    </div>
+    <input type="hidden" name="sort" value="{{ page.sort }}" />
+    <input type="hidden" name="direction" value="{{ page.direction }}" />
+    <input type="hidden" name="limit" value="{{ page.limit }}" />
+    <input type="hidden" name="offset" value="{{ page.offset }}" />
+  </form>
+
+  <div class="summary" aria-live="polite">
+    <span>Total: <strong>{{ page.total_jobs }}</strong></span>
+    <span>Matches: <strong>{{ page.filtered_total }}</strong></span>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th>
+            <button
+              class="sortable"
+              hx-get="/ui/graph/extraction-jobs{{ qs(offset=0, sort='job_id', direction=next_dir('job_id')) }}"
+              hx-target="#extraction-jobs-panel"
+              hx-swap="outerHTML"
+              hx-push-url="true"
+              type="button"
+            >
+              Job ID
+            </button>
+          </th>
+          <th>source_id</th>
+          <th>title</th>
+          <th>
+            <button
+              class="sortable"
+              hx-get="/ui/graph/extraction-jobs{{ qs(offset=0, sort='status', direction=next_dir('status')) }}"
+              hx-target="#extraction-jobs-panel"
+              hx-swap="outerHTML"
+              hx-push-url="true"
+              type="button"
+            >
+              status
+            </button>
+          </th>
+          <th>attempts</th>
+          <th>
+            <button
+              class="sortable"
+              hx-get="/ui/graph/extraction-jobs{{ qs(offset=0, sort='queued_at', direction=next_dir('queued_at')) }}"
+              hx-target="#extraction-jobs-panel"
+              hx-swap="outerHTML"
+              hx-push-url="true"
+              type="button"
+            >
+              queued_at
+            </button>
+          </th>
+          <th>started_at</th>
+          <th>finished_at</th>
+          <th>error_code</th>
+          <th>actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if page.jobs %} {% for job in page.jobs %}
+        <tr>
+          <td>
+            <input type="checkbox" class="row-select" name="job_ids" value="{{ job.id }}" form="extraction-jobs-form" />
+          </td>
+          <td class="mono">{{ job.id }}</td>
+          <td class="mono uuid">{{ job.source_id }}</td>
+          <td class="title-cell">{{ job.title }}</td>
+          <td><span class="status {{ job.status }}">{{ job.status }}</span></td>
+          <td class="mono">{{ job.attempts }}</td>
+          <td class="mono">{{ job.queued_at }}</td>
+          <td class="mono">{{ job.started_at }}</td>
+          <td class="mono">{{ job.finished_at }}</td>
+          <td class="mono">{{ job.error_code }}</td>
+          <td class="row-actions">
+            <button
+              type="button"
+              hx-get="/ui/graph/extraction-jobs/{{ job.id }}/stages"
+              hx-target="#drilldown"
+              hx-swap="innerHTML"
+            >
+              Stages
+            </button>
+          </td>
+        </tr>
+        {% endfor %} {% else %}
+        <tr class="empty-row">
+          {% if page.search or page.status_filter %}
+          <td colspan="10" class="empty" aria-live="polite">No jobs match your filters. Try clearing the search or status filter.</td>
+          {% else %}
+          <td colspan="10" class="empty" aria-live="polite">No extraction jobs yet.</td>
+          {% endif %}
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+
+  <form
+    id="extraction-jobs-form"
+    class="bulk-actions"
+    hx-post="/ui/graph/extraction-jobs/actions"
+    hx-target="#extraction-jobs-panel"
+    hx-swap="outerHTML"
+    hx-push-url="false"
+  >
+    <input type="hidden" name="status" value="{{ status_value }}" />
+    <input type="hidden" name="search" value="{{ search_value }}" />
+    <input type="hidden" name="sort" value="{{ page.sort }}" />
+    <input type="hidden" name="direction" value="{{ page.direction }}" />
+    <input type="hidden" name="limit" value="{{ page.limit }}" />
+    <input type="hidden" name="offset" value="{{ page.offset }}" />
+    <button class="btn-primary" type="submit" name="action" value="retry">Retry Selected</button>
+    <button class="btn-danger" type="submit" name="action" value="cancel">Cancel Selected</button>
+  </form>
+
+  <div class="notice" id="extraction-notice">
+    {{ page.notice or "Select jobs to retry or cancel. Bulk actions run immediately." }}
+  </div>
+
+  <div class="pager">
+    <span>Showing {{ page.start_index }}–{{ page.end_index }} of {{ page.filtered_total }} ({{ page.total_jobs }} total)</span>
+    <div>
+      {% if page.prev_offset is not none %}
+      <a
+        href="/ui/graph/extraction-jobs{{ qs(offset=page.prev_offset) }}"
+        hx-get="/ui/graph/extraction-jobs{{ qs(offset=page.prev_offset) }}"
+        hx-target="#extraction-jobs-panel"
+        hx-swap="outerHTML"
+        hx-push-url="true"
+        >Previous</a
+      >
+      {% else %}
+      <a href="#" aria-disabled="true">Previous</a>
+      {% endif %} {% if page.next_offset is not none %}
+      <a
+        href="/ui/graph/extraction-jobs{{ qs(offset=page.next_offset) }}"
+        hx-get="/ui/graph/extraction-jobs{{ qs(offset=page.next_offset) }}"
+        hx-target="#extraction-jobs-panel"
+        hx-swap="outerHTML"
+        hx-push-url="true"
+        >Next</a
+      >
+      {% else %}
+      <a href="#" aria-disabled="true">Next</a>
+      {% endif %}
+    </div>
+  </div>
+</section>

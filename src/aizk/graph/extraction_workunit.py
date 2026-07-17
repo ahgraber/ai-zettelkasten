@@ -1,0 +1,146 @@
+"""Enqueue paths for the extraction stage's work-units.
+
+Mirrors :mod:`aizk.graph.workunit`'s enqueue functions for the extraction
+stage's :class:`~aizk.graph.datamodel.ExtractionJob` table: an incremental
+one-source enqueue and a bulk/backfill enqueue over eligible sources, both
+deduped on ``idempotency_key`` so re-enqueueing the same source reuses the
+open row. Unlike the contextualization work-unit (which locates its Markdown
+by ``conversion_output_id``), an extraction work-unit carries only the durable
+``source_id``: :func:`aizk.graph.extraction_run.extract_document` resolves the
+source's active chunking run and contextualized variants itself, so no
+upstream artifact locator is needed here.
+
+This surface deduplicates on the source alone and never re-enqueues a
+terminal unit — an existing row is reused whatever its status, including
+``SUCCEEDED`` (a no-op). It is therefore **not** a re-extraction trigger:
+re-extraction after an extractor, materializer, input-policy, or
+upstream-generation change happens today through the direct entry points
+(:func:`~aizk.graph.extraction_run.extract_source` /
+:func:`~aizk.graph.extraction_run.extract_corpus`), where the run's
+derivation key decides reuse versus supersession. Worker-driven re-triggering
+on an upstream-generation change is deliberately not built here; a future
+change decides its mechanism (idempotency-key rotation on the upstream
+generation, or an explicit terminal-unit reset).
+"""
+
+from __future__ import annotations
+
+import datetime
+import logging
+from typing import TYPE_CHECKING
+from uuid import UUID
+
+from sqlmodel import select
+
+from aizk.graph.datamodel import ExtractionJob
+from aizk.graph.persistence import CHUNKING_STAGE
+from aizk.pipeline.invalidation import require_reprocessing_confirmation
+from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.pipeline.run import PipelineRun, RunStatus
+
+if TYPE_CHECKING:
+    from sqlmodel import Session
+
+logger = logging.getLogger(__name__)
+
+
+def _utcnow() -> datetime.datetime:
+    """Return a timezone-aware UTC timestamp."""
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def _idempotency_key(source_id: UUID) -> str:
+    """Return the enqueue-dedupe key for a source.
+
+    Keyed by the durable source identity alone — unlike contextualization's
+    per-artifact key — so a re-enqueue of the same source always targets the
+    same work-unit row, whatever its status. Extraction reads whichever
+    chunking/contextualization generation is active for the source at execute
+    time; an upstream-generation change does not rotate this key (see the
+    module docstring for how re-extraction is triggered today).
+    """
+    return f"source:{source_id}"
+
+
+def enqueue_extraction(session: "Session", *, source_id: UUID) -> ExtractionJob:
+    """Enqueue one source's extraction work-unit (incremental mode), deduped on ``idempotency_key``.
+
+    If a work-unit for this source already exists — in **any** status,
+    including a terminal one — it is returned unchanged rather than
+    duplicated or re-queued: an incremental re-ingest or an overlapping
+    backfill reuses the row, and re-enqueueing an already-``SUCCEEDED``
+    source is a no-op (this function is not a re-extraction trigger; see the
+    module docstring). Otherwise a new ``QUEUED`` unit is inserted and
+    flushed (so its ``id`` is available).
+
+    Does **not** commit; the caller owns the surrounding transaction.
+
+    Args:
+        session: Active session; the caller owns commit/rollback.
+        source_id: The durable source identity to extract.
+
+    Returns:
+        The existing or newly-created :class:`~aizk.graph.datamodel.ExtractionJob`.
+    """
+    key = _idempotency_key(source_id)
+    existing = session.exec(select(ExtractionJob).where(ExtractionJob.idempotency_key == key)).one_or_none()
+    if existing is not None:
+        logger.debug("Reusing extraction work-unit id=%s for source_id=%s", existing.id, source_id)
+        return existing
+
+    job = ExtractionJob(
+        idempotency_key=key,
+        source_id=source_id,
+        status=WorkUnitStatus.QUEUED,
+        queued_at=_utcnow(),
+    )
+    session.add(job)
+    session.flush()
+    logger.debug("Enqueued extraction work-unit id=%s for source_id=%s", job.id, source_id)
+    return job
+
+
+def _sources_with_active_chunking_run(session: "Session") -> list[UUID]:
+    """Return the source_ids with an active chunking run, in run-creation order.
+
+    A source with no chunking run has nothing to extract
+    (``extract_document`` rejects it), so the backfill enqueue scopes itself
+    to sources that are actually eligible rather than enqueueing units doomed
+    to a permanent failure.
+    """
+    scope_ids = session.exec(
+        select(PipelineRun.scope_id)
+        .where(PipelineRun.stage == CHUNKING_STAGE, PipelineRun.status == RunStatus.ACTIVE)
+        .order_by(PipelineRun.created_at)
+    ).all()
+    return [UUID(scope_id) for scope_id in scope_ids]
+
+
+def enqueue_extraction_backfill(session: "Session", *, confirmed: bool = False) -> list[ExtractionJob]:
+    """Enqueue extraction work-units for every eligible source (bulk/backfill mode).
+
+    Eligible sources are those with an active chunking run (see
+    :func:`_sources_with_active_chunking_run`). Each is enqueued via
+    :func:`enqueue_extraction`, so the same ``idempotency_key`` dedupe applies
+    and the resulting units are identical to incremental enqueue — only volume
+    and scheduling differ.
+
+    A corpus-wide backfill has a large downstream blast radius, so it is gated
+    behind explicit confirmation: nothing is enqueued unless ``confirmed`` is
+    ``True`` (see :func:`aizk.pipeline.invalidation.require_reprocessing_confirmation`).
+
+    Args:
+        session: Active session; the caller owns commit/rollback.
+        confirmed: Explicit human approval for the corpus-wide operation; when
+            ``False`` (the default) nothing is enqueued and the gate raises.
+
+    Returns:
+        The enqueued (or reused) work-units, one per eligible source.
+
+    Raises:
+        ReprocessingConfirmationError: When ``confirmed`` is ``False``.
+    """
+    require_reprocessing_confirmation("corpus-wide extraction backfill", confirmed=confirmed)
+    return [
+        enqueue_extraction(session, source_id=source_id) for source_id in _sources_with_active_chunking_run(session)
+    ]

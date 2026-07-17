@@ -40,6 +40,7 @@ from aizk.graph.datamodel import (
     ContextualizationOutputMemo,
     ContextualizedChunk,
     DocumentSummary,
+    ExtractionJob,
 )
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
@@ -53,6 +54,7 @@ _GRAPH_SCHEMA_TABLES = [
     ContextualizedChunk.__table__,
     ContextualizationOutputMemo.__table__,
     ContextualizationJob.__table__,
+    ExtractionJob.__table__,
     PipelineRun.__table__,
     PipelineEvent.__table__,
     # Conversion tables the operator UI reads alongside the graph tables. Ordered
@@ -217,6 +219,32 @@ def seed_contextualization_job() -> Callable[..., ContextualizationJob]:
         job = ContextualizationJob(
             idempotency_key=idempotency_key or f"conversion_output:{conversion_output_id}",
             conversion_output_id=conversion_output_id,
+            source_id=source_id,
+            status=status,
+            attempts=attempts,
+        )
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        return job
+
+    return _make
+
+
+@pytest.fixture
+def seed_extraction_job() -> Callable[..., ExtractionJob]:
+    """Return a factory that inserts an :class:`ExtractionJob` work-unit."""
+
+    def _make(
+        session: Session,
+        *,
+        source_id: UUID,
+        status: WorkUnitStatus = WorkUnitStatus.QUEUED,
+        attempts: int = 0,
+        idempotency_key: str | None = None,
+    ) -> ExtractionJob:
+        job = ExtractionJob(
+            idempotency_key=idempotency_key or f"source:{source_id}",
             source_id=source_id,
             status=status,
             attempts=attempts,

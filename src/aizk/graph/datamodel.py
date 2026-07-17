@@ -439,6 +439,80 @@ class ContextualizationJob(SQLModel, table=True):
     )
 
 
+class ExtractionJob(SQLModel, table=True):
+    """A claimable work-unit: extract one source's entity mentions and co-occurrence links.
+
+    Mirrors :class:`ContextualizationJob` — one row per source to extract,
+    scoped to the durable source identity ``source_id`` — so the shared
+    runtime's claim/lease/retry/stale-recovery machinery drives the extraction
+    stage the same way it drives contextualization. Unlike
+    :class:`ContextualizationJob`, the row carries no upstream artifact
+    locator: ``aizk.graph.extraction_run.extract_document`` resolves the
+    source's active chunking run (and, per the worker's configured input
+    policy, its active contextualized variants) directly from ``source_id``,
+    so the extractor choice and input policy are worker configuration, not job
+    fields.
+
+    This surface deduplicates on the source alone (``idempotency_key`` =
+    ``source:{source_id}``) and never re-enqueues a terminal unit: enqueue
+    reuses whatever row exists — including a ``SUCCEEDED`` one, as a no-op —
+    and the operator retry re-queues only failed/cancelled/timed-out units. It
+    is therefore **not** a re-extraction trigger. Re-extraction after an
+    extractor, materializer, input-policy, or upstream-generation change
+    happens today through the direct entry points
+    (:func:`~aizk.graph.extraction_run.extract_source` /
+    :func:`~aizk.graph.extraction_run.extract_corpus`), where the run's
+    derivation key decides reuse versus supersession. Worker-driven
+    re-triggering on an upstream-generation change is deliberately not built
+    here; a future change decides its mechanism (idempotency-key rotation on
+    the upstream generation, or an explicit terminal-unit reset).
+
+    ``status`` is the runtime's generic :class:`~aizk.pipeline.lifecycle.WorkUnitStatus`;
+    ``attempts`` and the ``*_at`` scheduling columns carry the retry/lease
+    bookkeeping the runner reads.
+    """
+
+    __tablename__ = "graph_extraction_jobs"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_graph_extraction_jobs_idempotency_key"),
+        Index(
+            "ix_graph_extraction_jobs_claim",
+            "status",
+            "earliest_next_attempt_at",
+            "queued_at",
+        ),
+        Index("ix_graph_extraction_jobs_source_id", "source_id"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True, nullable=False)
+    idempotency_key: str = Field(nullable=False)
+    source_id: UUID = Field(nullable=False)
+    # values_callable stores enum values ("queued") not names ("QUEUED"), matching RunStatus.
+    status: WorkUnitStatus = Field(
+        default=WorkUnitStatus.QUEUED,
+        sa_column=Column(
+            SAEnum(WorkUnitStatus, values_callable=lambda x: [e.value for e in x]),
+            nullable=False,
+        ),
+    )
+    attempts: int = Field(default=0, nullable=False)
+    error_code: str | None = Field(default=None, nullable=True)
+    error_message: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    earliest_next_attempt_at: datetime.datetime | None = Field(default=None, nullable=True)
+    last_error_at: datetime.datetime | None = Field(default=None, nullable=True)
+    queued_at: datetime.datetime | None = Field(default=None, nullable=True)
+    started_at: datetime.datetime | None = Field(default=None, nullable=True)
+    finished_at: datetime.datetime | None = Field(default=None, nullable=True)
+    created_at: datetime.datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
+    )
+    updated_at: datetime.datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
+    )
+
+
 class Mention(SQLModel, table=True):
     """An append-only, run-scoped entity-mention record produced by an extraction run.
 
