@@ -11,7 +11,7 @@ Each stage owns its own work-unit tables and identities and consumes these primi
 The runtime separates a stage's **domain core** (what to do for one unit of work) from the **orchestration engine** (how units get discovered, run, retried, drained, and recovered).
 
 - **The engine** is [`StageRunner`](runner.py) — the _current embedded engine implementation_, not a permanent framework.
-  It owns: work discovery scheduling, the claim/lease loop, bounded concurrency with **claim/dispatch order** following submission order (eligible units are claimed oldest-first; this is _not_ a guarantee about worker-thread start timing — see below), retry-wait gating, signal handling + graceful drain, wall-clock timeout enforcement, graceful-before-forceful termination, stale-unit recovery, and lifecycle observability.
+  It owns: work discovery scheduling, the claim/lease loop, bounded concurrency with **claim/dispatch order** following submission order (eligible units are claimed oldest-first; this is _not_ a guarantee about worker-thread start timing — see the concurrency contract below), retry-wait gating, signal handling + graceful drain, wall-clock timeout enforcement, graceful-before-forceful termination, stale-unit recovery, and lifecycle observability.
 - **The domain** is a stage's [`StageHandler`](handler.py) implementation.
   It owns: startup dependency validation, the store-specific discovery/claim/transition queries, the unit-of-work (`execute`), mapping a result/exception to a generic outcome (`map_result`), transient-resource cleanup, the cooperative `cancel` hook, and its timeout/concurrency/isolation declarations.
 
@@ -21,7 +21,32 @@ The narrow surface — `execute`/`map_result`/`cleanup` carry no `Session` or cl
 **Execution model:** thread-pool + optional subprocess isolation, _not_ asyncio.
 In-process units run in a `ThreadPoolExecutor`; a stage may opt into subprocess isolation, for which the runner/adapter guarantee graceful-before-forceful termination with no orphaned descendants.
 
+## How a stage consumes the runtime
+
+1. Implement `StageHandler` over the stage's own tables (the domain core).
+2. Add the stage's tables to the shared Alembic tree; use `record_run` for versioned derived output and `record_transition` for status changes.
+3. Construct and run the runner:
+
+```python
+repo = MyStageHandler(config, ...)
+runner = StageRunner(repo, engine, shutdown=ShutdownController())
+exit_code = runner.run()
+```
+
+Adding or changing a stage means writing/altering its `StageHandler`; it does not require modifying the runner.
+
+## Transaction discipline
+
+The runner owns the `Session` and opens the `BEGIN IMMEDIATE` transaction, passing it into `claim_next` / `recover_stale` / `finalize`; the repository runs its query + transition inside it and **never commits**.
+This preserves the single-serialized-writer / co-commit invariant (status change and its event commit together or not at all) and keeps the SQLite + Litestream assumption (one writer) intact.
+
+## Worked example
+
+`aizk.conversion.handler.ConversionStageHandler` is the reference implementation: it carries the conversion unit-of-work (fetch → convert → upload → enrich) behind this protocol, maps conversion's statuses onto the generic lifecycle, and runs under `StageRunner` via `aizk.conversion.processing.worker`.
+
 ## Primitives
+
+The reference detail behind the protocol above.
 
 ### Lifecycle & retry classification — [`lifecycle.py`](lifecycle.py)
 
@@ -73,54 +98,8 @@ Treat it as the product-facing read-model/audit projection — query it, not the
 
 ### Shutdown — [`shutdown.py`](shutdown.py)
 
-`ShutdownController` is per-runner-instance drain state; OS signals are delivered process-wide by a module-level dispatcher that **broadcasts** to every registered controller, so two runners can share one process and both observe a signal.
-`force_exit` (`os._exit`) is the forced-drain path: it bypasses the non-daemon thread pool's atexit join that would otherwise hang on a stuck in-process unit.
+`ShutdownController` is per-runner-instance drain state; OS signals are delivered process-wide by a module-level dispatcher that **broadcasts** to every registered controller, so two runners can share one process and both observe a signal: the first signal requests each controller's graceful drain, a second requests each controller's immediate termination.
+`force_exit` (`os._exit`) is the last-resort forced path — it terminates the whole process, bypassing the non-daemon thread pool's `atexit` join that would otherwise hang on a stuck in-process unit.
 
-#### Process-global ownership and broadcast semantics
-
-A runner touches several process-global facilities.
-Their ownership when **two or more runners share one process** is:
-
-- **SIGTERM / SIGINT** — _process-global, dispatcher-owned._
-  `signal.signal` installs exactly one handler per signal for the whole process, so no single controller can own the disposition.
-  The module-level `_dispatcher` installs the OS handlers **once** (on the main thread; an off-main-thread register is recorded for broadcast but skips the OS install) and **broadcasts** every signal to all registered controllers: the first signal requests each controller's graceful drain, a second requests each controller's immediate termination.
-  Every runner in the process therefore observes one signal.
-  Drain _bookkeeping_ stays per-`ShutdownController`.
-- **`os._exit` / `force_exit`** — _whole-process termination._
-  The forced-drain path terminates the **entire process**, not one runner: one runner's forced exit tears down every other runner, thread, and pool in the process.
-  It is a deliberate last-resort escape for a stuck/uncooperative in-process unit; cooperative shutdown drains per-runner via `ShutdownController` instead.
-- **`atexit`** — _bypassed on the forced path by design._
-  A clean drain lets the `ThreadPoolExecutor` join its non-daemon workers at interpreter exit.
-  The forced path uses `os._exit` precisely to **skip** that `atexit`-time join, which would otherwise hang forever on a stuck in-process worker that ignores cooperative cancellation.
-  So the forced path runs no `atexit` handlers; the clean path runs them normally.
-- **`setproctitle`** — _last-write-wins on a single process-global slot._
-  The process title is one global slot, so when two runners each `set_process_title()` the most-recently-set stage role is the one operators see.
-  The title is an advisory role hint, not a per-runner identifier.
-- **`ThreadPoolExecutor` lifecycle** — _per-runner-instance ownership._
-  Each runner constructs and owns **its own** pool (sized to its repository's `concurrency_limit`) inside `run()` / `run_until_idle()` and shuts it down in the same scope.
-  Pools are not shared across runners; two runners in one process run two independent pools.
-- **Logging setup** — _process-global, configured once by the entrypoint._
-  The runner only **emits** structured logs (it never calls `logging.basicConfig` or installs handlers); root-logger configuration is process-global and is the responsibility of the process entrypoint, configured once for all runners sharing the process.
-
-## How a stage consumes the runtime
-
-1. Implement `StageHandler` over the stage's own tables (the domain core).
-2. Add the stage's tables to the shared Alembic tree; use `record_run` for versioned derived output and `record_transition` for status changes.
-3. Construct and run the runner:
-
-```python
-repo = MyStageHandler(config, ...)
-runner = StageRunner(repo, engine, shutdown=ShutdownController())
-exit_code = runner.run()
-```
-
-Adding or changing a stage means writing/altering its `StageHandler`; it does not require modifying the runner.
-
-## Transaction discipline
-
-The runner owns the `Session` and opens the `BEGIN IMMEDIATE` transaction, passing it into `claim_next` / `recover_stale` / `finalize`; the repository runs its query + transition inside it and **never commits**.
-This preserves the single-serialized-writer / co-commit invariant (status change and its event commit together or not at all) and keeps the SQLite + Litestream assumption (one writer) intact.
-
-## Worked example
-
-`aizk.conversion.handler.ConversionStageHandler` is the reference implementation: it carries the conversion unit-of-work (fetch → convert → upload → enrich) behind this protocol, maps conversion's statuses onto the generic lifecycle, and runs under `StageRunner` via `aizk.conversion.processing.worker`.
+When two or more runners share one process, the ownership contract is: **signals** are process-global and dispatcher-owned (every runner observes each signal; drain bookkeeping stays per-controller); **`force_exit`** tears down the entire process, not one runner; the **process title** (`setproctitle`) is a last-write-wins advisory role hint, not a per-runner id; each runner owns **its own `ThreadPoolExecutor`** (never shared); and **logging** is process-global, configured once by the entrypoint (the runner only emits, never installs handlers).
+The finer rationale — the main-thread-only signal install, and why the forced path deliberately skips `atexit` — is documented in [`shutdown.py`](shutdown.py).

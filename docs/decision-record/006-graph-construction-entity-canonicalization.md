@@ -197,6 +197,17 @@ Represent nodes and edges primarily as embeddings, then materialize query-specif
 - _Reason for not selecting._
   A fixed co-occurrence/entity graph is simpler, more auditable, and better aligned with repairable canonicalization.
 
+### Addendum (2026-07-12): implemented techstack
+
+The NER extractor named in this ADR's Decision and Rationale is implemented as a pluggable interface (`aizk.graph.extraction.EntityExtractor`), with two concrete, pinned production implementations plus a deterministic stub for the contract test suite:
+
+- **spaCy** — the `en_core_web_sm` 3.8.0 pipeline, installed as a direct URL-wheel dependency (no runtime resolution against PyPI or a model hub).
+- **GLiNER2** — `gliner2==1.3.2` running the `fastino/gliner2-base-v1` weights, pinned to an exact HuggingFace revision and pre-fetched to a local directory by a one-time setup step (`aizk-graph fetch-gliner2-weights`); the runtime loads strictly from that local path and never reaches the network.
+
+Both extractors live behind the shared interface in an opt-in dependency group, so the contract suite (a deterministic stub) carries no model dependencies.
+Each extraction run records which extractor, model, and configuration produced it in `extractor_version`, so a swap between the two — or a version/label-schema change within one — is an observable, versioned run input, never an in-place change; this is the concrete mechanism behind this ADR's "track model and extractor versions on mentions" mitigation.
+Extractor determinism (same input → identical detections at pinned versions) was verified empirically before extraction's retry idempotency was relied on: spaCy is deterministic by design, GLiNER2 is verified at its pinned revision via an opt-in test gate.
+
 ## Implementation Details
 
 - **Mention store.**
