@@ -13,9 +13,20 @@ The graph stage reuses the conversion service's
 database URL and S3 settings (the Markdown it reads is a conversion output); this
 config carries only the contextualization-specific model endpoint and the
 worker's lease/retry knobs.
+
+:class:`NerConfig` follows the same nested convention
+(``AIZK_GRAPH__NER__<FIELD>``) for the pinned :class:`~aizk.graph.extraction.Gliner2Extractor`
+model's local weight location and pinned revision.
+
+:class:`ExtractionConfig` (``AIZK_GRAPH__EXTRACTION__<FIELD>``) selects the
+extraction worker's injected NER extractor and raw-vs-contextualized input
+policy, plus its lease/retry knobs, mirroring :class:`ContextualizationConfig`'s
+worker settings.
 """
 
 from __future__ import annotations
+
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -69,3 +80,61 @@ class ContextualizationConfig(BaseSettings):
         if any(not value for value in values):
             return False
         return not any("${" in value for value in values)
+
+
+class NerConfig(BaseSettings):
+    """Local weight location and pinned revision for the :class:`~aizk.graph.extraction.Gliner2Extractor`.
+
+    Read from ``AIZK_GRAPH__NER__*`` environment variables. GLiNER2's weights are
+    a pinned dependency (design decision ``TwoPinnedExtractorsSpacyAndGliner2``):
+    runtime loads ``gliner2_model_dir`` directly and never reaches the network.
+    ``gliner2_revision`` pins the exact HuggingFace revision the one-time setup
+    step (``aizk-graph fetch-gliner2-weights``) fetches into that directory, so
+    the local weights only change when setup is re-run against a new revision.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIZK_GRAPH__NER__",
+        env_file=None,
+        extra="ignore",
+    )
+
+    gliner2_model_dir: str = "data/models/gliner2-base-v1"
+    gliner2_revision: str = "f5b2ecedebe4381b088c1cf276f5bf72a52cac54"
+
+
+class ExtractionConfig(BaseSettings):
+    """Extractor/input-policy selection and worker lease/retry settings for the extraction stage.
+
+    Read from ``AIZK_GRAPH__EXTRACTION__*`` environment variables. ``extractor``
+    selects which pinned NER extractor the worker's composition root
+    (``aizk.graph.extraction_worker.build_extractor``) constructs; ``input_policy``
+    is the run-level raw-vs-contextualized toggle passed to every extraction.
+    Neither is a work-unit field. Changing either changes the run-level
+    derivation key, but the work-unit surface does not re-enqueue a terminal
+    unit on a config change (see :class:`~aizk.graph.datamodel.ExtractionJob`);
+    re-extraction under the new configuration happens today through the direct
+    entry points (:func:`~aizk.graph.extraction_run.extract_source` /
+    :func:`~aizk.graph.extraction_run.extract_corpus`). The ``worker_*`` and
+    ``retry_*`` fields tune the runner's lease, stale recovery, and bounded
+    retries, mirroring :class:`ContextualizationConfig`.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIZK_GRAPH__EXTRACTION__",
+        env_file=None,
+        extra="ignore",
+    )
+
+    extractor: Literal["spacy", "gliner2"] = "spacy"
+    input_policy: Literal["contextualized", "raw"] = "contextualized"
+
+    worker_concurrency: int = 1
+    worker_timeout_seconds: float = 600.0
+    worker_stale_minutes: float = 30.0
+    worker_poll_interval_seconds: float = 2.0
+    worker_drain_timeout_seconds: float = 30.0
+    worker_stale_recovery_interval_seconds: float = 60.0
+
+    retry_base_delay_seconds: float = 2.0
+    retry_max_attempts: int = 3
