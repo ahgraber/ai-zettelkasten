@@ -317,6 +317,52 @@ def test_run_scoped_rows_distinct_occurrence_key_stable(session: Session) -> Non
     assert len(rows_in_run2) == 1
 
 
+def test_revision_mention_idempotent_within_run(session: Session) -> None:
+    """Re-persisting a revision-anchored draft within one run reuses its row: no within-run duplicate.
+
+    The revision class's within-run identity is ``(run_id, chunk_id,
+    surface_form)`` — no span participates — so this exercises the revision arm
+    of the idempotency contract through the real write path, complementing the
+    source arm above.
+    """
+    _seed_chunk(session, chunk_id="chunk-1", text="The company announced results today.")
+    _seed_contextualized_chunk(session, chunk_id="chunk-1", contextualized_text="Acme Corp announced results today.")
+    run = _open_run(session)
+    draft = _revision_draft(chunk_id="chunk-1", surface_form="Acme Corp", input_span=(0, 9))
+
+    [first] = _persist(session, run=run, drafts=[draft])
+    [again] = _persist(session, run=run, drafts=[draft])
+
+    assert again.mention_id == first.mention_id
+    rows = session.exec(select(Mention).where(Mention.run_id == run.id)).all()
+    assert len(rows) == 1
+    assert rows[0].anchor_kind == "revision"
+
+
+def test_revision_rows_distinct_across_runs_comparable_by_chunk_and_surface(session: Session) -> None:
+    """The same revision detection under two runs yields distinct rows, comparable by ``(chunk_id, surface_form)``.
+
+    Revision-anchored mentions carry no ``source_occurrence_key`` (that key is
+    source-only), so their declared cross-run continuity handle is
+    ``(chunk_id, surface_form)`` — the revision analogue of the source class's
+    cross-run occurrence-key stability.
+    """
+    _seed_chunk(session, chunk_id="chunk-1", text="The company announced results today.")
+    _seed_contextualized_chunk(session, chunk_id="chunk-1", contextualized_text="Acme Corp announced results today.")
+    draft = _revision_draft(chunk_id="chunk-1", surface_form="Acme Corp", input_span=(0, 9))
+
+    run1 = _open_run(session, upstream_derivation_key="key-1")
+    [mention1] = _persist(session, run=run1, drafts=[draft])
+    run2 = _open_run(session, upstream_derivation_key="key-2")
+    [mention2] = _persist(session, run=run2, drafts=[draft])
+
+    assert mention1.mention_id != mention2.mention_id
+    assert mention1.run_id != mention2.run_id
+    assert mention1.source_occurrence_key is None
+    assert mention2.source_occurrence_key is None
+    assert (mention1.chunk_id, mention1.surface_form) == (mention2.chunk_id, mention2.surface_form)
+
+
 # --------------------------------------------------------------------------- #
 # Provenance completeness / no embedding
 # --------------------------------------------------------------------------- #
@@ -519,6 +565,30 @@ def test_cooccurrence_retry_does_not_duplicate(session: Session) -> None:
     assert all(lo < hi for lo, hi in pairs), "every stored pair must be in canonical lo < hi order"
 
 
+def test_cooccurrence_links_across_anchor_classes(session: Session) -> None:
+    """A source-anchored and a revision-anchored mention sharing a chunk co-occur.
+
+    Co-occurrence is defined over any two distinct mentions in the same chunk of
+    a run, independent of anchor class; ``_link_chunk_cooccurrences`` reads the
+    chunk's whole run-scoped mention set, so a mixed source/revision pair links
+    just like a source/source pair.
+    """
+    _seed_chunk(session, chunk_id="chunk-1", text="The company met Globex Inc today.")
+    _seed_contextualized_chunk(session, chunk_id="chunk-1", contextualized_text="Acme Corp met Globex Inc today.")
+    run = _open_run(session)
+    source_draft = _source_draft(chunk_id="chunk-1", surface_form="Globex Inc", span=(16, 26))
+    revision_draft = _revision_draft(chunk_id="chunk-1", surface_form="Acme Corp", input_span=(0, 9))
+
+    source_mention, revision_mention = _persist(session, run=run, drafts=[source_draft, revision_draft])
+    assert source_mention.anchor_kind == "source"
+    assert revision_mention.anchor_kind == "revision"
+
+    links = session.exec(select(MentionCooccurrence).where(MentionCooccurrence.run_id == run.id)).all()
+    assert len(links) == 1
+    endpoints = {links[0].mention_id_lo, links[0].mention_id_hi}
+    assert endpoints == {source_mention.mention_id, revision_mention.mention_id}
+
+
 # --------------------------------------------------------------------------- #
 # Chunk resolvability
 # --------------------------------------------------------------------------- #
@@ -688,6 +758,31 @@ def test_persist_mentions_rejects_input_span_not_matching_surface(session: Sessi
     draft = _source_draft(chunk_id="chunk-1", surface_form="Acme Corp", span=(0, 9), input_span=(10, 18))
 
     with pytest.raises(ValueError, match="input_span"):
+        persist_mentions(session, run=run, mentions=[draft])
+
+    assert session.exec(select(Mention)).all() == []
+
+
+def test_persist_mentions_rejects_raw_input_not_source_anchored(session: Session) -> None:
+    """A raw-input draft that is not source-anchored is refused; no mention row is written.
+
+    ``MentionDraft`` permits ``input_kind='raw'`` with ``anchor_kind='revision'``
+    (revision carries no source fields, raw carries no context fields), so
+    ``persist_mentions`` is the sole enforcer of "a mention read from raw input
+    must be source-anchored" — the raw-implies-source contract.
+    """
+    _seed_chunk(session, chunk_id="chunk-1", text="Acme Corp announced results.")
+    run = _open_run(session)
+    draft = MentionDraft(
+        chunk_id="chunk-1",
+        anchor_kind="revision",
+        surface_form="Acme Corp",
+        input_kind="raw",
+        input_span_start=0,
+        input_span_end=9,
+    )
+
+    with pytest.raises(ValueError, match="must be source-anchored"):
         persist_mentions(session, run=run, mentions=[draft])
 
     assert session.exec(select(Mention)).all() == []

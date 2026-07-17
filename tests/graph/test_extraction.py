@@ -336,6 +336,50 @@ def test_repeated_surface_expands_per_occurrence(session: Session) -> None:
         assert chunk_text[start:end] == "Acme Corp"
 
 
+@pytest.mark.parametrize(
+    ("raw_text", "near_miss"),
+    [
+        ("the acme corp announced results today.", "acme corp"),
+        ("Acme  Corp announced results today.", "Acme  Corp"),
+    ],
+    ids=["case-differing", "whitespace-differing"],
+)
+def test_near_miss_surface_is_revision_anchored_not_fuzzily_matched(
+    session: Session, raw_text: str, near_miss: str
+) -> None:
+    """A surface absent verbatim from the raw chunk is revision-anchored even when a near-miss form is present.
+
+    The variant states the entity verbatim (``"Acme Corp"``) while the raw chunk
+    carries only a case- or whitespace-differing form. Classification is exact
+    string match against the raw text (:func:`_raw_occurrences`), so it finds
+    zero occurrences of the detected surface and emits one revision-anchored
+    mention with no source span — never assigning the detection to the near-miss
+    raw span positionally or by fuzzy matching, the rule the source/revision
+    split forbids.
+    """
+    chunk = _seed_chunk(session, chunk_id="c1", text=raw_text)
+    variant_run = _seed_variant_run(session, source_id=chunk.source_id, derivation_key="variant-key-1")
+    variant = _seed_contextualized_chunk(
+        session,
+        chunk_id=chunk.chunk_id,
+        run_id=variant_run.id,
+        contextualized_text="Acme Corp announced results today.",
+    )
+    stub = StubExtractor(
+        {variant.contextualized_text: [Detection(surface_form="Acme Corp", span_start=0, span_end=9)]}
+    )
+
+    _, [mention] = _extract_chunk(session, chunk=chunk, extractor=stub)
+
+    assert mention.anchor_kind == "revision"
+    assert mention.source_span_start is None
+    assert mention.source_span_end is None
+    # The near-miss form is present in the raw text, but the exact surface is not —
+    # so a fuzzy or positional match would have wrongly source-anchored it here.
+    assert near_miss in chunk.text
+    assert "Acme Corp" not in chunk.text
+
+
 # --------------------------------------------------------------------------- #
 # EE3 — pair / singleton / cross-chunk co-occurrence partition
 # --------------------------------------------------------------------------- #
