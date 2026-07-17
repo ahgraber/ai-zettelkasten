@@ -1,13 +1,15 @@
 """Unit tests for the ``aizk-graph`` CLI dispatch.
 
-The CLI is a thin argument parser over two commands; these tests pin the command
-surface and the wiring of each command to its action, with every external effect
-(uvicorn, migrations, the worker loop, config construction) stubbed so the suite
-stays hermetic and never reads ``.env`` or opens a socket.
+The CLI is a thin argument parser over three commands; these tests pin the
+command surface and the wiring of each command to its action, with every
+external effect (uvicorn, migrations, the worker loop, huggingface_hub, config
+construction) stubbed so the suite stays hermetic and never reads ``.env``,
+opens a socket, or touches the network.
 """
 
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -91,6 +93,153 @@ def test_worker_maps_startup_validation_error_to_nonzero_exit(monkeypatch: pytes
 
     monkeypatch.setattr(cli, "run_graph_worker", raise_startup)
     assert cli.main(["worker"]) == 1
+
+
+def test_extraction_worker_runs_migrations_then_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``extraction-worker`` migrates first, then runs the worker loop and returns its exit code."""
+    order: list[str] = []
+    monkeypatch.setattr(cli, "ExtractionConfig", lambda: SimpleNamespace())
+    monkeypatch.setattr(cli, "run_migrations", lambda: order.append("migrate"))
+    monkeypatch.setattr(cli, "run_extraction_worker", lambda _c: order.append("loop") or 0)
+
+    assert cli.main(["extraction-worker"]) == 0
+    assert order == ["migrate", "loop"]
+
+
+def test_extraction_worker_maps_import_error_to_nonzero_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed startup gate (extractor's pinned dependency/model missing) exits non-zero rather than crashing."""
+    monkeypatch.setattr(cli, "ExtractionConfig", lambda: SimpleNamespace())
+    monkeypatch.setattr(cli, "run_migrations", lambda: None)
+
+    def raise_import_error(_config: object) -> int:
+        raise ImportError("GLiNER2 weights are not present")
+
+    monkeypatch.setattr(cli, "run_extraction_worker", raise_import_error)
+    assert cli.main(["extraction-worker"]) == 1
+
+
+def test_fetch_gliner2_weights_downloads_pinned_revision_to_configured_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``fetch-gliner2-weights`` downloads the configured repo/revision into the configured local directory."""
+    monkeypatch.setattr(
+        cli,
+        "NerConfig",
+        lambda: SimpleNamespace(gliner2_model_dir="data/models/gliner2-base-v1", gliner2_revision="deadbeef"),
+    )
+    calls: dict[str, object] = {}
+
+    def fake_snapshot_download(**kwargs: object) -> str:
+        calls.update(kwargs)
+        return kwargs["local_dir"]
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot_download)
+
+    assert cli.main(["fetch-gliner2-weights"]) == 0
+    assert calls == {
+        "repo_id": cli.GLINER2_REPO_ID,
+        "revision": "deadbeef",
+        "local_dir": "data/models/gliner2-base-v1",
+    }
+
+
+def test_fetch_gliner2_weights_missing_huggingface_hub_returns_nonzero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A missing ``huggingface_hub`` install exits non-zero rather than crashing."""
+    monkeypatch.setattr(cli, "NerConfig", lambda: SimpleNamespace(gliner2_model_dir="x", gliner2_revision="y"))
+    monkeypatch.setitem(sys.modules, "huggingface_hub", None)
+
+    assert cli.main(["fetch-gliner2-weights"]) == 1
+
+
+class _FakeSessionCtx:
+    """A no-op ``Session``-shaped context manager standing in for ``sqlmodel.Session`` in dispatch tests.
+
+    ``_cmd_extract_dataset`` opens a session only to hand it to
+    ``compute_dataset_statistics``, which is itself stubbed in these tests, so
+    this context manager never touches a real engine or database.
+    """
+
+    def __init__(self, _engine: object) -> None:
+        """Discard the engine argument; nothing is opened."""
+
+    def __enter__(self) -> SimpleNamespace:
+        """Return a placeholder session object."""
+        return SimpleNamespace()
+
+    def __exit__(self, *_exc_info: object) -> bool:
+        """No cleanup is needed."""
+        return False
+
+
+def test_extract_dataset_runs_migrations_extracts_and_prints_statistics(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``extract-dataset`` migrates, builds the extractor, runs the dataset extraction, and prints stats JSON."""
+    order: list[str] = []
+    monkeypatch.setattr(cli, "ExtractionConfig", lambda: SimpleNamespace(input_policy="contextualized"))
+    monkeypatch.setattr(cli, "run_migrations", lambda: order.append("migrate"))
+    monkeypatch.setattr(cli, "build_extractor", lambda _config: SimpleNamespace(extractor_version="stub/v1"))
+    monkeypatch.setattr(cli, "DatabaseConfig", lambda: SimpleNamespace(database_url="sqlite:///:memory:"))
+    monkeypatch.setattr(cli, "get_engine", lambda _url: "fake-engine")
+    monkeypatch.setattr(cli, "Session", _FakeSessionCtx)
+
+    captured_kwargs: dict[str, object] = {}
+
+    def fake_run_dataset_extraction(_engine: object, **kwargs: object) -> list[SimpleNamespace]:
+        order.append("extract")
+        captured_kwargs.update(kwargs)
+        return [SimpleNamespace(source_id="s1", mention_count=3)]
+
+    monkeypatch.setattr(cli, "run_dataset_extraction", fake_run_dataset_extraction)
+    monkeypatch.setattr(
+        cli, "compute_dataset_statistics", lambda _session: SimpleNamespace(model_dump_json=lambda **_k: '{"ok":true}')
+    )
+
+    exit_code = cli.main(["extract-dataset", "--source-id", "s1", "--source-id", "s2", "--limit", "5", "--yes"])
+
+    assert exit_code == 0
+    assert order == ["migrate", "extract"]
+    assert captured_kwargs["source_ids"] == ["s1", "s2"]
+    assert captured_kwargs["limit"] == 5
+    assert captured_kwargs["confirmed"] is True
+    assert captured_kwargs["input_policy"] == "contextualized"
+    assert '"ok":true' in capsys.readouterr().out
+
+
+def test_extract_dataset_maps_extractor_import_error_to_nonzero_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed extractor construction (pinned dependency/model missing) exits non-zero rather than crashing."""
+    monkeypatch.setattr(cli, "ExtractionConfig", lambda: SimpleNamespace(input_policy="raw"))
+    monkeypatch.setattr(cli, "run_migrations", lambda: None)
+
+    def raise_import_error(_config: object) -> object:
+        raise ImportError("GLiNER2 weights are not present")
+
+    monkeypatch.setattr(cli, "build_extractor", raise_import_error)
+
+    assert cli.main(["extract-dataset"]) == 1
+
+
+def test_extract_dataset_confirmation_gate_refusal_returns_nonzero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A corpus-scan target selection (no ``--source-id``) without ``--yes`` is refused; exits non-zero.
+
+    Mirrors ``tests/graph/test_extraction_workunit.py``'s coverage of
+    ``enqueue_extraction_backfill``'s confirmation-gate refusal: the same
+    :class:`~aizk.pipeline.invalidation.ReprocessingConfirmationError` gate,
+    surfaced through the CLI's dispatch layer rather than raised past it.
+    """
+    monkeypatch.setattr(cli, "ExtractionConfig", lambda: SimpleNamespace(input_policy="raw"))
+    monkeypatch.setattr(cli, "run_migrations", lambda: None)
+    monkeypatch.setattr(cli, "build_extractor", lambda _config: SimpleNamespace(extractor_version="stub/v1"))
+    monkeypatch.setattr(cli, "DatabaseConfig", lambda: SimpleNamespace(database_url="sqlite:///:memory:"))
+    monkeypatch.setattr(cli, "get_engine", lambda _url: "fake-engine")
+
+    def raise_confirmation_error(_engine: object, **_kwargs: object) -> list[object]:
+        raise cli.ReprocessingConfirmationError(
+            "corpus-scanning extraction dataset run has a large downstream blast radius and will not run "
+            "until it is explicitly confirmed; re-invoke with confirmation to approve."
+        )
+
+    monkeypatch.setattr(cli, "run_dataset_extraction", raise_confirmation_error)
+
+    assert cli.main(["extract-dataset"]) == 1
 
 
 def test_unknown_or_missing_command_is_rejected() -> None:
