@@ -8,7 +8,8 @@ routes import this package so the registry is populated before the first request
 from __future__ import annotations
 
 from aizk.console.descriptors import register_stage
-from aizk.console.stages import contextualization, extraction
+from aizk.console.stages import contextualization, conversion, extraction
 
+register_stage(conversion.DESCRIPTOR)
 register_stage(contextualization.DESCRIPTOR)
 register_stage(extraction.DESCRIPTOR)

@@ -180,6 +180,6 @@ shared SQLite (short BEGIN IMMEDIATE writes; both apps already write today — u
 
 - **Regression while collapsing three pages into one monitor**: the existing UI integration tests are ported to the unified paths (not rewritten), and the action-equivalence tests pin behavior against each stage's own pathway.
 - **Rollup map drift when a native status is added later**: the exhaustiveness test over `ConversionJobStatus` members fails on any unmapped status.
-- **Import creep from console into conversion internals**: the conversion descriptor imports only `aizk.conversion.datamodel` and `aizk.conversion.queries`; route, wiring, and processing modules stay off-limits (review guard, asserted by an import-boundary test).
+- **Import creep from console into conversion internals**: the conversion descriptor imports only conversion *domain* code — `aizk.conversion.datamodel`, `aizk.conversion.queries`, and the lifted `aizk.conversion.job_actions`; route, wiring, and processing modules stay off-limits (review guard, asserted by an import-boundary test).
 - **Stale references to retired paths**: a whole-tree sweep (`rg` across src, tests, templates, docs, notebooks) for the old `/ui/graph/*` and conversion `/ui/jobs` paths before completion.
 - **Monitor/dashboard latency on large tables**: list and count queries group over the existing indexed status columns; the 1000-unit load scenario is exercised by a seeded timing test.
