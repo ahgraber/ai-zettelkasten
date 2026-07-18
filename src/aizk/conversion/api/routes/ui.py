@@ -14,10 +14,10 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.templating import Jinja2Templates
 
 from aizk.conversion.api.dependencies import get_db_session, get_principal
-from aizk.conversion.api.routes.jobs import _apply_job_cancel, _apply_job_delete, _apply_job_retry
 from aizk.conversion.auth import Principal
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source
+from aizk.conversion.job_actions import apply_job_cancel, apply_job_delete, apply_job_retry
 
 router = APIRouter(prefix="/ui", tags=["ui"])
 
@@ -243,11 +243,11 @@ def ui_job_actions(
             continue
         try:
             if action == "retry":
-                _apply_job_retry(session, job, now, submitted_by=principal.subject)
+                apply_job_retry(session, job, now, submitted_by=principal.subject)
             elif action == "cancel":
-                _apply_job_cancel(session, job, now, cancelled_by=principal.subject)
+                apply_job_cancel(session, job, now, cancelled_by=principal.subject)
             else:
-                _apply_job_delete(session, job)
+                apply_job_delete(session, job)
             applied += 1
         except ValueError:
             ineligible += 1
