@@ -60,8 +60,9 @@ Fields:
 - `list_units(principal, ...)` / `count_by_status(principal)` — the stage's list query (filter/search/pagination inputs) and dashboard count query over its own work-unit table, scoped per SinglePrincipalOperatorPosture.
 - `columns_template` — the per-stage columns partial the generic monitor template includes.
 - `native_statuses` + `rollup` — the display vocabulary and the native→`WorkUnitStatus` mapping (see StatusAdapterReadSide).
-- `searchable_identifiers` — the stage-declared extra search fields (e.g. conversion's KaraKeep id and job title).
-- `actions` — the stage's **declared** actions only: per-action eligibility plus an apply callable dispatching to the stage's existing domain helper; the monitor offers exactly the declared set.
+- Search over stage-declared identifiers (e.g. conversion's KaraKeep id and job title) is owned by `list_units`, which the design already charters with the stage's "filter/search/pagination inputs" — so it is folded into that query closure rather than carried as a separate `searchable_identifiers` field the routes would re-implement.
+- `actions` — the stage's **declared** actions only: an apply callable dispatching to the stage's existing domain helper; the monitor offers exactly the declared set.
+  Per-action eligibility is encoded in that apply callable (it raises `ValueError` in the unit's current status, exactly as each stage's JSON API already does) rather than a separate predicate field, so the mixed-eligibility skip-and-report needs no second source of truth.
   Graph stages declare Retry and Cancel; conversion additionally declares Delete, preserving the destructive action its retired HTML UI offered (see ConversionHelperLift).
 - `detail(principal, ...)` — the **optional** drill-down detail composer: the shared event trail renders for every stage; the runs/artifact section only when declared (graph stages: pipeline runs; conversion: `ConversionOutput`).
 
