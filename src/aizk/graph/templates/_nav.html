@@ -1,7 +1,7 @@
 <nav class="nav" aria-label="Operator sections">
-  <a href="/ui/graph/jobs"{% if request.url.path == "/ui/graph/jobs" %} aria-current="page"{% endif %}>Contextualization</a>
-  <a href="/ui/graph/extraction-jobs"{% if request.url.path == "/ui/graph/extraction-jobs" %} aria-current="page"{% endif %}>Extraction</a>
-  <a href="/ui/graph/explorer"{% if request.url.path == "/ui/graph/explorer" %} aria-current="page"{% endif %}>Explorer</a>
+  <a href="/ui"{% if request.url.path == "/ui" %} aria-current="page"{% endif %}>Dashboard</a>
+  <a href="/ui/tasks"{% if request.url.path.startswith("/ui/tasks") %} aria-current="page"{% endif %}>Tasks</a>
+  <a href="/ui/explore/chunks"{% if request.url.path.startswith("/ui/explore") %} aria-current="page"{% endif %}>Explorer</a>
   <style>
     .nav {
       display: flex;
