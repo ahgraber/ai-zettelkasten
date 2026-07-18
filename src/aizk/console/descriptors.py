@@ -111,6 +111,13 @@ class StageDescriptor:
     #: Count of stage-specific columns ``columns_template`` adds, for the
     #: empty-state cell's ``colspan``.
     extra_columns: int = 0
+    #: Optional read-side split of the ``FAILED`` category into
+    #: ``(awaiting_retry, permanent)`` for the dashboard:
+    #: ``(session, principal) -> tuple[int, int]``. A stage whose failures carry a
+    #: retry-scheduling distinction (a scheduled next attempt, or a retryable vs.
+    #: permanent native status) declares it; a stage without that concept omits it
+    #: and the dashboard shows the ``FAILED`` total unsplit.
+    failed_split: Callable[["Session", "Principal"], tuple[int, int]] | None = None
 
 
 #: Module-level ordered registry of stage descriptors, keyed by stage key.

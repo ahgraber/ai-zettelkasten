@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
 
+from aizk.console.dashboard import router as console_dashboard_router
 from aizk.console.routes import router as console_router
 from aizk.conversion.utilities.config import AuthSettings, ConversionConfig
 from aizk.graph.api.routes import router
@@ -50,13 +50,10 @@ def create_app() -> FastAPI:
     # principal as the JSON API. Kept out of the generated OpenAPI — it serves HTML.
     app.include_router(ui_router, include_in_schema=False)
     app.include_router(extraction_ui_router, include_in_schema=False)
-    # Descriptor-driven operator console (task monitor + drill-down + actions),
-    # behind the same perimeter and principal. Serves HTML, so kept out of OpenAPI.
+    # Descriptor-driven operator console (dashboard + task monitor + drill-down +
+    # actions) and the app-root redirect to the dashboard, behind the same perimeter
+    # and principal. Serves HTML, so kept out of OpenAPI.
     app.include_router(console_router, include_in_schema=False)
-
-    @app.get("/", include_in_schema=False)
-    def root_redirect() -> RedirectResponse:
-        """Redirect the app root to the contextualization jobs UI landing page."""
-        return RedirectResponse(url="/ui/graph/jobs", status_code=307)
+    app.include_router(console_dashboard_router, include_in_schema=False)
 
     return app

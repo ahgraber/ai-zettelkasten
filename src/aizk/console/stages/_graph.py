@@ -162,6 +162,17 @@ def build_graph_descriptor(
         """Fetch one work-unit by id (graph stages define no principal-scoping)."""
         return session.get(model, unit_id)
 
+    def failed_split(session: "Session", _principal: "Principal") -> tuple[int, int]:
+        """Split ``FAILED`` units into ``(awaiting_retry, permanent)``.
+
+        A failed graph unit with ``earliest_next_attempt_at`` set is awaiting an
+        automatic retry; one with it ``NULL`` has exhausted retries and is permanent.
+        """
+        failed = select(func.count()).select_from(model).where(model.status == WorkUnitStatus.FAILED)
+        awaiting = session.exec(failed.where(model.earliest_next_attempt_at.is_not(None))).one()
+        permanent = session.exec(failed.where(model.earliest_next_attempt_at.is_(None))).one()
+        return awaiting, permanent
+
     def detail(session: "Session", unit: Any) -> dict[str, Any]:
         """Compose the runs section: each declared run stage, present or absent."""
         scope_id = str(unit.source_id)
@@ -199,9 +210,14 @@ def build_graph_descriptor(
         rollup=GRAPH_ROLLUP,
         events_stage=events_stage,
         actions=[
-            StageAction(key="retry", applied_label="retried", apply=lambda session, unit, _p: apply_retry(session, unit)),
-            StageAction(key="cancel", applied_label="cancelled", apply=lambda session, unit, _p: apply_cancel(session, unit)),
+            StageAction(
+                key="retry", applied_label="retried", apply=lambda session, unit, _p: apply_retry(session, unit)
+            ),
+            StageAction(
+                key="cancel", applied_label="cancelled", apply=lambda session, unit, _p: apply_cancel(session, unit)
+            ),
         ],
         detail=detail,
         detail_template="detail_graph_runs.html",
+        failed_split=failed_split,
     )

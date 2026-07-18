@@ -12,17 +12,16 @@ perimeter than the APIs beside it.
 
 from __future__ import annotations
 
-import importlib.resources
 from typing import TYPE_CHECKING, Annotated, Any
 
 from sqlalchemy import text
 from sqlmodel import Session, select
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
-from fastapi.templating import Jinja2Templates
 
 from aizk.console.descriptors import StageDescriptor, get_descriptor, registered_stages
 from aizk.console.monitor import BASE_COLUMN_COUNT, format_bulk_notice, format_dt
+from aizk.console.rendering import TEMPLATES
 import aizk.console.stages  # noqa: F401 -- import registers the stage descriptors
 from aizk.conversion.api.dependencies import get_principal
 from aizk.conversion.auth import Principal
@@ -37,15 +36,6 @@ if TYPE_CHECKING:
 MAX_BULK_SELECTION = 100
 
 router = APIRouter(prefix="/ui/tasks", tags=["console"])
-
-#: The console's own templates, with the graph package's shell partials
-#: (``_nav.html`` / ``_styles_*``) resolvable as a fallback.
-_TEMPLATES = Jinja2Templates(
-    directory=[
-        str(importlib.resources.files("aizk.console") / "templates"),
-        str(importlib.resources.files("aizk.graph") / "templates"),
-    ]
-)
 
 
 def _require_descriptor(stage: str | None) -> StageDescriptor:
@@ -100,7 +90,7 @@ def monitor(
         offset=offset,
     )
     template = "tasks_panel.html" if request.headers.get("HX-Request") else "tasks.html"
-    return _TEMPLATES.TemplateResponse(request, template, _monitor_context(descriptor, page))
+    return TEMPLATES.TemplateResponse(request, template, _monitor_context(descriptor, page))
 
 
 @router.post("/{stage}/actions")
@@ -181,7 +171,7 @@ def actions(
         offset=offset,
         notice=notice,
     )
-    return _TEMPLATES.TemplateResponse(request, "tasks_panel.html", _monitor_context(descriptor, page))
+    return TEMPLATES.TemplateResponse(request, "tasks_panel.html", _monitor_context(descriptor, page))
 
 
 def _event_trail(session: Session, events_stage: str, unit_id: int) -> list[dict[str, Any]]:
@@ -224,6 +214,6 @@ def drilldown(
         "detail": detail,
         "events": _event_trail(session, descriptor.events_stage, unit_id),
     }
-    return _TEMPLATES.TemplateResponse(
+    return TEMPLATES.TemplateResponse(
         request, "task_detail.html", {"descriptor": descriptor, "drilldown": drilldown_view}
     )
