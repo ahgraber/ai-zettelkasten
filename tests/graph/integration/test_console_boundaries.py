@@ -91,3 +91,26 @@ def test_oversized_selection_is_rejected_atomically(
     assert response.status_code == 400
     db_session.expire_all()
     assert db_session.get(ContextualizationJob, job.id).status is WorkUnitStatus.FAILED
+
+
+def test_malformed_status_filter_is_rejected_before_any_mutation(
+    client: TestClient, db_session: Session, seed_source, seed_contextualization_job
+) -> None:
+    """A malformed carried status filter rejects the action (400) without applying it.
+
+    The status filter is validated at the boundary, before the write transaction, so
+    a bad value cannot commit the action and then fail on the panel re-render.
+    """
+    source = seed_source(db_session, karakeep_id="bm_badstatus", title="Bad Status Doc")
+    job = seed_contextualization_job(
+        db_session, source_id=source.source_id, conversion_output_id=84, status=WorkUnitStatus.FAILED
+    )
+
+    response = client.post(
+        "/ui/tasks/contextualization/actions",
+        data={"action": "retry", "job_ids": [job.id], "status": "bogus-status"},
+    )
+
+    assert response.status_code == 400
+    db_session.expire_all()
+    assert db_session.get(ContextualizationJob, job.id).status is WorkUnitStatus.FAILED

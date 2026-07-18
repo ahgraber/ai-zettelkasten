@@ -13,23 +13,26 @@ from sqlmodel import Session, select
 
 from fastapi.testclient import TestClient
 
-from aizk.graph.api.routes import _apply_cancel
+from aizk.graph.api.routes import _apply_cancel, _apply_retry
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
 
-def _cancel_event(session: Session, job_id: int) -> PipelineEvent:
-    """Return the single cancelled lifecycle event recorded for a work-unit."""
+def _terminal_event(session: Session, job_id: int, to_status: WorkUnitStatus) -> PipelineEvent:
+    """Return the single lifecycle event transitioning a work-unit to ``to_status``."""
     events = session.exec(
         select(PipelineEvent)
         .where(PipelineEvent.stage == CONTEXTUALIZATION_STAGE)
         .where(PipelineEvent.work_unit_ref == str(job_id))
-        .where(PipelineEvent.to_status == WorkUnitStatus.CANCELLED.value)
+        .where(PipelineEvent.to_status == to_status.value)
     ).all()
-    assert len(events) == 1, f"expected exactly one cancel event, got {len(events)}"
+    assert len(events) == 1, f"expected exactly one {to_status.value} event, got {len(events)}"
     return events[0]
+
+
+_EVENT_FIELDS = ("stage", "kind", "from_status", "to_status", "attempt", "payload_json")
 
 
 def test_console_cancel_equals_the_stage_cancel_pathway(
@@ -57,7 +60,39 @@ def test_console_cancel_equals_the_stage_cancel_pathway(
     assert db_session.get(ContextualizationJob, via_console.id).status is WorkUnitStatus.CANCELLED
     assert db_session.get(ContextualizationJob, via_helper.id).status is WorkUnitStatus.CANCELLED
 
-    console_event = _cancel_event(db_session, via_console.id)
-    helper_event = _cancel_event(db_session, via_helper.id)
-    fields = ("stage", "kind", "from_status", "to_status", "attempt", "payload_json")
-    assert {f: getattr(console_event, f) for f in fields} == {f: getattr(helper_event, f) for f in fields}
+    console_event = _terminal_event(db_session, via_console.id, WorkUnitStatus.CANCELLED)
+    helper_event = _terminal_event(db_session, via_helper.id, WorkUnitStatus.CANCELLED)
+    assert {f: getattr(console_event, f) for f in _EVENT_FIELDS} == {
+        f: getattr(helper_event, f) for f in _EVENT_FIELDS
+    }
+
+
+def test_console_retry_equals_the_stage_retry_pathway(
+    client: TestClient, db_session: Session, seed_source, seed_contextualization_job
+) -> None:
+    """A console retry and a direct ``_apply_retry`` reach the same status and requeue event."""
+    source = seed_source(db_session, karakeep_id="bm_equiv_retry", title="Equivalence Retry Doc")
+    via_console = seed_contextualization_job(
+        db_session, source_id=source.source_id, conversion_output_id=93, status=WorkUnitStatus.FAILED
+    )
+    via_helper = seed_contextualization_job(
+        db_session, source_id=source.source_id, conversion_output_id=94, status=WorkUnitStatus.FAILED
+    )
+
+    response = client.post(
+        "/ui/tasks/contextualization/actions", data={"action": "retry", "job_ids": [via_console.id]}
+    )
+    assert response.status_code == 200
+
+    _apply_retry(db_session, via_helper)
+    db_session.commit()
+
+    db_session.expire_all()
+    assert db_session.get(ContextualizationJob, via_console.id).status is WorkUnitStatus.QUEUED
+    assert db_session.get(ContextualizationJob, via_helper.id).status is WorkUnitStatus.QUEUED
+
+    console_event = _terminal_event(db_session, via_console.id, WorkUnitStatus.QUEUED)
+    helper_event = _terminal_event(db_session, via_helper.id, WorkUnitStatus.QUEUED)
+    assert {f: getattr(console_event, f) for f in _EVENT_FIELDS} == {
+        f: getattr(helper_event, f) for f in _EVENT_FIELDS
+    }

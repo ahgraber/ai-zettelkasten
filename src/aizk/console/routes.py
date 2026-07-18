@@ -121,10 +121,11 @@ def actions(
     """Apply a stage's declared bulk action over the selected units, skip-and-report.
 
     Boundary checks run before any unit is touched: an unregistered stage is
-    not-found, an undeclared action is rejected, and a selection above the cap is
-    rejected whole. Each selected unit is applied in one ``BEGIN IMMEDIATE``
-    transaction; a missing unit is reported not-found and an ineligible unit
-    (the helper raises :class:`ValueError`) is skipped, both leaving status unchanged.
+    not-found, an undeclared action or a malformed status filter is rejected, and a
+    selection above the cap is rejected whole. A non-empty selection is applied in
+    one ``BEGIN IMMEDIATE`` transaction; a missing unit is reported not-found and an
+    ineligible unit (the helper raises :class:`ValueError`) is skipped, both leaving
+    status unchanged. An empty selection is a no-op that takes no write lock.
     """
     descriptor = _require_descriptor(stage)
     declared = {declared_action.key: declared_action for declared_action in descriptor.actions}
@@ -142,21 +143,31 @@ def actions(
                 "message": f"Select at most {MAX_BULK_SELECTION} work-units",
             },
         )
+    # Validate the carried status filter here too, before any mutation, so a
+    # malformed value rejects the whole action rather than committing it and then
+    # failing on the re-render.
+    if status_filter and status_filter not in descriptor.native_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "invalid_status", "message": "Invalid status filter"},
+        )
 
     declared_action = declared[action]
-    session.exec(text("BEGIN IMMEDIATE"))
     applied = ineligible = not_found = 0
-    for unit_id in selected_ids:
-        unit = descriptor.get_unit(session, principal, unit_id)
-        if unit is None:
-            not_found += 1
-            continue
-        try:
-            declared_action.apply(session, unit, principal)
-            applied += 1
-        except ValueError:
-            ineligible += 1
-    session.commit()
+    # Only the mutating path takes the write lock; an empty selection is a no-op.
+    if selected_ids:
+        session.exec(text("BEGIN IMMEDIATE"))
+        for unit_id in selected_ids:
+            unit = descriptor.get_unit(session, principal, unit_id)
+            if unit is None:
+                not_found += 1
+                continue
+            try:
+                declared_action.apply(session, unit, principal)
+                applied += 1
+            except ValueError:
+                ineligible += 1
+        session.commit()
 
     notice = format_bulk_notice(applied, ineligible, not_found, declared_action.applied_label)
     page = descriptor.list_units(
