@@ -2,28 +2,28 @@
 
 ## Stage descriptor contract
 
-- [ ] Define the `StageDescriptor` dataclass and the module-level registry (key, label, principal-receiving list/count queries, columns template, native statuses, rollup map, searchable identifiers, declared actions with eligibility/apply callables, optional drill-down detail composer).
-- [ ] Implement the identity rollup for graph stages and the conversion rollup map (`NEW`/`QUEUED`→queued, `RUNNING`/`UPLOAD_PENDING`→running, `SUCCEEDED`→succeeded, `FAILED_RETRYABLE`/`FAILED_PERM`→failed, `CANCELLED`→cancelled).
-- [ ] Test: rollup exhaustiveness — every `ConversionJobStatus` and `WorkUnitStatus` member maps to exactly one generic category (fails on any future unmapped status).
+- [x] Define the `StageDescriptor` dataclass and the module-level registry (key, label, principal-receiving list/count queries, columns template, native statuses, rollup map, searchable identifiers, declared actions with eligibility/apply callables, optional drill-down detail composer).
+- [x] Implement the identity rollup for graph stages and the conversion rollup map (`NEW`/`QUEUED`→queued, `RUNNING`/`UPLOAD_PENDING`→running, `SUCCEEDED`→succeeded, `FAILED_RETRYABLE`/`FAILED_PERM`→failed, `CANCELLED`→cancelled).
+- [x] Test: rollup exhaustiveness — every `ConversionJobStatus` and `WorkUnitStatus` member maps to exactly one generic category (fails on any future unmapped status).
 
 ## Conversion domain helper lift (independent of the descriptor group)
 
-- [ ] Move `_apply_job_retry`/`_apply_job_cancel`/`_apply_job_delete` and their eligibility sets from `aizk.conversion.api.routes.jobs` into a new `aizk.conversion.job_actions` domain module as public `apply_job_retry`/`apply_job_cancel`/`apply_job_delete` with docstrings; update the JSON API routes and the conversion HTML UI to call the lifted helpers.
-- [ ] Test: existing conversion job-action API and UI tests pass unchanged against the lifted helpers (behavior pinned before the console consumes them).
+- [x] Move `_apply_job_retry`/`_apply_job_cancel`/`_apply_job_delete` and their eligibility sets from `aizk.conversion.api.routes.jobs` into a new `aizk.conversion.job_actions` domain module as public `apply_job_retry`/`apply_job_cancel`/`apply_job_delete` with docstrings; update the JSON API routes and the conversion HTML UI to call the lifted helpers.
+- [x] Test: existing conversion job-action API and UI tests pass unchanged against the lifted helpers (behavior pinned before the console consumes them).
 
 ## Generic task monitor (graph stages first)
 
-- [ ] Add the generic console routes: `GET /ui/tasks` (stage-selected monitor), `GET /ui/tasks/{stage}/{id}` (drill-down), `POST /ui/tasks/{stage}/actions` (bulk retry/cancel, skip-and-report), all rendering from the registry.
-- [ ] Build the generic monitor template (filters, search, pagination, bulk-action form, flash summary) including the descriptor's columns partial; build the generic drill-down template (event trail + descriptor detail section).
-- [ ] Register the contextualization and extraction descriptors (list/count queries, columns partials, `_apply_retry`/`_apply_cancel` dispatch, runs-based drill-down composers).
-- [ ] Port the contextualization and extraction jobs-page integration tests to the unified paths: table rendering, whole-set status filter, title search, empty-result state, retry/cancel/mixed-eligibility bulk actions.
-- [ ] Test: title fallback for graph stages — `Source.title` when non-`NULL`, `source_id` otherwise.
-- [ ] Test: drill-down for a completed contextualization unit (three runs + succeeded trail) and for a failed-early unit (chunking shown, contextualization absent, failure event surfaced).
-- [ ] Test: drill-down for an extraction unit shows the extraction run with its lifecycle status plus the event trail.
-- [ ] Test: action equivalence — a console cancel and a direct `_apply_cancel` on equivalent contextualization units produce the same terminal status and equivalent durable event.
-- [ ] Test: perimeter on unified paths — a `Host` outside the allowlist is rejected on monitor, drill-down, and action routes; a served console route resolves the same principal as the JSON API (parameterized over registered stages).
-- [ ] Test: boundary validation — unknown stage key → 404, unknown unit → 404, undeclared action → 400, empty selection alters nothing with an informative summary, and a selection above the 100-id cap is rejected with no unit altered.
-- [ ] Test: seeded timing — a 1000-unit stage monitor page renders within 2 seconds; a bulk action over a realistic selection reports within 5 seconds.
+- [x] Add the generic console routes: `GET /ui/tasks` (stage-selected monitor), `GET /ui/tasks/{stage}/{id}` (drill-down), `POST /ui/tasks/{stage}/actions` (bulk retry/cancel, skip-and-report), all rendering from the registry.
+- [x] Build the generic monitor template (filters, search, pagination, bulk-action form, flash summary) including the descriptor's columns partial; build the generic drill-down template (event trail + descriptor detail section).
+- [x] Register the contextualization and extraction descriptors (list/count queries, columns partials, `_apply_retry`/`_apply_cancel` dispatch, runs-based drill-down composers).
+- [x] Port the contextualization and extraction jobs-page integration tests to the unified paths: table rendering, whole-set status filter, title search, empty-result state, retry/cancel/mixed-eligibility bulk actions.
+- [x] Test: title fallback for graph stages — `Source.title` when non-`NULL`, `source_id` otherwise.
+- [x] Test: drill-down for a completed contextualization unit (three runs + succeeded trail) and for a failed-early unit (chunking shown, contextualization absent, failure event surfaced).
+- [x] Test: drill-down for an extraction unit shows the extraction run with its lifecycle status plus the event trail.
+- [x] Test: action equivalence — a console cancel and a direct `_apply_cancel` on equivalent contextualization units produce the same terminal status and equivalent durable event.
+- [x] Test: perimeter on unified paths — a `Host` outside the allowlist is rejected on monitor, drill-down, and action routes; a served console route resolves the same principal as the JSON API (parameterized over registered stages).
+- [x] Test: boundary validation — unknown stage key → 404, unknown unit → 404, undeclared action → 400, empty selection alters nothing with an informative summary, and a selection above the 100-id cap is rejected with no unit altered.
+- [x] Test: seeded timing — a 1000-unit stage monitor page renders within 2 seconds; a bulk action over a realistic selection reports within 5 seconds.
 
 ## Dashboard
 
