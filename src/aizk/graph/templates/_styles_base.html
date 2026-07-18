@@ -1,0 +1,49 @@
+<style>
+  /* Shell chrome shared by every full-page graph operator surface (jobs,
+     extraction jobs, explorer): page frame, panel card, toolbar row, and the
+     shared form-control look. Page-specific rules live with each page. */
+  body {
+    font-family: system-ui, sans-serif;
+    margin: 0;
+    color: #1f1a16;
+    background: #f6f2eb;
+  }
+
+  .shell {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 24px 16px 48px;
+  }
+
+  .panel {
+    margin-top: 16px;
+    background: #fffdf8;
+    border: 1px solid rgba(31, 26, 22, 0.12);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 14px 16px;
+    border-bottom: 1px solid rgba(31, 26, 22, 0.12);
+  }
+
+  label,
+  .label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #6c5f55;
+  }
+
+  input[type="text"],
+  select {
+    border: 1px solid rgba(31, 26, 22, 0.18);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font: inherit;
+  }
+</style>

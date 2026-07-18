@@ -34,51 +34,12 @@
         });
       });
     </script>
+    {% include "_styles_base.html" %}
     <style>
-      body {
-        font-family: system-ui, sans-serif;
-        margin: 0;
-        color: #1f1a16;
-        background: #f6f2eb;
-      }
-
-      .shell {
-        max-width: 1200px;
-        margin: 0 auto;
-        padding: 24px 16px 48px;
-      }
-
-      .panel {
-        margin-top: 16px;
-        background: #fffdf8;
-        border: 1px solid rgba(31, 26, 22, 0.12);
-        border-radius: 12px;
-        overflow: hidden;
-      }
-
+      /* Explorer toolbar aligns its controls to the baseline; the rest of the
+         shell chrome comes from _styles_base.html. */
       .toolbar {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
         align-items: flex-end;
-        padding: 14px 16px;
-        border-bottom: 1px solid rgba(31, 26, 22, 0.12);
-      }
-
-      label,
-      .label {
-        font-size: 0.72rem;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: #6c5f55;
-      }
-
-      input[type="text"],
-      select {
-        border: 1px solid rgba(31, 26, 22, 0.18);
-        border-radius: 8px;
-        padding: 8px 10px;
-        font: inherit;
       }
 
       .summary {
@@ -263,6 +224,7 @@
   </head>
   <body>
     <div class="shell">
+      {% include "_nav.html" %}
       <header>
         <h1>Knowledge Base Explorer</h1>
         <p>Browse a document's chunks in reading order and search the active content, raw and contextualized.</p>
