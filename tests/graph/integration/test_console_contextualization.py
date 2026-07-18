@@ -80,7 +80,7 @@ def test_jobs_table_renders_all_columns_on_load(
         db_session, source_id=source.source_id, conversion_output_id=11, status=WorkUnitStatus.FAILED
     )
 
-    response = client.get("/ui/graph/jobs")
+    response = client.get("/ui/tasks", params={"stage": "contextualization"})
 
     assert response.status_code == 200
     body = response.text
@@ -107,7 +107,7 @@ def test_jobs_table_title_uses_source_title_when_present(
     source = seed_source(db_session, karakeep_id="bm_titled", title="Attention Is All You Need")
     seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=12)
 
-    response = client.get("/ui/graph/jobs")
+    response = client.get("/ui/tasks", params={"stage": "contextualization"})
 
     assert response.status_code == 200
     assert '<td class="title-cell">Attention Is All You Need</td>' in response.text
@@ -120,7 +120,7 @@ def test_jobs_table_title_falls_back_to_source_id_when_title_null(
     source = seed_source(db_session, karakeep_id="bm_untitled", title=None)
     seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=13)
 
-    response = client.get("/ui/graph/jobs")
+    response = client.get("/ui/tasks", params={"stage": "contextualization"})
 
     assert response.status_code == 200
     assert f'<td class="title-cell">{source.source_id}</td>' in response.text
@@ -147,9 +147,9 @@ def test_status_filter_spans_full_set_and_excludes_other_statuses(
         for cid in (100, 101, 102)
     }
 
-    page1 = client.get("/ui/graph/jobs", params={"status": "failed", "limit": 2, "offset": 0})
-    page2 = client.get("/ui/graph/jobs", params={"status": "failed", "limit": 2, "offset": 2})
-    page3 = client.get("/ui/graph/jobs", params={"status": "failed", "limit": 2, "offset": 4})
+    page1 = client.get("/ui/tasks", params={"stage": "contextualization", "status": "failed", "limit": 2, "offset": 0})
+    page2 = client.get("/ui/tasks", params={"stage": "contextualization", "status": "failed", "limit": 2, "offset": 2})
+    page3 = client.get("/ui/tasks", params={"stage": "contextualization", "status": "failed", "limit": 2, "offset": 4})
 
     assert page1.status_code == 200
     # The filtered total counts the whole matching set, not just the current page.
@@ -174,7 +174,7 @@ def test_search_by_source_title_finds_job(
     source = seed_source(db_session, karakeep_id="bm_search", title="Attention Is All You Need")
     job = seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=21)
 
-    response = client.get("/ui/graph/jobs", params={"search": "attention"})
+    response = client.get("/ui/tasks", params={"stage": "contextualization", "search": "attention"})
 
     assert response.status_code == 200
     assert f'<td class="mono">{job.id}</td>' in response.text
@@ -188,7 +188,7 @@ def test_search_with_no_match_renders_empty_state(
     source = seed_source(db_session, karakeep_id="bm_nomatch", title="Attention Is All You Need")
     seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=22)
 
-    response = client.get("/ui/graph/jobs", params={"search": "zzz-no-such-term"})
+    response = client.get("/ui/tasks", params={"stage": "contextualization", "search": "zzz-no-such-term"})
 
     assert response.status_code == 200
     assert "No jobs match your filters" in response.text
@@ -209,7 +209,7 @@ def test_bulk_retry_requeues_eligible_jobs_with_summary(
         db_session, source_id=source.source_id, conversion_output_id=32, status=WorkUnitStatus.FAILED
     )
 
-    response = client.post("/ui/graph/jobs/actions", data={"action": "retry", "job_ids": [job_a.id, job_b.id]})
+    response = client.post("/ui/tasks/contextualization/actions", data={"action": "retry", "job_ids": [job_a.id, job_b.id]})
 
     assert response.status_code == 200
     assert "2 jobs retried" in response.text
@@ -230,7 +230,7 @@ def test_bulk_cancel_cancels_eligible_jobs_with_summary(
         db_session, source_id=source.source_id, conversion_output_id=42, status=WorkUnitStatus.RUNNING
     )
 
-    response = client.post("/ui/graph/jobs/actions", data={"action": "cancel", "job_ids": [job_a.id, job_b.id]})
+    response = client.post("/ui/tasks/contextualization/actions", data={"action": "cancel", "job_ids": [job_a.id, job_b.id]})
 
     assert response.status_code == 200
     assert "2 jobs cancelled" in response.text
@@ -251,7 +251,7 @@ def test_bulk_action_mixed_eligibility_distinguishes_applied_and_skipped(
         db_session, source_id=source.source_id, conversion_output_id=52, status=WorkUnitStatus.SUCCEEDED
     )
 
-    response = client.post("/ui/graph/jobs/actions", data={"action": "retry", "job_ids": [eligible.id, ineligible.id]})
+    response = client.post("/ui/tasks/contextualization/actions", data={"action": "retry", "job_ids": [eligible.id, ineligible.id]})
 
     assert response.status_code == 200
     assert "1 jobs retried" in response.text
@@ -295,7 +295,7 @@ def test_completed_job_drilldown_shows_all_runs_and_succeeded_trail(
         occurred_at=base + dt.timedelta(seconds=1),
     )
 
-    response = client.get(f"/ui/graph/jobs/{job.id}/stages")
+    response = client.get(f"/ui/tasks/contextualization/{job.id}")
 
     assert response.status_code == 200
     body = response.text
@@ -339,7 +339,7 @@ def test_chunked_not_contextualized_drilldown_shows_gap_and_failure(
         occurred_at=base + dt.timedelta(seconds=1),
     )
 
-    response = client.get(f"/ui/graph/jobs/{job.id}/stages")
+    response = client.get(f"/ui/tasks/contextualization/{job.id}")
 
     assert response.status_code == 200
     body = response.text
@@ -352,6 +352,6 @@ def test_chunked_not_contextualized_drilldown_shows_gap_and_failure(
 
 def test_job_stages_unknown_job_is_404(client: TestClient) -> None:
     """Requesting the drill-down for an unknown work-unit returns 404."""
-    response = client.get("/ui/graph/jobs/999999/stages")
+    response = client.get("/ui/tasks/contextualization/999999")
 
     assert response.status_code == 404

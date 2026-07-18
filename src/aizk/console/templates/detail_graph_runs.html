@@ -1,0 +1,17 @@
+<div class="stage-runs" style="padding: 12px 16px">
+  <h3>Stage runs</h3>
+  <ul>
+    {% for stage in drilldown.detail.stages %}
+    <li class="stage-run {{ stage.stage }}" data-present="{{ 'true' if stage.present else 'false' }}">
+      <strong>{{ stage.label }}</strong>:
+      {% if stage.present %}
+      {% for run in stage.runs %}
+      <span class="run-status {{ run.status }}">run {{ run.run_id }} — {{ run.status }}</span>{% if not loop.last %}, {% endif %}
+      {% endfor %}
+      {% else %}
+      <span class="run-absent">absent</span>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</div>

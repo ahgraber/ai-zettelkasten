@@ -72,7 +72,7 @@ def test_jobs_table_renders_all_columns_on_load(
     source = seed_source(db_session, karakeep_id="bm_render", title="Render Doc")
     job = seed_extraction_job(db_session, source_id=source.source_id, status=WorkUnitStatus.FAILED)
 
-    response = client.get("/ui/graph/extraction-jobs")
+    response = client.get("/ui/tasks", params={"stage": "extraction"})
 
     assert response.status_code == 200
     body = response.text
@@ -99,7 +99,7 @@ def test_jobs_table_title_uses_source_title_when_present(
     source = seed_source(db_session, karakeep_id="bm_titled", title="Attention Is All You Need")
     seed_extraction_job(db_session, source_id=source.source_id)
 
-    response = client.get("/ui/graph/extraction-jobs")
+    response = client.get("/ui/tasks", params={"stage": "extraction"})
 
     assert response.status_code == 200
     assert '<td class="title-cell">Attention Is All You Need</td>' in response.text
@@ -118,7 +118,7 @@ def test_status_filter_excludes_other_statuses(
         db_session, source_id=source.source_id, status=WorkUnitStatus.SUCCEEDED, idempotency_key="source:other"
     )
 
-    response = client.get("/ui/graph/extraction-jobs", params={"status": "failed"})
+    response = client.get("/ui/tasks", params={"stage": "extraction", "status": "failed"})
 
     assert response.status_code == 200
     assert f'<td class="mono">{failed.id}</td>' in response.text
@@ -141,7 +141,7 @@ def test_bulk_retry_requeues_eligible_jobs_with_summary(
     )
 
     response = client.post(
-        "/ui/graph/extraction-jobs/actions", data={"action": "retry", "job_ids": [job_a.id, job_b.id]}
+        "/ui/tasks/extraction/actions", data={"action": "retry", "job_ids": [job_a.id, job_b.id]}
     )
 
     assert response.status_code == 200
@@ -164,7 +164,7 @@ def test_bulk_cancel_cancels_eligible_jobs_with_summary(
     )
 
     response = client.post(
-        "/ui/graph/extraction-jobs/actions", data={"action": "cancel", "job_ids": [job_a.id, job_b.id]}
+        "/ui/tasks/extraction/actions", data={"action": "cancel", "job_ids": [job_a.id, job_b.id]}
     )
 
     assert response.status_code == 200
@@ -204,7 +204,7 @@ def test_completed_job_drilldown_shows_the_run_and_succeeded_trail(
         occurred_at=base + dt.timedelta(seconds=1),
     )
 
-    response = client.get(f"/ui/graph/extraction-jobs/{job.id}/stages")
+    response = client.get(f"/ui/tasks/extraction/{job.id}")
 
     assert response.status_code == 200
     body = response.text
@@ -232,7 +232,7 @@ def test_never_extracted_job_drilldown_shows_absent_run(
         occurred_at=base,
     )
 
-    response = client.get(f"/ui/graph/extraction-jobs/{job.id}/stages")
+    response = client.get(f"/ui/tasks/extraction/{job.id}")
 
     assert response.status_code == 200
     body = response.text
@@ -243,6 +243,6 @@ def test_never_extracted_job_drilldown_shows_absent_run(
 
 def test_job_stages_unknown_job_is_404(client: TestClient) -> None:
     """Requesting the drill-down for an unknown work-unit returns 404."""
-    response = client.get("/ui/graph/extraction-jobs/999999/stages")
+    response = client.get("/ui/tasks/extraction/999999")
 
     assert response.status_code == 404
