@@ -1,0 +1,28 @@
+<nav class="nav" aria-label="Operator sections">
+  <a href="/ui/graph/jobs"{% if request.url.path == "/ui/graph/jobs" %} aria-current="page"{% endif %}>Contextualization</a>
+  <a href="/ui/graph/extraction-jobs"{% if request.url.path == "/ui/graph/extraction-jobs" %} aria-current="page"{% endif %}>Extraction</a>
+  <a href="/ui/graph/explorer"{% if request.url.path == "/ui/graph/explorer" %} aria-current="page"{% endif %}>Explorer</a>
+  <style>
+    .nav {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .nav a {
+      text-decoration: none;
+      color: #1f1a16;
+      border: 1px solid rgba(31, 26, 22, 0.18);
+      border-radius: 999px;
+      padding: 6px 14px;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+
+    .nav a[aria-current="page"] {
+      background: #b44b33;
+      border-color: #b44b33;
+      color: #fff;
+    }
+  </style>
+</nav>
