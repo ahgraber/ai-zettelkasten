@@ -96,8 +96,11 @@ def test_jobs_table_renders_all_columns_on_load(
         "error_code",
     ):
         assert header in body
-    assert str(job.id) in body
-    assert "failed" in body
+    # Row-scoped: the id in its own cell (not a substring against offsets/colspan)
+    # and the status in its own row span (not the ever-present `value="failed"`
+    # filter option).
+    assert f'<td class="mono">{job.id}</td>' in body
+    assert '<span class="status failed">failed</span>' in body
 
 
 def test_jobs_table_title_uses_source_title_when_present(
@@ -355,3 +358,98 @@ def test_job_stages_unknown_job_is_404(client: TestClient) -> None:
     response = client.get("/ui/tasks/contextualization/999999")
 
     assert response.status_code == 404
+
+
+# --- search by stage-declared identifier, sort, HX partial, not-found ---------
+
+
+def test_search_by_stage_declared_identifier_finds_job(
+    client: TestClient, db_session, seed_source, seed_contextualization_job
+) -> None:
+    """Search matches a stage-declared id column (conversion_output_id), not just title."""
+    source = seed_source(db_session, karakeep_id="bm_idsearch", title="Nonmatching Title")
+    target = seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=770077)
+    decoy = seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=42)
+
+    response = client.get("/ui/tasks", params={"stage": "contextualization", "search": "770077"})
+
+    assert response.status_code == 200
+    # Matched via the declared conversion_output_id column, though the title does not match.
+    assert f'<td class="mono">{target.id}</td>' in response.text
+    assert f'<td class="mono">{decoy.id}</td>' not in response.text
+
+
+def test_bulk_action_reports_missing_ids_as_not_found(
+    client: TestClient, db_session, seed_source, seed_contextualization_job
+) -> None:
+    """A selection mixing a real id with a non-existent one applies one and reports one not found."""
+    source = seed_source(db_session, karakeep_id="bm_notfound", title="Not Found Doc")
+    job = seed_contextualization_job(
+        db_session, source_id=source.source_id, conversion_output_id=61, status=WorkUnitStatus.FAILED
+    )
+
+    response = client.post(
+        "/ui/tasks/contextualization/actions", data={"action": "retry", "job_ids": [job.id, 999999]}
+    )
+
+    assert response.status_code == 200
+    assert "1 jobs retried" in response.text
+    assert "1 not found" in response.text
+    db_session.expire_all()
+    assert db_session.get(ContextualizationJob, job.id).status is WorkUnitStatus.QUEUED
+
+
+def test_sort_by_job_id_direction_reverses_row_order(
+    client: TestClient, db_session, seed_source, seed_contextualization_job
+) -> None:
+    """Ascending vs descending sort by job id reverses the row order."""
+    source = seed_source(db_session, karakeep_id="bm_sort", title="Sort Doc")
+    first = seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=1)
+    second = seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=2)
+
+    asc = client.get(
+        "/ui/tasks", params={"stage": "contextualization", "sort": "job_id", "direction": "asc"}
+    ).text
+    desc = client.get(
+        "/ui/tasks", params={"stage": "contextualization", "sort": "job_id", "direction": "desc"}
+    ).text
+
+    first_cell = f'<td class="mono">{first.id}</td>'
+    second_cell = f'<td class="mono">{second.id}</td>'
+    assert asc.index(first_cell) < asc.index(second_cell)
+    assert desc.index(second_cell) < desc.index(first_cell)
+
+
+def test_unknown_sort_key_falls_back_without_error(
+    client: TestClient, db_session, seed_source, seed_contextualization_job
+) -> None:
+    """An unrecognized sort key or direction falls back rather than erroring."""
+    source = seed_source(db_session, karakeep_id="bm_badsort", title="Bad Sort Doc")
+    seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=1)
+
+    response = client.get(
+        "/ui/tasks", params={"stage": "contextualization", "sort": "bogus", "direction": "sideways"}
+    )
+
+    assert response.status_code == 200
+
+
+def test_hx_request_returns_panel_partial_without_shell(
+    client: TestClient, db_session, seed_source, seed_contextualization_job
+) -> None:
+    """An ``HX-Request`` returns the panel partial (no nav/document shell); a plain request the full page."""
+    source = seed_source(db_session, karakeep_id="bm_hx", title="HX Doc")
+    seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=1)
+
+    full = client.get("/ui/tasks", params={"stage": "contextualization"}).text
+    partial = client.get(
+        "/ui/tasks", params={"stage": "contextualization"}, headers={"HX-Request": "true"}
+    ).text
+
+    # The panel is present in both; the nav and document shell only in the full page.
+    assert 'id="tasks-panel"' in partial
+    assert "<html" not in partial
+    assert 'class="nav"' not in partial
+    assert "<html" in full
+    assert 'id="tasks-panel"' in full
+    assert 'class="nav"' in full

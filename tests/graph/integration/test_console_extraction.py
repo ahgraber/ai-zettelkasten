@@ -88,8 +88,11 @@ def test_jobs_table_renders_all_columns_on_load(
         "error_code",
     ):
         assert header in body
-    assert str(job.id) in body
-    assert "failed" in body
+    # Row-scoped: the id in its own cell (not a substring against offsets/colspan)
+    # and the status in its own row span (not the ever-present `value="failed"`
+    # filter option).
+    assert f'<td class="mono">{job.id}</td>' in body
+    assert '<span class="status failed">failed</span>' in body
 
 
 def test_jobs_table_title_uses_source_title_when_present(
@@ -246,3 +249,16 @@ def test_job_stages_unknown_job_is_404(client: TestClient) -> None:
     response = client.get("/ui/tasks/extraction/999999")
 
     assert response.status_code == 404
+
+
+def test_jobs_table_title_falls_back_to_source_id_when_title_null(
+    client: TestClient, db_session, seed_source, seed_extraction_job
+) -> None:
+    """The title cell falls back to the source ``source_id`` when ``Source.title`` is NULL."""
+    source = seed_source(db_session, karakeep_id="bm_untitled", title=None)
+    seed_extraction_job(db_session, source_id=source.source_id)
+
+    response = client.get("/ui/tasks", params={"stage": "extraction"})
+
+    assert response.status_code == 200
+    assert f'<td class="title-cell">{source.source_id}</td>' in response.text
