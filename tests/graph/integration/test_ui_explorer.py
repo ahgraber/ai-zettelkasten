@@ -184,7 +184,7 @@ def test_explorer_spine_lists_chunks_in_span_start_order_with_facts(
         chunking_run_id=run_id,
     )
 
-    response = explorer_client.get("/ui/graph/explorer", params={"source_id": source_id})
+    response = explorer_client.get("/ui/explore/chunks", params={"source_id": source_id})
 
     assert response.status_code == 200
     body = response.text
@@ -222,7 +222,7 @@ def test_explorer_detail_shows_revision_distinct_from_raw_with_provenance(
         db_session, [chunk_p], [revision], source_id=source_id, conversion_output_id=output_id, chunking_run_id=run_id
     )
 
-    response = explorer_client.get("/ui/graph/explorer", params={"source_id": source_id, "chunk_id": chunk_p.chunk_id})
+    response = explorer_client.get("/ui/explore/chunks", params={"source_id": source_id, "chunk_id": chunk_p.chunk_id})
 
     assert response.status_code == 200
     body = response.text
@@ -260,7 +260,7 @@ def test_explorer_detail_self_contained_shows_raw_marked_with_same_provenance(
         db_session, [chunk_p], [""], source_id=source_id, conversion_output_id=output_id, chunking_run_id=run_id
     )
 
-    response = explorer_client.get("/ui/graph/explorer", params={"source_id": source_id, "chunk_id": chunk_p.chunk_id})
+    response = explorer_client.get("/ui/explore/chunks", params={"source_id": source_id, "chunk_id": chunk_p.chunk_id})
 
     assert response.status_code == 200
     body = response.text
@@ -301,18 +301,18 @@ def test_explorer_select_result_opens_document_at_chunk_with_contextualized_deta
         db_session, [chunk_p], [revision], source_id=source_id, conversion_output_id=output_id, chunking_run_id=run_id
     )
 
-    # The search row exposes the select target as an hx-get to /ui/graph/explorer.
+    # The search row exposes the select target as an hx-get to /ui/explore/chunks.
     search = explorer_client.post(
-        "/ui/graph/explorer/search", data={"query": "scaled dot-product attention", "kind": "either"}
+        "/ui/explore/chunks/search", data={"query": "scaled dot-product attention", "kind": "either"}
     )
     assert search.status_code == 200
-    assert "/ui/graph/explorer?source_id=" in search.text
+    assert "/ui/explore/chunks?source_id=" in search.text
     assert chunk_p.chunk_id in search.text
 
     # Following the selection (HX-Request partial) opens the document at the chunk
     # with the detail panel showing the contextualized representation.
     opened = explorer_client.get(
-        "/ui/graph/explorer",
+        "/ui/explore/chunks",
         params={"source_id": source_id, "chunk_id": chunk_p.chunk_id},
         headers={"HX-Request": "true"},
     )
@@ -357,7 +357,7 @@ def test_explorer_search_highlights_contextualized_only_and_both_sides(
         chunking_run_id=run_id,
     )
 
-    response = explorer_client.post("/ui/graph/explorer/search", data={"query": "photosynthesis", "kind": "either"})
+    response = explorer_client.post("/ui/explore/chunks/search", data={"query": "photosynthesis", "kind": "either"})
 
     assert response.status_code == 200
     body = response.text
@@ -394,7 +394,7 @@ def test_explorer_search_contextualized_only_not_marked_in_raw(
         chunking_run_id=run_id,
     )
 
-    response = explorer_client.post("/ui/graph/explorer/search", data={"query": "scaled", "kind": "either"})
+    response = explorer_client.post("/ui/explore/chunks/search", data={"query": "scaled", "kind": "either"})
 
     assert response.status_code == 200
     body = response.text
@@ -432,8 +432,8 @@ def test_explorer_search_empty_query_renders_empty_partial(
     _run_id, persisted = _seed_chunks(db_session, [chunk], source_id=source_id, conversion_output_id=output_id)
     chunk_p = persisted[0]
 
-    empty = explorer_client.post("/ui/graph/explorer/search", data={"query": "", "kind": "either"})
-    whitespace = explorer_client.post("/ui/graph/explorer/search", data={"query": "   \t  ", "kind": "either"})
+    empty = explorer_client.post("/ui/explore/chunks/search", data={"query": "", "kind": "either"})
+    whitespace = explorer_client.post("/ui/explore/chunks/search", data={"query": "   \t  ", "kind": "either"})
 
     # Both yield the empty-results partial: 200, zero rows, and the seeded corpus is not dumped.
     assert empty.status_code == 200
@@ -465,8 +465,8 @@ def test_explorer_search_syntax_characters_do_not_error(
     _run_id, persisted = _seed_chunks(db_session, [chunk], source_id=source_id, conversion_output_id=output_id)
     chunk_p = persisted[0]
 
-    literal = explorer_client.post("/ui/graph/explorer/search", data={"query": 'wildcard* "quoted"', "kind": "either"})
-    boolean_word = explorer_client.post("/ui/graph/explorer/search", data={"query": "AND OR NEAR", "kind": "either"})
+    literal = explorer_client.post("/ui/explore/chunks/search", data={"query": 'wildcard* "quoted"', "kind": "either"})
+    boolean_word = explorer_client.post("/ui/explore/chunks/search", data={"query": "AND OR NEAR", "kind": "either"})
 
     # Special-char query never errors the page and returns the literal match.
     assert literal.status_code == 200
@@ -506,7 +506,7 @@ def test_explorer_source_mid_contextualization_shows_raw_no_representation_no_me
     memo_upsert_and_read(db_session.get_bind(), MEMO_KIND_REVISION, source_id, "some-derivation-key", retained)
 
     # Spine: the raw chunk is present, marked as having no contextualized representation.
-    spine = explorer_client.get("/ui/graph/explorer", params={"source_id": source_id})
+    spine = explorer_client.get("/ui/explore/chunks", params={"source_id": source_id})
     assert spine.status_code == 200
     assert chunk_p.chunk_id in spine.text
     assert "no contextualized representation" in spine.text
@@ -514,18 +514,18 @@ def test_explorer_source_mid_contextualization_shows_raw_no_representation_no_me
     assert retained not in spine.text
 
     # Detail: raw text shown, no variant; the retained revision does not appear.
-    detail = explorer_client.get("/ui/graph/explorer", params={"source_id": source_id, "chunk_id": chunk_p.chunk_id})
+    detail = explorer_client.get("/ui/explore/chunks", params={"source_id": source_id, "chunk_id": chunk_p.chunk_id})
     assert detail.status_code == 200
     assert "uncontextualized raw passage" in detail.text
     assert 'data-has-variant="false"' in detail.text
     assert retained not in detail.text
 
     # Search: the raw side is searchable; the retained revision is not.
-    raw_hit = explorer_client.post("/ui/graph/explorer/search", data={"query": "uncontextualized", "kind": "either"})
+    raw_hit = explorer_client.post("/ui/explore/chunks/search", data={"query": "uncontextualized", "kind": "either"})
     assert raw_hit.status_code == 200
     assert chunk_p.chunk_id in raw_hit.text
     memo_hit = explorer_client.post(
-        "/ui/graph/explorer/search", data={"query": "floccinaucinihilipilification", "kind": "either"}
+        "/ui/explore/chunks/search", data={"query": "floccinaucinihilipilification", "kind": "either"}
     )
     assert memo_hit.status_code == 200
     assert retained not in memo_hit.text

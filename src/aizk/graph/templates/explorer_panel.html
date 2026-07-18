@@ -20,7 +20,7 @@
           class="spine-chunk{% if chunk.chunk_id == selected_chunk_id %} selected{% endif %}"
           data-chunk-id="{{ chunk.chunk_id }}"
           data-self-contained="{{ 'true' if chunk.self_contained else 'false' }}"
-          hx-get="/ui/graph/explorer?source_id={{ source_id | urlencode }}&chunk_id={{ chunk.chunk_id | urlencode }}"
+          hx-get="/ui/explore/chunks?source_id={{ source_id | urlencode }}&chunk_id={{ chunk.chunk_id | urlencode }}"
           hx-target="#explorer-panel"
           hx-swap="outerHTML"
           hx-push-url="true"

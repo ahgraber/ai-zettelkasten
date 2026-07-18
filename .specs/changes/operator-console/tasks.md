@@ -47,9 +47,9 @@
 ## Console shell and explorer path
 
 - [x] Extract the shared shell partials (`_nav.html`, `_styles_base.html`, `_styles_jobs.html`) from the per-stage templates (in-flight on this branch).
-- [ ] Update the nav partial to the console sections (dashboard, task monitor, explorer) at the unified paths; retitle the app to the operator console; move the explorer to `/ui/explore/chunks`.
-- [ ] Port the navigation integration tests to the unified paths: every page links every section, current section marked active, HTMX panel fragments omit the nav.
-- [ ] Delete the superseded per-stage console routes and templates (`ui.py`/`extraction_ui.py` monitor routes, `jobs.html`, `extraction_jobs.html`) once the generic monitor covers them; update the explorer's old-path references.
+- [x] Update the nav partial to the console sections (dashboard, task monitor, explorer) at the unified paths; retitle the app to the operator console; move the explorer to `/ui/explore/chunks`.
+- [x] Port the navigation integration tests to the unified paths: every page links every section, current section marked active, HTMX panel fragments omit the nav.
+- [x] Delete the superseded per-stage console routes and templates (`ui.py`/`extraction_ui.py` monitor routes, `jobs.html`, `extraction_jobs.html`) once the generic monitor covers them; update the explorer's old-path references.
 
 ## Conversion sheds HTML
 
