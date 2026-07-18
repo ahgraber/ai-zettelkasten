@@ -24,12 +24,12 @@ _PAGES = [
 _NAV_LINKS = ["/ui/graph/jobs", "/ui/graph/extraction-jobs", "/ui/graph/explorer"]
 
 
-def test_root_redirects_to_jobs_ui(client: TestClient) -> None:
-    """The bare app root redirects (307) to the contextualization jobs UI."""
+def test_root_redirects_to_console_dashboard(client: TestClient) -> None:
+    """The bare app root redirects (307) to the operator console dashboard."""
     response = client.get("/", follow_redirects=False)
 
     assert response.status_code == 307
-    assert response.headers["location"] == "/ui/graph/jobs"
+    assert response.headers["location"] == "/ui"
 
 
 @pytest.mark.parametrize("path", [page for page, _ in _PAGES])

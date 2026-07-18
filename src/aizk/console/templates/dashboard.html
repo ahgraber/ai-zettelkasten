@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dashboard — Operator Console</title>
+    {% include "_styles_base.html" %}
+    <style>
+      .dashboard {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      .dashboard th,
+      .dashboard td {
+        padding: 10px 14px;
+        text-align: left;
+        border-bottom: 1px solid rgba(31, 26, 22, 0.1);
+      }
+
+      .dashboard td.count {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .dashboard .failed-split {
+        display: block;
+        font-size: 0.72rem;
+        color: #6c5f55;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      {% include "_nav.html" %}
+      <header>
+        <h1>Operator Console</h1>
+        <p>Per-stage work-unit counts across the pipeline lifecycle.</p>
+      </header>
+
+      <div class="panel">
+        <table class="dashboard">
+          <thead>
+            <tr>
+              <th>Stage</th>
+              {% for category in categories %}<th class="count">{{ category }}</th>{% endfor %}
+              <th class="count">total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for stage in stages %}
+            <tr data-stage="{{ stage.key }}">
+              <td class="stage-name"><a href="/ui/tasks?stage={{ stage.key }}">{{ stage.label }}</a></td>
+              {% for category in categories %}
+              <td class="count {{ category }}"
+                {%- if category == "failed" and stage.failed_awaiting_retry is not none %}
+                  data-awaiting-retry="{{ stage.failed_awaiting_retry }}" data-permanent="{{ stage.failed_permanent }}"
+                {%- endif %}>
+                {{ stage.counts[category] }}
+                {%- if category == "failed" and stage.failed_awaiting_retry is not none %}
+                <span class="failed-split">{{ stage.failed_awaiting_retry }} awaiting retry, {{ stage.failed_permanent }} permanent</span>
+                {%- endif %}
+              </td>
+              {% endfor %}
+              <td class="count total">{{ stage.total }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </body>
+</html>

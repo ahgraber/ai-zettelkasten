@@ -27,10 +27,10 @@
 
 ## Dashboard
 
-- [ ] Add `GET /ui` rendering per-stage status counts from each descriptor's count query, rolled up to the generic lifecycle vocabulary; console root `/` redirects to `/ui`.
-- [ ] Test: graph-stage counts appear per lifecycle category, with failed counts split into awaiting-retry (`earliest_next_attempt_at` set) and permanent (`NULL`).
-- [ ] Test: registration seam — a test-double descriptor registered in a test app appears in the dashboard and the monitor, and its units list, filter, and drill down with no console route or template modification.
-- [ ] Test: declared capabilities — a test-double stage declaring no actions offers no action controls and its action route rejects all actions; one declaring no detail section renders the event trail alone in its drill-down.
+- [x] Add `GET /ui` rendering per-stage status counts from each descriptor's count query, rolled up to the generic lifecycle vocabulary; console root `/` redirects to `/ui`.
+- [x] Test: graph-stage counts appear per lifecycle category, with failed counts split into awaiting-retry (`earliest_next_attempt_at` set) and permanent (`NULL`).
+- [x] Test: registration seam — a test-double descriptor registered in a test app appears in the dashboard and the monitor, and its units list, filter, and drill down with no console route or template modification.
+- [x] Test: declared capabilities — a test-double stage declaring no actions offers no action controls and its action route rejects all actions; one declaring no detail section renders the event trail alone in its drill-down.
 
 ## Conversion joins the console
 
