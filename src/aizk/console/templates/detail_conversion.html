@@ -1,0 +1,17 @@
+<div class="conversion-output" style="padding: 12px 16px">
+  <h3>Conversion output</h3>
+  {% if drilldown.detail.output %}
+  {% set output = drilldown.detail.output %}
+  <ul>
+    <li class="output-present"><strong>{{ output.title }}</strong> (output {{ output.id }})</li>
+    <li class="mono">{{ output.s3_prefix }}/{{ output.markdown_key }}</li>
+    <li>
+      hash {{ output.markdown_hash_xx64 }} · {{ output.figure_count }} figures ·
+      docling {{ output.docling_version }} · {{ output.pipeline_name }}
+    </li>
+    <li class="mono">{{ output.created_at }}</li>
+  </ul>
+  {% else %}
+  <p class="output-absent">No conversion output produced yet.</p>
+  {% endif %}
+</div>

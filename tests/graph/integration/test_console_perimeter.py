@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from aizk.conversion.api.dependencies import get_principal
 
 _UNTRUSTED_HOST = "evil.invalid"
-_STAGES = ["contextualization", "extraction"]
+_STAGES = ["conversion", "contextualization", "extraction"]
 
 
 def _reject_principal() -> None:

@@ -34,15 +34,15 @@
 
 ## Conversion joins the console
 
-- [ ] Register the conversion descriptor: list/count queries over `ConversionJob`, native-status vocabulary, columns partial (bookmark/KaraKeep columns), searchable identifiers (`ConversionJob.title`, KaraKeep id), lifted `apply_job_retry`/`apply_job_cancel`/`apply_job_delete` dispatch (Retry, Cancel, Delete declared), `ConversionOutput` drill-down composer.
-- [ ] Test: conversion's declared Delete action removes selected terminal jobs and their `ConversionOutput`, skips an active job as ineligible with status unaltered, and reports both in the summary; graph stages reject Delete as an undeclared action.
-- [ ] Test: conversion monitor rows display native statuses (`UPLOAD_PENDING`, `FAILED_PERM`) and the conversion title fallback (submit-time placeholder when `Source.title` is `NULL`).
-- [ ] Test: search by KaraKeep id returns the job (stage-declared searchable identifiers exercised through the generic search path).
-- [ ] Test: stage-native eligibility — a Cancel selection including an `UPLOAD_PENDING` job skips it as ineligible with status unaltered while eligible jobs cancel.
-- [ ] Test: action equivalence — a console retry and a conversion JSON-API retry on equivalent jobs produce the same status, cleared fields, and equivalent durable requeue event.
-- [ ] Test: dashboard rollup lossless for conversion — every native status counted under exactly one generic category; per-stage total equals the job count; failed counts split `FAILED_RETRYABLE` from `FAILED_PERM`.
-- [ ] Test: principal-scoping parity — jobs seeded with a foreign `owner_id` are absent from the conversion monitor listing and dashboard counts, their drill-down responds not-found, and a bulk action including them reports them not-found without failing the batch.
-- [ ] Test: import boundary — the console's conversion descriptor imports only `aizk.conversion.datamodel` and `aizk.conversion.queries` (no route, wiring, or processing modules).
+- [x] Register the conversion descriptor: list/count queries over `ConversionJob`, native-status vocabulary, columns partial (bookmark/KaraKeep columns), searchable identifiers (`ConversionJob.title`, KaraKeep id), lifted `apply_job_retry`/`apply_job_cancel`/`apply_job_delete` dispatch (Retry, Cancel, Delete declared), `ConversionOutput` drill-down composer.
+- [x] Test: conversion's declared Delete action removes selected terminal jobs and their `ConversionOutput`, skips an active job as ineligible with status unaltered, and reports both in the summary; graph stages reject Delete as an undeclared action.
+- [x] Test: conversion monitor rows display native statuses (`UPLOAD_PENDING`, `FAILED_PERM`) and the conversion title fallback (submit-time placeholder when `Source.title` is `NULL`).
+- [x] Test: search by KaraKeep id returns the job (stage-declared searchable identifiers exercised through the generic search path).
+- [x] Test: stage-native eligibility — a Cancel selection including an `UPLOAD_PENDING` job skips it as ineligible with status unaltered while eligible jobs cancel.
+- [x] Test: action equivalence — a console retry and a conversion JSON-API retry on equivalent jobs produce the same status, cleared fields, and equivalent durable requeue event.
+- [x] Test: dashboard rollup lossless for conversion — every native status counted under exactly one generic category; per-stage total equals the job count; failed counts split `FAILED_RETRYABLE` from `FAILED_PERM`.
+- [x] Test: principal-scoping parity — jobs seeded with a foreign `owner_id` are absent from the conversion monitor listing and dashboard counts, their drill-down responds not-found, and a bulk action including them reports them not-found without failing the batch.
+- [x] Test: import boundary — the console's conversion descriptor imports only conversion domain code (`aizk.conversion.datamodel`, `aizk.conversion.queries`, `aizk.conversion.job_actions`); no route, wiring, or processing modules.
 
 ## Console shell and explorer path
 
