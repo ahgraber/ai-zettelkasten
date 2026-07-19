@@ -26,9 +26,9 @@ from fastapi.testclient import TestClient
 from aizk.console import descriptors as descriptors_module
 from aizk.console.descriptors import StageDescriptor
 from aizk.console.stages._graph import build_graph_descriptor
-from aizk.graph.api.routes import _apply_cancel, _apply_retry
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
+from aizk.graph.job_actions import apply_contextualization_cancel, apply_contextualization_retry
 from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
@@ -47,8 +47,8 @@ def _make_double(key: str, label: str, **overrides: object) -> StageDescriptor:
         model=ContextualizationJob,
         events_stage=CONTEXTUALIZATION_STAGE,
         drilldown_stages=[(CHUNKING_STAGE, "Chunking")],
-        apply_retry=_apply_retry,
-        apply_cancel=_apply_cancel,
+        apply_retry=apply_contextualization_retry,
+        apply_cancel=apply_contextualization_cancel,
         id_search_columns=[],
     )
     return replace(base, **overrides) if overrides else base

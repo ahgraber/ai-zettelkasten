@@ -10,7 +10,6 @@ unit — the worker resolves the outcome from its slot state).
 
 from __future__ import annotations
 
-import datetime
 from typing import TYPE_CHECKING, Annotated
 
 from sqlalchemy import func, text
@@ -23,8 +22,10 @@ from aizk.conversion.auth.principal import Principal
 from aizk.graph.api.dependencies import get_db_session
 from aizk.graph.api.schemas import ContextualizationJobList, ContextualizationJobResponse
 from aizk.graph.datamodel import ContextualizationJob
-from aizk.graph.events import CONTEXTUALIZATION_STAGE, CancelledPayload, GraphEventKind, RequeuedPayload
-from aizk.pipeline.events import record_transition
+from aizk.graph.job_actions import (
+    apply_contextualization_cancel as _apply_cancel,
+    apply_contextualization_retry as _apply_retry,
+)
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
 if TYPE_CHECKING:
@@ -37,16 +38,6 @@ _Principal = Annotated[Principal, Depends(get_principal)]
 
 router = APIRouter(prefix="/v1/contextualizations", tags=["contextualizations"])
 
-#: Terminal statuses an operator may re-queue.
-_RETRYABLE_FROM = frozenset({WorkUnitStatus.FAILED, WorkUnitStatus.CANCELLED, WorkUnitStatus.TIMED_OUT})
-#: Statuses an operator may cancel.
-_CANCELLABLE_FROM = frozenset({WorkUnitStatus.QUEUED, WorkUnitStatus.RUNNING, WorkUnitStatus.FAILED})
-
-
-def _utcnow() -> datetime.datetime:
-    """Return a timezone-aware UTC timestamp."""
-    return datetime.datetime.now(datetime.timezone.utc)
-
 
 def _get_or_404(session: "Session", job_id: int) -> ContextualizationJob:
     """Return the work-unit or raise 404."""
@@ -54,64 +45,6 @@ def _get_or_404(session: "Session", job_id: int) -> ContextualizationJob:
     if job is None:
         raise HTTPException(status_code=404, detail=f"contextualization work-unit {job_id} not found")
     return job
-
-
-def _apply_retry(session: "Session", job: ContextualizationJob) -> None:
-    """Re-queue a terminal work-unit, clearing error/retry-wait fields and recording the event.
-
-    Performs the status-eligibility check and raises :class:`ValueError` when the
-    unit is not in a re-queueable terminal status (the message is the operator-facing
-    reason). Applies the field mutations and co-commits a ``requeued`` transition via
-    :func:`aizk.pipeline.events.record_transition`. The caller owns the surrounding
-    transaction; this helper does **not** commit.
-    """
-    if job.status not in _RETRYABLE_FROM:
-        raise ValueError(f"cannot retry a work-unit in status {job.status.value!r}")
-    now = _utcnow()
-    job.error_code = None
-    job.error_message = None
-    job.earliest_next_attempt_at = None
-    job.finished_at = None
-    job.queued_at = now
-    job.updated_at = now
-    record_transition(
-        session,
-        job,
-        stage=CONTEXTUALIZATION_STAGE,
-        work_unit_ref=str(job.id),
-        source_id=job.source_id,
-        to_status=WorkUnitStatus.QUEUED,
-        kind=GraphEventKind.REQUEUED,
-        attempt=job.attempts,
-        payload=RequeuedPayload(requeue_reason="operator_retry"),
-    )
-
-
-def _apply_cancel(session: "Session", job: ContextualizationJob) -> None:
-    """Cancel a work-unit, writing a terminal ``CANCELLED`` status and recording the event.
-
-    Performs the status-eligibility check and raises :class:`ValueError` when the
-    unit is not in a cancellable status (the message is the operator-facing reason).
-    Applies the field mutations and co-commits a ``cancelled`` transition via
-    :func:`aizk.pipeline.events.record_transition`. The caller owns the surrounding
-    transaction; this helper does **not** commit.
-    """
-    if job.status not in _CANCELLABLE_FROM:
-        raise ValueError(f"cannot cancel a work-unit in status {job.status.value!r}")
-    now = _utcnow()
-    job.finished_at = now
-    job.updated_at = now
-    record_transition(
-        session,
-        job,
-        stage=CONTEXTUALIZATION_STAGE,
-        work_unit_ref=str(job.id),
-        source_id=job.source_id,
-        to_status=WorkUnitStatus.CANCELLED,
-        kind=GraphEventKind.CANCELLED,
-        attempt=job.attempts,
-        payload=CancelledPayload(cancellation_reason="operator_cancel"),
-    )
 
 
 @router.get("", response_model=ContextualizationJobList)
