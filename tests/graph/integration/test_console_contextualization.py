@@ -212,7 +212,9 @@ def test_bulk_retry_requeues_eligible_jobs_with_summary(
         db_session, source_id=source.source_id, conversion_output_id=32, status=WorkUnitStatus.FAILED
     )
 
-    response = client.post("/ui/tasks/contextualization/actions", data={"action": "retry", "job_ids": [job_a.id, job_b.id]})
+    response = client.post(
+        "/ui/tasks/contextualization/actions", data={"action": "retry", "job_ids": [job_a.id, job_b.id]}
+    )
 
     assert response.status_code == 200
     assert "2 jobs retried" in response.text
@@ -233,7 +235,9 @@ def test_bulk_cancel_cancels_eligible_jobs_with_summary(
         db_session, source_id=source.source_id, conversion_output_id=42, status=WorkUnitStatus.RUNNING
     )
 
-    response = client.post("/ui/tasks/contextualization/actions", data={"action": "cancel", "job_ids": [job_a.id, job_b.id]})
+    response = client.post(
+        "/ui/tasks/contextualization/actions", data={"action": "cancel", "job_ids": [job_a.id, job_b.id]}
+    )
 
     assert response.status_code == 200
     assert "2 jobs cancelled" in response.text
@@ -254,7 +258,9 @@ def test_bulk_action_mixed_eligibility_distinguishes_applied_and_skipped(
         db_session, source_id=source.source_id, conversion_output_id=52, status=WorkUnitStatus.SUCCEEDED
     )
 
-    response = client.post("/ui/tasks/contextualization/actions", data={"action": "retry", "job_ids": [eligible.id, ineligible.id]})
+    response = client.post(
+        "/ui/tasks/contextualization/actions", data={"action": "retry", "job_ids": [eligible.id, ineligible.id]}
+    )
 
     assert response.status_code == 200
     assert "1 jobs retried" in response.text
@@ -407,12 +413,8 @@ def test_sort_by_job_id_direction_reverses_row_order(
     first = seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=1)
     second = seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=2)
 
-    asc = client.get(
-        "/ui/tasks", params={"stage": "contextualization", "sort": "job_id", "direction": "asc"}
-    ).text
-    desc = client.get(
-        "/ui/tasks", params={"stage": "contextualization", "sort": "job_id", "direction": "desc"}
-    ).text
+    asc = client.get("/ui/tasks", params={"stage": "contextualization", "sort": "job_id", "direction": "asc"}).text
+    desc = client.get("/ui/tasks", params={"stage": "contextualization", "sort": "job_id", "direction": "desc"}).text
 
     first_cell = f'<td class="mono">{first.id}</td>'
     second_cell = f'<td class="mono">{second.id}</td>'
@@ -427,9 +429,7 @@ def test_unknown_sort_key_falls_back_without_error(
     source = seed_source(db_session, karakeep_id="bm_badsort", title="Bad Sort Doc")
     seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=1)
 
-    response = client.get(
-        "/ui/tasks", params={"stage": "contextualization", "sort": "bogus", "direction": "sideways"}
-    )
+    response = client.get("/ui/tasks", params={"stage": "contextualization", "sort": "bogus", "direction": "sideways"})
 
     assert response.status_code == 200
 
@@ -442,9 +442,7 @@ def test_hx_request_returns_panel_partial_without_shell(
     seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=1)
 
     full = client.get("/ui/tasks", params={"stage": "contextualization"}).text
-    partial = client.get(
-        "/ui/tasks", params={"stage": "contextualization"}, headers={"HX-Request": "true"}
-    ).text
+    partial = client.get("/ui/tasks", params={"stage": "contextualization"}, headers={"HX-Request": "true"}).text
 
     # The panel is present in both; the nav and document shell only in the full page.
     assert 'id="tasks-panel"' in partial

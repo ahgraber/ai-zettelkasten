@@ -143,9 +143,7 @@ def test_bulk_retry_requeues_eligible_jobs_with_summary(
         db_session, source_id=source.source_id, status=WorkUnitStatus.FAILED, idempotency_key="source:b"
     )
 
-    response = client.post(
-        "/ui/tasks/extraction/actions", data={"action": "retry", "job_ids": [job_a.id, job_b.id]}
-    )
+    response = client.post("/ui/tasks/extraction/actions", data={"action": "retry", "job_ids": [job_a.id, job_b.id]})
 
     assert response.status_code == 200
     assert "2 jobs retried" in response.text
@@ -166,9 +164,7 @@ def test_bulk_cancel_cancels_eligible_jobs_with_summary(
         db_session, source_id=source.source_id, status=WorkUnitStatus.RUNNING, idempotency_key="source:b"
     )
 
-    response = client.post(
-        "/ui/tasks/extraction/actions", data={"action": "cancel", "job_ids": [job_a.id, job_b.id]}
-    )
+    response = client.post("/ui/tasks/extraction/actions", data={"action": "cancel", "job_ids": [job_a.id, job_b.id]})
 
     assert response.status_code == 200
     assert "2 jobs cancelled" in response.text

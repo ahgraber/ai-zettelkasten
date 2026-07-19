@@ -59,6 +59,6 @@
 
 ## Completion sweeps
 
-- [ ] Whole-tree sweep (`rg` across src, tests, templates, docs, notebooks, scripts) for retired paths (`/ui/graph/jobs`, `/ui/graph/extraction-jobs`, `/ui/graph/explorer`, conversion `/ui/jobs`) and stale references to the removed modules/templates.
-- [ ] Refresh the graph and conversion package READMEs for the console/JSON-only split.
-- [ ] Run the full suite via project tooling (`uv run pytest -n auto -m "not integration_lifecycle" tests/`; lifecycle marker separately) and the lint/format gates.
+- [x] Whole-tree sweep (`rg` across src, tests, templates, docs, notebooks, scripts) for retired paths (`/ui/graph/jobs`, `/ui/graph/extraction-jobs`, `/ui/graph/explorer`, conversion `/ui/jobs`) and stale references to the removed modules/templates.
+- [x] Refresh the graph and conversion package READMEs for the console/JSON-only split.
+- [x] Run the full suite via project tooling (`uv run pytest -n auto -m "not integration_lifecycle" tests/`; lifecycle marker separately) and the lint/format gates.

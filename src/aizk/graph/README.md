@@ -162,7 +162,7 @@ Orchestration:
 - `ContextualizationStageHandler` — the runtime `StageHandler` (claim / execute-in-own-transaction / finalize / recover / cancel; `ValueError` → permanent, other exceptions → retryable, success → succeeded; in-process, single-writer).
 - `MarkdownSource` / `S3MarkdownSource` (over a `BlobReader`), `ContextualizationConfig`, `build_llm_client`, `run_graph_worker`.
 
-Operator surface (`aizk.graph.api`): the JSON API (`GET /v1/contextualizations` (+ status filter), `GET /{id}`, `POST /{id}/retry`, `POST /{id}/cancel`) and an HTML operator UI (`/ui/graph/jobs` jobs monitor, `/ui/graph/explorer` content explorer).
+Operator surface (`aizk.graph.api`): the JSON API (`GET /v1/contextualizations` (+ status filter), `GET /{id}`, `POST /{id}/retry`, `POST /{id}/cancel`) and the operator console (`aizk.console`) — a descriptor-driven dashboard (`/ui`), a cross-stage task monitor (`/ui/tasks?stage={key}`) with per-unit drill-down, and the content explorer (`/ui/explore/chunks`).
 
 ### CLI
 

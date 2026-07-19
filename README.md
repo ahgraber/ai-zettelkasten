@@ -127,7 +127,7 @@ uv run aizk-graph serve
 ```
 
 `aizk-graph serve` listens on its own port (default `0.0.0.0:8001`, set via `AIZK_GRAPH__CONTEXTUALIZATION__OPERATOR_API_PORT`) so it can run alongside the conversion API.
-The operator UI is at `http://<host>:8001/ui/graph/jobs` (jobs monitor) and `http://<host>:8001/ui/graph/explorer` (content explorer).
+The operator console is at `http://<host>:8001/ui` (dashboard), `http://<host>:8001/ui/tasks` (task monitor across all stages), and `http://<host>:8001/ui/explore/chunks` (content explorer).
 The graph stage reuses the conversion database, so point both stages at the same `AIZK_DATABASE_URL`; Litestream replication of that database is owned by the conversion service (see `docs/Litestream.md`).
 
 ### Backfill KaraKeep bookmarks
