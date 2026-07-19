@@ -27,10 +27,11 @@ from sqlmodel import select
 
 from fastapi import HTTPException
 
-from aizk.console.descriptors import CONVERSION_ROLLUP, StageAction, StageDescriptor
+from aizk.console.descriptors import StageAction, StageDescriptor
 from aizk.console.monitor import (
     MonitorPage,
     clamp_limit_offset,
+    escape_like_term,
     execute_page,
     format_dt,
     make_page,
@@ -41,11 +42,27 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.job_actions import apply_job_cancel, apply_job_delete, apply_job_retry
+from aizk.pipeline.lifecycle import WorkUnitStatus
 
 if TYPE_CHECKING:
     from sqlmodel import Session
 
     from aizk.conversion.auth import Principal
+
+#: Conversion's native status enum rolled up onto the generic lifecycle vocabulary.
+#: ``UPLOAD_PENDING`` counts as running and both failed variants collapse to
+#: ``FAILED`` for the dashboard; the monitor still shows the native status and the
+#: dashboard subdivides failed by repairability (via ``failed_split``).
+CONVERSION_ROLLUP: dict[ConversionJobStatus, WorkUnitStatus] = {
+    ConversionJobStatus.NEW: WorkUnitStatus.QUEUED,
+    ConversionJobStatus.QUEUED: WorkUnitStatus.QUEUED,
+    ConversionJobStatus.RUNNING: WorkUnitStatus.RUNNING,
+    ConversionJobStatus.UPLOAD_PENDING: WorkUnitStatus.RUNNING,
+    ConversionJobStatus.SUCCEEDED: WorkUnitStatus.SUCCEEDED,
+    ConversionJobStatus.FAILED_RETRYABLE: WorkUnitStatus.FAILED,
+    ConversionJobStatus.FAILED_PERM: WorkUnitStatus.FAILED,
+    ConversionJobStatus.CANCELLED: WorkUnitStatus.CANCELLED,
+}
 
 _DEFAULT_SORT = "queued_at"
 _SORTABLE_COLUMNS: dict[str, Any] = {
@@ -82,14 +99,15 @@ def _sort_clause(sort: str | None, direction: str) -> Any:
 
 def _apply_search(query: Any, search: str) -> Any:
     """Match the search across the job title, source title, KaraKeep id, source id, and job id."""
-    pattern = f"%{search.lower()}%"
+    lowered = f"%{escape_like_term(search.lower())}%"
+    raw = f"%{escape_like_term(search)}%"
     return query.where(
         or_(
-            func.lower(ConversionJob.title).like(pattern),
-            func.lower(Source.title).like(pattern),
-            func.lower(Source.karakeep_id).like(pattern),
-            func.lower(cast(ConversionJob.source_id, String)).like(pattern),
-            cast(ConversionJob.id, String).like(f"%{search}%"),
+            func.lower(ConversionJob.title).like(lowered, escape="\\"),
+            func.lower(Source.title).like(lowered, escape="\\"),
+            func.lower(Source.karakeep_id).like(lowered, escape="\\"),
+            func.lower(cast(ConversionJob.source_id, String)).like(lowered, escape="\\"),
+            cast(ConversionJob.id, String).like(raw, escape="\\"),
         )
     )
 
@@ -112,9 +130,12 @@ def list_units(
     status_filter = _parse_status(status)
     normalized_search = search.strip() if search else None
 
+    # Outer join so a job whose source_id has no ``sources`` row still lists (with a
+    # submit-time-title fallback) and is counted the same as on the dashboard's
+    # join-free ``count_by_status`` — the monitor total and dashboard total never diverge.
     base_query = (
         select(ConversionJob, Source)
-        .join(Source, Source.source_id == ConversionJob.source_id)
+        .outerjoin(Source, Source.source_id == ConversionJob.source_id)
         .where(ConversionJob.owner_id == principal.subject)
     )
     filtered_query = base_query
@@ -135,9 +156,9 @@ def list_units(
             {
                 "id": job.id,
                 "source_id": str(job.source_id),
-                "karakeep_id": source.karakeep_id or "",
+                "karakeep_id": (source.karakeep_id if source is not None else None) or "",
                 # Enriched source title, falling back to the submit-time job title.
-                "title": source.title or job.title or "",
+                "title": (source.title if source is not None else None) or job.title or "",
                 "status": job.status.value,
                 "attempts": job.attempts,
                 "queued_at": format_dt(job.queued_at),

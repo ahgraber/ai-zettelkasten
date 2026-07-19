@@ -15,6 +15,8 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.dependencies import get_principal
+from aizk.graph.datamodel import ContextualizationJob
+from aizk.pipeline.lifecycle import WorkUnitStatus
 
 _UNTRUSTED_HOST = "evil.invalid"
 _STAGES = ["conversion", "contextualization", "extraction"]
@@ -91,3 +93,47 @@ def test_console_and_api_resolve_the_same_default_principal(
     assert "Contextualization" in console.text
     assert api.status_code == 200
     assert api.json()["total"] == 1
+
+
+def test_actions_rejects_a_browser_cross_origin_post(
+    client: TestClient, db_session, seed_source, seed_contextualization_job
+) -> None:
+    """A cross-origin POST to a mutating action route is rejected (403) with no mutation.
+
+    Defense-in-depth over the trusted-host perimeter: a foreign ``Origin`` (a
+    cross-site auto-submitting form) cannot drive a bulk action.
+    """
+    source = seed_source(db_session, karakeep_id="bm_csrf", title="CSRF Doc")
+    job = seed_contextualization_job(
+        db_session, source_id=source.source_id, conversion_output_id=1, status=WorkUnitStatus.FAILED
+    )
+
+    response = client.post(
+        "/ui/tasks/contextualization/actions",
+        data={"action": "retry", "job_ids": [job.id]},
+        headers={"Origin": "http://evil.invalid"},
+    )
+
+    assert response.status_code == 403
+    db_session.expire_all()
+    assert db_session.get(ContextualizationJob, job.id).status is WorkUnitStatus.FAILED
+
+
+def test_actions_allows_a_same_origin_post(
+    client: TestClient, db_session, seed_source, seed_contextualization_job
+) -> None:
+    """A same-origin POST (``Origin`` matches ``Host``) — the console's own form — is served."""
+    source = seed_source(db_session, karakeep_id="bm_sameorigin", title="Same Origin Doc")
+    job = seed_contextualization_job(
+        db_session, source_id=source.source_id, conversion_output_id=2, status=WorkUnitStatus.FAILED
+    )
+
+    response = client.post(
+        "/ui/tasks/contextualization/actions",
+        data={"action": "retry", "job_ids": [job.id]},
+        headers={"Origin": "http://testserver"},
+    )
+
+    assert response.status_code == 200
+    db_session.expire_all()
+    assert db_session.get(ContextualizationJob, job.id).status is WorkUnitStatus.QUEUED

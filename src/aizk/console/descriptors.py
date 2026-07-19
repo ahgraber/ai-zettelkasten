@@ -18,7 +18,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from aizk.conversion.datamodel.job import ConversionJobStatus
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
 if TYPE_CHECKING:
@@ -27,22 +26,9 @@ if TYPE_CHECKING:
     from aizk.conversion.auth import Principal
 
 
-#: Conversion's native status enum rolled up onto the generic lifecycle vocabulary.
-#: ``UPLOAD_PENDING`` counts as running and both failed variants collapse to
-#: ``FAILED`` for the dashboard; the monitor still shows the native status and the
-#: dashboard subdivides failed by repairability from the native pair.
-CONVERSION_ROLLUP: dict[ConversionJobStatus, WorkUnitStatus] = {
-    ConversionJobStatus.NEW: WorkUnitStatus.QUEUED,
-    ConversionJobStatus.QUEUED: WorkUnitStatus.QUEUED,
-    ConversionJobStatus.RUNNING: WorkUnitStatus.RUNNING,
-    ConversionJobStatus.UPLOAD_PENDING: WorkUnitStatus.RUNNING,
-    ConversionJobStatus.SUCCEEDED: WorkUnitStatus.SUCCEEDED,
-    ConversionJobStatus.FAILED_RETRYABLE: WorkUnitStatus.FAILED,
-    ConversionJobStatus.FAILED_PERM: WorkUnitStatus.FAILED,
-    ConversionJobStatus.CANCELLED: WorkUnitStatus.CANCELLED,
-}
-
 #: Graph stages persist :class:`WorkUnitStatus`, so their rollup is the identity map.
+#: A stage that persists its own native enum (e.g. conversion) defines its own
+#: rollup in its stage module; the core stays free of any stage's native vocabulary.
 GRAPH_ROLLUP: dict[WorkUnitStatus, WorkUnitStatus] = {status: status for status in WorkUnitStatus}
 
 
@@ -73,6 +59,11 @@ class StageDescriptor:
     :class:`~aizk.conversion.auth.Principal` and preserve each stage's own
     principal-scoping contract (conversion scopes to the owner; graph stages, whose
     work-units carry no owner, add none).
+
+    A work-unit (what ``get_unit`` returns and ``list_units`` rows describe) is
+    required to expose an integer ``id`` and a ``source_id``; the generic drill-down
+    reads both. Everything else stage-specific is projected by the stage's own
+    callables and templates.
     """
 
     #: Stage key used in URLs, navigation, and the dashboard.
@@ -149,6 +140,11 @@ def rollup_counts(descriptor: StageDescriptor, native_counts: dict[str, int]) ->
     generic: dict[WorkUnitStatus, int] = dict.fromkeys(WorkUnitStatus, 0)
     native_by_value = {native.value: native for native in descriptor.rollup}
     for value, count in native_counts.items():
-        native = native_by_value[value]
+        native = native_by_value.get(value)
+        if native is None:
+            # Fail closed rather than KeyError-500: a native status with no rollup
+            # entry would otherwise be silently miscounted. The exhaustiveness test
+            # keeps this unreachable, but a future unmapped status names itself here.
+            raise ValueError(f"stage {descriptor.key!r} has no rollup mapping for native status {value!r}")
         generic[descriptor.rollup[native]] += count
     return generic

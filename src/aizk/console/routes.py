@@ -12,7 +12,9 @@ perimeter than the APIs beside it.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Annotated, Any
+from urllib.parse import urlparse
 
 from sqlalchemy import text
 from sqlmodel import Session, select
@@ -28,6 +30,8 @@ from aizk.conversion.auth import Principal
 from aizk.graph.api.dependencies import get_db_session
 from aizk.pipeline.events import PipelineEvent
 
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from aizk.console.monitor import MonitorPage
 
@@ -36,6 +40,29 @@ if TYPE_CHECKING:
 MAX_BULK_SELECTION = 100
 
 router = APIRouter(prefix="/ui/tasks", tags=["console"])
+
+
+def _reject_cross_origin(request: Request) -> None:
+    """Reject a browser cross-origin POST — a defense-in-depth CSRF guard.
+
+    A same-origin console POST (the htmx form) carries an ``Origin`` matching the
+    request ``Host``; a cross-site auto-submitting form carries a foreign ``Origin``
+    and is rejected (403). A request with no ``Origin`` (a non-browser client, which
+    carries no ambient browser credential to abuse) is allowed, so JSON-parity API
+    clients are unaffected. This layers over — it does not replace — the trusted-host
+    perimeter, which reverse proxies satisfy by rewriting ``Host``.
+    """
+    origin = request.headers.get("origin")
+    if origin is None:
+        return
+    origin_host = urlparse(origin).hostname
+    host_header = request.headers.get("host", "")
+    request_host = host_header.rsplit(":", 1)[0] if host_header else ""
+    if origin_host != request_host:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "cross_origin", "message": "Cross-origin request rejected"},
+        )
 
 
 def _require_descriptor(stage: str | None) -> StageDescriptor:
@@ -102,7 +129,7 @@ def actions(
     action: Annotated[str, Form()],
     job_ids: Annotated[list[int] | None, Form()] = None,
     status_filter: Annotated[str | None, Form(alias="status")] = None,
-    search: Annotated[str | None, Form()] = None,
+    search: Annotated[str | None, Form(max_length=200)] = None,
     sort: Annotated[str | None, Form()] = None,
     direction: Annotated[str | None, Form()] = None,
     limit: Annotated[int, Form(ge=1, le=200)] = 50,
@@ -116,7 +143,11 @@ def actions(
     one ``BEGIN IMMEDIATE`` transaction; a missing unit is reported not-found and an
     ineligible unit (the helper raises :class:`ValueError`) is skipped, both leaving
     status unchanged. An empty selection is a no-op that takes no write lock.
+
+    A browser cross-origin POST is rejected before any work (defense-in-depth CSRF
+    guard layered over the trusted-host perimeter).
     """
+    _reject_cross_origin(request)
     descriptor = _require_descriptor(stage)
     declared = {declared_action.key: declared_action for declared_action in descriptor.actions}
     if action not in declared:
@@ -158,6 +189,21 @@ def actions(
             except ValueError:
                 ineligible += 1
         session.commit()
+
+    # Audit line at the action boundary. Retry/cancel co-commit attributed lifecycle
+    # events; delete records none, so this log is the only durable trace of a delete.
+    logger.info(
+        "console bulk action applied",
+        extra={
+            "stage": descriptor.key,
+            "action": action,
+            "principal": principal.subject,
+            "selected": len(selected_ids),
+            "applied": applied,
+            "ineligible": ineligible,
+            "not_found": not_found,
+        },
+    )
 
     notice = format_bulk_notice(applied, ineligible, not_found, declared_action.applied_label)
     page = descriptor.list_units(
