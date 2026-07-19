@@ -61,9 +61,7 @@ def _seed_jobs(session: Session, source_id, count: int, status: WorkUnitStatus) 
     return [job.id for job in jobs]
 
 
-def test_monitor_page_renders_within_two_seconds(
-    client: TestClient, db_session: Session, seed_source
-) -> None:
+def test_monitor_page_renders_within_two_seconds(client: TestClient, db_session: Session, seed_source) -> None:
     """A 1000-unit stage monitor page renders within two seconds."""
     source = seed_source(db_session, karakeep_id="bm_perf_page", title="Perf Page Doc")
     _seed_jobs(db_session, source.source_id, 1000, WorkUnitStatus.QUEUED)
@@ -77,17 +75,13 @@ def test_monitor_page_renders_within_two_seconds(
     assert elapsed < 2.0
 
 
-def test_bulk_action_reports_within_five_seconds(
-    client: TestClient, db_session: Session, seed_source
-) -> None:
+def test_bulk_action_reports_within_five_seconds(client: TestClient, db_session: Session, seed_source) -> None:
     """A bulk retry over a realistic (cap-sized) selection reports within five seconds."""
     source = seed_source(db_session, karakeep_id="bm_perf_bulk", title="Perf Bulk Doc")
     ids = _seed_jobs(db_session, source.source_id, 100, WorkUnitStatus.FAILED)
 
     start = time.perf_counter()
-    response = client.post(
-        "/ui/tasks/contextualization/actions", data={"action": "retry", "job_ids": ids}
-    )
+    response = client.post("/ui/tasks/contextualization/actions", data={"action": "retry", "job_ids": ids})
     elapsed = time.perf_counter() - start
 
     assert response.status_code == 200

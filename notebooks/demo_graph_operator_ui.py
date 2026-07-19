@@ -658,17 +658,18 @@ while not server.started and time.monotonic() < _deadline:
     time.sleep(0.05)
 
 _base = f"http://{GRAPH_UI_HOST}:{GRAPH_UI_PORT}"
-print("graph operator UI is serving — open these in your browser:\n")
-print(f"  Jobs monitor : {_base}/ui/graph/jobs")
+print("operator console is serving — open these in your browser:\n")
+print(f"  Dashboard    : {_base}/ui")
+print(f"  Task monitor : {_base}/ui/tasks?stage=contextualization")
 print("     filter by status, search, select rows -> bulk Retry/Cancel, open a job -> stage drill-down")
-print(f"  Explorer     : {_base}/ui/graph/explorer")
+print(f"  Explorer     : {_base}/ui/explore/chunks")
 print(f"     search 'attention' / 'luciferin' / 'levain'; '{REVISION_SENTINEL}' under the contextualized filter")
 print("\n  Open a document browser directly:")
-print(f"     transformer (focal) : {_base}/ui/graph/explorer?source_id={focal_uuid}")
+print(f"     transformer (focal) : {_base}/ui/explore/chunks?source_id={focal_uuid}")
 for uid in more_uuids:
-    print(f"     more document       : {_base}/ui/graph/explorer?source_id={uid}")
+    print(f"     more document       : {_base}/ui/explore/chunks?source_id={uid}")
 print(
-    f"     chunked-not-contextualized (raw chunks, no contextualized rep): {_base}/ui/graph/explorer?source_id={gap_uuid}"
+    f"     chunked-not-contextualized (raw chunks, no contextualized rep): {_base}/ui/explore/chunks?source_id={gap_uuid}"
 )
 print("\n  Stop: run the Cleanup cell below, or restart the kernel.")
 print("  (Running this file as a plain script exits after starting the daemon server — run it interactively.)")

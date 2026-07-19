@@ -46,9 +46,7 @@ def test_undeclared_action_is_rejected_without_mutation(
     )
 
     # Graph stages declare only Retry and Cancel; Delete is not offered here.
-    response = client.post(
-        "/ui/tasks/contextualization/actions", data={"action": "delete", "job_ids": [job.id]}
-    )
+    response = client.post("/ui/tasks/contextualization/actions", data={"action": "delete", "job_ids": [job.id]})
 
     assert response.status_code == 400
     db_session.expire_all()
@@ -84,9 +82,7 @@ def test_oversized_selection_is_rejected_atomically(
     selection = [job.id, *range(10_000, 10_000 + MAX_BULK_SELECTION)]
     assert len(selection) > MAX_BULK_SELECTION
 
-    response = client.post(
-        "/ui/tasks/contextualization/actions", data={"action": "retry", "job_ids": selection}
-    )
+    response = client.post("/ui/tasks/contextualization/actions", data={"action": "retry", "job_ids": selection})
 
     assert response.status_code == 400
     db_session.expire_all()

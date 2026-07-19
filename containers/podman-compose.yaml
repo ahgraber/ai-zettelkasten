@@ -38,7 +38,7 @@ services:
   graph-operator:
     image: aizk-docling:latest
     command: ["python", "-m", "aizk.graph.cli", "serve"]
-    # Operator API + UI (/ui/graph/jobs, /ui/graph/explorer) on its own port.
+    # Operator JSON API + console (/ui dashboard, /ui/tasks, /ui/explore/chunks) on its own port.
     ports:
       - "8001:8001"
     env_file:

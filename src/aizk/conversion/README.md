@@ -52,7 +52,7 @@ The service owns SQLite replication via Litestream (started role-gated by `serve
 - **Jobs** — `POST /v1/jobs` (submit; deduped on `(owner_id, idempotency_key)`; `503` when the queue is at capacity), `GET /v1/jobs` (+ `/{id}`, `/status-counts`), `POST /v1/jobs/{id}/retry`, `POST /v1/jobs/{id}/cancel`, `POST /v1/jobs/actions` (bulk).
   Which source kinds may be submitted is a per-deployment policy (`accepted_submission_kinds`).
 - **Outputs** — `GET /v1/outputs/{output_id}/{manifest,markdown,figures/{filename}}` fetch the produced artifacts.
-- **Misc** — `GET /v1/bookmarks/{source_id}/outputs`; `GET /health/live`, `GET /health/ready`; the HTML operator UI at `/ui/jobs`.
+- **Misc** — `GET /v1/bookmarks/{source_id}/outputs`; `GET /health/live`, `GET /health/ready`. The service is JSON-only (root redirects to `/docs`); operator job monitoring lives in the console app (`aizk.console`, served by `aizk-graph`).
 
 ### Configuration
 

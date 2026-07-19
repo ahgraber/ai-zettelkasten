@@ -52,13 +52,16 @@ def _make_output(session: Session, *, job_id: int, source_id) -> ConversionOutpu
 
 def test_deletable_statuses_are_the_terminal_non_active_set() -> None:
     """Delete is eligible exactly from the terminal, non-active statuses."""
-    assert frozenset(
-        {
-            ConversionJobStatus.FAILED_RETRYABLE,
-            ConversionJobStatus.FAILED_PERM,
-            ConversionJobStatus.CANCELLED,
-        }
-    ) == DELETABLE_STATUSES
+    assert (
+        frozenset(
+            {
+                ConversionJobStatus.FAILED_RETRYABLE,
+                ConversionJobStatus.FAILED_PERM,
+                ConversionJobStatus.CANCELLED,
+            }
+        )
+        == DELETABLE_STATUSES
+    )
 
 
 def test_apply_job_delete_removes_the_job_and_its_output(db_session: Session) -> None:
