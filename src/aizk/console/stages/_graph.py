@@ -22,6 +22,7 @@ from aizk.console.descriptors import GRAPH_ROLLUP, StageAction, StageDescriptor
 from aizk.console.monitor import (
     MonitorPage,
     clamp_limit_offset,
+    escape_like_term,
     execute_page,
     format_dt,
     make_page,
@@ -84,13 +85,14 @@ def build_graph_descriptor(
         return column.asc() if direction == "asc" else column.desc()
 
     def _apply_search(query: Any, search: str) -> Any:
-        pattern = f"%{search.lower()}%"
+        lowered = f"%{escape_like_term(search.lower())}%"
+        raw = f"%{escape_like_term(search)}%"
         clauses = [
-            func.lower(Source.title).like(pattern),
-            func.lower(cast(model.source_id, String)).like(pattern),
-            cast(model.id, String).like(f"%{search}%"),
+            func.lower(Source.title).like(lowered, escape="\\"),
+            func.lower(cast(model.source_id, String)).like(lowered, escape="\\"),
+            cast(model.id, String).like(raw, escape="\\"),
         ]
-        clauses.extend(cast(column, String).like(f"%{search}%") for column in id_search_columns)
+        clauses.extend(cast(column, String).like(raw, escape="\\") for column in id_search_columns)
         return query.where(or_(*clauses))
 
     def list_units(
@@ -111,7 +113,10 @@ def build_graph_descriptor(
         status_filter = _parse_status(status)
         normalized_search = search.strip() if search else None
 
-        base_query = select(model, Source).join(Source, Source.source_id == model.source_id)
+        # Outer join so a unit whose source_id has no ``sources`` row still lists
+        # (with a source-id fallback title) and is counted the same as on the
+        # dashboard's join-free ``count_by_status`` — the two never diverge.
+        base_query = select(model, Source).outerjoin(Source, Source.source_id == model.source_id)
         filtered_query = base_query
         if status_filter is not None:
             filtered_query = filtered_query.where(model.status == status_filter)
@@ -130,7 +135,7 @@ def build_graph_descriptor(
                 {
                     "id": job.id,
                     "source_id": str(job.source_id),
-                    "title": source.title or str(job.source_id),
+                    "title": (source.title if source is not None else None) or str(job.source_id),
                     "status": job.status.value,
                     "attempts": job.attempts,
                     "queued_at": format_dt(job.queued_at),

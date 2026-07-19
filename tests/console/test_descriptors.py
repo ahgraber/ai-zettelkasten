@@ -8,12 +8,14 @@ status added later cannot silently vanish from the dashboard.
 
 from __future__ import annotations
 
+import pytest
+
 from aizk.console.descriptors import (
-    CONVERSION_ROLLUP,
     GRAPH_ROLLUP,
     StageDescriptor,
     rollup_counts,
 )
+from aizk.console.stages.conversion import CONVERSION_ROLLUP
 from aizk.conversion.datamodel.job import ConversionJobStatus
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
@@ -71,3 +73,22 @@ def test_rollup_counts_folds_native_counts_without_loss() -> None:
     assert generic[WorkUnitStatus.FAILED] == 9
     assert generic[WorkUnitStatus.SUCCEEDED] == 0
     assert sum(generic.values()) == sum(native_counts.values())
+
+
+def test_rollup_counts_fails_closed_on_an_unmapped_native_status() -> None:
+    """A native status absent from the rollup raises a named error, not a silent miscount."""
+    descriptor = StageDescriptor(
+        key="conversion",
+        label="Conversion",
+        list_units=lambda *a, **k: None,
+        count_by_status=lambda *a, **k: {},
+        get_unit=lambda *a, **k: None,
+        columns_template="",
+        native_statuses=[status.value for status in ConversionJobStatus],
+        rollup=CONVERSION_ROLLUP,
+        events_stage="conversion",
+        actions=[],
+    )
+
+    with pytest.raises(ValueError, match="no rollup mapping for native status"):
+        rollup_counts(descriptor, {"a_future_unmapped_status": 1})

@@ -55,6 +55,16 @@ def format_dt(value: Any) -> str:
     return value.isoformat()
 
 
+def escape_like_term(term: str) -> str:
+    r"""Escape SQL ``LIKE`` wildcards so a search term matches literally.
+
+    Backslash-escapes ``\``, ``%``, and ``_`` (used with ``.like(pattern,
+    escape="\\")``), so a search containing ``%`` or ``_`` matches those characters
+    rather than acting as a wildcard.
+    """
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def clamp_limit_offset(limit: int, offset: int) -> tuple[int, int]:
     """Clamp the page size to ``[1, MAX_LIMIT]`` and the offset to ``>= 0``."""
     return max(1, min(limit, MAX_LIMIT)), max(offset, 0)
@@ -99,8 +109,14 @@ def make_page(
     notice: str | None,
 ) -> MonitorPage:
     """Assemble a :class:`MonitorPage` with the derived pager indices."""
-    start_index = offset + 1 if filtered_total else 0
-    end_index = min(offset + limit, filtered_total)
+    # An offset past the (possibly just-shrunk) match count is an empty page; show
+    # "0 of N" rather than a start index that exceeds the end (e.g. "101–5 of 5").
+    if filtered_total and offset < filtered_total:
+        start_index = offset + 1
+        end_index = min(offset + limit, filtered_total)
+    else:
+        start_index = 0
+        end_index = 0
     prev_offset = max(offset - limit, 0) if offset > 0 else None
     next_offset = offset + limit if (offset + limit) < filtered_total else None
     return MonitorPage(
@@ -129,7 +145,7 @@ def format_bulk_notice(applied: int, ineligible: int, not_found: int, action_lab
     """
     if applied == 0 and ineligible == 0 and not_found == 0:
         return "Select at least one work-unit."
-    parts = [f"{applied} jobs {action_label}"]
+    parts = [f"{applied} {'job' if applied == 1 else 'jobs'} {action_label}"]
     if ineligible:
         parts.append(f"{ineligible} skipped as ineligible")
     if not_found:

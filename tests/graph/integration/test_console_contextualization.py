@@ -263,7 +263,7 @@ def test_bulk_action_mixed_eligibility_distinguishes_applied_and_skipped(
     )
 
     assert response.status_code == 200
-    assert "1 jobs retried" in response.text
+    assert "1 job retried" in response.text
     assert "1 skipped as ineligible" in response.text
     db_session.expire_all()
     assert db_session.get(ContextualizationJob, eligible.id).status is WorkUnitStatus.QUEUED
@@ -399,7 +399,7 @@ def test_bulk_action_reports_missing_ids_as_not_found(
     )
 
     assert response.status_code == 200
-    assert "1 jobs retried" in response.text
+    assert "1 job retried" in response.text
     assert "1 not found" in response.text
     db_session.expire_all()
     assert db_session.get(ContextualizationJob, job.id).status is WorkUnitStatus.QUEUED

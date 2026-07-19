@@ -158,7 +158,13 @@
     <input type="hidden" name="limit" value="{{ page.limit }}" />
     <input type="hidden" name="offset" value="{{ page.offset }}" />
     {% for action in descriptor.actions %}
-    <button class="{{ 'btn-primary' if action.key == 'retry' else 'btn-danger' }}" type="submit" name="action" value="{{ action.key }}">
+    <button
+      class="{{ 'btn-primary' if action.key == 'retry' else 'btn-danger' }}"
+      type="submit"
+      name="action"
+      value="{{ action.key }}"
+      {% if action.key == "delete" %}hx-confirm="Permanently delete the selected work-units and their outputs? This cannot be undone."{% endif %}
+    >
       {{ action.key|capitalize }} Selected
     </button>
     {% endfor %}

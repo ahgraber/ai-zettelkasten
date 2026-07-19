@@ -9,7 +9,6 @@ descriptor.
 from __future__ import annotations
 
 from aizk.console.descriptors import (
-    CONVERSION_ROLLUP,
     GRAPH_ROLLUP,
     StageAction,
     StageDescriptor,
@@ -20,7 +19,6 @@ from aizk.console.descriptors import (
 )
 
 __all__ = [
-    "CONVERSION_ROLLUP",
     "GRAPH_ROLLUP",
     "StageAction",
     "StageDescriptor",

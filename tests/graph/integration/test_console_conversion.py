@@ -88,7 +88,7 @@ def test_delete_removes_terminal_jobs_and_output_and_skips_active(
     )
 
     assert response.status_code == 200
-    assert "1 jobs deleted" in response.text
+    assert "1 job deleted" in response.text
     assert "1 skipped as ineligible" in response.text
     db_session.expire_all()
     assert db_session.get(ConversionJob, terminal_id) is None
@@ -187,7 +187,7 @@ def test_cancel_skips_upload_pending_as_ineligible(client: TestClient, db_sessio
     )
 
     assert response.status_code == 200
-    assert "1 jobs cancelled" in response.text
+    assert "1 job cancelled" in response.text
     assert "1 skipped as ineligible" in response.text
     db_session.expire_all()
     assert db_session.get(ConversionJob, queued.id).status is ConversionJobStatus.CANCELLED
@@ -345,7 +345,7 @@ def test_bulk_action_reports_foreign_job_as_not_found_without_failing(
     response = client.post("/ui/tasks/conversion/actions", data={"action": "retry", "job_ids": [mine.id, theirs.id]})
 
     assert response.status_code == 200
-    assert "1 jobs retried" in response.text
+    assert "1 job retried" in response.text
     assert "1 not found" in response.text
     db_session.expire_all()
     assert db_session.get(ConversionJob, mine.id).status is ConversionJobStatus.QUEUED
