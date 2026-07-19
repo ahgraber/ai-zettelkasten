@@ -9,7 +9,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
-from aizk.conversion.api.routes import bookmarks_router, health_router, jobs_router, outputs_router, ui_router
+from aizk.conversion.api.routes import bookmarks_router, health_router, jobs_router, outputs_router
 from aizk.conversion.utilities.config import AuthSettings, ConversionConfig
 from aizk.conversion.utilities.dotenv import load_process_dotenv_once
 from aizk.conversion.utilities.logging import configure_logging
@@ -62,12 +62,15 @@ def create_app() -> FastAPI:
     app.include_router(jobs_router)
     app.include_router(bookmarks_router)
     app.include_router(outputs_router)
-    app.include_router(ui_router)
 
     @app.get("/", include_in_schema=False)
     def root_redirect() -> RedirectResponse:
-        """Temporary shim redirecting root to the jobs UI."""
-        return RedirectResponse(url="/ui/jobs", status_code=307)
+        """Redirect root to the API docs; the conversion service serves only JSON.
+
+        Operator HTML lives in the console app; this service exposes the JSON API
+        and its OpenAPI docs.
+        """
+        return RedirectResponse(url="/docs", status_code=307)
 
     return app
 

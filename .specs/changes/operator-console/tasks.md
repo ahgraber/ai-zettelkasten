@@ -53,9 +53,9 @@
 
 ## Conversion sheds HTML
 
-- [ ] Remove the conversion `ui` router, its templates, and template wiring from the conversion app; retarget the conversion root redirect to `/docs`.
-- [ ] Test: the conversion app serves no HTML — the former `/ui/jobs` path returns 404 and the app's OpenAPI schema contains no `/ui` paths.
-- [ ] Schema check: regenerate `conversion-api-openapi` and diff against `schemas/expected.md` (only the two `/ui` path removals).
+- [x] Remove the conversion `ui` router, its templates, and template wiring from the conversion app; retarget the conversion root redirect to `/docs`.
+- [x] Test: the conversion app serves no HTML — the former `/ui/jobs` path returns 404 and the app's OpenAPI schema contains no `/ui` paths.
+- [x] Schema check: regenerate `conversion-api-openapi` and diff against `schemas/expected.md` (only the two `/ui` path removals).
 
 ## Completion sweeps
 
