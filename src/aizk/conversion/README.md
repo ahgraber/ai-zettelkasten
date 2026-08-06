@@ -52,7 +52,8 @@ The service owns SQLite replication via Litestream (started role-gated by `serve
 - **Jobs** — `POST /v1/jobs` (submit; deduped on `(owner_id, idempotency_key)`; `503` when the queue is at capacity), `GET /v1/jobs` (+ `/{id}`, `/status-counts`), `POST /v1/jobs/{id}/retry`, `POST /v1/jobs/{id}/cancel`, `POST /v1/jobs/actions` (bulk).
   Which source kinds may be submitted is a per-deployment policy (`accepted_submission_kinds`).
 - **Outputs** — `GET /v1/outputs/{output_id}/{manifest,markdown,figures/{filename}}` fetch the produced artifacts.
-- **Misc** — `GET /v1/bookmarks/{source_id}/outputs`; `GET /health/live`, `GET /health/ready`. The service is JSON-only (root redirects to `/docs`); operator job monitoring lives in the console app (`aizk.console`, served by `aizk-graph`).
+- **Misc** — `GET /v1/bookmarks/{source_id}/outputs`; `GET /health/live`, `GET /health/ready`.
+  The service is JSON-only (root redirects to `/docs`); operator job monitoring lives in the console app (`aizk.console`, served by `aizk-graph`).
 
 ### Configuration
 
@@ -70,7 +71,10 @@ This is the system's outermost boundary — it dials arbitrary user-supplied URL
   Full rationale and the IP-classification decision live in the [network-egress-policy design doc](../../../.specs/changes/archive/2026-04-28-network-egress-policy/design.md).
 - **Untrusted subprocess output** ([`processing/uploader.py`](processing/uploader.py)) — conversion runs in a spawned subprocess, and the parent uploader treats its `metadata.json` and emitted files as untrusted.
   Declared filenames are containment-checked against the workspace (rejecting path separators and `..`, then resolving symlinks) and opened `O_NOFOLLOW`, so a compromised subprocess cannot read or write outside its workspace; an escape raises `WorkspaceEscape`.
-  Docling's local-fetch path is confined by the same gate ([`utilities/docling_backend.py`](utilities/docling_backend.py)).
+- **Page-referenced resource admission** ([`utilities/html_prefetch.py`](utilities/html_prefetch.py)) — the pipeline decides which resources an untrusted page may pull in, not the converter.
+  Each `<img src>` is resolved against the source URL, fetched through the egress gate, and carried into the document as a `data:` URI; anything not admitted loses its `src` and is recorded with the class that dropped it.
+  The converter is then configured so it can dereference no location at all — no remote fetch, no local fetch, no browser rendering — which is what covers the resource-bearing shapes admission does not rewrite (`<source srcset>`, `<object data>`, CSS `url()`, and any not yet invented).
+  Enumerating those attributes instead would be a deny-list over an open set; see the comment in [`processing/converter.py`](processing/converter.py) for the three library facts to recheck whenever the pinned Docling version moves.
 
 ## References
 
