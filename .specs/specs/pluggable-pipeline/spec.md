@@ -593,9 +593,21 @@ Network dereferences SHALL:
 - Re-apply the policy at every redirect hop; redirect chains SHALL NOT cross a hop whose target fails validation, regardless of how many hops preceded.
 - Reject schemes outside `https` and `http`.
 
-Local filesystem dereferences triggered during conversion SHALL be confined to the job's per-conversion workspace directory; any attempt to read a path outside that workspace SHALL be rejected.
+**A location named by external content SHALL NOT be dereferenced as a local filesystem path at any point in the pipeline.**
+This prohibition is on locations the external content names.
+Paths the pipeline itself composes for its own artifacts — workspace files, figure outputs, manifest entries — are not locations named by external content, and remain governed by the workspace-containment rules that apply to artifact paths.
 
-Rejections SHALL surface as a typed error and SHALL be classified as non-retryable; the job SHALL fail with an error message identifying the policy violation class (deny-list category, scheme, redirect hop, or out-of-workspace read) without echoing the rejected destination back into structured output served to clients.
+**The converter SHALL be configured such that it performs no dereference of any location it finds in the content it is given**, whether that location appears in a reference shape the pipeline recognizes or in any other.
+For any resource an external document references, admission is therefore the pipeline's decision and not the converter's: the bytes of an admitted resource SHALL be supplied to the converter by the pipeline, and no reference the pipeline has not admitted SHALL be resolvable by the converter.
+A reference that carries its own bytes rather than naming a location SHALL be admitted without any fetch or read.
+
+Every non-admission SHALL be recorded individually, identifying the reference and the class of policy violation or resource cap that caused it, and the per-conversion record of the phase SHALL account for every non-admitted reference.
+
+A **rejection** is a non-admission caused by an egress-policy violation.
+Rejections SHALL surface as a typed error and SHALL be classified as non-retryable; the failure SHALL identify the policy violation class (deny-list category, scheme, redirect hop, or out-of-workspace artifact path) without echoing the rejected destination back into structured output served to clients.
+A rejection raised while dereferencing a source SHALL fail the job.
+A rejection raised while admitting a resource that already-fetched content references SHALL drop that reference without failing the job.
+A non-admission caused by a resource cap rather than a policy violation SHALL likewise drop the reference without failing the job, and SHALL NOT be required to surface as a typed error.
 
 **Operator-trusted KaraKeep carve-out — parsed-origin exact match, never string prefix.**
 A candidate URL qualifies for the KaraKeep trusted-infrastructure path only when its effective origin exactly matches the configured `karakeep_base_url` origin (`scheme`, normalized hostname, and effective port) **and** its path begins with `/api/v1/assets/`.
@@ -653,21 +665,51 @@ This shape exists because (1) operator-configured KaraKeep base URLs are typical
 
 #### Scenario: Converter outbound HTTP fetch routed through the egress gate
 
-- **GIVEN** an HTML document containing `<img src="http://169.254.169.254/...">` is handed to the converter
-- **WHEN** the converter prepares to embed the image
-- **THEN** the image-fetch attempt passes through the same egress validation as a `SourceRef` dereference and the cloud-metadata target is rejected before any network request is issued
+- **GIVEN** an HTML document containing `<img src="http://169.254.169.254/...">` is handed to the conversion pipeline
+- **WHEN** the document is prepared for the converter
+- **THEN** the image-fetch attempt passes through the same egress validation as a `SourceRef` dereference, the cloud-metadata target is rejected before any network request is issued, the reference is not resolvable by the converter, the rejection is recorded with its policy violation class, and the job completes rather than failing
 
-#### Scenario: Converter local-file dereference confined to workspace
+#### Scenario: Reference in an unrecognized shape is not resolvable by the converter
 
-- **GIVEN** an HTML document containing `<img src="/etc/ssh/ssh_host_rsa_key">` is handed to the converter and the file is not present inside the job's workspace directory
-- **WHEN** the converter attempts the dereference
-- **THEN** the attempt is rejected by the workspace-confinement gate; no `open()` against `/etc/ssh/...` is performed
+- **GIVEN** an HTML document that names a resource in a shape the pipeline's admission step does not recognize, such as `<source srcset="http://169.254.169.254/x.png">` or a CSS `url()` declaration
+- **WHEN** the document is converted
+- **THEN** the converter's configuration leaves the reference unresolvable, so no network request and no filesystem read is performed for it
 
-#### Scenario: Converter local-file dereference within workspace permitted
+#### Scenario: Local-path image reference never dereferenced
 
-- **GIVEN** an image was pre-fetched through the egress gate into the job's workspace and the HTML document references that scoped local copy via an absolute path inside the workspace
-- **WHEN** the converter dereferences the local path
-- **THEN** the read is permitted because the resolved path is contained within the workspace directory
+- **GIVEN** an HTML document containing `<img src="/etc/ssh/ssh_host_rsa_key">` is handed to the conversion pipeline
+- **WHEN** the document is prepared for the converter
+- **THEN** the reference is not admitted, it is not resolvable by the converter, its refusal is recorded, and no read of `/etc/ssh/ssh_host_rsa_key` is performed
+
+#### Scenario: Traversal image reference never dereferenced
+
+- **GIVEN** an HTML document containing `<img src="../../../../etc/passwd">` is handed to the conversion pipeline
+- **WHEN** the document is prepared for the converter
+- **THEN** the reference is not admitted, it is not resolvable by the converter, its refusal is recorded, and no read of `/etc/passwd` is performed
+
+#### Scenario: Egress-admitted image reaches the converted output
+
+- **GIVEN** an HTML document whose `<img src>` names a resource that passes egress validation and is within the per-document caps
+- **WHEN** the document is converted
+- **THEN** the resource's bytes appear as a figure in the converted document, and the converter performs no local filesystem read derived from the document
+
+#### Scenario: Relative image reference resolved against the source URL
+
+- **GIVEN** an HTML document fetched from a known source URL containing `<img src="images/photo.png">`
+- **WHEN** the document is prepared for the converter
+- **THEN** the reference is resolved against the source URL and evaluated by the egress policy as an ordinary outbound URL
+
+#### Scenario: Inline data reference admitted without any dereference
+
+- **GIVEN** an HTML document containing an `<img>` whose `src` is a `data:` URI
+- **WHEN** the document is prepared for the converter
+- **THEN** the reference is admitted unchanged, and no network request and no filesystem read is performed for it
+
+#### Scenario: Cap-exceeded image reference dropped rather than failing the job
+
+- **GIVEN** an HTML document whose image references exceed a per-document pre-fetch cap
+- **WHEN** the document is prepared for the converter
+- **THEN** each reference beyond the cap is not resolvable by the converter, its refusal is recorded with the cap that caused it, and the job does not fail
 
 #### Scenario: UrlRef construction does not perform egress validation
 
@@ -707,6 +749,7 @@ This shape exists because (1) operator-configured KaraKeep base URLs are typical
 - **AND** a candidate URL of `https://karakeep.example.internal/api/v1/bookmarks/abc123`
 - **WHEN** the fetcher decides whether to use the KaraKeep trusted-infrastructure path
 - **THEN** the URL does not qualify for the carve-out because the path is outside `/api/v1/assets/`, and it is processed through the normal egress-validation path
+
 
 ### Requirement: Preserve non-retryable fetch-error classification through fetcher dispatch
 
