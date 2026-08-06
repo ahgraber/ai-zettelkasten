@@ -473,8 +473,7 @@ class TestEgressErrorPropagation:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        """A ``WorkspaceEscape`` raised by the confined Docling backend during
-        ``converter.convert(...)`` must propagate untouched."""
+        """A ``WorkspaceEscape`` raised during ``converter.convert(...)`` must propagate untouched."""
         from aizk.conversion.core.errors import WorkspaceEscape
 
         rejected_path = "/etc/ssh/ssh_host_rsa_key"
@@ -549,6 +548,144 @@ class TestEgressErrorPropagation:
 
         assert not isinstance(excinfo.value, converter_module.DoclingError)
         assert rejected_path in str(excinfo.value)
+
+
+def test_convert_html_threads_source_url_and_policy_into_the_admission_step(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``convert_html`` must hand its ``source_url`` and policy to ``prefetch_images``.
+
+    Resolution of page-relative references happens inside the admission step, so
+    dropping either keyword at this call site would silently sever it: every
+    relative image would fail egress validation as written and be dropped, while
+    the admission step's own tests stay green because they receive the
+    parameters directly.
+    """
+    from aizk.conversion.utilities.html_prefetch import PrefetchPolicy
+
+    captured: dict[str, object] = {}
+
+    async def _capture_prefetch(html, _workspace, *, policy=None, source_url=None):
+        captured["policy"] = policy
+        captured["source_url"] = source_url
+        return html
+
+    monkeypatch.setattr(converter_module, "prefetch_images", _capture_prefetch)
+    monkeypatch.setattr(converter_module, "_create_document_converter", lambda *_a, **_kw: _FakeDocumentConverter())
+    monkeypatch.setattr(converter_module, "_docling_to_markdown", lambda _doc: "markdown")
+    monkeypatch.setattr(converter_module, "_extract_figures", lambda _doc, _out: [])
+
+    config = DoclingConverterConfig(_env_file=None)
+    policy = PrefetchPolicy(per_image_max_bytes=1234)
+
+    converter_module.convert_html(
+        b"<html></html>",
+        temp_dir=tmp_path,
+        config=config,
+        source_url="https://origin.example/article",
+        prefetch_policy=policy,
+    )
+
+    assert captured["source_url"] == "https://origin.example/article"
+    assert captured["policy"] is policy
+
+
+class TestConverterDereferenceCapability:
+    """The converter must be configured so it can dereference no location in the document.
+
+    Admission upstream covers ``<img src>``; these flags are what cover every
+    other resource-bearing shape a page might use, so they are contract rather
+    than incidental configuration.
+    """
+
+    @staticmethod
+    def _html_backend_options(**kwargs):
+        """Build the converter and return the HTML backend options it was given."""
+        from docling.datamodel.base_models import InputFormat
+
+        config = DoclingConverterConfig(_env_file=None)
+        converter = converter_module._create_document_converter(config, **kwargs)
+        return converter.format_to_options[InputFormat.HTML].backend_options
+
+    def test_no_fetch_lever_is_left_open(self) -> None:
+        """Remote fetch, local fetch, and browser rendering are all off.
+
+        Browser rendering is a separate lever from the two fetch flags: its
+        request filter permits the file scheme outright and never consults
+        ``enable_local_fetch``, so leaving it defaulted would reopen local reads
+        through a different door.
+        """
+        options = self._html_backend_options()
+
+        assert options.enable_remote_fetch is False
+        assert options.enable_local_fetch is False
+        assert options.render_page is False
+
+    def test_base64_ceiling_is_derived_from_the_admission_cap(self) -> None:
+        """The converter's per-image ceiling comes from the pre-fetch policy."""
+        from aizk.conversion.utilities.html_prefetch import PrefetchPolicy
+
+        policy = PrefetchPolicy()
+        options = self._html_backend_options(prefetch_policy=policy)
+
+        assert options.max_image_data_base64_bytes == policy.per_image_max_bytes
+
+    def test_raising_the_admission_cap_raises_the_converter_ceiling_with_it(self) -> None:
+        """The two caps measure the same quantity and must not be able to disagree.
+
+        Left at the library default, an operator raising the admission cap past it
+        would pass the pipeline's own limit only to be refused by the converter,
+        and the refusal surfaces as a warning rather than an error.
+        """
+        from aizk.conversion.utilities.html_prefetch import PrefetchPolicy
+
+        raised = PrefetchPolicy(per_image_max_bytes=64 * 1024 * 1024)
+        options = self._html_backend_options(prefetch_policy=raised)
+
+        assert options.max_image_data_base64_bytes == raised.per_image_max_bytes
+
+    def test_page_authored_data_image_is_held_to_the_admission_cap(self, tmp_path: Path) -> None:
+        """A `data:` image is admitted without a fetch, so only this ceiling bounds its size.
+
+        Without the derived ceiling a page could inline an image larger than the
+        per-image cap and bypass the limit entirely.
+        """
+        import base64
+        from io import BytesIO
+
+        from PIL import Image
+
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.document import InputDocument
+        from docling_core.types.doc.document import PictureItem
+
+        from aizk.conversion.utilities.html_prefetch import PrefetchPolicy
+
+        buf = BytesIO()
+        Image.new("RGB", (64, 64), color=(0, 128, 255)).save(buf, format="PNG")
+        payload = buf.getvalue()
+
+        # A cap below the payload size must refuse it; a cap above must admit it.
+        def _convert_with_cap(cap: int):
+            options = self._html_backend_options(prefetch_policy=PrefetchPolicy(per_image_max_bytes=cap))
+            encoded = base64.b64encode(payload).decode()
+            html = f'<html><body><img src="data:image/png;base64,{encoded}"></body></html>'
+            in_doc = InputDocument(
+                path_or_stream=BytesIO(html.encode()),
+                format=InputFormat.HTML,
+                filename="document.html",
+                backend=converter_module.HTMLDocumentBackend,
+                backend_options=options,
+            )
+            assert in_doc._backend is not None
+            doc = in_doc._backend.convert()
+            return [item for item, _ in doc.iterate_items() if isinstance(item, PictureItem)]
+
+        under_cap = _convert_with_cap(len(payload) - 1)
+        assert under_cap[0].image is None, "an oversized inline image must not be admitted"
+
+        over_cap = _convert_with_cap(len(payload) + 1)
+        assert over_cap[0].image is not None, "an inline image within the cap must be admitted"
 
 
 # ---------------------------------------------------------------------------

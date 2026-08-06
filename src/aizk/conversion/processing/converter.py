@@ -47,7 +47,6 @@ from docling_core.types.io import DocumentStream
 
 from aizk.conversion.core.errors import EgressPolicyError
 from aizk.conversion.utilities.config import DoclingConverterConfig
-from aizk.conversion.utilities.docling_backend import make_confined_backend
 from aizk.conversion.utilities.html_prefetch import PrefetchPolicy, prefetch_images
 from aizk.conversion.utilities.paths import figure_dir
 from aizk.utilities.mlflow_tracing import trace_model_call
@@ -165,10 +164,21 @@ def _get_picture_description_options(config: DoclingConverterConfig) -> Optional
 def _create_document_converter(
     config: DoclingConverterConfig,
     source_url: Optional[str] = None,
-    workspace: Optional[Path] = None,
+    prefetch_policy: Optional[PrefetchPolicy] = None,
 ) -> DocumentConverter:
-    """Create a DocumentConverter with HTML and PDF format options."""
+    """Create a DocumentConverter with HTML and PDF format options.
+
+    Args:
+        config: Converter configuration.
+        source_url: URL the document was fetched from. Becomes the HTML
+            backend's base path, which is what resolves page-relative
+            ``<a href>`` values against their origin.
+        prefetch_policy: Per-document admission caps. The HTML backend's
+            per-image byte ceiling is derived from this so the two cannot
+            disagree. ``None`` uses :class:`PrefetchPolicy` defaults.
+    """
     picture_opts = _get_picture_description_options(config)
+    policy = prefetch_policy or PrefetchPolicy()
 
     # Two-phase approach: when classification is enabled and VLM is configured,
     # suppress Docling's built-in description; the enrichment loop handles it instead.
@@ -184,25 +194,46 @@ def _create_document_converter(
     else:
         html_pipeline_opts.do_picture_description = False
 
-    # Docling's HTML backend only calls _load_image_data for <img src>; every
-    # other resource-referencing tag type produces no I/O, so enable_remote_fetch=False
-    # fully prevents outbound network activity. HTMLBackendOptions has no
-    # local_fetch_root field, so workspace containment requires the subclass
-    # returned by make_confined_backend (see utilities/docling_backend.py).
+    # The converter is configured so it can dereference no location it finds in
+    # the document. Admission happens upstream in prefetch_images, which rewrites
+    # every <img src> it admits to a data: URI and strips every one it does not;
+    # these three flags are what cover every other resource-bearing shape a page
+    # might use (<source srcset>, <object data>, CSS url(), and anything not yet
+    # invented), because enumerating those attributes would be a deny-list over
+    # an open set.
+    #
+    # Three facts about the installed Docling make this sufficient. Recheck all
+    # three when the pinned version moves:
+    #   1. Its HTML backend performs I/O for <img src> alone. `_use_hyperlink`
+    #      resolves <a href> as a string and opens nothing, and no handling
+    #      exists for srcset, <picture><source>, <object>, <embed>, SVG
+    #      resources, or CSS url(). The multi-shape coverage test in
+    #      tests/conversion/unit/utilities/test_docling_remote_fetch_coverage.py
+    #      is the standing evidence.
+    #   2. `enable_remote_services` (set above for picture description) governs
+    #      model inference engines only, never resource fetching.
+    #   3. `render_page` is a separate lever. Its headless-browser request filter
+    #      permits the file, data, about, and blob schemes outright and consults
+    #      enable_remote_fetch only for remote URLs, so a rendered page could read
+    #      local files regardless of enable_local_fetch. It is pinned off here.
     html_backend_opts = HTMLBackendOptions(
         kind="html",
         fetch_images=True,
         enable_remote_fetch=False,
-        enable_local_fetch=True,
+        enable_local_fetch=False,
+        render_page=False,
+        # Derived, not defaulted: a data: image the page authored is admitted
+        # without a fetch, so this is the only thing holding it to the same
+        # per-image ceiling as a fetched one.
+        max_image_data_base64_bytes=policy.per_image_max_bytes,
         source_uri=AnyUrl(source_url) if source_url else None,
         add_title=True,  # default
         infer_furniture=True,  # default
     )
 
-    html_backend = make_confined_backend(workspace) if workspace is not None else HTMLDocumentBackend
     html_format = HTMLFormatOption(
         pipeline_options=html_pipeline_opts,
-        backend=html_backend,
+        backend=HTMLDocumentBackend,
         backend_options=html_backend_opts,
     )
 
@@ -509,16 +540,16 @@ def convert_html(
         DoclingEmptyOutputError: If no Markdown is produced.
     """
     try:
-        converter = _create_document_converter(config, source_url=source_url, workspace=temp_dir)
-        # Egress gate for `<img>` URLs: pre-fetch through the validated helper
-        # and rewrite each src to a workspace-local absolute path. After this
-        # rewrite, Docling can run with `enable_remote_fetch=False` because
-        # every image referenced by the HTML is already on disk inside
-        # `temp_dir`. Failures (deny-list, size cap, etc.) leave the original
-        # src in place so Docling's local-fetch confinement gate refuses to
-        # dereference it instead of opening an SSRF / blind-LFI primitive.
+        converter = _create_document_converter(config, source_url=source_url, prefetch_policy=prefetch_policy)
+        # Admission boundary for `<img>` references: each is resolved against the
+        # source URL, fetched through the egress-validated helper, and carried
+        # into the document inline. Anything not admitted loses its `src`, so the
+        # converter emits a placeholder and performs no I/O for it. Nothing the
+        # converter receives names a location it is able to dereference.
         html_text = html_bytes.decode("utf-8", errors="replace")
-        rewritten_html = asyncio.run(prefetch_images(html_text, temp_dir, policy=prefetch_policy))
+        rewritten_html = asyncio.run(
+            prefetch_images(html_text, temp_dir, policy=prefetch_policy, source_url=source_url)
+        )
         prefetched_bytes = rewritten_html.encode("utf-8")
         source = DocumentStream(name="document.html", stream=BytesIO(prefetched_bytes))
         if config.is_picture_description_enabled() and not config.picture_classification_enabled:

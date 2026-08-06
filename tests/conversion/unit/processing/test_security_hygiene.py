@@ -339,13 +339,14 @@ def test_prefetch_images_emits_summary_once_with_correct_counts(
     summary_records = [
         r
         for r in caplog.records
-        if r.levelno == logging.INFO and "prefetch_images" in r.getMessage() and "prefetched" in r.getMessage()
+        if r.levelno == logging.INFO and "prefetch_images" in r.getMessage() and "admitted" in r.getMessage()
     ]
     assert len(summary_records) == 1, f"Expected exactly 1 summary line, got {len(summary_records)}"
 
     msg = summary_records[0].getMessage()
-    # 1 success, 1 egress_blocked, 1 too_large, 1 errors
-    assert "prefetched 1" in msg
+    # 1 admitted, 1 egress_blocked, 1 too_large, 1 errors
+    assert "admitted 1" in msg
+    assert "not admitted 3" in msg
     assert "egress_blocked=1" in msg
     assert "too_large=1" in msg
     assert "errors=1" in msg

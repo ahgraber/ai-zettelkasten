@@ -7,6 +7,7 @@ only at the network boundary (socket, HTTP transport, S3).
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from pathlib import Path
 import queue as queue_module
@@ -258,19 +259,19 @@ def test_redirect_to_private_ip_rejected(monkeypatch: pytest.MonkeyPatch) -> Non
 # ---------------------------------------------------------------------------
 
 
-def test_prefetch_skips_private_image_and_rewrites_public(
+def test_prefetch_drops_private_image_and_inlines_public(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Private image is silently dropped; public image is prefetched and its src rewritten.
+    """A deny-set image is dropped from the document; a public one is admitted inline.
 
     After prefetch_images:
-    - <img src="http://169.254.169.254/foo.png"> is skipped (egress denied);
-      the original src is left in place (not rewritten) so that
-      enable_remote_fetch=False prevents Docling from fetching it.
+    - <img src="http://169.254.169.254/foo.png"> is refused by the egress policy,
+      and its src attribute is removed so the reference the page named is not
+      resolvable by the converter at all.
     - <img src="http://public.example.com/valid.png"> is fetched into the
-      workspace, and the output HTML's src is rewritten to the workspace-local
-      absolute path.
+      workspace and carried into the output HTML as a data: URI, so conversion
+      performs no local read to reach its bytes.
     """
     html = (
         "<html><body>"
@@ -296,19 +297,18 @@ def test_prefetch_skips_private_image_and_rewrites_public(
 
     output_html = asyncio.run(prefetch_images(html, tmp_path))
 
-    # Private image: original src unchanged (not rewritten)
-    assert "169.254.169.254" in output_html, (
-        "Private image src must not be rewritten (left for enable_remote_fetch=False to block)"
+    # Deny-set image: the reference is gone, not merely left for a later gate.
+    assert "169.254.169.254" not in output_html, (
+        "A reference the egress policy refused must not survive into the converter's input"
     )
 
-    # Public image: rewritten to workspace-local absolute path
+    # Public image: bytes carried inline, workspace copy retained for inspection.
+    expected_uri = "data:image/png;base64," + base64.b64encode(_png_stub).decode()
+    assert expected_uri in output_html, f"Output HTML must carry the admitted bytes inline; got html:\n{output_html}"
+
     prefetched = list((tmp_path / "prefetched-images").glob("*.png"))
     assert len(prefetched) == 1, f"Expected exactly one prefetched image; got {prefetched}"
-    local_path = prefetched[0]
-    assert str(local_path) in output_html, (
-        f"Output HTML must reference the workspace-local copy {local_path}; got html:\n{output_html}"
-    )
-    assert local_path.read_bytes() == _png_stub
+    assert prefetched[0].read_bytes() == _png_stub
 
 
 # ---------------------------------------------------------------------------
