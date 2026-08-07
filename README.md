@@ -33,6 +33,8 @@ Zettelkasten may also benefit from structural notes that create hierarchy, servi
 
 - [Litestream](https://litestream.io/) (v0.5+): required to replicate the SQLite conversion database to S3 for durability and recovery; we store database replicas in `s3://aizk/db/` alongside conversion artifacts.
 - [uv](https://docs.astral.sh/uv/) is recommended to manage the python environment and installation
+- [just](https://just.systems/) is used as the task runner; the `justfile` at the repo root wraps every command in this README.
+- [1Password CLI](https://developer.1password.com/docs/cli/) (`op`) is optional; it resolves the secret references in `.env.op` so no plaintext credential has to sit on disk.
 
 ## Install
 
@@ -40,12 +42,40 @@ This project uses Python 3.12+ and `uv` for dependency management.
 To install, clone the repo, then run:
 
 ```sh
-uv sync
+just install        # uv sync
+just install-all    # uv sync --all-packages, including notebooks/claimify
 ```
+
+Run `just` with no arguments to list every recipe.
 
 ## Configure
 
 Configuration is driven by environment variables and `.env` (auto-loaded from the repo root).
+
+### Secrets
+
+`.env.op` holds 1Password secret _references_ (`op://env/aizk/…`), never secret values, so it is committed.
+Run anything that needs live credentials under `op run`:
+
+```sh
+op run --env-file=.env.op -- uv run aizk-conversion serve
+```
+
+`op run` resolves each reference and injects the value into the child process environment before `.env` is read, so injected values take precedence over `.env`.
+
+Variables prefixed with `_` (for example `_OPENROUTER_BASE_URL`) are raw credentials, not settings.
+`.env` interpolates them into the real setting names:
+
+```sh
+AIZK_GRAPH__CONTEXTUALIZATION__LLM_BASE_URL=${_OPENROUTER_BASE_URL}
+AIZK_GRAPH__CONTEXTUALIZATION__LLM_API_KEY=${_OPENROUTER_API_KEY}
+```
+
+A `${…}` placeholder that is still unexpanded at startup counts as unconfigured and fails the startup gate, so these stages must run under `op run` unless concrete values are already exported.
+
+Every `just` recipe that needs credentials applies the `op run` prefix for you.
+To run without 1Password, clear the prefix: `just op= serve`.
+Use `just secrets-check` to confirm all references resolve; it prints no secret values.
 
 Required for API/worker:
 
@@ -102,29 +132,41 @@ Each stage has its own console script. `db-init` runs the shared Alembic
 migrations (it creates both the conversion and graph tables — run it once); each
 `worker` also migrates on startup.
 
+Each recipe below wraps its console script in `op run --env-file=.env.op --`.
+To skip 1Password, clear the prefix before the recipe name: `just op= serve`.
+A `just` variable override must come before the recipe, so `just serve op=` fails.
+
 ### Conversion service
 
 ```sh
-uv run aizk-conversion db-init
-AIZK_FETCHER__KARAKEEP__API_KEY=... AIZK_FETCHER__KARAKEEP__BASE_URL=... uv run aizk-conversion serve
-AIZK_FETCHER__KARAKEEP__API_KEY=... AIZK_FETCHER__KARAKEEP__BASE_URL=... uv run aizk-conversion worker
+just db-init    # uv run aizk-conversion db-init
+just serve      # uv run aizk-conversion serve
+just worker     # uv run aizk-conversion worker
 ```
 
 `serve` listens on `AIZK_API_HOST:AIZK_API_PORT` (default `0.0.0.0:8000`).
+Both `serve` and `worker` need `AIZK_FETCHER__KARAKEEP__API_KEY` and `AIZK_FETCHER__KARAKEEP__BASE_URL`.
 
 ### Graph (contextualization) stage
 
 ```sh
 # Worker: splits, summarizes, and contextualizes converted documents.
 # Requires the model endpoint triple; refuses to start without it.
-AIZK_GRAPH__CONTEXTUALIZATION__LLM_BASE_URL=... \
-AIZK_GRAPH__CONTEXTUALIZATION__LLM_API_KEY=... \
-AIZK_GRAPH__CONTEXTUALIZATION__LLM_MODEL=... \
-  uv run aizk-graph worker
+just graph-worker              # uv run aizk-graph worker
 
 # Operator API + UI: jobs monitor and content explorer.
-uv run aizk-graph serve
+just graph-serve               # uv run aizk-graph serve
+
+# Mention extraction.
+just fetch-gliner2-weights     # one-time: pull the pinned GLiNER2 weights
+just extraction-worker         # uv run aizk-graph extraction-worker
+
+# Foreground extraction pass over target sources; prints dataset stats as JSON.
+just extract-dataset --limit 10 --yes
 ```
+
+The contextualization worker needs the model endpoint triple — `AIZK_GRAPH__CONTEXTUALIZATION__LLM_BASE_URL`, `..._LLM_API_KEY`, and `..._LLM_MODEL` — and refuses to start without it.
+`just fetch-gliner2-weights` needs `HF_TOKEN`.
 
 `aizk-graph serve` listens on its own port (default `0.0.0.0:8001`, set via `AIZK_GRAPH__CONTEXTUALIZATION__OPERATOR_API_PORT`) so it can run alongside the conversion API.
 The operator console is at `http://<host>:8001/ui` (dashboard), `http://<host>:8001/ui/tasks` (task monitor across all stages), and `http://<host>:8001/ui/explore/chunks` (content explorer).
@@ -167,8 +209,12 @@ node2nix -i package.json -o ./nix/node-packages.nix -c ./nix/default.nix -e ./ni
 Use the Podman compose file to run API + worker separately from the same image:
 
 ```sh
-podman-compose -f containers/podman-compose.yaml up -d --build
+just up      # podman-compose -f containers/podman-compose.yaml up -d --build
+just logs    # follow container logs
+just down    # stop the containers
 ```
+
+The compose services read `.env` directly, so any value they need must be a concrete literal there — the `${_VAR}` interpolation described under [Secrets](#secrets) only applies to processes launched under `op run`.
 
 ## AI Disclosure
 
@@ -177,28 +223,34 @@ See the `sdd-*` family of [ahgraber/skills: Agent skills](https://github.com/ahg
 
 ## Testing
 
-Run tests with uv:
+Tests are hermetic: they never read `.env`, so no recipe here runs under `op run`.
+
+Run the suite in parallel across CPU cores using [pytest-xdist](https://pytest-xdist.readthedocs.io/en/stable/):
 
 ```sh
-uv run pytest tests/
-```
-
-Run tests in parallel across CPU cores using [pytest-xdist](https://pytest-xdist.readthedocs.io/en/stable/):
-
-```sh
-uv run pytest -n auto -m "not integration_lifecycle" tests/
+just test    # uv run pytest -n auto -m "not integration_lifecycle" tests/
 ```
 
 Subprocess lifecycle tests (`integration_lifecycle`) are incompatible with xdist and must be run separately:
 
 ```sh
-uv run pytest -m integration_lifecycle tests/
+just test-lifecycle    # uv run pytest -m integration_lifecycle tests/
+just test-all          # both suites, in order
 ```
+
+Both recipes forward extra arguments, e.g. `just test tests/graph -k contextualization`.
 
 With coverage:
 
 ```sh
-uv run pytest -n auto -m "not integration_lifecycle" --cov=src --cov-report=term-missing tests/
+just coverage
+```
+
+Lint and format:
+
+```sh
+just format    # ruff check --fix, then ruff format
+just lint      # every pre-commit hook over the whole tree
 ```
 
 ## Contributing
@@ -209,7 +261,7 @@ Please open issues or pull requests with clear descriptions and tests where appr
 ### Releasing
 
 This project uses [uv-ship](https://github.com/floRaths/uv-ship) to manage releases.
-Install it as a uv tool:
+It ships in the `dev` dependency group, so `just install` is enough; to make it available outside the project, install it as a uv tool:
 
 ```bash
 uv tool install uv-ship
@@ -219,10 +271,10 @@ To cut a release:
 
 ```bash
 # do a dry run first!
-uv-ship --dry-run next <major | minor | patch>
+just release-dry <major | minor | patch>
 
 # if everything looks good, ship it
-uv-ship next <major | minor | patch>
+just release <major | minor | patch>
 ```
 
 This bumps the version in `pyproject.toml`, updates `CHANGELOG`, commits, tags, and pushes.

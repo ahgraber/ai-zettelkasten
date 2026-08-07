@@ -153,4 +153,7 @@ chrome-profile
 !.devcontainer
 !.github
 !.taskfiles
+!.env.example
+!.env.sample
+!.env.op
 !*.sops.*

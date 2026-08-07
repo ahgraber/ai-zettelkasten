@@ -114,6 +114,7 @@
           packages = [
             #--- cli ---
             # pkgs.ungoogled-chromium # not available on mac
+            pkgs.just
             pkgs.litestream
             pkgs.pandoc
             #--- node ---
