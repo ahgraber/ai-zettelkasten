@@ -1,10 +1,10 @@
 """Unit tests for the ``aizk-graph`` CLI dispatch.
 
-The CLI is a thin argument parser over three commands; these tests pin the
-command surface and the wiring of each command to its action, with every
-external effect (uvicorn, migrations, the worker loop, huggingface_hub, config
-construction) stubbed so the suite stays hermetic and never reads ``.env``,
-opens a socket, or touches the network.
+The CLI is a thin argument parser over the graph stage's commands; these tests
+pin the command surface and the wiring of each command to its action, with every
+external effect (uvicorn, migrations, the worker loop, huggingface_hub, backfill
+runs, config construction) stubbed so the suite stays hermetic and never reads
+``.env``, opens a socket, or touches the network.
 """
 
 from __future__ import annotations
@@ -217,13 +217,17 @@ def test_extract_dataset_maps_extractor_import_error_to_nonzero_exit(monkeypatch
     assert cli.main(["extract-dataset"]) == 1
 
 
-def test_extract_dataset_confirmation_gate_refusal_returns_nonzero(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_extract_dataset_confirmation_gate_refusal_returns_nonzero(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """A corpus-scan target selection (no ``--source-id``) without ``--yes`` is refused; exits non-zero.
 
     Mirrors ``tests/graph/test_extraction_workunit.py``'s coverage of
     ``enqueue_extraction_backfill``'s confirmation-gate refusal: the same
     :class:`~aizk.pipeline.invalidation.ReprocessingConfirmationError` gate,
-    surfaced through the CLI's dispatch layer rather than raised past it.
+    surfaced through the CLI's dispatch layer rather than raised past it. Every
+    gated command reports the refusal the same way, naming the flags that
+    resolve it rather than emitting a traceback.
     """
     monkeypatch.setattr(cli, "ExtractionConfig", lambda: SimpleNamespace(input_policy="raw"))
     monkeypatch.setattr(cli, "run_migrations", lambda: None)
@@ -240,6 +244,198 @@ def test_extract_dataset_confirmation_gate_refusal_returns_nonzero(monkeypatch: 
     monkeypatch.setattr(cli, "run_dataset_extraction", raise_confirmation_error)
 
     assert cli.main(["extract-dataset"]) == 1
+    captured = capsys.readouterr()
+    assert "large downstream blast radius" in captured.err
+    assert "--yes" in captured.err
+    assert "--source-id" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def _stub_backfill_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub migrations and engine construction shared by both backfill commands."""
+    monkeypatch.setattr(cli, "run_migrations", lambda: None)
+    monkeypatch.setattr(cli, "DatabaseConfig", lambda: SimpleNamespace(database_url="sqlite:///:memory:"))
+    monkeypatch.setattr(cli, "get_engine", lambda _url: "fake-engine")
+
+
+def test_backfill_runs_migrations_then_enqueues_with_parsed_targets(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``backfill`` migrates, then passes its parsed target selection to the backfill run."""
+    order: list[str] = []
+    monkeypatch.setattr(cli, "run_migrations", lambda: order.append("migrate"))
+    monkeypatch.setattr(cli, "DatabaseConfig", lambda: SimpleNamespace(database_url="sqlite:///:memory:"))
+    monkeypatch.setattr(cli, "get_engine", lambda _url: "fake-engine")
+    captured: dict[str, object] = {}
+
+    def fake_backfill(_engine: object, **kwargs: object) -> cli.BackfillResult:
+        order.append("backfill")
+        captured.update(kwargs)
+        return cli.BackfillResult(targeted=3, enqueued=2, reused=1)
+
+    monkeypatch.setattr(cli, "run_contextualization_backfill", fake_backfill)
+
+    exit_code = cli.main(["backfill", "--output-id", "7", "--output-id", "9", "--yes"])
+
+    assert exit_code == 0
+    assert order == ["migrate", "backfill"]
+    assert captured["output_ids"] == [7, 9]
+    assert captured["confirmed"] is True
+    assert captured["dry_run"] is False
+
+
+def test_backfill_corpus_scan_passes_limit_and_no_explicit_targets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without ``--output-id`` the run receives ``None``, marking an implicit corpus scan."""
+    _stub_backfill_engine(monkeypatch)
+    captured: dict[str, object] = {}
+
+    def fake_backfill(_engine: object, **kwargs: object) -> cli.BackfillResult:
+        captured.update(kwargs)
+        return cli.BackfillResult(targeted=0, enqueued=0, reused=0)
+
+    monkeypatch.setattr(cli, "run_contextualization_backfill", fake_backfill)
+
+    assert cli.main(["backfill", "--limit", "25", "--yes"]) == 0
+    assert captured["output_ids"] is None
+    assert captured["limit"] == 25
+
+
+def test_backfill_reports_counts_and_points_at_the_worker(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The run reports its counts and names the worker that drains what it enqueued."""
+    _stub_backfill_engine(monkeypatch)
+    monkeypatch.setattr(
+        cli,
+        "run_contextualization_backfill",
+        lambda _e, **_k: cli.BackfillResult(targeted=3, enqueued=2, reused=1),
+    )
+
+    assert cli.main(["backfill", "--yes"]) == 0
+    out = capsys.readouterr().out
+    assert "3 targeted" in out
+    assert "2 enqueued" in out
+    assert "1 reused" in out
+    assert "aizk-graph worker" in out, "the operator is told what drains the queue"
+
+
+def test_backfill_dry_run_reports_that_nothing_was_written(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A dry run forwards the flag and its report does not claim work was queued."""
+    _stub_backfill_engine(monkeypatch)
+    captured: dict[str, object] = {}
+
+    def fake_backfill(_engine: object, **kwargs: object) -> cli.BackfillResult:
+        captured.update(kwargs)
+        return cli.BackfillResult(targeted=3, enqueued=2, reused=1)
+
+    monkeypatch.setattr(cli, "run_contextualization_backfill", fake_backfill)
+
+    assert cli.main(["backfill", "--dry-run", "--yes"]) == 0
+    assert captured["dry_run"] is True
+    assert "dry run" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("subcommand", ["backfill", "extract-dataset"])
+@pytest.mark.parametrize("limit", ["-1", "0"])
+def test_a_limit_that_does_not_bound_is_rejected_at_parse_time(subcommand: str, limit: str) -> None:
+    """``--limit -1`` reads as a restriction but SQLite treats it as none, so it never parses."""
+    with pytest.raises(SystemExit):
+        cli.main([subcommand, "--limit", limit, "--yes"])
+
+
+def test_backfill_gate_refusal_names_the_flags_that_resolve_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A refused corpus scan exits non-zero with a message naming ``--yes`` and ``--output-id``."""
+    _stub_backfill_engine(monkeypatch)
+
+    def raise_confirmation_error(_engine: object, **_kwargs: object) -> object:
+        raise cli.ReprocessingConfirmationError("gated")
+
+    monkeypatch.setattr(cli, "run_contextualization_backfill", raise_confirmation_error)
+
+    assert cli.main(["backfill"]) == 1
+    captured = capsys.readouterr()
+    assert "large downstream blast radius" in captured.err
+    assert "--yes" in captured.err
+    assert "--output-id" in captured.err
+    assert "Traceback" not in captured.err, "a missing flag is a usage refusal, not a crash"
+
+
+def test_backfill_reports_an_unknown_output_id_as_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A named output that does not exist is bad operator input, reported without a traceback."""
+    _stub_backfill_engine(monkeypatch)
+
+    def raise_unknown_output(_engine: object, **_kwargs: object) -> object:
+        raise ValueError("conversion output 999999 not found")
+
+    monkeypatch.setattr(cli, "run_contextualization_backfill", raise_unknown_output)
+
+    assert cli.main(["backfill", "--output-id", "999999"]) == 1
+    captured = capsys.readouterr()
+    assert "conversion output 999999 not found" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_extraction_backfill_passes_parsed_source_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``extraction-backfill`` parses ``--source-id`` into UUIDs before handing them to the run."""
+    from uuid import UUID
+
+    _stub_backfill_engine(monkeypatch)
+    captured: dict[str, object] = {}
+
+    def fake_backfill(_engine: object, **kwargs: object) -> cli.BackfillResult:
+        captured.update(kwargs)
+        return cli.BackfillResult(targeted=1, enqueued=1, reused=0)
+
+    monkeypatch.setattr(cli, "run_extraction_backfill", fake_backfill)
+
+    exit_code = cli.main(["extraction-backfill", "--source-id", "11111111-1111-1111-1111-111111111111"])
+
+    assert exit_code == 0
+    assert captured["source_ids"] == [UUID("11111111-1111-1111-1111-111111111111")]
+    assert captured["confirmed"] is False
+
+
+def test_extraction_backfill_rejects_a_malformed_source_id() -> None:
+    """A ``--source-id`` that is not a UUID is rejected at parse time, before any work runs."""
+    with pytest.raises(SystemExit):
+        cli.main(["extraction-backfill", "--source-id", "not-a-uuid"])
+
+
+def test_extraction_backfill_gate_refusal_names_the_flags_that_resolve_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A refused corpus scan exits non-zero with a message naming ``--yes`` and ``--source-id``."""
+    _stub_backfill_engine(monkeypatch)
+
+    def raise_confirmation_error(_engine: object, **_kwargs: object) -> object:
+        raise cli.ReprocessingConfirmationError("gated")
+
+    monkeypatch.setattr(cli, "run_extraction_backfill", raise_confirmation_error)
+
+    assert cli.main(["extraction-backfill"]) == 1
+    captured = capsys.readouterr()
+    assert "large downstream blast radius" in captured.err
+    assert "--yes" in captured.err
+    assert "--source-id" in captured.err
+
+
+def test_extraction_backfill_points_at_its_own_worker(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The extraction report names the extraction worker, not the contextualization one."""
+    _stub_backfill_engine(monkeypatch)
+    monkeypatch.setattr(
+        cli, "run_extraction_backfill", lambda _e, **_k: cli.BackfillResult(targeted=1, enqueued=1, reused=0)
+    )
+
+    assert cli.main(["extraction-backfill", "--yes"]) == 0
+    assert "aizk-graph extraction-worker" in capsys.readouterr().out
 
 
 def test_unknown_or_missing_command_is_rejected() -> None:

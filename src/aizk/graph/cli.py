@@ -1,8 +1,8 @@
 """Command-line entrypoints for the graph stage (contextualization + extraction).
 
-Five commands, mirroring the conversion CLI's structure. ``main`` loads the
-environment and configures structured logging once, before any command runs, so
-every subcommand uses the identical logging procedure.
+Mirrors the conversion CLI's structure. ``main`` loads the environment and
+configures structured logging once, before any command runs, so every subcommand
+uses the identical logging procedure.
 
 - ``worker`` drives the contextualization stage through the shared runner: set a
   descriptive process title, run migrations (graph tables live in the shared
@@ -19,6 +19,10 @@ every subcommand uses the identical logging procedure.
   resulting corpus mention dataset's cold-start statistics
   (:mod:`aizk.graph.dataset_stats`) as JSON on stdout. A corpus-scanning target
   selection (no ``--source-id``) requires ``--yes`` confirmation.
+- ``backfill`` and ``extraction-backfill`` enqueue each stage's work-units over
+  the corpus (see :mod:`aizk.graph.backfill`). They enqueue only — the units they
+  create stay ``QUEUED`` until the matching worker claims them — and an implicit
+  corpus-scan selection requires ``--yes`` confirmation.
 - ``serve`` runs the operator API (jobs monitor + content explorer, for both
   stages) over uvicorn.
 - ``fetch-gliner2-weights`` is the one-time setup step that pre-fetches the
@@ -41,6 +45,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
+from uuid import UUID
 
 from setproctitle import setproctitle
 from sqlmodel import Session
@@ -53,6 +59,7 @@ from aizk.conversion.utilities.startup import StartupValidationError
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 from aizk.db.migrations import run_migrations
+from aizk.graph.backfill import BackfillResult, run_contextualization_backfill, run_extraction_backfill
 from aizk.graph.config import ContextualizationConfig, ExtractionConfig, NerConfig
 from aizk.graph.dataset_extraction import run_dataset_extraction
 from aizk.graph.dataset_stats import compute_dataset_statistics
@@ -60,8 +67,22 @@ from aizk.graph.extraction import GLINER2_REPO_ID
 from aizk.graph.extraction_worker import build_extractor, run_extraction_worker
 from aizk.graph.worker import run_graph_worker
 from aizk.pipeline.invalidation import ReprocessingConfirmationError
+from aizk.utilities.cli_gates import positive_int, refuse_unconfirmed
 
 logger = logging.getLogger(__name__)
+
+
+def _report_backfill(result: BackfillResult, *, stage: str, worker_command: str, dry_run: bool) -> None:
+    """Print a backfill run's counts and name the worker that drains what it enqueued."""
+    if dry_run:
+        print(
+            f"{stage} backfill (dry run): {result.targeted} targeted, "
+            f"{result.enqueued} would be enqueued, {result.reused} already exist. "
+            "No work-units were written."
+        )
+        return
+    print(f"{stage} backfill: {result.targeted} targeted, {result.enqueued} enqueued, {result.reused} reused.")
+    print(f"Enqueued work stays QUEUED until a worker drains it — start one with `{worker_command}`.")
 
 
 def _cmd_serve(_args: argparse.Namespace) -> int:
@@ -143,6 +164,60 @@ def _cmd_extraction_worker(_args: argparse.Namespace) -> int:
         return 1
 
 
+def _cmd_backfill(args: argparse.Namespace) -> int:
+    """Enqueue contextualization work-units over the corpus, or over named outputs.
+
+    Migrates first (a backfill is often the first thing run against a fresh
+    database), then delegates target selection and enqueue to
+    :func:`~aizk.graph.backfill.run_contextualization_backfill`. Enqueue only: the
+    units it creates stay ``QUEUED`` until ``aizk-graph worker`` claims them.
+
+    A ``--output-id`` naming no conversion output is operator input, so it is
+    reported as a usage error rather than raised as a traceback.
+    """
+    setproctitle("graph-backfill")
+    run_migrations()
+    engine = get_engine(DatabaseConfig().database_url)
+    try:
+        result = run_contextualization_backfill(
+            engine,
+            output_ids=args.output_id,
+            limit=args.limit,
+            confirmed=args.yes,
+            dry_run=args.dry_run,
+        )
+    except ReprocessingConfirmationError:
+        return refuse_unconfirmed("corpus-wide contextualization backfill", explicit_flag="--output-id")
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _report_backfill(result, stage="Contextualization", worker_command="aizk-graph worker", dry_run=args.dry_run)
+    return 0
+
+
+def _cmd_extraction_backfill(args: argparse.Namespace) -> int:
+    """Enqueue extraction work-units over the corpus, or over named sources.
+
+    Migrates first, then delegates to
+    :func:`~aizk.graph.backfill.run_extraction_backfill`. Enqueue only: the units
+    it creates stay ``QUEUED`` until ``aizk-graph extraction-worker`` claims them.
+    """
+    setproctitle("graph-extraction-backfill")
+    run_migrations()
+    engine = get_engine(DatabaseConfig().database_url)
+    try:
+        result = run_extraction_backfill(
+            engine,
+            source_ids=args.source_id,
+            confirmed=args.yes,
+            dry_run=args.dry_run,
+        )
+    except ReprocessingConfirmationError:
+        return refuse_unconfirmed("corpus-wide extraction backfill", explicit_flag="--source-id")
+    _report_backfill(result, stage="Extraction", worker_command="aizk-graph extraction-worker", dry_run=args.dry_run)
+    return 0
+
+
 def _cmd_extract_dataset(args: argparse.Namespace) -> int:
     """Run a foreground extraction dataset pass, then print corpus cold-start statistics as JSON.
 
@@ -178,8 +253,7 @@ def _cmd_extract_dataset(args: argparse.Namespace) -> int:
             input_policy=extraction_config.input_policy,
         )
     except ReprocessingConfirmationError:
-        logger.exception("extraction dataset run refused", extra={"role": "graph-extract-dataset"})
-        return 1
+        return refuse_unconfirmed("corpus-scanning extraction dataset run", explicit_flag="--source-id")
 
     logger.info(
         "Extraction dataset run complete",
@@ -210,6 +284,66 @@ def main(argv: list[str] | None = None) -> int:
         "fetch-gliner2-weights",
         help="Pre-fetch the pinned GLiNER2 model weights into the local model directory (one-time setup).",
     ).set_defaults(func=_cmd_fetch_gliner2_weights)
+    backfill_parser = subparsers.add_parser(
+        "backfill",
+        help="Enqueue contextualization work-units for the corpus, or for named conversion outputs.",
+    )
+    backfill_parser.add_argument(
+        "--output-id",
+        action="append",
+        type=int,
+        default=None,
+        metavar="OUTPUT_ID",
+        help=(
+            "Explicit target conversion output (repeatable). An explicit enumeration is deliberate "
+            "operator intent, so it is never confirmation-gated; only an implicit corpus scan "
+            "requires --yes."
+        ),
+    )
+    backfill_parser.add_argument(
+        "--limit",
+        type=positive_int,
+        default=None,
+        metavar="N",
+        help="Cap a corpus scan to its first N sources; ignored with --output-id.",
+    )
+    backfill_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Resolve and report the target set without persisting any work-unit.",
+    )
+    backfill_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Confirm an implicit (corpus-scan or --limit) target selection; not needed with --output-id.",
+    )
+    backfill_parser.set_defaults(func=_cmd_backfill)
+    extraction_backfill_parser = subparsers.add_parser(
+        "extraction-backfill",
+        help="Enqueue extraction work-units for the corpus, or for named sources.",
+    )
+    extraction_backfill_parser.add_argument(
+        "--source-id",
+        action="append",
+        type=UUID,
+        default=None,
+        metavar="SOURCE_ID",
+        help=(
+            "Explicit target source (repeatable). An explicit enumeration is deliberate operator "
+            "intent, so it is never confirmation-gated; only an implicit corpus scan requires --yes."
+        ),
+    )
+    extraction_backfill_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Resolve and report the target set without persisting any work-unit.",
+    )
+    extraction_backfill_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Confirm an implicit (corpus-scan) target selection; not needed with --source-id.",
+    )
+    extraction_backfill_parser.set_defaults(func=_cmd_extraction_backfill)
     extract_dataset_parser = subparsers.add_parser(
         "extract-dataset",
         help=(
@@ -230,7 +364,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     extract_dataset_parser.add_argument(
         "--limit",
-        type=int,
+        type=positive_int,
         default=None,
         metavar="N",
         help="Cap a corpus-scan target selection to its first N sources; ignored with --source-id.",
