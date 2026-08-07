@@ -37,6 +37,7 @@ from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.processing import errors as errors_mod, subproc
 from aizk.conversion.utilities.config import ConversionConfig
 from tests.conversion.integration import _subprocess_helpers
+from tests.conversion.integration._zombie_checks import ZombieInspectionError, descendant_zombies
 
 # Mark all tests in this module to run in isolated process.
 # Incompatible with xdist — use -m "not integration_lifecycle" when running with -n auto.
@@ -72,17 +73,18 @@ def _assert_pid_gone(pid: int, *, timeout_seconds: float, interval_seconds: floa
 
 
 def _assert_no_zombie_processes(job_id: int) -> None:
-    zombies: list[str] = []
+    """Fail if the job's subprocess was left un-reaped by this process.
+
+    A host that will not let the process table be read cannot answer the
+    question, so the test skips rather than passing on an inspection that never
+    ran.
+    """
     try:
-        for proc in psutil.process_iter(["pid", "status", "cmdline"], ad_value=None):
-            if proc.info.get("status") == psutil.STATUS_ZOMBIE:
-                cmdline = " ".join(proc.info.get("cmdline") or [])
-                zombies.append(f"pid={proc.info['pid']} cmdline={cmdline}")
-    except PermissionError:
-        return
+        zombies = descendant_zombies()
+    except ZombieInspectionError as exc:
+        pytest.skip(f"cannot verify subprocess reaping on this host: {exc}")
     if zombies:
-        formatted = "; ".join(zombies)
-        pytest.fail(f"Job {job_id} left zombie processes: {formatted}")
+        pytest.fail(f"Job {job_id} left zombie processes: {'; '.join(zombies)}")
 
 
 def _wait_for_path(path: Path, *, timeout_seconds: float, interval_seconds: float) -> None:

@@ -39,6 +39,7 @@ from aizk.conversion.processing import subproc
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.pipeline.runner import StageRunner
 from tests.conversion.integration import _subprocess_helpers
+from tests.conversion.integration._zombie_checks import ZombieInspectionError, descendant_zombies
 
 pytestmark = [
     pytest.mark.isolate,  # Requires pytest-isolate: pip install pytest-isolate
@@ -65,15 +66,16 @@ def _assert_pid_gone(pid: int, *, timeout_seconds: float, interval_seconds: floa
 
 
 def _assert_no_zombie_processes() -> None:
-    """Fail if any zombie process is left behind."""
-    zombies: list[str] = []
+    """Fail if the runner left the subprocess it spawned un-reaped.
+
+    A host that will not let the process table be read cannot answer the
+    question, so the test skips rather than passing on an inspection that never
+    ran.
+    """
     try:
-        for proc in psutil.process_iter(["pid", "status", "cmdline"], ad_value=None):
-            if proc.info.get("status") == psutil.STATUS_ZOMBIE:
-                cmdline = " ".join(proc.info.get("cmdline") or [])
-                zombies.append(f"pid={proc.info['pid']} cmdline={cmdline}")
-    except PermissionError:
-        return
+        zombies = descendant_zombies()
+    except ZombieInspectionError as exc:
+        pytest.skip(f"cannot verify subprocess reaping on this host: {exc}")
     if zombies:
         pytest.fail("Left zombie processes: " + "; ".join(zombies))
 
