@@ -172,11 +172,76 @@ The contextualization worker needs the model endpoint triple — `AIZK_GRAPH__CO
 The operator console is at `http://<host>:8001/ui` (dashboard), `http://<host>:8001/ui/tasks` (task monitor across all stages), and `http://<host>:8001/ui/explore/chunks` (content explorer).
 The graph stage reuses the conversion database, so point both stages at the same `AIZK_DATABASE_URL`; Litestream replication of that database is owned by the conversion service (see `docs/Litestream.md`).
 
-### Backfill KaraKeep bookmarks
+### Backfill
 
-To backfill or re-enqueue existing KaraKeep bookmarks, use the notebook at `notebooks/karakeep_conversion_pipeline.py`.
-It pages through KaraKeep and submits bookmark IDs to the conversion API.
-The notebook includes required env vars, startup commands for API/worker, and a `KARAKEEP_DRY_RUN` mode for verification.
+Backfill finds work a stage has not done yet and puts it on that stage's queue.
+Nothing else creates graph work-units, so a converted source reaches the contextualization and extraction stages only after a backfill enqueues it.
+
+A backfill inserts queue rows and stops.
+A separate worker process claims those rows and does the work:
+
+| Command                           | Enqueues                                     | Drained by               |
+| --------------------------------- | -------------------------------------------- | ------------------------ |
+| `just backfill conversion`        | every KaraKeep bookmark, as a conversion job | `just worker`            |
+| `just backfill contextualization` | each source's newest conversion output       | `just graph-worker`      |
+| `just backfill extraction`        | each source that has been chunked            | `just extraction-worker` |
+
+While no worker runs, enqueued units stay `QUEUED`.
+`just backfill` with no target runs all three.
+
+#### Re-running is safe
+
+Each leg deduplicates against work that already exists.
+The conversion API answers a bookmark it has seen before with `200` and the existing job rather than creating a second one.
+The graph legs match on the work-unit's `idempotency_key` and reuse the unit they find, whatever status it is in.
+A second pass over an unchanged corpus therefore enqueues nothing.
+
+#### `all` sweeps each stage once; it does not chain them
+
+Each leg reads the state that exists when it runs.
+A bookmark the conversion leg submits has no conversion output yet, so the contextualization leg in the same invocation cannot see it, and extraction cannot see a source contextualization has not chunked.
+Run `just backfill` again as the workers drain; each pass picks up what the previous one made eligible.
+
+With target `all`, only `--yes` and `--dry-run` are accepted, and both are checked before the first leg runs.
+A rejected invocation leaves the corpus untouched instead of half-swept.
+
+#### A sweep needs `--yes`
+
+Every leg that writes requires explicit sign-off.
+Contextualization calls the model once per document and once per chunk, so a graph sweep costs real inference spend.
+A conversion sweep is gated for a less obvious reason: the API's idempotency key folds in the converter's configuration snapshot, so after a converter version or config change the same sweep gives every bookmark a fresh key and re-converts the whole corpus.
+
+If a backfill names no explicit targets, add `--yes`:
+
+```sh
+just backfill conversion --yes
+just backfill contextualization --limit 50 --yes
+```
+
+Named targets are not gated, because naming them is already a decision about scope:
+
+```sh
+just backfill extraction --source-id 3f1c2b90-8d44-4e1a-9c2f-0b7a6d5e4c31
+just backfill contextualization --output-id 412 --output-id 413
+```
+
+`--dry-run` is not gated either.
+It reports the target set it would enqueue and writes nothing, so use it to see what `--yes` would do:
+
+```sh
+just backfill contextualization --dry-run
+```
+
+#### Only the conversion leg needs a running API
+
+`just backfill conversion` submits over HTTP, so `just serve` must be running.
+The command checks `/health/ready` before it fetches any bookmark and refuses to start unless the API reports itself ready, naming the address it dialed and the dependency check that failed.
+Refusing here is cheaper than discovering mid-sweep that every submission fails: submissions write database rows, so an API whose database check is down cannot accept any of them.
+It also honors the API's queue-full response: when the queue is at capacity the API returns `503` with a `Retry-After` header, and the backfill waits that long before retrying.
+The two graph legs write to the database directly and need no API.
+
+To work through the KaraKeep submission path interactively, use `notebooks/karakeep_conversion_pipeline.py`.
+It pages through KaraKeep and submits bookmark IDs, with a `KARAKEEP_DRY_RUN` mode for verification.
 
 ## Design
 

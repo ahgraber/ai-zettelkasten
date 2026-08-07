@@ -70,6 +70,64 @@ fetch-gliner2-weights:
 extract-dataset *ARGS:
     {{ op }} uv run aizk-graph extract-dataset {{ ARGS }}
 
+# ------------------------------------------------------------- backfill ---
+
+# Each leg only enqueues; the matching worker drains it. `all` is three
+# independent sweeps, not a pipeline driver — a bookmark submitted by the
+# conversion leg has no conversion output for the contextualization leg to find
+# yet. Every leg is idempotent, so re-run it as the workers drain and it
+# converges. A corpus-wide graph sweep needs --yes.
+#
+#     just backfill                      # all three, requires --yes
+#     just backfill conversion --dry-run
+#     just backfill extraction --yes
+#
+# Enqueue pending work: all | conversion | contextualization | extraction.
+backfill TARGET="all" *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{ TARGET }}" in
+      conversion)
+        {{ op }} uv run aizk-conversion backfill {{ ARGS }}
+        ;;
+      contextualization)
+        {{ op }} uv run aizk-graph backfill {{ ARGS }}
+        ;;
+      extraction)
+        {{ op }} uv run aizk-graph extraction-backfill {{ ARGS }}
+        ;;
+      all)
+        # Only the flags all three legs accept are valid here, and the graph legs
+        # need --yes. Both are checked before any leg runs, so a rejected
+        # invocation never leaves a partially-swept corpus behind.
+        confirmed=""
+        for arg in {{ ARGS }}; do
+          case "$arg" in
+            --yes) confirmed="yes" ;;
+            --dry-run) confirmed="${confirmed:-dry}" ;;
+            *)
+              echo "'$arg' is not accepted by every backfill leg" >&2
+              echo "with target 'all', only --yes and --dry-run are valid; run a single leg for the rest" >&2
+              exit 2
+              ;;
+          esac
+        done
+        if [ -z "$confirmed" ]; then
+          echo "a corpus-wide backfill across every stage requires explicit sign-off" >&2
+          echo "re-invoke as 'just backfill all --yes', or preview it with --dry-run" >&2
+          exit 2
+        fi
+        {{ op }} uv run aizk-conversion backfill {{ ARGS }}
+        {{ op }} uv run aizk-graph backfill {{ ARGS }}
+        {{ op }} uv run aizk-graph extraction-backfill {{ ARGS }}
+        ;;
+      *)
+        echo "unknown backfill target '{{ TARGET }}'" >&2
+        echo "expected one of: all, conversion, contextualization, extraction" >&2
+        exit 2
+        ;;
+    esac
+
 # ------------------------------------------------------------- quality ---
 
 # Run the test suite in parallel, excluding the subprocess lifecycle tests.
