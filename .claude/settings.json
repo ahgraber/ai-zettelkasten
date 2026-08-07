@@ -10,5 +10,17 @@
         ]
       }
     ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(prek run *)"
+    ]
+  },
+  "sandbox": {
+    "filesystem": {
+      "allowRead": [
+        ".env.op"
+      ]
+    }
   }
 }
