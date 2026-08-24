@@ -33,6 +33,8 @@ IMPORTANT: Preserve the original code and the logic of the original code as much
 - Prefer the golden path for internal logic; let tests define edge-case expectations.
 - Add explicit validation and error handling at external boundaries (I/O, network, persistence, auth, parsing, external APIs).
 - If you write 200 lines and it could be 50, rewrite it.
+- Extend an existing function only while it stays readable at a glance.
+  When a new requirement adds another branch or nesting level to an already-branchy function, split along the new axis instead of growing the function.
 - Apply YAGNI ruthlessly.
 
 ## 3. Surgical Changes
@@ -64,15 +66,41 @@ Testing guardrails:
   Fix the code under test.
 - If a test is genuinely wrong, explain why and await user approval before changing it.
 - Write implementations that solve the general problem, not code that special-cases specific test inputs.
+- Cover each distinct behavior once.
+  More tests of the same shape is not more coverage.
 
 For multi-step tasks, state a brief plan defining the step task and associated verification checks.
 
 ## 5. Definition of Done
 
+The required checks are the full test suite and every hook in `.pre-commit-config.yaml`.
+Slow, or looking unrelated to the change, is not a reason to skip one.
+
 - The requested behavior works as specified.
+
+- The test suite passes, not just tests for this change; previously working behavior is part of the acceptance criteria.
+
 - Behavior changes are covered by tests, or testing gaps are explicitly stated.
+
 - Public contract changes are documented.
-- Required checks were run when available; if not run, state what was skipped and why.
+
+- The hooks pass on everything changed since `HEAD`, staged or not, including new files.
+  Pass the paths NUL-delimited so names with spaces survive:
+
+  ```sh
+  { git diff -z --name-only --diff-filter=d HEAD; git ls-files -z --others --exclude-standard; } | xargs -0 {{ hook_runner }} run --files
+  ```
+
+  Report failing hook output verbatim and fix the cause — a failure is a defect, not an unavailable check.
+
+- A check is unavailable only when the command itself fails to run — missing binary, permission error, no network.
+  Then name the check, quote the error, and give the user the exact command to run.
+
+- Never call a change "confirmed", "verified", or "working" unless you ran the command in this session and read its output.
+  Do not describe expected output as if you had seen it.
+
+- Re-read a file immediately before reporting on it.
+  Never report from a snapshot taken earlier in the session — the user edits files between turns.
 
 ## Defaults
 
@@ -89,6 +117,15 @@ For multi-step tasks, state a brief plan defining the step task and associated v
 - Run lint/format/test through project tooling when available; do not hand-format code.
 - Write tests for public behavior and regressions, not implementation details.
 
+## Terminology and Tone
+
+- Prefer the tone of a professional technical writer.
+- Use the vocabulary already in the project.
+  Do not invent jargon, and name a thing after its effect rather than its mechanism.
+- State findings plainly.
+  No flattery, no hedging.
+- Label an unresolved question `OPEN QUESTION` and queue it; do not present it as a conclusion.
+
 ## Technology & Data Handling Requirements
 
 - Python code runs in the uv-managed environment; dependencies are pinned via uv/lockfiles (pyproject.toml + uv.lock) and honored by Nix devshells — no ad-hoc global installs.
@@ -96,6 +133,7 @@ For multi-step tasks, state a brief plan defining the step task and associated v
 - Storage of raw inputs and derived artifacts must permit replay; blob/object storage locations are recorded alongside metadata.
 - Secret management: Secrets/keys MUST NOT be committed.
   Store them in a gitignored `.env` file (or a secret manager) and access them via environment variables at runtime.
+- Give executable Python scripts a `uv` shebang, not a system interpreter: `#!/usr/bin/env -S uv run --script`, paired with a PEP 723 `# /// script` block declaring `requires-python` and `dependencies`.
 - Process identification: Every Python process MUST set a descriptive process title using `setproctitle` so hosts running multiple Python processes can distinguish them.
 
 ## Workflow & Quality Gates
@@ -188,6 +226,7 @@ Existing examples: `test_fetcher.py`, `test_async_utils.py`, `test_limiters.py`,
 
 ## Commit & Review Guidelines
 
+- Commit only when the user asks, and draft the message at that point, not in advance.
 - **Hard gate before committing**: before running `git agent-commit`, present the user with (1) the proposed commit message and (2) a concise diff summary covering which files changed and what each change does.
   Wait for explicit user approval; do not proceed if the user requests changes.
 - **Every commit message draft, without exception, must be produced by invoking the `commit-message` skill first.**
@@ -195,10 +234,12 @@ Existing examples: `test_fetcher.py`, `test_async_utils.py`, `test_limiters.py`,
   Drafting inline, from memory, or from habit is not acceptable.
 - Commit format: `type(scope): summary` (e.g., `feat(zsh): …`, `fix(vscode): …`).
   Scope should reflect directories or logical surfaces.
+- Never pass `--no-verify` or work around a hook silently.
 - Separate unrelated changes (docs vs configs vs lockfile updates) into distinct commits.
 - Use `git agent-commit` (not `git commit`) to create signed commits; this alias uses the dedicated agent signing key at `~/.ssh/id_ed25519_agent_signing`.
 
 ## Sandbox Limitations
+
 <!-- - `tests/conversion/conftest.py` imports `aizk.db.engine` → `pydantic_settings`, which may fail with `ModuleNotFoundError: No module named 'pydantic_settings.sources.providers.secrets'` if sandbox permissions are too strict. -->
 
 - The sandbox may not be able to run `uv sync` or read `.env` / `.env.example` (permission errors) — attempt the command first rather than assuming failure.
