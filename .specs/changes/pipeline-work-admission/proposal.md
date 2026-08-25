@@ -154,14 +154,6 @@ The graph service's API **does** gain operations, and no schema is tracked for i
 A change that adds API operations with no schema under version control gives `sdd-verify` nothing to cross-check.
 Adding a `graph-api-openapi` entry to the schema config is therefore proposed as part of this change, so the new intake operations land with a captured before/after diff rather than none.
 
-> **NOTE:** The `before/` snapshot was not captured. The generator command requires dependency resolution against `github.com` (the `en-core-web-sm` wheel), which the sandbox network policy blocks. To capture it:
->
-> ```sh
-> mkdir -p .specs/changes/pipeline-work-admission/schemas/before
-> uv run python -c 'from aizk.conversion.api.main import create_app; import json; print(json.dumps(create_app().openapi(), indent=2))' \
->   > .specs/changes/pipeline-work-admission/schemas/before/conversion-api-openapi.json
-> ```
-
 ## Open Questions
 
 - **Where does the admission pass run?**
