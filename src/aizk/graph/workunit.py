@@ -383,10 +383,9 @@ def enqueue_document(
     overlapping an already-queued unit, reuses the open unit. Otherwise a new
     ``QUEUED`` unit is inserted and flushed (so its ``id`` is available).
 
-    The capacity check runs **after** the dedupe branch, so a request resolving to
-    an existing unit is returned rather than refused: it adds nothing to the
-    backlog. This is the only place contextualization work-unit rows are
-    constructed, so the limit binds every caller.
+    The capacity check runs **after** the dedupe branch, so a request that resolves
+    to an existing unit is never refused. This is the only place contextualization
+    work-unit rows are constructed, so the limit binds every caller.
 
     Does **not** commit; the caller owns the surrounding transaction.
 
@@ -449,9 +448,8 @@ def enqueue_backfill(
     Throttling and per-document commit batching are the caller's concern; this
     function only stages the rows and does not commit.
 
-    Remaining capacity is read once for the batch and the input truncated to it,
-    rather than counting the backlog per row. Documents beyond the headroom are
-    left unenqueued; they remain pending for a later batch.
+    Capacity is read once for the batch and the input truncated to it. Documents
+    beyond the headroom stay pending for a later batch.
 
     A corpus-wide backfill has a large downstream blast radius, so it is gated
     behind explicit confirmation: nothing is enqueued unless ``confirmed`` is True

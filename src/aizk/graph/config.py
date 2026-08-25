@@ -24,10 +24,9 @@ policy, plus its lease/retry knobs, mirroring :class:`ContextualizationConfig`'s
 worker settings.
 
 :class:`AdmissionConfig` (``AIZK_GRAPH__<FIELD>``) governs what may enter the
-graph stages' queues: the per-stage capacity limits enforced at every enqueue
-path, the refusal delay intake reports, and the per-stage switches for automatic
-admission. It spans both stages, so it sits at the graph level rather than inside
-either stage's section.
+graph stages' queues: the per-stage capacity limits, the refusal delay intake
+reports, and the per-stage switches for automatic admission. It spans both
+stages, so it sits at the graph level rather than inside either stage's section.
 """
 
 from __future__ import annotations
@@ -150,20 +149,19 @@ class AdmissionConfig(BaseSettings):
     """What may enter the graph stages' queues, and whether it enters automatically.
 
     Read from ``AIZK_GRAPH__*`` environment variables. The two ``*_queue_max_depth``
-    fields bound each stage's actionable backlog (see
-    :mod:`aizk.graph.capacity`); ``0`` — the default — means the stage declares no
-    limit and accepts work without a capacity refusal. The limits are per stage
-    because contextualization is LLM-backed and extraction is not, so their spend
-    profiles differ.
+    fields bound each stage's actionable backlog (see :mod:`aizk.graph.capacity`);
+    ``0``, the default, declares no limit. The limits are per stage because
+    contextualization is LLM-backed and extraction is not, so their spend profiles
+    differ.
 
     ``queue_retry_after_seconds`` mirrors the conversion service's field of the
     same name: it is the ``Retry-After`` value graph intake returns with its 503,
     so one refusal convention covers the fleet.
 
-    The two ``admission_*_enabled`` flags switch automatic admission on per stage,
+    The two ``admission_*_enabled`` flags switch automatic admission on per stage
     and are off by default: admitting contextualization work is external inference
-    spend, so starting the flow is a deliberate act, and enabling one stage never
-    enables the other. ``admission_interval_seconds`` is how often each enabled
+    spend, so starting the flow must be deliberate. Enabling one stage never
+    enables the other. ``admission_interval_seconds`` is how often an enabled
     stage's worker evaluates its pending set.
     """
 

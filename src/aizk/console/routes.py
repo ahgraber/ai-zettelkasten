@@ -107,9 +107,9 @@ def monitor(
     """Render a stage's task monitor (full page, or the panel partial on ``HX-Request``).
 
     A stage that declares a pending-work derivation also gets its pending sources
-    listed on the full page — work behind the stage, which by definition has no
-    work-unit and so cannot appear in the unit table. The listing is resolved only
-    for the full page, not for the panel partial an htmx filter or sort swaps in.
+    listed on the full page; they have no work-unit, so the unit table cannot show
+    them. The listing is resolved for the full page only, not for the panel partial
+    an htmx filter or sort swaps in.
     """
     descriptor = _require_descriptor(stage)
     page = descriptor.list_units(

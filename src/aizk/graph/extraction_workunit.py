@@ -14,10 +14,9 @@ Both paths honor the stage's declared capacity (:mod:`aizk.graph.capacity`):
 the single enqueue refuses at capacity, the bulk enqueue truncates to the
 batch's headroom.
 
-:func:`pending_extraction_sources` is the stage's pending-work derivation —
-the eligible set the bulk enqueue resolves, narrowed to the sources that have
-no work-unit yet. It is a read-only query, so the same derivation can be
-counted and listed for an operator as well as admitted.
+:func:`pending_extraction_sources` is the stage's pending-work derivation: the
+eligible set the bulk enqueue resolves, narrowed to the sources with no work-unit
+yet. It is read-only, so admission and the operator surfaces read one derivation.
 
 This surface deduplicates on the source alone and never re-enqueues a
 terminal unit — an existing row is reused whatever its status, including
@@ -72,8 +71,7 @@ def _idempotency_key(source_id: UUID) -> str:
     same work-unit row, whatever its status. Extraction reads whichever
     chunking/contextualization generation is active for the source at execute
     time; an upstream-generation change does not rotate this key, because
-    re-extraction requeues the existing unit rather than creating a second one
-    (see the module docstring).
+    re-extraction requeues the existing unit (see the module docstring).
     """
     return f"source:{source_id}"
 
@@ -89,10 +87,9 @@ def enqueue_extraction(session: "Session", *, source_id: UUID, queue_max_depth: 
     module docstring). Otherwise a new ``QUEUED`` unit is inserted and
     flushed (so its ``id`` is available).
 
-    The capacity check runs **after** the dedupe branch, so a request resolving
-    to an existing unit is returned rather than refused: it adds nothing to the
-    backlog. This is the only place extraction work-unit rows are constructed,
-    so the limit binds every caller.
+    The capacity check runs **after** the dedupe branch, so a request that resolves
+    to an existing unit is never refused. This is the only place extraction
+    work-unit rows are constructed, so the limit binds every caller.
 
     Does **not** commit; the caller owns the surrounding transaction.
 
@@ -149,19 +146,18 @@ def pending_extraction_sources(session: "Session", *, limit: int | None = None) 
     """Return the sources that should have an extraction work-unit but do not.
 
     A source is pending exactly when it has an active chunking run and no
-    extraction work-unit. Because the work-unit is keyed by the source alone,
-    a source that already has one is not pending whatever that unit's status:
-    a succeeded unit whose chunking has since been superseded is stale, not
-    pending, and re-extraction stays operator-initiated rather than automatic.
+    extraction work-unit. Because the work-unit is keyed by the source alone, a
+    source that already has one is never pending, whatever that unit's status: a
+    succeeded unit whose chunking has since been superseded is stale, not pending.
 
     Derived from current run and work-unit state alone — nothing records that a
     previous evaluation saw a source, so a source this evaluation leaves out is
     still pending for the next one.
 
     The anti-join resolves in Python rather than SQL: a work-unit carries a UUID
-    ``source_id`` while a run carries the string ``scope_id``, and normalizing
-    between them in SQL would depend on how a particular backend serializes a
-    UUID. This is the same boundary conversion the stage applies everywhere else.
+    ``source_id`` and a run carries the string ``scope_id``, so normalizing them in
+    SQL would depend on how a backend serializes a UUID. This is the boundary
+    conversion the stage applies everywhere else.
 
     Args:
         session: Active, read-only session.
@@ -197,9 +193,8 @@ def enqueue_extraction_backfill(
     and the resulting units are identical to incremental enqueue — only volume
     and scheduling differ.
 
-    Remaining capacity is read once for the batch and the eligible set truncated
-    to it, rather than counting the backlog per row. Sources beyond the headroom
-    are left unenqueued and remain eligible for a later batch.
+    Capacity is read once for the batch and the eligible set truncated to it.
+    Sources beyond the headroom stay eligible for a later batch.
 
     A corpus-wide backfill has a large downstream blast radius, so it is gated
     behind explicit confirmation: nothing is enqueued unless ``confirmed`` is

@@ -27,9 +27,8 @@ DESCRIPTOR = build_graph_descriptor(
     apply_retry=apply_contextualization_retry,
     apply_cancel=apply_contextualization_cancel,
     id_search_columns=[ContextualizationJob.conversion_output_id],
-    # The stage's own pending-work derivation, read here rather than re-expressed:
-    # what an operator sees behind is exactly what an admission pass would take up.
-    # No staleness derivation — a re-converted source becomes pending again on its
-    # own, so the stage has no notion of completed-but-behind work.
+    # The stage's own pending-work derivation, not a re-expression of it: what an
+    # operator sees behind is exactly what an admission pass would take up. No
+    # staleness derivation — a re-converted source becomes pending again on its own.
     pending_sources=pending_contextualization_sources,
 )

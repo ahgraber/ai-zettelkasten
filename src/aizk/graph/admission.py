@@ -6,15 +6,14 @@ units to claim. Admission asks a stage what work it is missing, and creates it.
 A stage participates by declaring an :class:`AdmissionAdapter` — its pending-work
 derivation, its enqueue primitive, its capacity, and whether automatic admission
 is switched on. Declaring one is optional and queryable
-(:func:`admission_adapter_for`): a stage that declares none is fully operable and
-is simply never admitted into.
+(:func:`admission_adapter_for`): a stage that declares none is never admitted
+into, and is otherwise unaffected.
 
-The pass itself (:func:`run_admission_pass`) is a bounded query plus an enqueue,
-run inside one short write transaction. It has no memory: the pending set is a
-function of current state, so work a pass leaves out — because the stage is at
-capacity, or because the pass was interrupted — is still pending for the next
-one. Because enqueue dedupes on ``idempotency_key``, a pass that overlaps an
-intake submission or a backfill creates nothing twice.
+The pass (:func:`run_admission_pass`) is a bounded query plus an enqueue in one
+short write transaction. It has no memory: the pending set derives from current
+state, so work a pass leaves out — at capacity, or on interruption — is still
+pending for the next pass. Because enqueue dedupes on ``idempotency_key``, a pass
+that overlaps an intake submission or a backfill creates nothing twice.
 
 :class:`AdmissionLoop` runs the pass on an interval inside a stage's existing
 worker process, so admission needs no scheduler, no queue broker, and no new
@@ -58,9 +57,8 @@ class AdmissionAdapter:
             keys``. Each key identifies work that should have a work-unit and does
             not; the ``limit`` bounds the result after the derivation is applied.
         enqueue: The stage's enqueue primitive, ``(session, key, queue_max_depth)
-            -> unit``. Admission goes through the stage's own enqueue rather than
-            constructing rows, so an admitted unit is identical to one created by
-            any other path.
+            -> unit``. Admission calls this rather than constructing rows, so an
+            admitted unit is identical to one any other path creates.
         queue_max_depth: The stage's declared capacity; ``0`` declares no limit.
         enabled: Whether automatic admission is switched on for this stage.
             Off by default, so turning the flow on is a deliberate act.
@@ -109,9 +107,9 @@ _ADAPTER_FACTORIES: "dict[str, Callable[[AdmissionConfig], AdmissionAdapter]]" =
 def admission_adapter_for(stage: str, config: "AdmissionConfig") -> AdmissionAdapter | None:
     """Return the stage's admission adapter, or ``None`` when the stage declares none.
 
-    This is the feature detection the contract rests on: a stage that declares no
-    pending-work derivation reports none here, and no admission creates work for
-    it. Its own enqueue and processing behavior is unaffected.
+    This is the contract's feature detection: a stage that declares no
+    pending-work derivation reports ``None`` here, and admission never creates
+    work for it. Its enqueue and processing behavior is unaffected.
 
     Args:
         stage: The stage to query.
@@ -125,14 +123,13 @@ def admission_adapter_for(stage: str, config: "AdmissionConfig") -> AdmissionAda
 def run_admission_pass(engine: "Engine", adapter: AdmissionAdapter) -> int:
     """Admit a stage's pending work, up to its capacity, in one short write transaction.
 
-    Creates work-units only for work in the stage's pending set, through the
-    stage's own enqueue, so an admitted unit is identical to one any other path
-    would create for the same work. Over unchanged state a repeat pass creates
-    nothing, because the admitted work is no longer pending.
+    Creates work-units only for the stage's pending set, through the stage's own
+    enqueue, so an admitted unit is identical to one any other path would create.
+    Over unchanged state a repeat pass creates nothing: the admitted work is no
+    longer pending.
 
-    Admission stops at capacity rather than overrunning it; what it does not admit
-    stays pending for the next pass. A stage with automatic admission switched off
-    admits nothing at all.
+    Admission stops at capacity; what it does not admit stays pending for the next
+    pass. A stage with automatic admission switched off admits nothing.
 
     Args:
         engine: The shared engine; the pass opens its own short transaction.

@@ -1,10 +1,9 @@
 """Request and response schemas for the graph operator API.
 
-The intake submissions carry the upstream reference each stage's enqueue resolves
-— a conversion output for contextualization, a source identity for extraction.
-A submission refused at capacity answers with the conversion service's
-:class:`~aizk.conversion.api.schemas.QueueFullResponse`, reused rather than
-restated so the fleet's rejection shape has one definition.
+Each intake submission carries the upstream reference its stage's enqueue
+resolves: a conversion output for contextualization, a source identity for
+extraction. A refusal at capacity reuses the conversion service's
+:class:`~aizk.conversion.api.schemas.QueueFullResponse`.
 """
 
 from __future__ import annotations

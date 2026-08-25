@@ -7,16 +7,14 @@ pre-rename synonym (``aizk_uuid`` / ``doc_id`` / ``scope_key``), so a stray
 synonym cannot creep back onto a model. Round-trip persistence by these names is
 exercised by the per-stage conversion, graph, and pipeline suites.
 
-The two names also carry different *types*, and that difference is load-bearing.
-``source_id`` is referential — it says the value resolves to a ``sources`` row — so
-it is a ``UUID``. ``scope_id`` is role-generic — it says only that the value is the
-partition key run supersession is defined over — so it is a string, because the run
-primitive is stage-agnostic and must not assume its scope is a source at all.
-Consequently the two are stored in different forms and **cannot be joined in SQL**;
-crossing between them converts in Python at the boundary. The tests below pin the
-type convention over every registered table (so a new table cannot drift out of it
-unnoticed) and pin the storage difference itself, since a naive cross-seam join
-returns no rows rather than raising.
+The two names also carry different types. ``source_id`` is referential — the value
+resolves to a ``sources`` row — so it is a ``UUID``. ``scope_id`` is role-generic:
+the run primitive is stage-agnostic and must not assume its scope is a source, so
+it is a string. The two therefore store in different forms and **cannot be joined
+in SQL**; crossing the seam converts in Python. The tests below pin the type
+convention over every registered table, so a table added later cannot drift out of
+it, and pin the storage difference itself, because a naive cross-seam join returns
+no rows rather than raising.
 """
 
 from __future__ import annotations
@@ -54,14 +52,12 @@ def test_models_use_canonical_identity_names(model: type[SQLModel], present: str
     assert absent not in columns, f"{model.__tablename__} still carries the pre-rename column {absent!r}"
 
 
-#: The type each identity name carries, and the deviations we accept.
+#: Identity columns that deviate from the type their name implies, each with its reason.
 #:
-#: A deviation belongs here only as a reviewed decision with a reason; anything
-#: else reaching this list is drift, which is what the exhaustive check below is
-#: for. ``graph_chunks.source_id`` is the one deviation: it holds the dashed
-#: string so it compares directly against ``PipelineRun.scope_id``, so it is named
-#: for the contract term but typed as a scope key. Reconciling it is a schema
-#: change, tracked separately.
+#: An entry belongs here only as a reviewed decision; anything else reaching the
+#: list is drift. ``graph_chunks.source_id`` holds the dashed string so it compares
+#: directly against ``PipelineRun.scope_id`` — named for the contract term, typed as
+#: a scope key. Reconciling it is a schema change, tracked separately.
 _TYPE_DEVIATIONS: dict[tuple[str, str], str] = {
     ("graph_chunks", "source_id"): "typed as a scope key so it compares against PipelineRun.scope_id",
 }
@@ -91,8 +87,8 @@ def _identity_columns() -> list[tuple[str, str, TypeEngine]]:
 def test_every_identity_column_carries_the_type_its_name_implies() -> None:
     """`source_id` is a UUID and `scope_id` is a string, on every registered table.
 
-    Enumerated from the model metadata rather than a hand-kept list, so a table
-    added later is covered without anyone remembering to add it here.
+    Enumerated from the model metadata, so a table added later is covered without
+    anyone remembering to add it here.
     """
     found = _identity_columns()
     assert found, "no identity columns discovered — the metadata import is not registering tables"
@@ -116,9 +112,9 @@ def test_a_source_id_and_a_scope_id_for_one_source_do_not_compare_in_sql(tmp_pat
     """The two identity forms are stored differently, so a cross-seam SQL join finds nothing.
 
     This is why a derivation spanning the seam — a work-unit table against
-    ``pipeline_runs`` — resolves its anti-join in Python. The failure mode is a
-    silent empty result rather than an error, so it is pinned here: if the two
-    forms ever converge, this test fails and the Python-side conversion can go.
+    ``pipeline_runs`` — resolves its anti-join in Python. The failure is silent, so
+    it is pinned: if the forms ever converge, this fails and the Python-side
+    conversion can go.
     """
     engine = create_engine(f"sqlite:///{tmp_path / 'identity.db'}")
     SQLModel.metadata.create_all(engine, tables=[ExtractionJob.__table__, PipelineRun.__table__])
@@ -140,7 +136,7 @@ def test_a_source_id_and_a_scope_id_for_one_source_do_not_compare_in_sql(tmp_pat
         stored_run = session.execute(text("SELECT scope_id FROM pipeline_runs")).scalar_one()
         assert stored_unit == source_id.hex, "a UUID column stores the dashless form"
         assert stored_run == str(source_id), "a scope column stores the dashed form"
-        assert stored_unit != stored_run, "one source, two storage forms"
+        assert stored_unit != stored_run
 
         matched_in_sql = session.exec(
             select(ExtractionJob.id).where(cast(ExtractionJob.source_id, String) == PipelineRun.scope_id)

@@ -10,8 +10,8 @@ A stage's **actionable backlog** is the work it still owes: units in
 ``QUEUED`` plus failed units awaiting an automatic retry (those carrying an
 ``earliest_next_attempt_at``). This mirrors the conversion service's actionable
 set (``QUEUED`` + ``FAILED_RETRYABLE``), so one queue-depth vocabulary covers
-the fleet. Units that succeeded, were cancelled, timed out, or exhausted their
-retries are not backlog and do not hold the queue closed.
+the fleet. Succeeded, cancelled, timed-out, and retry-exhausted units are not
+backlog; they do not hold the queue closed.
 
 A limit of ``0`` (or below) declares no limit.
 
@@ -124,9 +124,8 @@ def within_headroom(
 ) -> list[T]:
     """Truncate a bulk enqueue's input to the stage's remaining capacity.
 
-    Reads the headroom once for the whole batch. What is dropped is logged rather
-    than silently discarded — the remainder is still pending and a later batch
-    admits it.
+    Reads the headroom once for the whole batch. What is dropped is logged, not
+    silently discarded; the remainder stays pending for a later batch.
 
     Args:
         session: Active session.

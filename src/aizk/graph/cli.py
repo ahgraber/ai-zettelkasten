@@ -206,8 +206,8 @@ def _cmd_extraction_backfill(args: argparse.Namespace) -> int:
     :func:`~aizk.graph.backfill.run_extraction_backfill`. Enqueue only: the units
     it creates stay ``QUEUED`` until ``aizk-graph extraction-worker`` claims them.
 
-    A stage at its declared capacity is reported as a usage error rather than
-    raised as a traceback: the backlog, not the command, is what has to change.
+    A stage at capacity is reported as a usage error rather than raised as a
+    traceback: the backlog, not the command, is what has to change.
     """
     setproctitle("graph-extraction-backfill")
     run_migrations()

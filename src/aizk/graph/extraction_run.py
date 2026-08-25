@@ -26,10 +26,9 @@ write paths staying in sync. Neither entry point does any scheduling,
 throttling, or concurrency control; that is the caller's/runtime's concern.
 
 :func:`stale_extraction_sources` is the stage's staleness derivation: which
-sources' active extraction runs consumed upstream state that has since been
-superseded. It resolves the current upstream key through the same resolver the
-write path uses, so a stale verdict and what a re-extraction would consume cannot
-disagree.
+sources' active extraction runs consumed since-superseded upstream state. It
+resolves the current upstream key through the same resolver the write path uses,
+so a stale verdict and what a re-extraction would consume cannot disagree.
 """
 
 from __future__ import annotations
@@ -167,15 +166,13 @@ def stale_extraction_sources(session: "Session") -> set[str]:
     """Return the scope ids whose active extraction run consumed since-superseded upstream state.
 
     A source is stale when the upstream derivation key its active extraction run
-    recorded differs from the key the source's current active runs would yield —
-    that is, when re-extracting would read a different generation than the one
-    already extracted. A re-chunk makes a source stale; so does a
-    contextualization run appearing for a source whose extraction fell back to raw
-    chunk text because no variants existed yet.
+    recorded differs from the key its current active runs would yield: re-extracting
+    would read a different generation than the one already extracted. A re-chunk
+    makes a source stale; so does a contextualization run appearing for a source
+    whose extraction fell back to raw chunk text because no variants existed yet.
 
     Resolution goes through :func:`_resolve_upstream_derivation_key`, the same
-    resolver :func:`extract_document` uses at execute time, so a stale verdict and
-    what a re-extraction would actually consume cannot disagree.
+    resolver :func:`extract_document` uses at execute time.
 
     The comparison uses the policy the run itself recorded, so the verdict is
     about upstream supersession alone. A change to the configured input policy is

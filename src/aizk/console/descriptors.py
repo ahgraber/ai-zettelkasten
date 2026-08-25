@@ -12,10 +12,8 @@ status enum declares a ``rollup`` mapping every native status onto exactly one
 roll up by identity. The rollup is read-side only — no status storage changes.
 
 Capabilities beyond the required set are **optional and feature-detected**: a
-descriptor leaves the callable ``None`` and the console omits that surface for
-the stage. ``failed_split``, ``pending_count``, ``pending_list``, and
-``stale_count`` all work this way, so a stage is never obliged to have a concept
-it does not have.
+descriptor leaves the callable ``None`` and the console omits that surface for the
+stage, so a stage is never obliged to have a concept it does not have.
 """
 
 from __future__ import annotations
@@ -116,10 +114,8 @@ class StageDescriptor:
     #: and the dashboard shows the ``FAILED`` total unsplit.
     failed_split: Callable[["Session", "Principal"], tuple[int, int]] | None = None
     #: Optional count of sources the stage owes a work-unit but has none for:
-    #: ``(session, principal) -> int``. Declared by a stage that has a pending-work
-    #: derivation; feature-detected exactly like ``failed_split``. The count sits
-    #: outside the lifecycle rollup — it counts no work-unit — so the per-stage unit
-    #: total is unaffected. A stage without a derivation omits it and shows none.
+    #: ``(session, principal) -> int``. The count sits outside the lifecycle rollup —
+    #: it counts no work-unit — so the per-stage unit total is unaffected.
     pending_count: Callable[["Session", "Principal"], int] | None = None
     #: Optional listing of those same pending sources, each as a mapping carrying at
     #: least ``source_id`` and ``title``: ``(session, principal) -> list[dict]``.
@@ -127,9 +123,8 @@ class StageDescriptor:
     #: count cannot disagree about what is pending.
     pending_list: Callable[["Session", "Principal"], list[dict[str, Any]]] | None = None
     #: Optional count of sources whose completed work consumed since-superseded
-    #: upstream state: ``(session, principal) -> int``. Declared by a stage with a
-    #: staleness derivation; a stage without one shows no stale figure and no stale
-    #: marking on its monitor rows.
+    #: upstream state: ``(session, principal) -> int``. A stage without a staleness
+    #: derivation shows no stale figure and no stale marking on its monitor rows.
     stale_count: Callable[["Session", "Principal"], int] | None = None
 
 

@@ -3,10 +3,9 @@
 ``build_extractor`` selects the pinned :class:`~aizk.graph.extraction.EntityExtractor`
 implementation named by ``ExtractionConfig.extractor``, and
 ``run_extraction_worker`` wires the stage's admission loop around the runner.
-Construction is patched at the composition root's import location (not exercised
-for real) so the suite stays hermetic and fast, mirroring
-``tests/graph/test_worker_build.py``'s treatment of the contextualization
-worker.
+Construction is patched at the composition root's import location so the suite stays
+hermetic and fast, as ``tests/graph/test_worker_build.py`` does for the
+contextualization worker.
 """
 
 from __future__ import annotations

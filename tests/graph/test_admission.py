@@ -1,13 +1,12 @@
 """Behavioral tests for admission (``aizk.graph.admission``).
 
-Admission creates the work-units a stage's upstream state says should exist. These
-tests pin what a pass does — and what it must not do: nothing while the stage is
-switched off, nothing for a stage that declared no derivation, nothing twice over
-unchanged state, and nothing beyond the stage's capacity.
+Admission creates the work-units a stage's upstream state says should exist. A pass
+admits nothing while the stage is switched off, nothing for a stage that declared no
+derivation, nothing twice over unchanged state, and nothing beyond capacity.
 
-Both graph stages are exercised through their real adapters against real conversion
-outputs and chunking runs, so a pass goes through the same enqueue primitive every
-other path uses and the resulting units are directly comparable.
+Both stages run through their real adapters against real conversion outputs and
+chunking runs, so a pass uses the same enqueue primitive every other path uses and
+its units are comparable with theirs.
 """
 
 from __future__ import annotations
@@ -110,7 +109,7 @@ def _units(engine: Engine, model: type) -> list:
 
 
 def _config(**overrides: object) -> AdmissionConfig:
-    """Build hermetic admission settings, overriding only the fields a test cares about."""
+    """Build hermetic admission settings, overriding only the named fields."""
     return AdmissionConfig(_env_file=None, **overrides)
 
 
@@ -183,8 +182,7 @@ def test_a_pass_admits_exactly_the_pending_set(tmp_path: Path) -> None:
     engine = _make_engine(tmp_path)
     _seed_chunked_sources(engine, _UUID_A, _UUID_B)
     with Session(engine) as session:
-        # _UUID_A already has a unit, so it is not pending; _UUID_C is in the corpus
-        # but unchunked, so it has nothing to extract. Only _UUID_B is pending.
+        # _UUID_A already has a unit; _UUID_C is unchunked. Only _UUID_B is pending.
         enqueue_extraction(session, source_id=_UUID_A)
         _add_output(session, output_id=99, source_id=_UUID_C)
         session.commit()

@@ -2,11 +2,9 @@
 
 Submission resolves the referenced conversion output and calls the stage's domain
 enqueue in the request transaction, so an intake-created unit is identical to one
-created by any other path. It answers 201 for new work, 200 with the existing unit
-when the submission resolves to work already enqueued, 404 when the referenced
-output does not exist, and — because capacity is enforced at the enqueue seam
-rather than in front of this one caller — 503 with a ``Retry-After`` header when
-the stage is full, matching the conversion service's rejection.
+created by any other path. Capacity is enforced at that enqueue seam rather than
+in front of this one caller, so a full stage is refused with the same 503 and
+``Retry-After`` the conversion service uses.
 
 Read endpoints query the work-unit table; the retry and cancel mutations run in a
 ``BEGIN IMMEDIATE`` transaction and co-commit a transition event via
@@ -69,9 +67,8 @@ def queue_full_response(retry_after_seconds: int) -> JSONResponse:
     """Return the fleet's capacity refusal: 503 carrying ``Retry-After``.
 
     The body matches the conversion service's
-    :class:`~aizk.conversion.api.schemas.QueueFullResponse`, so one convention
-    covers every submission surface and a client backs off the same way whichever
-    service refused it.
+    :class:`~aizk.conversion.api.schemas.QueueFullResponse`, so a client backs off
+    the same way whichever service refused it.
     """
     return JSONResponse(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -96,8 +93,8 @@ def submit_job(
     """Submit one converted document for contextualization.
 
     Answers 201 with the created work-unit, 200 with the existing one when the
-    submission resolves to work already enqueued, 404 when no such conversion
-    output exists, and 503 when the stage is at its declared capacity.
+    output is already enqueued, 404 when no such output exists, and 503 when the
+    stage is at capacity.
     """
     session.exec(text("BEGIN IMMEDIATE"))
     existing = session.exec(
