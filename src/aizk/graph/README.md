@@ -27,6 +27,31 @@ conversion Markdown artifact  (fetched by its conversion_output_id locator)
 `process_document` runs the whole top path for one work-unit; chunk persistence, summary, and contextualization are **one required pipeline**, not separately-gated steps.
 Mention extraction is a **distinct stage** — its own worker, its own run, run once variants exist — not another step in that path.
 
+## How work reaches a stage
+
+A stage's work-units are created by **admission**: each stage declares, over current upstream state, the set of work that should exist at it but has no work-unit, and a pass creates exactly that set through the stage's own enqueue.
+Admission is a query, not an event — nothing pushes work into the graph — so a unit that failed to be created is simply created on the next pass, and adding a stage later pulls the existing corpus through by declaring what it consumes rather than by a one-off script.
+It is distinct from the runtime's _discovery_, which selects already-queued units to claim.
+
+| Stage             | pending exactly when                                               | stale                                                              |
+| ----------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| contextualization | the source's newest `ConversionOutput` has no work-unit            | n/a — a re-converted source becomes pending again                  |
+| extraction        | the source has an active chunking run and no work-unit, any status | its active extraction run consumed upstream state since superseded |
+
+Extraction's work-unit is keyed by the source alone, so a completed source that falls behind is **stale, not pending**: nothing re-admits it automatically, and an operator re-extracts it through the console's `Re-extract` action (see below).
+
+Three surfaces create work, all through the same two enqueue primitives:
+
+- **Automatic admission** — a loop in each stage's existing worker process, on `ADMISSION_INTERVAL_SECONDS`.
+  Off unless enabled per stage, so switching the flow on is a deliberate act.
+- **Intake** — `POST /v1/contextualizations` (a conversion-output reference) and `POST /v1/extractions` (a source identity) on the graph service, mirroring the conversion service's job submission.
+- **Bulk commands** — `aizk-graph backfill` and `aizk-graph extraction-backfill`.
+
+**Capacity sits at the enqueue seam**, not in front of any one caller: a stage may declare a limit over its _actionable backlog_ (units queued, plus failures awaiting retry), and every path is subject to it with no bypass.
+A single enqueue is refused at the limit; a bulk enqueue truncates to the batch's remaining headroom and logs the remainder; a request resolving to an existing work-unit is returned rather than refused, since reusing a unit adds no work.
+Each surface maps the refusal its own way — intake answers `503` with a `Retry-After` header (the conversion service's shape), an admission pass stops and leaves the rest pending, a command exits non-zero.
+Unset (`0`) declares no limit.
+
 ## How we slice identity and provenance
 
 Everything below rests on a few deliberate choices about _what names a thing_ and _how a thing points back to what it came from_.
@@ -158,11 +183,20 @@ Orchestration:
 
 - `process_document(session, client, job, markdown_source) -> ProcessResult` — the single write path.
 - `enqueue_document` / `enqueue_backfill` (domain) and `enqueue_output` / `enqueue_backfill_outputs` (resolve `conversion_output_id → ConversionOutput.source_id`).
-  Both modes dedupe on `idempotency_key` and feed the one write path, so the produced records are run-mode-independent.
+  Both modes dedupe on `idempotency_key`, honor the stage's declared capacity, and feed the one write path, so the produced records are run-mode-independent.
+- Derivations: `pending_contextualization` (with its `_outputs` / `_sources` projections), `pending_extraction_sources`, `stale_extraction_sources`.
+  Each is read-only, so the same query feeds both admission and the operator's coverage view and the two cannot disagree.
+- Admission: `AdmissionAdapter`, `admission_adapter_for`, `run_admission_pass`, `AdmissionLoop`; `StageAtCapacityError` and the `capacity` helpers.
 - `ContextualizationStageHandler` — the runtime `StageHandler` (claim / execute-in-own-transaction / finalize / recover / cancel; `ValueError` → permanent, other exceptions → retryable, success → succeeded; in-process, single-writer).
 - `MarkdownSource` / `S3MarkdownSource` (over a `BlobReader`), `ContextualizationConfig`, `build_llm_client`, `run_graph_worker`.
 
-Operator surface (`aizk.graph.api`): the JSON API (`GET /v1/contextualizations` (+ status filter), `GET /{id}`, `POST /{id}/retry`, `POST /{id}/cancel`) and the operator console (`aizk.console`) — a descriptor-driven dashboard (`/ui`), a cross-stage task monitor (`/ui/tasks?stage={key}`) with per-unit drill-down, and the content explorer (`/ui/explore/chunks`).
+Operator surface (`aizk.graph.api`): the JSON API — `POST /v1/contextualizations` and `POST /v1/extractions` to submit work, plus `GET` (+ status filter), `GET /{id}`, `POST /{id}/retry`, `POST /{id}/cancel` per stage — and the operator console (`aizk.console`): a descriptor-driven dashboard (`/ui`), a cross-stage task monitor (`/ui/tasks?stage={key}`) with per-unit drill-down, and the content explorer (`/ui/explore/chunks`).
+
+A stage that declares a pending-work derivation also gets a **pending** count on the dashboard and a listing of the sources behind it on its monitor page — work that by definition has no work-unit, so it cannot appear in the unit table.
+One that declares a staleness derivation gets a **stale** count and stale-marked monitor rows, selectable for its declared actions.
+Both are feature-detected, so a stage without the concept shows no figure.
+Extraction declares `Re-extract`: a requeue of a finished unit whose source is stale, which the worker then re-runs against the source's current active inputs, superseding the prior run.
+It is the only path to re-extraction and is always operator-initiated.
 
 ### CLI
 
@@ -189,6 +223,7 @@ Its own settings ([`config.py`](config.py)):
 - `AIZK_GRAPH__CONTEXTUALIZATION__*` — the OpenAI-compatible model endpoint triple (`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`), the worker's lease/retry knobs, and the operator listener (`OPERATOR_API_HOST` / `OPERATOR_API_PORT` / `OPERATOR_API_RELOAD`).
 - `AIZK_GRAPH__EXTRACTION__*` — the extractor choice and `input_policy` for `extraction-worker`.
 - `AIZK_GRAPH__NER__*` — the local GLiNER2 weights directory.
+- `AIZK_GRAPH__*` (admission and capacity, spanning both stages) — `ADMISSION_CONTEXTUALIZATION_ENABLED` / `ADMISSION_EXTRACTION_ENABLED` (both off by default) and `ADMISSION_INTERVAL_SECONDS`; `CONTEXTUALIZATION_QUEUE_MAX_DEPTH` / `EXTRACTION_QUEUE_MAX_DEPTH` (`0` = no limit) and `QUEUE_RETRY_AFTER_SECONDS`.
 
 The write-path worker refuses to start when the model endpoint is not fully configured; `serve` needs only the shared database.
 
