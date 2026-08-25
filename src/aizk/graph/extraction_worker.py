@@ -14,6 +14,12 @@ The pinned extractor is constructed eagerly, before the runner starts:
 one-time ``aizk-graph fetch-gliner2-weights`` pre-fetch) when their pinned
 dependency or model artifact is unavailable, so the worker refuses to start
 rather than claiming work it cannot complete.
+
+The process also hosts the stage's admission loop
+(:class:`~aizk.graph.admission.AdmissionLoop`), which creates the work-units the
+stage's upstream state says should exist. It runs alongside the claim/execute
+loop rather than in a process of its own, and admits nothing unless automatic
+admission is switched on for the stage.
 """
 
 from __future__ import annotations
@@ -23,6 +29,8 @@ from typing import TYPE_CHECKING
 
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
+from aizk.graph.admission import AdmissionLoop, extraction_adapter
+from aizk.graph.config import AdmissionConfig
 from aizk.graph.extraction import EntityExtractor, Gliner2Extractor, SpacyExtractor
 from aizk.graph.extraction_handler import ExtractionStageHandler
 from aizk.pipeline.runner import StageRunner
@@ -46,13 +54,22 @@ def build_extractor(config: "ExtractionConfig") -> EntityExtractor:
     return Gliner2Extractor()
 
 
-def run_extraction_worker(extraction_config: "ExtractionConfig") -> int:
+def run_extraction_worker(
+    extraction_config: "ExtractionConfig",
+    admission_config: "AdmissionConfig | None" = None,
+) -> int:
     """Build the extraction stage handler and drive it via the shared runner.
 
     Reuses the conversion/graph database engine; constructs the configured
     extractor; runs the supervised claim/execute/finalize loop until shutdown.
     Returns the runner's exit code.
+
+    Alongside that loop the process runs the stage's admission loop, which creates
+    the work-units the stage's upstream state says should exist. It admits nothing
+    unless automatic admission is switched on for this stage, and it is stopped
+    and joined before the worker returns.
     """
+    admission_config = admission_config if admission_config is not None else AdmissionConfig()
     engine = get_engine(DatabaseConfig().database_url)
     extractor = build_extractor(extraction_config)
 
@@ -79,4 +96,10 @@ def run_extraction_worker(extraction_config: "ExtractionConfig") -> int:
         extraction_config.input_policy,
         extraction_config.worker_concurrency,
     )
-    return runner.run()
+    admission = AdmissionLoop(
+        engine,
+        extraction_adapter(admission_config),
+        interval_seconds=admission_config.admission_interval_seconds,
+    )
+    with admission:
+        return runner.run()

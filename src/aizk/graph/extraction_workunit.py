@@ -14,17 +14,26 @@ Both paths honor the stage's declared capacity (:mod:`aizk.graph.capacity`):
 the single enqueue refuses at capacity, the bulk enqueue truncates to the
 batch's headroom.
 
+:func:`pending_extraction_sources` is the stage's pending-work derivation —
+the eligible set the bulk enqueue resolves, narrowed to the sources that have
+no work-unit yet. It is a read-only query, so the same derivation can be
+counted and listed for an operator as well as admitted.
+
 This surface deduplicates on the source alone and never re-enqueues a
 terminal unit — an existing row is reused whatever its status, including
-``SUCCEEDED`` (a no-op). It is therefore **not** a re-extraction trigger:
-re-extraction after an extractor, materializer, input-policy, or
-upstream-generation change happens today through the direct entry points
-(:func:`~aizk.graph.extraction_run.extract_source` /
-:func:`~aizk.graph.extraction_run.extract_corpus`), where the run's
-derivation key decides reuse versus supersession. Worker-driven re-triggering
-on an upstream-generation change is deliberately not built here; a future
-change decides its mechanism (idempotency-key rotation on the upstream
-generation, or an explicit terminal-unit reset).
+``SUCCEEDED`` (a no-op). It is therefore **not** a re-extraction trigger.
+Re-extraction after an upstream-generation change is a requeue of the existing
+unit rather than a second row: the identity key stays ``source:{source_id}``,
+and :func:`aizk.graph.job_actions.apply_extraction_readmission` transitions a
+finished unit back to ``QUEUED`` when
+:func:`aizk.graph.extraction_run.stale_extraction_sources` says the source's
+upstream has moved on. The worker then re-reads the source's current active
+inputs and its run supersedes the prior one. That action is operator-initiated —
+no staleness condition re-admits work on its own. Re-extraction after an
+extractor, materializer, or input-policy change remains a matter for the direct
+entry points (:func:`~aizk.graph.extraction_run.extract_source` /
+:func:`~aizk.graph.extraction_run.extract_corpus`), where the run's derivation
+key decides reuse versus supersession.
 """
 
 from __future__ import annotations
@@ -62,8 +71,9 @@ def _idempotency_key(source_id: UUID) -> str:
     per-artifact key — so a re-enqueue of the same source always targets the
     same work-unit row, whatever its status. Extraction reads whichever
     chunking/contextualization generation is active for the source at execute
-    time; an upstream-generation change does not rotate this key (see the
-    module docstring for how re-extraction is triggered today).
+    time; an upstream-generation change does not rotate this key, because
+    re-extraction requeues the existing unit rather than creating a second one
+    (see the module docstring).
     """
     return f"source:{source_id}"
 
@@ -133,6 +143,44 @@ def _sources_with_active_chunking_run(session: "Session") -> list[UUID]:
         .order_by(PipelineRun.created_at)
     ).all()
     return [UUID(scope_id) for scope_id in scope_ids]
+
+
+def pending_extraction_sources(session: "Session", *, limit: int | None = None) -> list[UUID]:
+    """Return the sources that should have an extraction work-unit but do not.
+
+    A source is pending exactly when it has an active chunking run and no
+    extraction work-unit. Because the work-unit is keyed by the source alone,
+    a source that already has one is not pending whatever that unit's status:
+    a succeeded unit whose chunking has since been superseded is stale, not
+    pending, and re-extraction stays operator-initiated rather than automatic.
+
+    Derived from current run and work-unit state alone — nothing records that a
+    previous evaluation saw a source, so a source this evaluation leaves out is
+    still pending for the next one.
+
+    The anti-join resolves in Python rather than SQL: a work-unit carries a UUID
+    ``source_id`` while a run carries the string ``scope_id``, and normalizing
+    between them in SQL would depend on how a particular backend serializes a
+    UUID. This is the same boundary conversion the stage applies everywhere else.
+
+    Args:
+        session: Active, read-only session.
+        limit: Caps the result to its first N pending sources when supplied. The
+            bound applies after the anti-join, so a bounded evaluation returns
+            pending work rather than a sample of the corpus that may hold none.
+            Must be one or more.
+
+    Returns:
+        The pending source identities, in chunking-run creation order.
+
+    Raises:
+        ValueError: If ``limit`` is supplied and is less than one.
+    """
+    if limit is not None and limit < 1:
+        raise ValueError(f"limit must be a positive integer, got {limit}")
+    enqueued = set(session.exec(select(ExtractionJob.source_id)).all())
+    pending = [source_id for source_id in _sources_with_active_chunking_run(session) if source_id not in enqueued]
+    return pending[:limit] if limit is not None else pending
 
 
 def enqueue_extraction_backfill(

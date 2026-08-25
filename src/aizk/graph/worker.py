@@ -11,6 +11,12 @@ The model endpoint is required: :func:`build_llm_client` raises
 :class:`~aizk.conversion.utilities.startup.StartupValidationError` when the
 OpenAI-compatible triple is not fully configured, so the worker refuses to start
 rather than claiming work it cannot complete.
+
+The process also hosts the stage's admission loop
+(:class:`~aizk.graph.admission.AdmissionLoop`), which creates the work-units the
+stage's upstream state says should exist. It runs alongside the claim/execute
+loop rather than in a process of its own, and admits nothing unless automatic
+admission is switched on for the stage.
 """
 
 from __future__ import annotations
@@ -22,6 +28,8 @@ from aizk.conversion.storage.s3_client import S3Client
 from aizk.conversion.utilities.startup import StartupValidationError
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
+from aizk.graph.admission import AdmissionLoop, contextualization_adapter
+from aizk.graph.config import AdmissionConfig
 from aizk.graph.handler import ContextualizationStageHandler
 from aizk.graph.llm import PydanticAILLMClient
 from aizk.graph.markdown_source import ConversionOutputFreshness, S3MarkdownSource
@@ -60,13 +68,20 @@ def build_llm_client(config: "ContextualizationConfig") -> PydanticAILLMClient:
 def run_graph_worker(
     conversion_config: "ConversionConfig",
     contextualization_config: "ContextualizationConfig",
+    admission_config: "AdmissionConfig | None" = None,
 ) -> int:
     """Build the contextualization stage handler and drive it via the shared runner.
 
     Reuses the conversion database engine and S3 client; constructs the model
     client and Markdown source; runs the supervised claim/execute/finalize loop
     until shutdown. Returns the runner's exit code.
+
+    Alongside that loop the process runs the stage's admission loop, which creates
+    the work-units the stage's upstream state says should exist. It admits nothing
+    unless automatic admission is switched on for this stage, and it is stopped
+    and joined before the worker returns.
     """
+    admission_config = admission_config if admission_config is not None else AdmissionConfig()
     engine = get_engine(DatabaseConfig().database_url)
     llm_client = build_llm_client(contextualization_config)
     markdown_source = S3MarkdownSource(engine, S3Client(conversion_config))
@@ -94,4 +109,10 @@ def run_graph_worker(
         contextualization_config.llm_model,
         contextualization_config.worker_concurrency,
     )
-    return runner.run()
+    admission = AdmissionLoop(
+        engine,
+        contextualization_adapter(admission_config),
+        interval_seconds=admission_config.admission_interval_seconds,
+    )
+    with admission:
+        return runner.run()

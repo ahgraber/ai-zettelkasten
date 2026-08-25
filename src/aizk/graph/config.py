@@ -25,8 +25,9 @@ worker settings.
 
 :class:`AdmissionConfig` (``AIZK_GRAPH__<FIELD>``) governs what may enter the
 graph stages' queues: the per-stage capacity limits enforced at every enqueue
-path, and the refusal delay intake reports. It spans both stages, so it sits at
-the graph level rather than inside either stage's section.
+path, the refusal delay intake reports, and the per-stage switches for automatic
+admission. It spans both stages, so it sits at the graph level rather than inside
+either stage's section.
 """
 
 from __future__ import annotations
@@ -146,7 +147,7 @@ class ExtractionConfig(BaseSettings):
 
 
 class AdmissionConfig(BaseSettings):
-    """Capacity limits over the graph stages' queues, and the refusal delay intake reports.
+    """What may enter the graph stages' queues, and whether it enters automatically.
 
     Read from ``AIZK_GRAPH__*`` environment variables. The two ``*_queue_max_depth``
     fields bound each stage's actionable backlog (see
@@ -158,6 +159,12 @@ class AdmissionConfig(BaseSettings):
     ``queue_retry_after_seconds`` mirrors the conversion service's field of the
     same name: it is the ``Retry-After`` value graph intake returns with its 503,
     so one refusal convention covers the fleet.
+
+    The two ``admission_*_enabled`` flags switch automatic admission on per stage,
+    and are off by default: admitting contextualization work is external inference
+    spend, so starting the flow is a deliberate act, and enabling one stage never
+    enables the other. ``admission_interval_seconds`` is how often each enabled
+    stage's worker evaluates its pending set.
     """
 
     model_config = SettingsConfigDict(
@@ -169,3 +176,7 @@ class AdmissionConfig(BaseSettings):
     contextualization_queue_max_depth: int = 0
     extraction_queue_max_depth: int = 0
     queue_retry_after_seconds: int = 30
+
+    admission_contextualization_enabled: bool = False
+    admission_extraction_enabled: bool = False
+    admission_interval_seconds: float = 60.0

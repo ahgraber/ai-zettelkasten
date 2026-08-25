@@ -458,14 +458,15 @@ class ExtractionJob(SQLModel, table=True):
     reuses whatever row exists — including a ``SUCCEEDED`` one, as a no-op —
     and the operator retry re-queues only failed/cancelled/timed-out units. It
     is therefore **not** a re-extraction trigger. Re-extraction after an
-    extractor, materializer, input-policy, or upstream-generation change
-    happens today through the direct entry points
+    upstream-generation change re-queues this same row rather than creating a
+    second: the identity stays one per source, and the operator's re-extract
+    action (:func:`~aizk.graph.job_actions.apply_extraction_readmission`) makes
+    a finished unit claimable again when the source's upstream has been
+    superseded. Re-extraction after an extractor, materializer, or input-policy
+    change happens through the direct entry points
     (:func:`~aizk.graph.extraction_run.extract_source` /
     :func:`~aizk.graph.extraction_run.extract_corpus`), where the run's
-    derivation key decides reuse versus supersession. Worker-driven
-    re-triggering on an upstream-generation change is deliberately not built
-    here; a future change decides its mechanism (idempotency-key rotation on
-    the upstream generation, or an explicit terminal-unit reset).
+    derivation key decides reuse versus supersession.
 
     ``status`` is the runtime's generic :class:`~aizk.pipeline.lifecycle.WorkUnitStatus`;
     ``attempts`` and the ``*_at`` scheduling columns carry the retry/lease

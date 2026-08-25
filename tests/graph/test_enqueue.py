@@ -20,7 +20,12 @@ from sqlmodel import Session, create_engine, select
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.graph.capacity import StageAtCapacityError
 from aizk.graph.datamodel import ContextualizationJob
-from aizk.graph.enqueue import enqueue_backfill_outputs, enqueue_output, latest_output_ids_per_source
+from aizk.graph.enqueue import (
+    enqueue_backfill_outputs,
+    enqueue_output,
+    latest_output_ids_per_source,
+    pending_contextualization_outputs,
+)
 from aizk.graph.workunit import enqueue_backfill
 from aizk.pipeline.invalidation import ReprocessingConfirmationError
 from aizk.pipeline.lifecycle import WorkUnitStatus
@@ -197,6 +202,117 @@ def test_enqueue_backfill_admits_only_the_batch_headroom(tmp_path: Path) -> None
 
         assert [job.conversion_output_id for job in admitted] == [1, 2]
         assert {job.conversion_output_id for job in session.exec(select(ContextualizationJob)).all()} == {1, 2}
+
+
+# --- pending-work derivation ------------------------------------------------
+
+
+def test_a_never_contextualized_source_is_pending(tmp_path: Path) -> None:
+    """A source with a conversion output and no work-unit is work the stage owes."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        _add_output(session, output_id=1, source_id=_UUID_A)
+        session.commit()
+
+        assert pending_contextualization_outputs(session) == [1]
+
+
+@pytest.mark.parametrize("status", list(WorkUnitStatus), ids=lambda status: status.value)
+def test_a_source_whose_newest_output_has_a_unit_is_not_pending(tmp_path: Path, status: WorkUnitStatus) -> None:
+    """A work-unit in any status covers its output, so the source is not pending."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        _add_output(session, output_id=1, source_id=_UUID_A)
+        session.add(
+            ContextualizationJob(
+                idempotency_key="conversion_output:1",
+                conversion_output_id=1,
+                source_id=_UUID_A,
+                status=status,
+            )
+        )
+        session.commit()
+
+        assert pending_contextualization_outputs(session) == []
+
+
+def test_a_re_converted_source_is_pending_again(tmp_path: Path) -> None:
+    """A newer output is a distinct locator, so the unit covering the older one does not cover it."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        _add_output(session, output_id=1, source_id=_UUID_A, created_at=_EPOCH)
+        _add_output(session, output_id=2, source_id=_UUID_A, created_at=_EPOCH + dt.timedelta(days=1))
+        session.add(
+            ContextualizationJob(
+                idempotency_key="conversion_output:1",
+                conversion_output_id=1,
+                source_id=_UUID_A,
+                status=WorkUnitStatus.SUCCEEDED,
+            )
+        )
+        session.commit()
+
+        assert pending_contextualization_outputs(session) == [2]
+
+
+def test_a_source_without_a_conversion_output_is_not_pending(tmp_path: Path) -> None:
+    """An unconverted source has nothing to contextualize, so it never enters the pending set."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        assert pending_contextualization_outputs(session) == []
+
+
+def test_the_contextualization_pending_set_is_a_function_of_state_alone(tmp_path: Path) -> None:
+    """Two evaluations against identical state yield the identical set — the derivation has no memory."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        _add_output(session, output_id=1, source_id=_UUID_A, created_at=_EPOCH)
+        _add_output(session, output_id=2, source_id=_UUID_B, created_at=_EPOCH + dt.timedelta(days=1))
+        session.commit()
+
+        first = pending_contextualization_outputs(session)
+        second = pending_contextualization_outputs(session)
+
+        assert first == second == [1, 2]
+
+
+def test_unadmitted_contextualization_work_stays_pending(tmp_path: Path) -> None:
+    """Work a bounded evaluation left out is still pending on the next evaluation."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        _add_output(session, output_id=1, source_id=_UUID_A, created_at=_EPOCH)
+        _add_output(session, output_id=2, source_id=_UUID_B, created_at=_EPOCH + dt.timedelta(days=1))
+        session.commit()
+
+        assert pending_contextualization_outputs(session, limit=1) == [1]
+        assert pending_contextualization_outputs(session) == [1, 2], "nothing records that an evaluation happened"
+
+
+def test_the_contextualization_pending_limit_applies_after_the_anti_join(tmp_path: Path) -> None:
+    """A bounded evaluation returns pending work, not a corpus sample that may hold none."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        _add_output(session, output_id=1, source_id=_UUID_A, created_at=_EPOCH)
+        _add_output(session, output_id=2, source_id=_UUID_B, created_at=_EPOCH + dt.timedelta(days=1))
+        session.add(
+            ContextualizationJob(
+                idempotency_key="conversion_output:1",
+                conversion_output_id=1,
+                source_id=_UUID_A,
+                status=WorkUnitStatus.QUEUED,
+            )
+        )
+        session.commit()
+
+        assert pending_contextualization_outputs(session, limit=1) == [2]
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_the_contextualization_pending_query_rejects_a_limit_that_does_not_bound(tmp_path: Path, limit: int) -> None:
+    """A non-positive bound would widen the evaluation instead of narrowing it, so it is refused."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session, pytest.raises(ValueError, match="limit must be a positive integer"):
+        pending_contextualization_outputs(session, limit=limit)
 
 
 def test_latest_output_ids_per_source_selects_one_output_per_source(tmp_path: Path) -> None:
