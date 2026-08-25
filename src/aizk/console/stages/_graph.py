@@ -33,6 +33,8 @@ from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from sqlmodel import Session
 
     from aizk.conversion.auth import Principal
@@ -63,6 +65,9 @@ def build_graph_descriptor(
     apply_retry: Callable[["Session", Any], None],
     apply_cancel: Callable[["Session", Any], None],
     id_search_columns: list[Any],
+    extra_actions: list[StageAction] | None = None,
+    pending_sources: "Callable[[Session], list[UUID]] | None" = None,
+    stale_sources: "Callable[[Session], set[str]] | None" = None,
 ) -> StageDescriptor:
     """Build a :class:`StageDescriptor` for one graph pipeline stage.
 
@@ -71,7 +76,14 @@ def build_graph_descriptor(
     shown in the drill-down in pipeline order; ``apply_retry`` / ``apply_cancel`` are
     the stage's own transition helpers (they raise :class:`ValueError` when the unit
     is ineligible); ``id_search_columns`` are extra integer columns matched by the
-    text search (beyond the id, source id, and source title).
+    text search (beyond the id, source id, and source title). ``extra_actions`` are
+    actions only this stage offers, appended after the shared Retry and Cancel.
+
+    ``pending_sources`` and ``stale_sources`` are the stage's optional derivations.
+    Supplying ``pending_sources`` gives the stage a pending count and listing;
+    supplying ``stale_sources`` gives it a stale count and marks its stale rows in
+    the monitor so an operator can select them together. Omitting either leaves the
+    corresponding console surface absent for the stage.
     """
     sortable_columns: dict[str, Any] = {
         "job_id": model.id,
@@ -127,6 +139,10 @@ def build_graph_descriptor(
             session, base_query, filtered_query, _sort_clause(sort, direction), limit, offset
         )
 
+        # Resolved once per page, not per row: a stale verdict reads the source's
+        # runs, so a per-row lookup would be a query per listed unit.
+        stale = stale_sources(session) if stale_sources is not None else None
+
         jobs: list[dict[str, Any]] = []
         for job, source in rows:
             if job.id is None:
@@ -142,6 +158,7 @@ def build_graph_descriptor(
                     "started_at": format_dt(job.started_at),
                     "finished_at": format_dt(job.finished_at),
                     "error_code": job.error_code or "",
+                    "stale": None if stale is None else str(job.source_id) in stale,
                 }
             )
 
@@ -204,6 +221,30 @@ def build_graph_descriptor(
         ]
         return {"stages": stages}
 
+    def pending_count(session: "Session", _principal: "Principal") -> int:
+        """Count the sources this stage owes a work-unit but has none for."""
+        return len(pending_sources(session))  # type: ignore[misc] -- only wired when declared
+
+    def pending_list(session: "Session", _principal: "Principal") -> list[dict[str, Any]]:
+        """List those pending sources with the same title contract the monitor applies.
+
+        Titles come from the ``sources`` table where one exists, falling back to the
+        source identity, so a pending source reads the same way as a listed
+        work-unit even though no work-unit exists for it yet.
+        """
+        source_ids = pending_sources(session)  # type: ignore[misc] -- only wired when declared
+        titles = {
+            source.source_id: source.title
+            for source in session.exec(select(Source).where(Source.source_id.in_(source_ids))).all()
+        }
+        return [
+            {"source_id": str(source_id), "title": titles.get(source_id) or str(source_id)} for source_id in source_ids
+        ]
+
+    def stale_count(session: "Session", _principal: "Principal") -> int:
+        """Count the sources whose completed work consumed since-superseded upstream state."""
+        return len(stale_sources(session))  # type: ignore[misc] -- only wired when declared
+
     return StageDescriptor(
         key=key,
         label=label,
@@ -221,8 +262,12 @@ def build_graph_descriptor(
             StageAction(
                 key="cancel", applied_label="cancelled", apply=lambda session, unit, _p: apply_cancel(session, unit)
             ),
+            *(extra_actions or []),
         ],
         detail=detail,
         detail_template="detail_graph_runs.html",
         failed_split=failed_split,
+        pending_count=pending_count if pending_sources is not None else None,
+        pending_list=pending_list if pending_sources is not None else None,
+        stale_count=stale_count if stale_sources is not None else None,
     )

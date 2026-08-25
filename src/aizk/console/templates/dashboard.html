@@ -45,6 +45,8 @@
               <th>Stage</th>
               {% for category in categories %}<th class="count">{{ category }}</th>{% endfor %}
               <th class="count">total</th>
+              <th class="count">pending</th>
+              <th class="count">stale</th>
             </tr>
           </thead>
           <tbody>
@@ -63,6 +65,14 @@
               </td>
               {% endfor %}
               <td class="count total">{{ stage.total }}</td>
+              <td class="count pending"
+                {%- if stage.pending is not none %} data-pending="{{ stage.pending }}"{% endif %}>
+                {%- if stage.pending is not none %}<a href="/ui/tasks?stage={{ stage.key }}">{{ stage.pending }}</a>{% else %}&mdash;{% endif -%}
+              </td>
+              <td class="count stale"
+                {%- if stage.stale is not none %} data-stale="{{ stage.stale }}"{% endif %}>
+                {%- if stage.stale is not none %}{{ stage.stale }}{% else %}&mdash;{% endif -%}
+              </td>
             </tr>
             {% endfor %}
           </tbody>
