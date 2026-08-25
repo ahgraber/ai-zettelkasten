@@ -17,7 +17,6 @@ from collections.abc import Callable, Iterator
 from dataclasses import replace
 import datetime as dt
 import re
-from uuid import UUID
 
 import pytest
 from sqlmodel import Session
@@ -27,15 +26,12 @@ from fastapi.testclient import TestClient
 from aizk.console import descriptors as descriptors_module
 from aizk.console.descriptors import StageDescriptor
 from aizk.console.stages._graph import build_graph_descriptor
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJobStatus
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
-from aizk.graph.extraction_events import EXTRACTION_STAGE
 from aizk.graph.job_actions import apply_contextualization_cancel, apply_contextualization_retry
-from aizk.graph.mention_store import extraction_derivation_key
 from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.lifecycle import WorkUnitStatus
-from aizk.pipeline.run import PipelineRun, RunStatus
 
 
 def _make_double(key: str, label: str, **overrides: object) -> StageDescriptor:
@@ -84,56 +80,6 @@ def _dashboard_row(body: str, stage_key: str) -> str:
     match = re.search(rf'<tr data-stage="{stage_key}".*?</tr>', body, re.DOTALL)
     assert match is not None, f"no dashboard row rendered for stage {stage_key!r}"
     return match.group(0)
-
-
-def _make_conversion_job(
-    session: Session, *, source_id: UUID, idempotency_key: str, status: ConversionJobStatus
-) -> ConversionJob:
-    """Insert and return a conversion job, the parent a conversion output needs."""
-    job = ConversionJob(
-        source_id=source_id,
-        owner_id="self",
-        title="Doc",
-        payload_version=1,
-        status=status,
-        idempotency_key=idempotency_key,
-    )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    return job
-
-
-def _seed_extraction_state(session: Session, *, source_id: UUID, current: bool) -> None:
-    """Give a source an active chunking run and an extraction run over it, or over an earlier one.
-
-    ``current=False`` records an extraction whose consumed upstream key no longer
-    matches the source's active chunking run — a source that has fallen behind.
-    """
-    consumed = "chunking-current" if current else "chunking-superseded"
-    session.add(
-        PipelineRun(
-            stage=CHUNKING_STAGE,
-            scope_id=str(source_id),
-            status=RunStatus.ACTIVE,
-            derivation_key="chunking-current",
-        )
-    )
-    session.add(
-        PipelineRun(
-            stage=EXTRACTION_STAGE,
-            scope_id=str(source_id),
-            status=RunStatus.ACTIVE,
-            derivation_key=extraction_derivation_key(
-                extractor_version="stub/v1",
-                materializer_version="v1",
-                input_policy="raw",
-                upstream_derivation_key=consumed,
-            ),
-            version_stamps_json='{"input_policy":"raw"}',
-        )
-    )
-    session.commit()
 
 
 # --- graph-stage rollup with failed split ------------------------------------
@@ -189,12 +135,12 @@ def test_dashboard_shows_zeroes_for_a_stage_with_no_units(client: TestClient, mi
 
 
 def test_a_declaring_stage_shows_its_pending_count(
-    client: TestClient, db_session: Session, seed_source, seed_conversion_output
+    client: TestClient, db_session: Session, seed_source, seed_conversion_job, seed_conversion_output
 ) -> None:
     """A stage with sources behind it reports how many, so a stalled document is a number."""
     for index in range(2):
         source = seed_source(db_session, karakeep_id=f"bm_pending_{index}", title=f"Pending {index}")
-        job = _make_conversion_job(
+        job = seed_conversion_job(
             db_session,
             source_id=source.source_id,
             idempotency_key=f"pending-{index}",
@@ -209,11 +155,16 @@ def test_a_declaring_stage_shows_its_pending_count(
 
 
 def test_the_pending_count_does_not_perturb_the_unit_rollup(
-    client: TestClient, db_session: Session, seed_source, seed_conversion_output, seed_contextualization_job
+    client: TestClient,
+    db_session: Session,
+    seed_source,
+    seed_conversion_job,
+    seed_conversion_output,
+    seed_contextualization_job,
 ) -> None:
     """Pending sources count no work-unit, so the per-status counts and total are unchanged."""
     covered = seed_source(db_session, karakeep_id="bm_covered", title="Covered")
-    covered_job = _make_conversion_job(
+    covered_job = seed_conversion_job(
         db_session, source_id=covered.source_id, idempotency_key="covered", status=ConversionJobStatus.SUCCEEDED
     )
     covered_output = seed_conversion_output(db_session, job_id=covered_job.id, source_id=covered.source_id)
@@ -224,7 +175,7 @@ def test_the_pending_count_does_not_perturb_the_unit_rollup(
         status=WorkUnitStatus.QUEUED,
     )
     behind = seed_source(db_session, karakeep_id="bm_behind", title="Behind")
-    behind_job = _make_conversion_job(
+    behind_job = seed_conversion_job(
         db_session, source_id=behind.source_id, idempotency_key="behind", status=ConversionJobStatus.SUCCEEDED
     )
     seed_conversion_output(db_session, job_id=behind_job.id, source_id=behind.source_id)
@@ -246,19 +197,21 @@ def test_a_stage_without_a_derivation_shows_no_pending_or_stale_figure(client: T
     assert "data-stale=" not in row
 
 
-def test_the_stale_count_appears_for_the_declaring_stage(client: TestClient, db_session: Session, seed_source) -> None:
+def test_the_stale_count_appears_for_the_declaring_stage(
+    client: TestClient, db_session: Session, seed_source, seed_extraction_state
+) -> None:
     """Extraction reports how many extracted sources have fallen behind their upstream."""
     stale = seed_source(db_session, karakeep_id="bm_stale_dash", title="Stale")
     current = seed_source(db_session, karakeep_id="bm_current_dash", title="Current")
-    _seed_extraction_state(db_session, source_id=stale.source_id, current=False)
-    _seed_extraction_state(db_session, source_id=current.source_id, current=True)
+    seed_extraction_state(db_session, source_id=stale.source_id, current=False)
+    seed_extraction_state(db_session, source_id=current.source_id, current=True)
 
     response = client.get("/ui")
 
     extraction_row = _dashboard_row(response.text, "extraction")
     assert 'data-stale="1"' in extraction_row
     assert "data-stale=" not in _dashboard_row(response.text, "contextualization"), (
-        "contextualization has no staleness concept: a re-converted source becomes pending again"
+        "contextualization has no staleness concept"
     )
 
 

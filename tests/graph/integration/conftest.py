@@ -12,8 +12,9 @@ allowlist from the process environment; the harness sets only those two variable
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from sqlalchemy import Engine
@@ -22,10 +23,15 @@ from sqlmodel import Session
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.db.engine import _ENGINE_CACHE, get_engine
 from aizk.db.migrations import run_migrations
 from aizk.graph.api.dependencies import get_blob_reader
 from aizk.graph.api.main import create_app
+from aizk.graph.extraction_events import EXTRACTION_STAGE
+from aizk.graph.mention_store import extraction_derivation_key
+from aizk.graph.persistence import CHUNKING_STAGE
+from aizk.pipeline.run import PipelineRun, RunStatus
 
 
 @pytest.fixture
@@ -120,3 +126,76 @@ def explorer_client(app: FastAPI, explorer_markdown: str) -> Iterator[TestClient
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.pop(get_blob_reader, None)
+
+
+@pytest.fixture
+def seed_conversion_job() -> "Callable[..., ConversionJob]":
+    """Return a factory that inserts a :class:`ConversionJob` and returns the refreshed row.
+
+    A conversion output needs a job to hang off, so a test that seeds an output
+    seeds one of these first.
+    """
+
+    def _make(
+        session: Session,
+        *,
+        source_id: UUID,
+        idempotency_key: str,
+        status: ConversionJobStatus,
+        owner_id: str = "self",
+        title: str = "Doc",
+        attempts: int = 0,
+    ) -> ConversionJob:
+        job = ConversionJob(
+            source_id=source_id,
+            owner_id=owner_id,
+            title=title,
+            payload_version=1,
+            status=status,
+            attempts=attempts,
+            idempotency_key=idempotency_key,
+        )
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        return job
+
+    return _make
+
+
+@pytest.fixture
+def seed_extraction_state() -> "Callable[..., None]":
+    """Return a factory that puts a source in a current or stale extraction state.
+
+    Both runs are activated for the source: a chunking run, and an extraction run
+    recording the upstream key it consumed. With ``current=False`` that recorded key
+    no longer matches the chunking run, which is what makes the source stale.
+    """
+
+    def _make(session: Session, *, source_id: UUID, current: bool) -> None:
+        consumed = "chunking-current" if current else "chunking-superseded"
+        session.add(
+            PipelineRun(
+                stage=CHUNKING_STAGE,
+                scope_id=str(source_id),
+                status=RunStatus.ACTIVE,
+                derivation_key="chunking-current",
+            )
+        )
+        session.add(
+            PipelineRun(
+                stage=EXTRACTION_STAGE,
+                scope_id=str(source_id),
+                status=RunStatus.ACTIVE,
+                derivation_key=extraction_derivation_key(
+                    extractor_version="stub/v1",
+                    materializer_version="v1",
+                    input_policy="raw",
+                    upstream_derivation_key=consumed,
+                ),
+                version_stamps_json='{"input_policy":"raw"}',
+            )
+        )
+        session.commit()
+
+    return _make
