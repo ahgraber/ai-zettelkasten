@@ -25,6 +25,7 @@ from aizk.conversion.utilities.config import AuthSettings, ConversionConfig
 from aizk.graph.api.routes import router
 from aizk.graph.api.routes.extraction import router as extraction_router
 from aizk.graph.api.routes.ui import router as explorer_router
+from aizk.graph.config import AdmissionConfig
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -32,9 +33,10 @@ if TYPE_CHECKING:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> "AsyncIterator[None]":
-    """Load the shared configuration and auth settings onto application state."""
+    """Load the shared configuration, auth settings, and admission settings onto application state."""
     app.state.config = ConversionConfig()
     app.state.auth_settings = AuthSettings()
+    app.state.admission_config = AdmissionConfig()
     yield
 
 

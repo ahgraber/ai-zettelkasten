@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
     from sqlmodel import Session
 
+    from aizk.graph.config import AdmissionConfig
     from aizk.graph.markdown_source import BlobReader
     from aizk.graph.search import SearchProvider
 
@@ -35,6 +36,16 @@ def get_config(request: Request) -> ConversionConfig:
     a query parameter.
     """
     return request.app.state.config
+
+
+def get_admission_config(request: Request) -> "AdmissionConfig":
+    """Return the graph admission settings from application state.
+
+    The intake routes read each stage's declared capacity and the refusal delay
+    from here, so a test overrides ``app.state.admission_config`` rather than the
+    process environment.
+    """
+    return request.app.state.admission_config
 
 
 def get_db_session(_request: Request) -> "Iterator[Session]":
