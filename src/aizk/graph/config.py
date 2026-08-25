@@ -22,6 +22,11 @@ model's local weight location and pinned revision.
 extraction worker's injected NER extractor and raw-vs-contextualized input
 policy, plus its lease/retry knobs, mirroring :class:`ContextualizationConfig`'s
 worker settings.
+
+:class:`AdmissionConfig` (``AIZK_GRAPH__<FIELD>``) governs what may enter the
+graph stages' queues: the per-stage capacity limits enforced at every enqueue
+path, and the refusal delay intake reports. It spans both stages, so it sits at
+the graph level rather than inside either stage's section.
 """
 
 from __future__ import annotations
@@ -138,3 +143,29 @@ class ExtractionConfig(BaseSettings):
 
     retry_base_delay_seconds: float = 2.0
     retry_max_attempts: int = 3
+
+
+class AdmissionConfig(BaseSettings):
+    """Capacity limits over the graph stages' queues, and the refusal delay intake reports.
+
+    Read from ``AIZK_GRAPH__*`` environment variables. The two ``*_queue_max_depth``
+    fields bound each stage's actionable backlog (see
+    :mod:`aizk.graph.capacity`); ``0`` — the default — means the stage declares no
+    limit and accepts work without a capacity refusal. The limits are per stage
+    because contextualization is LLM-backed and extraction is not, so their spend
+    profiles differ.
+
+    ``queue_retry_after_seconds`` mirrors the conversion service's field of the
+    same name: it is the ``Retry-After`` value graph intake returns with its 503,
+    so one refusal convention covers the fleet.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIZK_GRAPH__",
+        env_file=None,
+        extra="ignore",
+    )
+
+    contextualization_queue_max_depth: int = 0
+    extraction_queue_max_depth: int = 0
+    queue_retry_after_seconds: int = 30

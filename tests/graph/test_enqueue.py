@@ -2,9 +2,10 @@
 
 ``enqueue_output`` / ``enqueue_backfill_outputs`` resolve the durable
 ``source_id`` from the conversion output and delegate to the domain enqueue
-(dedupe on ``idempotency_key``). ``latest_output_ids_per_source`` selects the
-corpus-scan target set a backfill enqueues. FK enforcement is off, so standalone
-``conversion_outputs`` rows suffice alongside the work-unit table.
+(dedupe on ``idempotency_key``, then the stage's declared capacity).
+``latest_output_ids_per_source`` selects the corpus-scan target set a backfill
+enqueues. FK enforcement is off, so standalone ``conversion_outputs`` rows
+suffice alongside the work-unit table.
 """
 
 from __future__ import annotations
@@ -17,8 +18,10 @@ import pytest
 from sqlmodel import Session, create_engine, select
 
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.graph.capacity import StageAtCapacityError
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.enqueue import enqueue_backfill_outputs, enqueue_output, latest_output_ids_per_source
+from aizk.graph.workunit import enqueue_backfill
 from aizk.pipeline.invalidation import ReprocessingConfirmationError
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
@@ -115,6 +118,85 @@ def test_enqueue_backfill_outputs_requires_confirmation(tmp_path: Path) -> None:
         with pytest.raises(ReprocessingConfirmationError, match="will not run until it is explicitly confirmed"):
             enqueue_backfill_outputs(session, [1])
         assert session.exec(select(ContextualizationJob)).all() == [], "nothing is enqueued without confirmation"
+
+
+def test_enqueue_output_refuses_new_work_at_capacity(tmp_path: Path) -> None:
+    """At the declared capacity a new work-unit is refused and nothing is added."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        _add_output(session, output_id=1, source_id=_UUID_A)
+        _add_output(session, output_id=2, source_id=_UUID_B)
+        session.commit()
+
+        enqueue_output(session, 1, queue_max_depth=1)
+        session.commit()
+
+        with pytest.raises(StageAtCapacityError, match="contextualization stage is at capacity"):
+            enqueue_output(session, 2, queue_max_depth=1)
+        session.rollback()
+
+        assert len(session.exec(select(ContextualizationJob)).all()) == 1
+
+
+def test_enqueue_output_at_capacity_returns_the_existing_unit(tmp_path: Path) -> None:
+    """A duplicate bypasses the capacity check: reusing a unit adds no work to the backlog."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        _add_output(session, output_id=1, source_id=_UUID_A)
+        session.commit()
+
+        first = enqueue_output(session, 1, queue_max_depth=1)
+        session.commit()
+
+        again = enqueue_output(session, 1, queue_max_depth=1)
+        session.commit()
+
+        assert again.id == first.id
+        assert len(session.exec(select(ContextualizationJob)).all()) == 1
+
+
+def test_enqueue_output_without_a_declared_limit_accepts_work(tmp_path: Path) -> None:
+    """A stage declaring no capacity limit enqueues without a capacity refusal."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        _add_output(session, output_id=1, source_id=_UUID_A)
+        _add_output(session, output_id=2, source_id=_UUID_B)
+        session.commit()
+
+        enqueue_output(session, 1)
+        enqueue_output(session, 2)
+        session.commit()
+
+        assert len(session.exec(select(ContextualizationJob)).all()) == 2
+
+
+def test_enqueue_backfill_outputs_admits_only_the_batch_headroom(tmp_path: Path) -> None:
+    """A bulk enqueue over more work than the headroom admits the headroom and leaves the rest."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        _add_output(session, output_id=1, source_id=_UUID_A)
+        _add_output(session, output_id=2, source_id=_UUID_B)
+        _add_output(session, output_id=3, source_id=_UUID_C)
+        session.commit()
+
+        admitted = enqueue_backfill_outputs(session, [1, 2, 3], confirmed=True, queue_max_depth=2)
+        session.commit()
+
+        assert [job.conversion_output_id for job in admitted] == [1, 2]
+        assert {job.conversion_output_id for job in session.exec(select(ContextualizationJob)).all()} == {1, 2}
+
+
+def test_enqueue_backfill_admits_only_the_batch_headroom(tmp_path: Path) -> None:
+    """The domain bulk enqueue is bounded by the same batch headroom as its output-resolving wrapper."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        documents = [(1, _UUID_A), (2, _UUID_B), (3, _UUID_C)]
+
+        admitted = enqueue_backfill(session, documents, confirmed=True, queue_max_depth=2)
+        session.commit()
+
+        assert [job.conversion_output_id for job in admitted] == [1, 2]
+        assert {job.conversion_output_id for job in session.exec(select(ContextualizationJob)).all()} == {1, 2}
 
 
 def test_latest_output_ids_per_source_selects_one_output_per_source(tmp_path: Path) -> None:

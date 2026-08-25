@@ -364,6 +364,57 @@ def test_backfill_gate_refusal_names_the_flags_that_resolve_it(
     assert "Traceback" not in captured.err, "a missing flag is a usage refusal, not a crash"
 
 
+@pytest.mark.parametrize(
+    ("argv", "run_attr", "config_field"),
+    [
+        (["backfill", "--yes"], "run_contextualization_backfill", "contextualization_queue_max_depth"),
+        (["extraction-backfill", "--yes"], "run_extraction_backfill", "extraction_queue_max_depth"),
+    ],
+    ids=["contextualization", "extraction"],
+)
+def test_a_backfill_command_forwards_its_stages_declared_capacity(
+    monkeypatch: pytest.MonkeyPatch, argv: list[str], run_attr: str, config_field: str
+) -> None:
+    """Each command reads its own stage's limit, so a bulk enqueue is subject to it like any other path."""
+    _stub_backfill_engine(monkeypatch)
+    monkeypatch.setenv(f"AIZK_GRAPH__{config_field.upper()}", "12")
+    captured: dict[str, object] = {}
+
+    def fake_backfill(_engine: object, **kwargs: object) -> cli.BackfillResult:
+        captured.update(kwargs)
+        return cli.BackfillResult(targeted=0, enqueued=0, reused=0)
+
+    monkeypatch.setattr(cli, run_attr, fake_backfill)
+
+    assert cli.main(argv) == 0
+    assert captured["queue_max_depth"] == 12
+
+
+@pytest.mark.parametrize(
+    ("argv", "run_attr"),
+    [
+        (["backfill", "--yes"], "run_contextualization_backfill"),
+        (["extraction-backfill", "--yes"], "run_extraction_backfill"),
+    ],
+    ids=["contextualization", "extraction"],
+)
+def test_a_backfill_command_reports_a_capacity_refusal_as_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], argv: list[str], run_attr: str
+) -> None:
+    """A stage at capacity exits non-zero with the refusal on stderr rather than a traceback."""
+    _stub_backfill_engine(monkeypatch)
+
+    def raise_at_capacity(_engine: object, **_kwargs: object) -> object:
+        raise cli.StageAtCapacityError("contextualization", depth=5, limit=5)
+
+    monkeypatch.setattr(cli, run_attr, raise_at_capacity)
+
+    assert cli.main(argv) == 1
+    captured = capsys.readouterr()
+    assert "is at capacity" in captured.err
+    assert "Traceback" not in captured.err, "a full queue is a refusal, not a crash"
+
+
 def test_backfill_reports_an_unknown_output_id_as_a_usage_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

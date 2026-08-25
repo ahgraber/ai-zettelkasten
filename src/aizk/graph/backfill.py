@@ -47,7 +47,9 @@ class BackfillResult:
     """How a backfill run resolved and enqueued its target set.
 
     Attributes:
-        targeted: Work-units the run resolved as its target set.
+        targeted: Work the run put through the stage's enqueue. A corpus scan
+            truncated by the stage's capacity reports the admitted batch; what
+            capacity left out is logged and stays eligible for a later run.
         enqueued: Targets that did not have a work-unit and now do.
         reused: Targets whose work-unit already existed, in any status.
     """
@@ -69,6 +71,7 @@ def run_contextualization_backfill(
     limit: int | None,
     confirmed: bool,
     dry_run: bool,
+    queue_max_depth: int = 0,
 ) -> BackfillResult:
     """Enqueue contextualization work-units for conversion outputs.
 
@@ -78,6 +81,10 @@ def run_contextualization_backfill(
     :func:`aizk.graph.enqueue.latest_output_ids_per_source`), optionally capped by
     ``limit``, and the corpus-wide enqueue is confirmation-gated.
 
+    Both paths are bounded by the stage's declared capacity: a corpus scan
+    truncates to the batch's headroom, while a named enumeration refuses once the
+    backlog is full, so the run commits nothing rather than partially.
+
     Args:
         engine: The shared engine.
         output_ids: Explicit target outputs, or ``None`` to scan the corpus.
@@ -86,6 +93,8 @@ def run_contextualization_backfill(
         confirmed: Explicit approval for a corpus scan; ignored when
             ``output_ids`` is supplied or when ``dry_run`` is set.
         dry_run: Resolve and enqueue, then roll back instead of committing.
+        queue_max_depth: The stage's declared capacity over its actionable
+            backlog; ``0`` (the default) declares no limit.
 
     Returns:
         The run's :class:`BackfillResult`.
@@ -93,6 +102,8 @@ def run_contextualization_backfill(
     Raises:
         ReprocessingConfirmationError: If ``output_ids`` is ``None`` and neither
             ``confirmed`` nor ``dry_run`` is set.
+        StageAtCapacityError: If a named output cannot be enqueued because the
+            stage is at capacity.
         ValueError: If a named output id has no conversion output.
     """
     with Session(engine) as session:
@@ -100,10 +111,11 @@ def run_contextualization_backfill(
         before = _unit_count(session, ContextualizationJob)
 
         if output_ids is not None:
-            for output_id in targets:
-                enqueue_output(session, output_id)
+            units = [enqueue_output(session, output_id, queue_max_depth=queue_max_depth) for output_id in targets]
         else:
-            enqueue_backfill_outputs(session, targets, confirmed=confirmed or dry_run)
+            units = enqueue_backfill_outputs(
+                session, targets, confirmed=confirmed or dry_run, queue_max_depth=queue_max_depth
+            )
 
         session.flush()
         enqueued = _unit_count(session, ContextualizationJob) - before
@@ -112,7 +124,7 @@ def run_contextualization_backfill(
         else:
             session.commit()
 
-    result = BackfillResult(targeted=len(targets), enqueued=enqueued, reused=len(targets) - enqueued)
+    result = BackfillResult(targeted=len(units), enqueued=enqueued, reused=len(units) - enqueued)
     logger.info(
         "Contextualization backfill complete",
         extra={
@@ -132,6 +144,7 @@ def run_extraction_backfill(
     source_ids: "Sequence[UUID] | None",
     confirmed: bool,
     dry_run: bool,
+    queue_max_depth: int = 0,
 ) -> BackfillResult:
     """Enqueue extraction work-units for sources with something to extract.
 
@@ -141,12 +154,18 @@ def run_extraction_backfill(
     :func:`aizk.graph.extraction_workunit.enqueue_extraction_backfill`), which
     resolves its own target set.
 
+    Both paths are bounded by the stage's declared capacity: a corpus scan
+    truncates to the batch's headroom, while a named enumeration refuses once the
+    backlog is full, so the run commits nothing rather than partially.
+
     Args:
         engine: The shared engine.
         source_ids: Explicit target sources, or ``None`` to scan the corpus.
         confirmed: Explicit approval for a corpus scan; ignored when
             ``source_ids`` is supplied or when ``dry_run`` is set.
         dry_run: Resolve and enqueue, then roll back instead of committing.
+        queue_max_depth: The stage's declared capacity over its actionable
+            backlog; ``0`` (the default) declares no limit.
 
     Returns:
         The run's :class:`BackfillResult`.
@@ -154,14 +173,21 @@ def run_extraction_backfill(
     Raises:
         ReprocessingConfirmationError: If ``source_ids`` is ``None`` and neither
             ``confirmed`` nor ``dry_run`` is set.
+        StageAtCapacityError: If a named source cannot be enqueued because the
+            stage is at capacity.
     """
     with Session(engine) as session:
         before = _unit_count(session, ExtractionJob)
 
         if source_ids is not None:
-            units = [enqueue_extraction(session, source_id=source_id) for source_id in source_ids]
+            units = [
+                enqueue_extraction(session, source_id=source_id, queue_max_depth=queue_max_depth)
+                for source_id in source_ids
+            ]
         else:
-            units = enqueue_extraction_backfill(session, confirmed=confirmed or dry_run)
+            units = enqueue_extraction_backfill(
+                session, confirmed=confirmed or dry_run, queue_max_depth=queue_max_depth
+            )
 
         session.flush()
         enqueued = _unit_count(session, ExtractionJob) - before

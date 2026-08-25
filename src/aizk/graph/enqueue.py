@@ -9,8 +9,10 @@ carried onto the work-unit's runs and transition events and a source's progress
 stays resolvable across stages.
 
 Both modes (incremental single enqueue, bulk/backfill) dedupe on the work-unit's
-``idempotency_key`` via the underlying domain functions. They ``add`` / ``flush``
-on the caller's session and never commit.
+``idempotency_key`` via the underlying domain functions, and both honor the
+stage's declared capacity (:mod:`aizk.graph.capacity`) — the single enqueue by
+refusing, the bulk enqueue by truncating to the batch's headroom. They ``add`` /
+``flush`` on the caller's session and never commit.
 
 :func:`latest_output_ids_per_source` is the corpus-scan target selection a bulk
 backfill enqueues over, kept here rather than in a caller so every surface that
@@ -24,6 +26,9 @@ from typing import TYPE_CHECKING
 from sqlmodel import func, select
 
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.graph.capacity import within_headroom
+from aizk.graph.datamodel import ContextualizationJob
+from aizk.graph.events import CONTEXTUALIZATION_STAGE
 from aizk.graph.workunit import enqueue_document
 from aizk.pipeline.invalidation import require_reprocessing_confirmation
 
@@ -31,8 +36,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from sqlmodel import Session
-
-    from aizk.graph.datamodel import ContextualizationJob
 
 
 def latest_output_ids_per_source(session: "Session", *, limit: int | None = None) -> list[int]:
@@ -93,19 +96,37 @@ def latest_output_ids_per_source(session: "Session", *, limit: int | None = None
     return [row[0] for row in session.exec(winners).all()]
 
 
-def enqueue_output(session: "Session", conversion_output_id: int) -> "ContextualizationJob":
+def enqueue_output(
+    session: "Session",
+    conversion_output_id: int,
+    *,
+    queue_max_depth: int = 0,
+) -> "ContextualizationJob":
     """Enqueue one document's work-unit, resolving its source identity from the output.
 
     Looks up the conversion output to resolve ``source_id``, then enqueues (or
     reuses, on ``idempotency_key``) the work-unit. Does not commit.
 
+    Args:
+        session: Active session; the caller owns commit/rollback.
+        conversion_output_id: The conversion artifact locator to process.
+        queue_max_depth: The stage's declared capacity over its actionable
+            backlog; ``0`` (the default) declares no limit.
+
     Raises:
         ValueError: If no conversion output exists for ``conversion_output_id``.
+        StageAtCapacityError: When the stage is at capacity and the request does
+            not resolve to an existing work-unit.
     """
     output = session.get(ConversionOutput, conversion_output_id)
     if output is None:
         raise ValueError(f"conversion output {conversion_output_id} not found")
-    return enqueue_document(session, conversion_output_id=conversion_output_id, source_id=output.source_id)
+    return enqueue_document(
+        session,
+        conversion_output_id=conversion_output_id,
+        source_id=output.source_id,
+        queue_max_depth=queue_max_depth,
+    )
 
 
 def enqueue_backfill_outputs(
@@ -113,6 +134,7 @@ def enqueue_backfill_outputs(
     conversion_output_ids: "Iterable[int]",
     *,
     confirmed: bool = False,
+    queue_max_depth: int = 0,
 ) -> list["ContextualizationJob"]:
     """Enqueue work-units for many conversion outputs (bulk/backfill mode).
 
@@ -122,11 +144,34 @@ def enqueue_backfill_outputs(
     scheduling differ. Throttling and per-document commit batching are the
     caller's concern; this only stages the rows and does not commit.
 
+    Remaining capacity is read once for the batch and the input truncated to it,
+    rather than counting the backlog per row. Outputs beyond the headroom are
+    left unenqueued and remain pending for a later batch.
+
     A corpus-wide backfill has a large downstream blast radius, so it is gated
     behind explicit confirmation: nothing is enqueued unless ``confirmed`` is True.
+
+    Args:
+        session: Active session; the caller owns commit/rollback.
+        conversion_output_ids: The conversion artifact locators to enqueue, in
+            admission order.
+        confirmed: Explicit human approval for the corpus-wide operation; when
+            ``False`` (the default) nothing is enqueued and the gate raises.
+        queue_max_depth: The stage's declared capacity over its actionable
+            backlog; ``0`` (the default) declares no limit.
+
+    Returns:
+        The enqueued (or reused) work-units, one per admitted output.
 
     Raises:
         ReprocessingConfirmationError: When ``confirmed`` is ``False``.
     """
     require_reprocessing_confirmation("corpus-wide contextualization backfill", confirmed=confirmed)
-    return [enqueue_output(session, conversion_output_id) for conversion_output_id in conversion_output_ids]
+    admitted = within_headroom(
+        session,
+        ContextualizationJob,
+        conversion_output_ids,
+        stage=CONTEXTUALIZATION_STAGE,
+        limit=queue_max_depth,
+    )
+    return [enqueue_output(session, conversion_output_id) for conversion_output_id in admitted]
