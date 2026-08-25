@@ -10,6 +10,10 @@ by ``conversion_output_id``), an extraction work-unit carries only the durable
 source's active chunking run and contextualized variants itself, so no
 upstream artifact locator is needed here.
 
+Both paths honor the stage's declared capacity (:mod:`aizk.graph.capacity`):
+the single enqueue refuses at capacity, the bulk enqueue truncates to the
+batch's headroom.
+
 This surface deduplicates on the source alone and never re-enqueues a
 terminal unit — an existing row is reused whatever its status, including
 ``SUCCEEDED`` (a no-op). It is therefore **not** a re-extraction trigger:
@@ -32,7 +36,9 @@ from uuid import UUID
 
 from sqlmodel import select
 
+from aizk.graph.capacity import check_capacity, within_headroom
 from aizk.graph.datamodel import ExtractionJob
+from aizk.graph.extraction_events import EXTRACTION_STAGE
 from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.invalidation import require_reprocessing_confirmation
 from aizk.pipeline.lifecycle import WorkUnitStatus
@@ -62,7 +68,7 @@ def _idempotency_key(source_id: UUID) -> str:
     return f"source:{source_id}"
 
 
-def enqueue_extraction(session: "Session", *, source_id: UUID) -> ExtractionJob:
+def enqueue_extraction(session: "Session", *, source_id: UUID, queue_max_depth: int = 0) -> ExtractionJob:
     """Enqueue one source's extraction work-unit (incremental mode), deduped on ``idempotency_key``.
 
     If a work-unit for this source already exists — in **any** status,
@@ -73,20 +79,33 @@ def enqueue_extraction(session: "Session", *, source_id: UUID) -> ExtractionJob:
     module docstring). Otherwise a new ``QUEUED`` unit is inserted and
     flushed (so its ``id`` is available).
 
+    The capacity check runs **after** the dedupe branch, so a request resolving
+    to an existing unit is returned rather than refused: it adds nothing to the
+    backlog. This is the only place extraction work-unit rows are constructed,
+    so the limit binds every caller.
+
     Does **not** commit; the caller owns the surrounding transaction.
 
     Args:
         session: Active session; the caller owns commit/rollback.
         source_id: The durable source identity to extract.
+        queue_max_depth: The stage's declared capacity over its actionable
+            backlog; ``0`` (the default) declares no limit.
 
     Returns:
         The existing or newly-created :class:`~aizk.graph.datamodel.ExtractionJob`.
+
+    Raises:
+        StageAtCapacityError: When the backlog is at or above ``queue_max_depth``
+            and the request does not resolve to an existing unit.
     """
     key = _idempotency_key(source_id)
     existing = session.exec(select(ExtractionJob).where(ExtractionJob.idempotency_key == key)).one_or_none()
     if existing is not None:
         logger.debug("Reusing extraction work-unit id=%s for source_id=%s", existing.id, source_id)
         return existing
+
+    check_capacity(session, ExtractionJob, stage=EXTRACTION_STAGE, limit=queue_max_depth)
 
     job = ExtractionJob(
         idempotency_key=key,
@@ -116,7 +135,12 @@ def _sources_with_active_chunking_run(session: "Session") -> list[UUID]:
     return [UUID(scope_id) for scope_id in scope_ids]
 
 
-def enqueue_extraction_backfill(session: "Session", *, confirmed: bool = False) -> list[ExtractionJob]:
+def enqueue_extraction_backfill(
+    session: "Session",
+    *,
+    confirmed: bool = False,
+    queue_max_depth: int = 0,
+) -> list[ExtractionJob]:
     """Enqueue extraction work-units for every eligible source (bulk/backfill mode).
 
     Eligible sources are those with an active chunking run (see
@@ -124,6 +148,10 @@ def enqueue_extraction_backfill(session: "Session", *, confirmed: bool = False) 
     :func:`enqueue_extraction`, so the same ``idempotency_key`` dedupe applies
     and the resulting units are identical to incremental enqueue — only volume
     and scheduling differ.
+
+    Remaining capacity is read once for the batch and the eligible set truncated
+    to it, rather than counting the backlog per row. Sources beyond the headroom
+    are left unenqueued and remain eligible for a later batch.
 
     A corpus-wide backfill has a large downstream blast radius, so it is gated
     behind explicit confirmation: nothing is enqueued unless ``confirmed`` is
@@ -133,14 +161,21 @@ def enqueue_extraction_backfill(session: "Session", *, confirmed: bool = False) 
         session: Active session; the caller owns commit/rollback.
         confirmed: Explicit human approval for the corpus-wide operation; when
             ``False`` (the default) nothing is enqueued and the gate raises.
+        queue_max_depth: The stage's declared capacity over its actionable
+            backlog; ``0`` (the default) declares no limit.
 
     Returns:
-        The enqueued (or reused) work-units, one per eligible source.
+        The enqueued (or reused) work-units, one per admitted source.
 
     Raises:
         ReprocessingConfirmationError: When ``confirmed`` is ``False``.
     """
     require_reprocessing_confirmation("corpus-wide extraction backfill", confirmed=confirmed)
-    return [
-        enqueue_extraction(session, source_id=source_id) for source_id in _sources_with_active_chunking_run(session)
-    ]
+    admitted = within_headroom(
+        session,
+        ExtractionJob,
+        _sources_with_active_chunking_run(session),
+        stage=EXTRACTION_STAGE,
+        limit=queue_max_depth,
+    )
+    return [enqueue_extraction(session, source_id=source_id) for source_id in admitted]

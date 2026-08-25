@@ -54,6 +54,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from sqlmodel import Session, select
 
 from aizk.chunking import SPLITTER_VERSION, split
+from aizk.graph.capacity import check_capacity, within_headroom
 from aizk.graph.contextualization import (
     consumed_output_memo_keys,
     contextualize_chunks,
@@ -63,6 +64,7 @@ from aizk.graph.contextualization import (
 )
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.db import begin_immediate
+from aizk.graph.events import CONTEXTUALIZATION_STAGE
 from aizk.graph.persistence import memo_delete_keys, persist_chunks
 from aizk.pipeline.invalidation import require_reprocessing_confirmation
 from aizk.pipeline.lifecycle import WorkUnitStatus
@@ -372,6 +374,7 @@ def enqueue_document(
     *,
     conversion_output_id: int,
     source_id: "UUID",
+    queue_max_depth: int = 0,
 ) -> ContextualizationJob:
     """Enqueue one document's work-unit (incremental mode), deduped on ``idempotency_key``.
 
@@ -380,6 +383,11 @@ def enqueue_document(
     overlapping an already-queued unit, reuses the open unit. Otherwise a new
     ``QUEUED`` unit is inserted and flushed (so its ``id`` is available).
 
+    The capacity check runs **after** the dedupe branch, so a request resolving to
+    an existing unit is returned rather than refused: it adds nothing to the
+    backlog. This is the only place contextualization work-unit rows are
+    constructed, so the limit binds every caller.
+
     Does **not** commit; the caller owns the surrounding transaction.
 
     Args:
@@ -387,9 +395,15 @@ def enqueue_document(
         conversion_output_id: The conversion artifact locator to process.
         source_id: The durable source identity, resolved by the caller from the
             conversion output and carried onto the unit's runs and events.
+        queue_max_depth: The stage's declared capacity over its actionable
+            backlog; ``0`` (the default) declares no limit.
 
     Returns:
         The existing or newly-created :class:`ContextualizationJob`.
+
+    Raises:
+        StageAtCapacityError: When the backlog is at or above ``queue_max_depth``
+            and the request does not resolve to an existing unit.
     """
     key = _idempotency_key(conversion_output_id)
     existing = session.exec(
@@ -402,6 +416,8 @@ def enqueue_document(
             conversion_output_id,
         )
         return existing
+
+    check_capacity(session, ContextualizationJob, stage=CONTEXTUALIZATION_STAGE, limit=queue_max_depth)
 
     job = ContextualizationJob(
         idempotency_key=key,
@@ -423,6 +439,7 @@ def enqueue_backfill(
     documents: "Iterable[tuple[int, UUID]]",
     *,
     confirmed: bool = False,
+    queue_max_depth: int = 0,
 ) -> list[ContextualizationJob]:
     """Enqueue work-units for many documents (bulk/backfill mode) through the single path.
 
@@ -431,6 +448,10 @@ def enqueue_backfill(
     are identical to incremental enqueue — only volume and scheduling differ.
     Throttling and per-document commit batching are the caller's concern; this
     function only stages the rows and does not commit.
+
+    Remaining capacity is read once for the batch and the input truncated to it,
+    rather than counting the backlog per row. Documents beyond the headroom are
+    left unenqueued; they remain pending for a later batch.
 
     A corpus-wide backfill has a large downstream blast radius, so it is gated
     behind explicit confirmation: nothing is enqueued unless ``confirmed`` is True
@@ -441,9 +462,11 @@ def enqueue_backfill(
         documents: The ``(conversion_output_id, source_id)`` pairs to enqueue.
         confirmed: Explicit human approval for the corpus-wide operation; when
             ``False`` (the default) nothing is enqueued and the gate raises.
+        queue_max_depth: The stage's declared capacity over its actionable
+            backlog; ``0`` (the default) declares no limit.
 
     Returns:
-        The enqueued (or reused) work-units, one per input document.
+        The enqueued (or reused) work-units, one per admitted document.
 
     Raises:
         ReprocessingConfirmationError: When ``confirmed`` is ``False``.
@@ -451,5 +474,7 @@ def enqueue_backfill(
     require_reprocessing_confirmation("corpus-wide contextualization backfill", confirmed=confirmed)
     return [
         enqueue_document(session, conversion_output_id=conversion_output_id, source_id=source_id)
-        for conversion_output_id, source_id in documents
+        for conversion_output_id, source_id in within_headroom(
+            session, ContextualizationJob, documents, stage=CONTEXTUALIZATION_STAGE, limit=queue_max_depth
+        )
     ]

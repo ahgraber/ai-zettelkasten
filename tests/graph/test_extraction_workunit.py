@@ -1,9 +1,10 @@
 """Tests for the extraction stage's enqueue paths (``aizk.graph.extraction_workunit``).
 
 ``enqueue_extraction`` dedupes on ``idempotency_key`` (keyed by the durable
-source identity); ``enqueue_extraction_backfill`` scopes itself to sources with
-an active chunking run and refuses to run without explicit confirmation,
-mirroring ``aizk.graph.workunit``'s enqueue functions and
+source identity), then honors the stage's declared capacity;
+``enqueue_extraction_backfill`` scopes itself to sources with an active chunking
+run, truncates to the batch's capacity headroom, and refuses to run without
+explicit confirmation, mirroring ``aizk.graph.workunit``'s enqueue functions and
 ``tests/graph/test_enqueue.py``'s coverage of the contextualization backfill's
 confirmation gate.
 """
@@ -16,6 +17,7 @@ from uuid import UUID
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from aizk.graph.capacity import StageAtCapacityError
 from aizk.graph.datamodel import ExtractionJob
 from aizk.graph.extraction_workunit import enqueue_extraction, enqueue_extraction_backfill
 from aizk.graph.persistence import CHUNKING_STAGE
@@ -86,6 +88,62 @@ def test_enqueue_extraction_backfill_excludes_sources_without_a_chunking_run(tmp
         session.commit()
 
         assert {j.source_id for j in jobs} == {_UUID_A}
+
+
+def test_enqueue_extraction_refuses_new_work_at_capacity(tmp_path: Path) -> None:
+    """At the declared capacity a new work-unit is refused and nothing is added."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        enqueue_extraction(session, source_id=_UUID_A, queue_max_depth=1)
+        session.commit()
+
+        with pytest.raises(StageAtCapacityError, match="mention_extraction stage is at capacity"):
+            enqueue_extraction(session, source_id=_UUID_B, queue_max_depth=1)
+        session.rollback()
+
+        assert len(session.exec(select(ExtractionJob)).all()) == 1
+
+
+def test_enqueue_extraction_at_capacity_returns_the_existing_unit(tmp_path: Path) -> None:
+    """A duplicate bypasses the capacity check: reusing a unit adds no work to the backlog."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        first = enqueue_extraction(session, source_id=_UUID_A, queue_max_depth=1)
+        session.commit()
+
+        again = enqueue_extraction(session, source_id=_UUID_A, queue_max_depth=1)
+        session.commit()
+
+        assert again.id == first.id
+        assert len(session.exec(select(ExtractionJob)).all()) == 1
+
+
+def test_enqueue_extraction_without_a_declared_limit_accepts_work(tmp_path: Path) -> None:
+    """A stage declaring no capacity limit enqueues without a capacity refusal."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        enqueue_extraction(session, source_id=_UUID_A)
+        enqueue_extraction(session, source_id=_UUID_B)
+        session.commit()
+
+        assert len(session.exec(select(ExtractionJob)).all()) == 2
+
+
+def test_enqueue_extraction_backfill_admits_only_the_batch_headroom(tmp_path: Path) -> None:
+    """A bulk enqueue over more eligible sources than the headroom admits the headroom and leaves the rest."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_B), derivation_key="dk-b")
+        session.commit()
+
+        admitted = enqueue_extraction_backfill(session, confirmed=True, queue_max_depth=1)
+        session.commit()
+
+        persisted = session.exec(select(ExtractionJob)).all()
+        assert len(admitted) == 1, "only the headroom is admitted"
+        assert {job.source_id for job in persisted} == {job.source_id for job in admitted}
+        assert {job.source_id for job in persisted} < {_UUID_A, _UUID_B}, "the remainder is left unenqueued"
 
 
 def test_enqueue_extraction_backfill_requires_confirmation(tmp_path: Path) -> None:

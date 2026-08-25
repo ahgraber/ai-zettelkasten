@@ -5,20 +5,22 @@ Groups 4–6 are mutually independent once groups 1–3 exist.
 
 ## 1. Schema baseline
 
-- [ ] Add a `graph-api-openapi` generator entry to `.specs/.sdd/schema-config.yaml` alongside the conversion entry.
-- [ ] Capture `schemas/before/` snapshots for both APIs and write `schemas/expected.md` (graph gains the two intake operations; conversion unchanged).
+- [x] Add a `graph-api-openapi` generator entry to `.specs/.sdd/schema-config.yaml` alongside the conversion entry.
+- [x] Capture `schemas/before/` snapshots for both APIs and write `schemas/expected.md` (graph gains the two intake operations; conversion unchanged).
   Requires network for `uv run`; run outside the sandbox if it refuses.
 
 ## 2. Capacity at the enqueue seam
 
-- [ ] Add capacity config fields to the graph config (`contextualization_queue_max_depth`, `extraction_queue_max_depth`, `queue_retry_after_seconds`; unset/0 = no limit), with a hermetic `_env_file=None` settings test.
-- [ ] Define the capacity-refusal exception type in `aizk.graph`.
-- [ ] Enforce capacity in `enqueue_document` after the dedupe branch.
+- [x] Add capacity config fields to the graph config (`contextualization_queue_max_depth`, `extraction_queue_max_depth`, `queue_retry_after_seconds`; unset/0 = no limit), with a hermetic `_env_file=None` settings test.
+- [x] Define the capacity-refusal exception type in `aizk.graph`.
+- [x] Enforce capacity in `enqueue_document` after the dedupe branch.
   Tests in `tests/graph/test_enqueue.py`: new unit refused at capacity; duplicate at capacity returns the existing unit; no configured limit accepts.
-- [ ] Enforce capacity in `enqueue_extraction` after the dedupe branch.
+- [x] Enforce capacity in `enqueue_extraction` after the dedupe branch.
   Tests in `tests/graph/test_extraction_workunit.py`: the same three cases (second construction site needs its own evidence).
-- [ ] Compute per-batch headroom in `enqueue_backfill_outputs` and `enqueue_extraction_backfill` instead of per-row checks.
+- [x] Compute per-batch headroom in `enqueue_backfill_outputs`, `enqueue_backfill`, and `enqueue_extraction_backfill` instead of per-row checks.
   Tests: a bulk enqueue over more work than headroom admits only the headroom and leaves the remainder unenqueued (one test per bulk write-site).
+- [x] Pass each stage's configured limit through the backfill runs to the bulk command surface, and map the refusal to a non-zero exit with a message.
+  Tests: each command forwards its own stage's limit; a refusal exits non-zero without a traceback.
 
 ## 3. Pending-work derivations
 

@@ -60,7 +60,8 @@ from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 from aizk.db.migrations import run_migrations
 from aizk.graph.backfill import BackfillResult, run_contextualization_backfill, run_extraction_backfill
-from aizk.graph.config import ContextualizationConfig, ExtractionConfig, NerConfig
+from aizk.graph.capacity import StageAtCapacityError
+from aizk.graph.config import AdmissionConfig, ContextualizationConfig, ExtractionConfig, NerConfig
 from aizk.graph.dataset_extraction import run_dataset_extraction
 from aizk.graph.dataset_stats import compute_dataset_statistics
 from aizk.graph.extraction import GLINER2_REPO_ID
@@ -173,7 +174,9 @@ def _cmd_backfill(args: argparse.Namespace) -> int:
     units it creates stay ``QUEUED`` until ``aizk-graph worker`` claims them.
 
     A ``--output-id`` naming no conversion output is operator input, so it is
-    reported as a usage error rather than raised as a traceback.
+    reported as a usage error rather than raised as a traceback. A stage at its
+    declared capacity is reported the same way: the backlog, not the command, is
+    what has to change.
     """
     setproctitle("graph-backfill")
     run_migrations()
@@ -185,10 +188,11 @@ def _cmd_backfill(args: argparse.Namespace) -> int:
             limit=args.limit,
             confirmed=args.yes,
             dry_run=args.dry_run,
+            queue_max_depth=AdmissionConfig().contextualization_queue_max_depth,
         )
     except ReprocessingConfirmationError:
         return refuse_unconfirmed("corpus-wide contextualization backfill", explicit_flag="--output-id")
-    except ValueError as exc:
+    except (StageAtCapacityError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     _report_backfill(result, stage="Contextualization", worker_command="aizk-graph worker", dry_run=args.dry_run)
@@ -201,6 +205,9 @@ def _cmd_extraction_backfill(args: argparse.Namespace) -> int:
     Migrates first, then delegates to
     :func:`~aizk.graph.backfill.run_extraction_backfill`. Enqueue only: the units
     it creates stay ``QUEUED`` until ``aizk-graph extraction-worker`` claims them.
+
+    A stage at its declared capacity is reported as a usage error rather than
+    raised as a traceback: the backlog, not the command, is what has to change.
     """
     setproctitle("graph-extraction-backfill")
     run_migrations()
@@ -211,9 +218,13 @@ def _cmd_extraction_backfill(args: argparse.Namespace) -> int:
             source_ids=args.source_id,
             confirmed=args.yes,
             dry_run=args.dry_run,
+            queue_max_depth=AdmissionConfig().extraction_queue_max_depth,
         )
     except ReprocessingConfirmationError:
         return refuse_unconfirmed("corpus-wide extraction backfill", explicit_flag="--source-id")
+    except StageAtCapacityError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     _report_backfill(result, stage="Extraction", worker_command="aizk-graph extraction-worker", dry_run=args.dry_run)
     return 0
 
