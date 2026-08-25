@@ -1,12 +1,11 @@
 """Tests for the extraction stage's enqueue paths (``aizk.graph.extraction_workunit``).
 
-``enqueue_extraction`` dedupes on ``idempotency_key`` (keyed by the durable
-source identity), then honors the stage's declared capacity;
-``enqueue_extraction_backfill`` scopes itself to sources with an active chunking
-run, truncates to the batch's capacity headroom, and refuses to run without
-explicit confirmation, mirroring ``aizk.graph.workunit``'s enqueue functions and
-``tests/graph/test_enqueue.py``'s coverage of the contextualization backfill's
-confirmation gate.
+``enqueue_extraction`` dedupes on ``idempotency_key`` (keyed by the durable source
+identity), then honors the stage's declared capacity. ``enqueue_extraction_backfill``
+scopes itself to sources with an active chunking run, truncates to the batch's
+capacity headroom, and refuses to run without explicit confirmation. These mirror
+``aizk.graph.workunit``'s enqueue functions, covered in
+``tests/graph/test_enqueue.py``.
 """
 
 from __future__ import annotations
@@ -246,7 +245,7 @@ def test_enqueue_extraction_backfill_admits_only_the_batch_headroom(tmp_path: Pa
         session.commit()
 
         persisted = session.exec(select(ExtractionJob)).all()
-        assert len(admitted) == 1, "only the headroom is admitted"
+        assert len(admitted) == 1
         assert {job.source_id for job in persisted} == {job.source_id for job in admitted}
         assert {job.source_id for job in persisted} < {_UUID_A, _UUID_B}, "the remainder is left unenqueued"
 

@@ -13,10 +13,8 @@ OpenAI-compatible triple is not fully configured, so the worker refuses to start
 rather than claiming work it cannot complete.
 
 The process also hosts the stage's admission loop
-(:class:`~aizk.graph.admission.AdmissionLoop`), which creates the work-units the
-stage's upstream state says should exist. It runs alongside the claim/execute
-loop rather than in a process of its own, and admits nothing unless automatic
-admission is switched on for the stage.
+(:class:`~aizk.graph.admission.AdmissionLoop`), so admission needs no process of
+its own. It admits nothing unless automatic admission is switched on for the stage.
 """
 
 from __future__ import annotations
@@ -76,10 +74,8 @@ def run_graph_worker(
     client and Markdown source; runs the supervised claim/execute/finalize loop
     until shutdown. Returns the runner's exit code.
 
-    Alongside that loop the process runs the stage's admission loop, which creates
-    the work-units the stage's upstream state says should exist. It admits nothing
-    unless automatic admission is switched on for this stage, and it is stopped
-    and joined before the worker returns.
+    The stage's admission loop runs alongside, stopped and joined before the worker
+    returns.
     """
     admission_config = admission_config if admission_config is not None else AdmissionConfig()
     engine = get_engine(DatabaseConfig().database_url)

@@ -79,11 +79,10 @@ def build_graph_descriptor(
     text search (beyond the id, source id, and source title). ``extra_actions`` are
     actions only this stage offers, appended after the shared Retry and Cancel.
 
-    ``pending_sources`` and ``stale_sources`` are the stage's optional derivations.
-    Supplying ``pending_sources`` gives the stage a pending count and listing;
-    supplying ``stale_sources`` gives it a stale count and marks its stale rows in
-    the monitor so an operator can select them together. Omitting either leaves the
-    corresponding console surface absent for the stage.
+    ``pending_sources`` and ``stale_sources`` are the stage's optional derivations:
+    ``pending_sources`` gives the stage a pending count and listing; ``stale_sources``
+    gives it a stale count and marks its stale monitor rows, so an operator can
+    select them together. Omitting either leaves that console surface absent.
     """
     sortable_columns: dict[str, Any] = {
         "job_id": model.id,
@@ -139,8 +138,8 @@ def build_graph_descriptor(
             session, base_query, filtered_query, _sort_clause(sort, direction), limit, offset
         )
 
-        # Resolved once per page, not per row: a stale verdict reads the source's
-        # runs, so a per-row lookup would be a query per listed unit.
+        # Resolved once per page: a stale verdict reads the source's runs, so a
+        # per-row lookup would cost a query per listed unit.
         stale = stale_sources(session) if stale_sources is not None else None
 
         jobs: list[dict[str, Any]] = []
@@ -228,9 +227,8 @@ def build_graph_descriptor(
     def pending_list(session: "Session", _principal: "Principal") -> list[dict[str, Any]]:
         """List those pending sources with the same title contract the monitor applies.
 
-        Titles come from the ``sources`` table where one exists, falling back to the
-        source identity, so a pending source reads the same way as a listed
-        work-unit even though no work-unit exists for it yet.
+        Titles come from the ``sources`` table, falling back to the source identity,
+        so a pending source reads the same way as a listed work-unit.
         """
         source_ids = pending_sources(session)  # type: ignore[misc] -- only wired when declared
         titles = {

@@ -44,12 +44,10 @@ def _stage_rows(session: Session, principal: Principal) -> list[dict[str, Any]]:
     ``failed_split`` contributes the awaiting-retry / permanent subdivision of its
     ``FAILED`` count.
 
-    A stage declaring a pending-work derivation also contributes its count of
-    sources behind the stage, and one declaring a staleness derivation its count of
-    sources whose completed work is behind. Both sit outside the lifecycle rollup —
-    neither counts a work-unit — so the per-stage total stays the number of the
-    stage's work-units. A stage declaring neither contributes ``None`` and the
-    dashboard shows no figure for it.
+    A stage declaring a pending-work or staleness derivation also contributes that
+    count, or ``None`` when it declares neither. Both counts sit outside the
+    lifecycle rollup — neither counts a work-unit — so the per-stage total stays the
+    number of the stage's work-units.
     """
     rows: list[dict[str, Any]] = []
     for descriptor in registered_stages():

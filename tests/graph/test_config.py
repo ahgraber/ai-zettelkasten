@@ -80,7 +80,7 @@ def test_enabling_one_stage_does_not_enable_the_other(
 
 
 def test_the_two_stage_limits_are_independent(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Limiting one stage leaves the other unlimited, so their spend profiles stay separate."""
+    """Limiting one stage leaves the other unlimited."""
     monkeypatch.setenv("AIZK_GRAPH__CONTEXTUALIZATION_QUEUE_MAX_DEPTH", "5")
 
     config = AdmissionConfig(_env_file=None)

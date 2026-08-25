@@ -48,8 +48,8 @@ class BackfillResult:
 
     Attributes:
         targeted: Work the run put through the stage's enqueue. A corpus scan
-            truncated by the stage's capacity reports the admitted batch; what
-            capacity left out is logged and stays eligible for a later run.
+            truncated at capacity reports the admitted batch; what it left out is
+            logged and stays eligible for a later run.
         enqueued: Targets that did not have a work-unit and now do.
         reused: Targets whose work-unit already existed, in any status.
     """

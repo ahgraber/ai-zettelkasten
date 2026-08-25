@@ -20,9 +20,7 @@ _DRILLDOWN_STAGES = [(EXTRACTION_STAGE, "Mention Extraction")]
 #: Re-extracting a source whose upstream has moved on beneath it. Offered only by
 #: this stage: contextualization's work-unit is per conversion output, so a
 #: re-converted source becomes pending again on its own and needs no operator action.
-#: Eligibility (finished, and the source stale) lives in the domain helper, so a
-#: bulk application over a mixed selection re-extracts what qualifies and reports
-#: the rest skipped.
+#: Eligibility lives in :func:`~aizk.graph.job_actions.apply_extraction_readmission`.
 _READMISSION = StageAction(
     key="re-extract",
     applied_label="re-extracted",

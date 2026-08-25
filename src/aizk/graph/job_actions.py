@@ -14,10 +14,10 @@ co-commits the matching lifecycle event via
 :func:`aizk.pipeline.events.record_transition`. The caller owns the surrounding
 ``BEGIN IMMEDIATE`` transaction; these helpers do **not** commit.
 
-:func:`apply_extraction_readmission` is extraction's own third transition: the
-one way to re-extract a source whose upstream has moved on beneath it. It is a
-requeue like retry, but gated on staleness rather than on failure, so it can only
-ever cover work the corpus has actually invalidated.
+:func:`apply_extraction_readmission` is extraction's third transition: the one way
+to re-extract a source whose upstream has moved on beneath it. It requeues like
+retry but gates on staleness rather than failure, so it covers only work the
+corpus has invalidated.
 """
 
 from __future__ import annotations
@@ -145,12 +145,11 @@ apply_extraction_retry, apply_extraction_cancel = _build_transitions(
 def apply_extraction_readmission(session: "Session", job: Any) -> None:
     """Re-queue a finished extraction whose source has moved on beneath it.
 
-    Extraction's work-unit is keyed by the source alone, so a finished unit is
-    never re-enqueued and a source whose chunking or contextualization has been
-    superseded stays stale rather than becoming pending. This is the one way to
-    re-extract it: an explicit operator action that re-queues the existing unit,
-    after which the worker claims it and reads the source's current active inputs,
-    opening a run that supersedes the prior one.
+    Extraction's work-unit is keyed by the source alone, so a finished unit is never
+    re-enqueued: a source whose chunking or contextualization has been superseded
+    stays stale rather than becoming pending. This action is the one way to
+    re-extract it. It re-queues the existing unit; the worker then reads the
+    source's current active inputs and opens a run that supersedes the prior one.
 
     Eligible only when the unit is finished **and** its source is stale, so the
     action can never turn into an unbounded corpus re-run: a current source has

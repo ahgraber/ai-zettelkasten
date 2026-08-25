@@ -5,9 +5,8 @@ The dashboard groups every stage's work-units by the generic
 must map *every* native status onto exactly one generic category, so a native
 status added later cannot silently vanish from the dashboard.
 
-The coverage capabilities beyond that required set — the pending-work and
-staleness derivations — are optional and feature-detected: a stage declares them
-or the console omits those surfaces for it entirely.
+The pending-work and staleness derivations are optional capabilities: a stage
+declares one or the console omits that surface for it entirely.
 """
 
 from __future__ import annotations
@@ -152,6 +151,6 @@ def test_only_extraction_declares_a_staleness_derivation() -> None:
 
 
 def test_only_extraction_declares_the_re_extract_action() -> None:
-    """Re-admission rides the console's declared-action machinery, on the one stage that needs it."""
+    """Re-extraction is a declared console action, on the one stage that has staleness."""
     assert "re-extract" in {action.key for action in EXTRACTION_DESCRIPTOR.actions}
     assert "re-extract" not in {action.key for action in CONTEXTUALIZATION_DESCRIPTOR.actions}

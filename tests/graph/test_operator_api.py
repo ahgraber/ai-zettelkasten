@@ -66,11 +66,10 @@ def client(engine) -> Iterator[TestClient]:
 
 @pytest.fixture
 def client_factory(engine, monkeypatch: pytest.MonkeyPatch):
-    """Build a TestClient after applying per-test admission settings to the environment.
+    """Build a TestClient after setting per-test admission environment variables.
 
-    The app reads its admission settings during lifespan, so a test that needs a
-    declared capacity sets the variables before the client is constructed rather
-    than reaching into application state afterwards.
+    The app reads its admission settings during lifespan, so a declared capacity
+    must be in the environment before the client is constructed.
     """
 
     @contextlib.contextmanager

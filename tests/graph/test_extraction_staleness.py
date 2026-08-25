@@ -5,11 +5,11 @@ since been superseded — a re-chunk, or a contextualization run appearing for a
 source whose extraction fell back to raw chunk text. Staleness marks work an
 operator may re-admit; it never makes a source pending.
 
-Every case drives a real :func:`~aizk.graph.extraction_run.extract_document` over
-a deterministic stub extractor, so the run records under test are the ones the
-write path actually produces rather than hand-built rows. The conformance case
-then pins the derivation to the write path itself: a stale verdict must predict
-that re-extracting supersedes, and a current verdict that it reuses.
+Every case drives the real :func:`~aizk.graph.extraction_run.extract_document` over
+a deterministic stub extractor, so the run records under test are the ones the write
+path produces, not hand-built rows. The conformance case then pins the derivation to
+that write path: a stale verdict must predict that re-extracting supersedes, a
+current verdict that it reuses.
 """
 
 from __future__ import annotations
@@ -69,9 +69,8 @@ _CHUNK_TEXT = "Ada Lovelace wrote the first algorithm."
 class _SilentExtractor:
     """An :class:`~aizk.graph.extraction.EntityExtractor` that detects nothing.
 
-    Staleness is decided by the run's recorded derivation keys, not by the
-    mentions a run emits, so these tests need a deterministic extractor rather
-    than a productive one.
+    Staleness is decided by a run's recorded derivation keys, not by the mentions it
+    emits, so these tests need a deterministic extractor, not a productive one.
     """
 
     extractor_version = "stub/v1"
@@ -91,9 +90,8 @@ def _make_engine(tmp_path: Path, name: str = "staleness.db") -> Engine:
 def _seed_chunking_run(engine: Engine, *, source_id: str, derivation_key: str) -> None:
     """Activate a chunking run for a source and put one chunk under it.
 
-    A re-chunk over unchanged content reuses the existing chunk row and lists it
-    under the new run's manifest, which is what ``persist_chunks`` does: the chunk
-    is content-keyed, so only the generation changes.
+    Mirrors ``persist_chunks``: the chunk is content-keyed, so a re-chunk over
+    unchanged content reuses the existing row and only the manifest generation changes.
     """
     with Session(engine) as session:
         run = record_run(session, stage=CHUNKING_STAGE, scope_id=source_id, derivation_key=derivation_key)
@@ -201,9 +199,8 @@ def test_the_staleness_verdict_agrees_with_what_re_extraction_reads(
 ) -> None:
     """A stale verdict predicts that re-extracting supersedes; a current verdict predicts reuse.
 
-    This is the conformance the derivation rests on: it resolves the current
-    upstream key through the same resolver the write path uses, so the two cannot
-    reach different conclusions about the same state.
+    The derivation resolves the current upstream key through the same resolver the
+    write path uses, so the two cannot disagree about the same state.
     """
     engine = _make_engine(tmp_path)
     _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
@@ -312,8 +309,7 @@ def test_a_re_admitted_source_re_extracts_against_current_inputs(tmp_path: Path)
         apply_extraction_readmission(session, session.get(ExtractionJob, job_id))
         session.commit()
 
-    # The requeued unit is what a worker would claim; executing it is the stage's
-    # normal write path, unchanged by how the unit came to be queued.
+    # Executing the requeued unit is the stage's normal write path, whatever queued it.
     second_run_id = _extract(engine, _SOURCE_A)
 
     assert second_run_id != first_run_id

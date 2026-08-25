@@ -9,17 +9,16 @@ carried onto the work-unit's runs and transition events and a source's progress
 stays resolvable across stages.
 
 Both modes (incremental single enqueue, bulk/backfill) dedupe on the work-unit's
-``idempotency_key`` via the underlying domain functions, and both honor the
-stage's declared capacity (:mod:`aizk.graph.capacity`) — the single enqueue by
-refusing, the bulk enqueue by truncating to the batch's headroom. They ``add`` /
-``flush`` on the caller's session and never commit.
+``idempotency_key`` via the underlying domain functions. Both honor the stage's
+declared capacity (:mod:`aizk.graph.capacity`): the single enqueue refuses, the
+bulk enqueue truncates to the batch's headroom. They ``add`` / ``flush`` on the
+caller's session and never commit.
 
 :func:`latest_output_ids_per_source` is the corpus-scan target selection a bulk
-backfill enqueues over, and :func:`pending_contextualization_outputs` narrows the
-same selection to the outputs that have no work-unit yet — the stage's
-pending-work derivation. Both are kept here rather than in a caller so every
-surface that scans the corpus for contextualization work resolves the same
-target set.
+backfill enqueues over. :func:`pending_contextualization_outputs` narrows that
+selection to the outputs with no work-unit yet — the stage's pending-work
+derivation. Both live here rather than in a caller, so every surface that scans
+the corpus for contextualization work resolves the same target set.
 """
 
 from __future__ import annotations
@@ -135,9 +134,9 @@ def pending_contextualization(session: "Session", *, limit: int | None = None) -
     that a previous evaluation saw a source, so work this evaluation leaves out
     is still pending for the next one.
 
-    This is the stage's single pending-work derivation. Admission reads the
-    output locators from it and the console reads the source identities, so what
-    an operator is shown and what a pass would admit cannot disagree.
+    This is the stage's single pending-work derivation: admission reads its output
+    locators and the console reads its source identities, so what an operator sees
+    and what a pass would admit cannot disagree.
 
     Args:
         session: Active, read-only session.
@@ -179,7 +178,7 @@ def pending_contextualization_sources(session: "Session", *, limit: int | None =
     """Return the sources the stage owes a work-unit, in selection order.
 
     The operator-facing projection of :func:`pending_contextualization`: coverage
-    is reported per source, since that is the thing an operator recognizes.
+    is reported per source, the identity an operator recognizes.
     """
     return [source_id for _output_id, source_id in pending_contextualization(session, limit=limit)]
 
@@ -232,9 +231,8 @@ def enqueue_backfill_outputs(
     scheduling differ. Throttling and per-document commit batching are the
     caller's concern; this only stages the rows and does not commit.
 
-    Remaining capacity is read once for the batch and the input truncated to it,
-    rather than counting the backlog per row. Outputs beyond the headroom are
-    left unenqueued and remain pending for a later batch.
+    Capacity is read once for the batch and the input truncated to it. Outputs
+    beyond the headroom stay pending for a later batch.
 
     A corpus-wide backfill has a large downstream blast radius, so it is gated
     behind explicit confirmation: nothing is enqueued unless ``confirmed`` is True.

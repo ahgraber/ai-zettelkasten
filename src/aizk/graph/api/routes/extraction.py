@@ -2,10 +2,8 @@
 
 Mirrors ``aizk.graph.api.routes`` (the contextualization work-unit routes)
 exactly in structure and behavior, parameterized for
-:class:`~aizk.graph.datamodel.ExtractionJob`. Submission resolves the referenced
-source and calls the stage's domain enqueue in the request transaction, so an
-intake-created unit is identical to one created by any other path; it refuses at
-capacity with the same 503 and ``Retry-After`` the whole fleet uses.
+:class:`~aizk.graph.datamodel.ExtractionJob`. Submission resolves on the source
+identity rather than a conversion output.
 
 Read endpoints query the work-unit table; the retry and cancel mutations run in a
 ``BEGIN IMMEDIATE`` transaction and co-commit a transition event via
@@ -75,8 +73,8 @@ def submit_job(
     """Submit one source for entity-mention extraction.
 
     Answers 201 with the created work-unit, 200 with the existing one when the
-    submission resolves to work already enqueued, 404 when no such source exists,
-    and 503 when the stage is at its declared capacity.
+    source is already enqueued, 404 when no such source exists, and 503 when the
+    stage is at capacity.
     """
     session.exec(text("BEGIN IMMEDIATE"))
     # Resolved on the durable ``source_id`` identity, not the table's row surrogate.
