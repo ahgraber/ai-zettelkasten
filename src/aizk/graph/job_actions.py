@@ -13,6 +13,11 @@ an operator-facing reason when ineligible), applies the field mutations, and
 co-commits the matching lifecycle event via
 :func:`aizk.pipeline.events.record_transition`. The caller owns the surrounding
 ``BEGIN IMMEDIATE`` transaction; these helpers do **not** commit.
+
+:func:`apply_extraction_readmission` is extraction's own third transition: the
+one way to re-extract a source whose upstream has moved on beneath it. It is a
+requeue like retry, but gated on staleness rather than on failure, so it can only
+ever cover work the corpus has actually invalidated.
 """
 
 from __future__ import annotations
@@ -32,8 +37,9 @@ from aizk.graph.extraction_events import (
     ExtractionEventKind,
     RequeuedPayload as ExtractionRequeuedPayload,
 )
+from aizk.graph.extraction_run import stale_extraction_sources
 from aizk.pipeline.events import record_transition
-from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.pipeline.lifecycle import WorkUnitStatus, is_terminal
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -134,3 +140,53 @@ apply_extraction_retry, apply_extraction_cancel = _build_transitions(
     requeued_payload_cls=ExtractionRequeuedPayload,
     cancelled_payload_cls=ExtractionCancelledPayload,
 )
+
+
+def apply_extraction_readmission(session: "Session", job: Any) -> None:
+    """Re-queue a finished extraction whose source has moved on beneath it.
+
+    Extraction's work-unit is keyed by the source alone, so a finished unit is
+    never re-enqueued and a source whose chunking or contextualization has been
+    superseded stays stale rather than becoming pending. This is the one way to
+    re-extract it: an explicit operator action that re-queues the existing unit,
+    after which the worker claims it and reads the source's current active inputs,
+    opening a run that supersedes the prior one.
+
+    Eligible only when the unit is finished **and** its source is stale, so the
+    action can never turn into an unbounded corpus re-run: a current source has
+    nothing to re-read, and an unfinished unit is already going to run.
+
+    The caller owns the surrounding transaction; this does not commit.
+
+    Args:
+        session: Active session; the caller owns commit/rollback.
+        job: The extraction work-unit to re-admit.
+
+    Raises:
+        ValueError: When the unit is not in a finished status, or when its source
+            is not stale (the message is the operator-facing reason).
+    """
+    if not is_terminal(job.status):
+        raise ValueError(f"cannot re-extract a work-unit in status {job.status.value!r}")
+    if str(job.source_id) not in stale_extraction_sources(session):
+        raise ValueError("cannot re-extract a source that is not stale")
+    now = _utcnow()
+    job.attempts = 0
+    job.error_code = None
+    job.error_message = None
+    job.earliest_next_attempt_at = None
+    job.started_at = None
+    job.finished_at = None
+    job.queued_at = now
+    job.updated_at = now
+    record_transition(
+        session,
+        job,
+        stage=EXTRACTION_STAGE,
+        work_unit_ref=str(job.id),
+        source_id=job.source_id,
+        to_status=WorkUnitStatus.QUEUED,
+        kind=ExtractionEventKind.REQUEUED,
+        attempt=job.attempts,
+        payload=ExtractionRequeuedPayload(requeue_reason="operator_readmission"),
+    )

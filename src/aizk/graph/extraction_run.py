@@ -24,11 +24,18 @@ run-mode independence — the same inputs and versions yield the same mentions a
 co-occurrences regardless of mode — holds by construction rather than by two
 write paths staying in sync. Neither entry point does any scheduling,
 throttling, or concurrency control; that is the caller's/runtime's concern.
+
+:func:`stale_extraction_sources` is the stage's staleness derivation: which
+sources' active extraction runs consumed upstream state that has since been
+superseded. It resolves the current upstream key through the same resolver the
+write path uses, so a stale verdict and what a re-extraction would consume cannot
+disagree.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -47,6 +54,7 @@ from aizk.graph.extraction import (
 from aizk.graph.mention_store import (
     INPUT_POLICY_CONTEXTUALIZED,
     INPUT_POLICY_RAW,
+    MENTION_EXTRACTION_STAGE,
     InputPolicy,
     MentionDraft,
     open_extraction_run,
@@ -124,6 +132,88 @@ def _resolve_upstream_derivation_key(
         if variant_run is not None:
             return variant_run.derivation_key
     return chunking_run.derivation_key
+
+
+def _recorded_upstream(run: PipelineRun) -> tuple[str, InputPolicy] | None:
+    """Return the upstream key and input policy an extraction run recorded, or ``None``.
+
+    The upstream key is one of the four components of the run's canonical
+    ``derivation_key``; the input policy is one of its version stamps. A run whose
+    records cannot be read is reported as unresolvable rather than guessed at, so
+    an unreadable record never becomes a spend decision.
+    """
+    try:
+        upstream_key = json.loads(run.derivation_key)["upstream_derivation_key"]
+        input_policy = json.loads(run.version_stamps_json)["input_policy"]
+    except (TypeError, ValueError, KeyError):
+        logger.warning(
+            "Extraction run %s does not carry a readable upstream record; treating its source as current",
+            run.id,
+            extra={"run_id": run.id, "scope_id": run.scope_id},
+        )
+        return None
+    if input_policy not in (INPUT_POLICY_CONTEXTUALIZED, INPUT_POLICY_RAW):
+        logger.warning(
+            "Extraction run %s recorded input policy %r, which is not a legal policy",
+            run.id,
+            input_policy,
+            extra={"run_id": run.id, "scope_id": run.scope_id},
+        )
+        return None
+    return upstream_key, input_policy
+
+
+def stale_extraction_sources(session: "Session") -> set[str]:
+    """Return the scope ids whose active extraction run consumed since-superseded upstream state.
+
+    A source is stale when the upstream derivation key its active extraction run
+    recorded differs from the key the source's current active runs would yield —
+    that is, when re-extracting would read a different generation than the one
+    already extracted. A re-chunk makes a source stale; so does a
+    contextualization run appearing for a source whose extraction fell back to raw
+    chunk text because no variants existed yet.
+
+    Resolution goes through :func:`_resolve_upstream_derivation_key`, the same
+    resolver :func:`extract_document` uses at execute time, so a stale verdict and
+    what a re-extraction would actually consume cannot disagree.
+
+    The comparison uses the policy the run itself recorded, so the verdict is
+    about upstream supersession alone. A change to the configured input policy is
+    a different kind of invalidation: it changes the extraction derivation key
+    directly, and the next run supersedes on that basis without being called stale.
+
+    Staleness never makes a source pending — no staleness condition admits work
+    automatically. It marks work an operator may choose to re-admit.
+
+    Args:
+        session: Active, read-only session.
+
+    Returns:
+        The stale sources' ``scope_id`` values (``str(source_id)``).
+    """
+    stale: set[str] = set()
+    active_runs = session.exec(
+        select(PipelineRun).where(
+            PipelineRun.stage == MENTION_EXTRACTION_STAGE,
+            PipelineRun.status == RunStatus.ACTIVE,
+        )
+    ).all()
+    for run in active_runs:
+        recorded = _recorded_upstream(run)
+        if recorded is None:
+            continue
+        recorded_key, input_policy = recorded
+        chunking_run = active_chunking_run(session, run.scope_id)
+        if chunking_run is None:
+            # Nothing active to re-extract from, so there is no different generation
+            # to be behind; a source in this state is not re-admittable work.
+            continue
+        current_key = _resolve_upstream_derivation_key(
+            session, source_id=run.scope_id, input_policy=input_policy, chunking_run=chunking_run
+        )
+        if current_key != recorded_key:
+            stale.add(run.scope_id)
+    return stale
 
 
 def _resolve_extraction_input(session: "Session", chunk: "Chunk", *, input_policy: InputPolicy) -> ExtractionInput:
