@@ -1,4 +1,4 @@
-"""Tests for the extraction operator HTTP API (list/detail/retry/cancel).
+"""Tests for the extraction operator HTTP API (submit/list/detail/retry/cancel).
 
 Mirrors ``tests/graph/test_operator_api.py`` exactly, parameterized for
 :class:`~aizk.graph.datamodel.ExtractionJob`. Drives the real FastAPI app over a
@@ -11,6 +11,7 @@ created on that same engine.
 from __future__ import annotations
 
 from collections.abc import Iterator
+import contextlib
 from pathlib import Path
 from uuid import UUID
 
@@ -19,14 +20,17 @@ from sqlmodel import Session, SQLModel, select
 
 from fastapi.testclient import TestClient
 
+from aizk.conversion.datamodel.source import Source
 from aizk.db.engine import get_engine
 from aizk.graph.api.main import create_app
 from aizk.graph.datamodel import ExtractionJob
+from aizk.graph.extraction_workunit import enqueue_extraction
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
 _SOURCE_A = UUID("11111111-1111-1111-1111-111111111111")
 _SOURCE_B = UUID("22222222-2222-2222-2222-222222222222")
+_UNKNOWN_SOURCE = UUID("99999999-9999-9999-9999-999999999999")
 
 
 @pytest.fixture
@@ -35,7 +39,7 @@ def engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     url = f"sqlite:///{tmp_path / 'extraction_api.db'}"
     monkeypatch.setenv("AIZK_DATABASE_URL", url)
     eng = get_engine(url)
-    SQLModel.metadata.create_all(eng, tables=[ExtractionJob.__table__, PipelineEvent.__table__])
+    SQLModel.metadata.create_all(eng, tables=[ExtractionJob.__table__, Source.__table__, PipelineEvent.__table__])
     return eng
 
 
@@ -44,6 +48,42 @@ def client(engine) -> Iterator[TestClient]:
     """A TestClient over the real app (no dependency overrides; same DB as ``engine``)."""
     with TestClient(create_app(), base_url="http://localhost") as test_client:
         yield test_client
+
+
+@pytest.fixture
+def client_factory(engine, monkeypatch: pytest.MonkeyPatch):
+    """Build a TestClient after applying per-test admission settings to the environment.
+
+    The app reads its admission settings during lifespan, so a test that needs a
+    declared capacity sets the variables before the client is constructed rather
+    than reaching into application state afterwards.
+    """
+
+    @contextlib.contextmanager
+    def _build(**settings: object) -> "Iterator[TestClient]":
+        for name, value in settings.items():
+            monkeypatch.setenv(name, str(value))
+        with TestClient(create_app(), base_url="http://localhost") as test_client:
+            yield test_client
+
+    return _build
+
+
+def _add_source(engine, source_id: UUID) -> None:
+    """Insert the source identity an intake submission references."""
+    with Session(engine) as session:
+        if session.exec(select(Source).where(Source.source_id == source_id)).first() is not None:
+            return
+        session.add(
+            Source(
+                source_id=source_id,
+                source_ref=f'{{"kind":"url","url":"https://example.test/{source_id}"}}',
+                source_ref_hash=str(source_id),
+                owner_id="owner",
+                title="Doc",
+            )
+        )
+        session.commit()
 
 
 def _seed(
@@ -60,6 +100,91 @@ def _seed(
         session.add(job)
         session.commit()
         return job.id
+
+
+def test_submit_creates_a_queued_work_unit(client: TestClient, engine) -> None:
+    """A submission for work with no unit yet creates one, queued for processing."""
+    _add_source(engine, _SOURCE_A)
+
+    response = client.post("/v1/extractions", json={"source_id": str(_SOURCE_A)})
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["source_id"] == str(_SOURCE_A)
+    assert body["status"] == "queued"
+    with Session(engine) as session:
+        assert len(session.exec(select(ExtractionJob)).all()) == 1
+
+
+def test_resubmitting_returns_the_existing_unit(client: TestClient, engine) -> None:
+    """The same work submitted twice returns the original unit rather than duplicating it."""
+    _add_source(engine, _SOURCE_A)
+    first = client.post("/v1/extractions", json={"source_id": str(_SOURCE_A)})
+
+    second = client.post("/v1/extractions", json={"source_id": str(_SOURCE_A)})
+
+    assert (first.status_code, second.status_code) == (201, 200)
+    assert second.json()["id"] == first.json()["id"]
+    with Session(engine) as session:
+        assert len(session.exec(select(ExtractionJob)).all()) == 1
+
+
+def test_submitting_an_unknown_source_is_rejected_cleanly(client: TestClient, engine) -> None:
+    """A submission naming no existing source is a 404 that changes nothing."""
+    response = client.post("/v1/extractions", json={"source_id": str(_UNKNOWN_SOURCE)})
+
+    assert response.status_code == 404
+    with Session(engine) as session:
+        assert session.exec(select(ExtractionJob)).all() == []
+
+
+def test_submit_refuses_new_work_at_capacity(client_factory, engine) -> None:
+    """At the stage's declared capacity a new submission is refused with the fleet's rejection shape."""
+    _add_source(engine, _SOURCE_A)
+    _add_source(engine, _SOURCE_B)
+    with client_factory(AIZK_GRAPH__EXTRACTION_QUEUE_MAX_DEPTH=1, AIZK_GRAPH__QUEUE_RETRY_AFTER_SECONDS=45) as client:
+        assert client.post("/v1/extractions", json={"source_id": str(_SOURCE_A)}).status_code == 201
+
+        response = client.post("/v1/extractions", json={"source_id": str(_SOURCE_B)})
+
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "45"
+    assert response.json() == {"detail": "Queue is at capacity", "retry_after": 45}
+    with Session(engine) as session:
+        assert len(session.exec(select(ExtractionJob)).all()) == 1
+
+
+def test_a_duplicate_submission_at_capacity_still_succeeds(client_factory, engine) -> None:
+    """Resubmitting work that already has a unit adds nothing to the backlog, so it is not refused."""
+    _add_source(engine, _SOURCE_A)
+    with client_factory(AIZK_GRAPH__EXTRACTION_QUEUE_MAX_DEPTH=1) as client:
+        first = client.post("/v1/extractions", json={"source_id": str(_SOURCE_A)})
+
+        again = client.post("/v1/extractions", json={"source_id": str(_SOURCE_A)})
+
+    assert again.status_code == 200
+    assert again.json()["id"] == first.json()["id"]
+
+
+def test_an_intake_unit_equals_a_domain_enqueued_unit(client: TestClient, engine) -> None:
+    """A unit intake created is indistinguishable from one the stage's domain enqueue created."""
+    _add_source(engine, _SOURCE_A)
+    _add_source(engine, _SOURCE_B)
+
+    client.post("/v1/extractions", json={"source_id": str(_SOURCE_A)})
+    with Session(engine) as session:
+        enqueue_extraction(session, source_id=_SOURCE_B)
+        session.commit()
+
+    with Session(engine) as session:
+        by_source = {job.source_id: job for job in session.exec(select(ExtractionJob)).all()}
+
+        def _fields(job: ExtractionJob) -> tuple:
+            return (job.status, job.attempts, job.error_code, job.error_message, job.queued_at is not None)
+
+        assert by_source[_SOURCE_A].idempotency_key == f"source:{_SOURCE_A}"
+        assert by_source[_SOURCE_B].idempotency_key == f"source:{_SOURCE_B}"
+        assert _fields(by_source[_SOURCE_A]) == _fields(by_source[_SOURCE_B])
 
 
 def test_list_and_filter_by_status(client: TestClient, engine) -> None:

@@ -1,4 +1,11 @@
-"""Response schemas for the contextualization operator API."""
+"""Request and response schemas for the graph operator API.
+
+The intake submissions carry the upstream reference each stage's enqueue resolves
+— a conversion output for contextualization, a source identity for extraction.
+A submission refused at capacity answers with the conversion service's
+:class:`~aizk.conversion.api.schemas.QueueFullResponse`, reused rather than
+restated so the fleet's rejection shape has one definition.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +15,18 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from aizk.pipeline.lifecycle import WorkUnitStatus
+
+
+class ContextualizationSubmission(BaseModel):
+    """A request to contextualize one converted document."""
+
+    conversion_output_id: int
+
+
+class ExtractionSubmission(BaseModel):
+    """A request to extract one source's entity mentions."""
+
+    source_id: UUID
 
 
 class ContextualizationJobResponse(BaseModel):

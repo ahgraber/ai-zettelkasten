@@ -1,4 +1,12 @@
-"""Operator routes for contextualization work-units: list, detail, retry, cancel.
+"""Operator routes for contextualization work-units: submit, list, detail, retry, cancel.
+
+Submission resolves the referenced conversion output and calls the stage's domain
+enqueue in the request transaction, so an intake-created unit is identical to one
+created by any other path. It answers 201 for new work, 200 with the existing unit
+when the submission resolves to work already enqueued, 404 when the referenced
+output does not exist, and — because capacity is enforced at the enqueue seam
+rather than in front of this one caller — 503 with a ``Retry-After`` header when
+the stage is full, matching the conversion service's rejection.
 
 Read endpoints query the work-unit table; the retry and cancel mutations run in a
 ``BEGIN IMMEDIATE`` transaction and co-commit a transition event via
@@ -15,13 +23,21 @@ from typing import TYPE_CHECKING, Annotated
 from sqlalchemy import func, text
 from sqlmodel import select
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import JSONResponse
 
 from aizk.conversion.api.dependencies import get_principal
+from aizk.conversion.api.schemas import QueueFullResponse
 from aizk.conversion.auth.principal import Principal
-from aizk.graph.api.dependencies import get_db_session
-from aizk.graph.api.schemas import ContextualizationJobList, ContextualizationJobResponse
+from aizk.graph.api.dependencies import get_admission_config, get_db_session
+from aizk.graph.api.schemas import (
+    ContextualizationJobList,
+    ContextualizationJobResponse,
+    ContextualizationSubmission,
+)
+from aizk.graph.capacity import StageAtCapacityError
 from aizk.graph.datamodel import ContextualizationJob
+from aizk.graph.enqueue import enqueue_output
 from aizk.graph.job_actions import (
     apply_contextualization_cancel as _apply_cancel,
     apply_contextualization_retry as _apply_retry,
@@ -30,6 +46,8 @@ from aizk.pipeline.lifecycle import WorkUnitStatus
 
 if TYPE_CHECKING:
     from sqlmodel import Session
+
+    from aizk.graph.config import AdmissionConfig
 
 #: Resolves the request principal (trust-network: a single deployment principal).
 #: Required on every route for auth parity with the conversion API; the graph
@@ -45,6 +63,65 @@ def _get_or_404(session: "Session", job_id: int) -> ContextualizationJob:
     if job is None:
         raise HTTPException(status_code=404, detail=f"contextualization work-unit {job_id} not found")
     return job
+
+
+def queue_full_response(retry_after_seconds: int) -> JSONResponse:
+    """Return the fleet's capacity refusal: 503 carrying ``Retry-After``.
+
+    The body matches the conversion service's
+    :class:`~aizk.conversion.api.schemas.QueueFullResponse`, so one convention
+    covers every submission surface and a client backs off the same way whichever
+    service refused it.
+    """
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": "Queue is at capacity", "retry_after": retry_after_seconds},
+        headers={"Retry-After": str(retry_after_seconds)},
+    )
+
+
+@router.post(
+    "",
+    response_model=ContextualizationJobResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={503: {"model": QueueFullResponse, "description": "Stage is at capacity"}},
+)
+def submit_job(
+    submission: ContextualizationSubmission,
+    api_response: Response,
+    session: Annotated["Session", Depends(get_db_session)],
+    admission_config: Annotated["AdmissionConfig", Depends(get_admission_config)],
+    _principal: _Principal,
+) -> ContextualizationJobResponse | JSONResponse:
+    """Submit one converted document for contextualization.
+
+    Answers 201 with the created work-unit, 200 with the existing one when the
+    submission resolves to work already enqueued, 404 when no such conversion
+    output exists, and 503 when the stage is at its declared capacity.
+    """
+    session.exec(text("BEGIN IMMEDIATE"))
+    existing = session.exec(
+        select(ContextualizationJob).where(
+            ContextualizationJob.conversion_output_id == submission.conversion_output_id
+        )
+    ).first()
+    try:
+        job = enqueue_output(
+            session,
+            submission.conversion_output_id,
+            queue_max_depth=admission_config.contextualization_queue_max_depth,
+        )
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except StageAtCapacityError:
+        session.rollback()
+        return queue_full_response(admission_config.queue_retry_after_seconds)
+    session.commit()
+    session.refresh(job)
+    if existing is not None:
+        api_response.status_code = status.HTTP_200_OK
+    return ContextualizationJobResponse.model_validate(job)
 
 
 @router.get("", response_model=ContextualizationJobList)
