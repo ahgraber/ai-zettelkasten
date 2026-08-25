@@ -105,14 +105,20 @@
       </thead>
       <tbody>
         {% if page.jobs %} {% for job in page.jobs %}
-        <tr>
+        <tr {% if job.stale %}class="stale-row" data-stale="true"{% endif %}>
           <td>
-            <input type="checkbox" class="row-select" name="job_ids" value="{{ job.id }}" form="tasks-form" />
+            <input
+              type="checkbox"
+              class="row-select{% if job.stale %} stale-select{% endif %}"
+              name="job_ids"
+              value="{{ job.id }}"
+              form="tasks-form"
+            />
           </td>
           <td class="mono">{{ job.id }}</td>
           <td class="mono uuid">{{ job.source_id }}</td>
           {{ cols.extra_cells(job) }}
-          <td class="title-cell">{{ job.title }}</td>
+          <td class="title-cell">{{ job.title }}{% if job.stale %}<span class="stale-badge" title="Upstream has moved on since this source was extracted">stale</span>{% endif %}</td>
           <td><span class="status {{ job.status }}">{{ job.status }}</span></td>
           <td class="mono">{{ job.attempts }}</td>
           <td class="mono">{{ job.queued_at }}</td>

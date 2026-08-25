@@ -4,9 +4,13 @@ The dashboard (``GET /ui``) renders every registered stage's work-unit counts,
 each stage's native-status counts folded onto the generic lifecycle vocabulary so
 the pipeline reads uniformly across stages. Where a stage declares a
 ``failed_split`` capability, its ``FAILED`` count is subdivided into units awaiting
-an automatic retry and units that have exhausted retries. The app root (``/``)
-redirects here. Both sit behind the app's trusted-host perimeter and resolve the
-same request :class:`~aizk.conversion.auth.Principal` the JSON APIs require.
+an automatic retry and units that have exhausted retries. Where a stage declares
+a pending-work or staleness derivation, its count of sources behind the stage is
+shown beside the lifecycle columns — work the stage owes but has no unit for, and
+work it finished against upstream state that has since moved on. The app root
+(``/``) redirects here. Both sit behind the app's trusted-host perimeter and
+resolve the same request :class:`~aizk.conversion.auth.Principal` the JSON APIs
+require.
 """
 
 from __future__ import annotations
@@ -39,6 +43,13 @@ def _stage_rows(session: Session, principal: Principal) -> list[dict[str, Any]]:
     vocabulary (so no unit is dropped or double-counted); a stage declaring a
     ``failed_split`` contributes the awaiting-retry / permanent subdivision of its
     ``FAILED`` count.
+
+    A stage declaring a pending-work derivation also contributes its count of
+    sources behind the stage, and one declaring a staleness derivation its count of
+    sources whose completed work is behind. Both sit outside the lifecycle rollup —
+    neither counts a work-unit — so the per-stage total stays the number of the
+    stage's work-units. A stage declaring neither contributes ``None`` and the
+    dashboard shows no figure for it.
     """
     rows: list[dict[str, Any]] = []
     for descriptor in registered_stages():
@@ -54,6 +65,8 @@ def _stage_rows(session: Session, principal: Principal) -> list[dict[str, Any]]:
                 "total": sum(generic.values()),
                 "failed_awaiting_retry": awaiting_retry,
                 "failed_permanent": permanent,
+                "pending": None if descriptor.pending_count is None else descriptor.pending_count(session, principal),
+                "stale": None if descriptor.stale_count is None else descriptor.stale_count(session, principal),
             }
         )
     return rows

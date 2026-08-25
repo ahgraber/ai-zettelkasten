@@ -13,6 +13,7 @@ work-unit event trail.
 from __future__ import annotations
 
 import datetime as dt
+import re
 from uuid import UUID
 
 from sqlmodel import Session
@@ -21,6 +22,8 @@ from fastapi.testclient import TestClient
 
 from aizk.graph.datamodel import ExtractionJob
 from aizk.graph.extraction_events import EXTRACTION_STAGE
+from aizk.graph.mention_store import extraction_derivation_key
+from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus
@@ -171,6 +174,150 @@ def test_bulk_cancel_cancels_eligible_jobs_with_summary(
     db_session.expire_all()
     assert db_session.get(ExtractionJob, job_a.id).status is WorkUnitStatus.CANCELLED
     assert db_session.get(ExtractionJob, job_b.id).status is WorkUnitStatus.CANCELLED
+
+
+def _row_for_job(body: str, job_id: int) -> str:
+    """Return the monitor table row carrying ``job_id`` (fails if absent)."""
+    match = re.search(rf'<tr[^>]*>(?:(?!</tr>).)*?value="{job_id}"(?:(?!</tr>).)*?</tr>', body, re.DOTALL)
+    assert match is not None, f"no monitor row rendered for job {job_id}"
+    return match.group(0)
+
+
+def _make_stale(session: Session, *, source_id: UUID, current: bool) -> None:
+    """Give a source an active chunking run and an extraction run that consumed it or an earlier one.
+
+    ``current=False`` records an extraction whose consumed upstream key no longer
+    matches the source's active chunking run — the state the re-extract action
+    exists for.
+    """
+    consumed = "chunking-current" if current else "chunking-superseded"
+    session.add(
+        PipelineRun(
+            stage=CHUNKING_STAGE,
+            scope_id=str(source_id),
+            status=RunStatus.ACTIVE,
+            derivation_key="chunking-current",
+        )
+    )
+    session.add(
+        PipelineRun(
+            stage=EXTRACTION_STAGE,
+            scope_id=str(source_id),
+            status=RunStatus.ACTIVE,
+            derivation_key=extraction_derivation_key(
+                extractor_version="stub/v1",
+                materializer_version="v1",
+                input_policy="raw",
+                upstream_derivation_key=consumed,
+            ),
+            version_stamps_json='{"input_policy":"raw"}',
+        )
+    )
+    session.commit()
+
+
+def test_bulk_re_extract_applies_to_stale_units_and_skips_the_rest(
+    client: TestClient, db_session, seed_source, seed_extraction_job
+) -> None:
+    """A mixed selection re-extracts the stale sources and reports the current ones skipped."""
+    stale_source = seed_source(db_session, karakeep_id="bm_stale", title="Stale Doc")
+    current_source = seed_source(db_session, karakeep_id="bm_current", title="Current Doc")
+    _make_stale(db_session, source_id=stale_source.source_id, current=False)
+    _make_stale(db_session, source_id=current_source.source_id, current=True)
+    stale_job = seed_extraction_job(db_session, source_id=stale_source.source_id, status=WorkUnitStatus.SUCCEEDED)
+    current_job = seed_extraction_job(db_session, source_id=current_source.source_id, status=WorkUnitStatus.SUCCEEDED)
+
+    response = client.post(
+        "/ui/tasks/extraction/actions",
+        data={"action": "re-extract", "job_ids": [stale_job.id, current_job.id]},
+    )
+
+    assert response.status_code == 200
+    assert "1 job re-extracted" in response.text
+    assert "1 skipped as ineligible" in response.text
+    db_session.expire_all()
+    assert db_session.get(ExtractionJob, stale_job.id).status is WorkUnitStatus.QUEUED
+    assert db_session.get(ExtractionJob, current_job.id).status is WorkUnitStatus.SUCCEEDED
+
+
+# --- coverage: pending listing and stale marking ------------------------------
+
+
+def test_pending_sources_are_listed_with_their_identity_and_title(client: TestClient, db_session, seed_source) -> None:
+    """Sources behind the stage are listed by identity and title, though they have no work-unit."""
+    source = seed_source(db_session, karakeep_id="bm_behind", title="Behind Doc")
+    db_session.add(
+        PipelineRun(stage=CHUNKING_STAGE, scope_id=str(source.source_id), status=RunStatus.ACTIVE, derivation_key="dk")
+    )
+    db_session.commit()
+
+    response = client.get("/ui/tasks", params={"stage": "extraction"})
+
+    assert response.status_code == 200
+    assert f'data-pending-source="{source.source_id}"' in response.text
+    assert "Behind Doc" in response.text
+
+
+def test_the_pending_listing_matches_the_dashboard_count(client: TestClient, db_session, seed_source) -> None:
+    """The listing and the count read one derivation, so they cannot disagree about what is behind."""
+    for index in range(3):
+        source = seed_source(db_session, karakeep_id=f"bm_behind_{index}", title=f"Behind {index}")
+        db_session.add(
+            PipelineRun(
+                stage=CHUNKING_STAGE,
+                scope_id=str(source.source_id),
+                status=RunStatus.ACTIVE,
+                derivation_key=f"dk-{index}",
+            )
+        )
+    db_session.commit()
+
+    listing = client.get("/ui/tasks", params={"stage": "extraction"}).text
+    dashboard = client.get("/ui").text
+
+    assert listing.count("data-pending-source=") == 3
+    assert 'data-pending="3"' in dashboard
+
+
+def test_a_stage_without_a_derivation_offers_no_pending_listing(client: TestClient, db_session) -> None:
+    """Conversion declares no pending-work derivation, so its monitor offers no listing."""
+    response = client.get("/ui/tasks", params={"stage": "conversion"})
+
+    assert response.status_code == 200
+    assert 'id="pending-sources"' not in response.text
+
+
+def test_stale_units_are_marked_and_selectable_in_the_monitor(
+    client: TestClient, db_session, seed_source, seed_extraction_job
+) -> None:
+    """Stale units are identifiable in the listing and carry the selection input a declared action reads."""
+    stale_source = seed_source(db_session, karakeep_id="bm_stale_row", title="Stale Doc")
+    current_source = seed_source(db_session, karakeep_id="bm_current_row", title="Current Doc")
+    _make_stale(db_session, source_id=stale_source.source_id, current=False)
+    _make_stale(db_session, source_id=current_source.source_id, current=True)
+    stale_job = seed_extraction_job(db_session, source_id=stale_source.source_id, status=WorkUnitStatus.SUCCEEDED)
+    current_job = seed_extraction_job(db_session, source_id=current_source.source_id, status=WorkUnitStatus.SUCCEEDED)
+
+    body = client.get("/ui/tasks", params={"stage": "extraction"}).text
+
+    stale_row = _row_for_job(body, stale_job.id)
+    current_row = _row_for_job(body, current_job.id)
+    assert 'data-stale="true"' in stale_row
+    assert 'class="row-select stale-select"' in stale_row, "a stale unit is selectable as one"
+    assert "data-stale=" not in current_row
+    assert body.count('data-stale="true"') == 1
+
+
+def test_a_stage_without_a_staleness_derivation_marks_nothing(
+    client: TestClient, db_session, seed_source, seed_contextualization_job
+) -> None:
+    """Contextualization has no staleness concept, so none of its rows carry the marking."""
+    source = seed_source(db_session, karakeep_id="bm_ctx_row", title="Ctx Doc")
+    seed_contextualization_job(db_session, source_id=source.source_id, status=WorkUnitStatus.SUCCEEDED)
+
+    body = client.get("/ui/tasks", params={"stage": "contextualization"}).text
+
+    assert "data-stale=" not in body
 
 
 # --- drill-down ---------------------------------------------------------------

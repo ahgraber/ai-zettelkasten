@@ -18,6 +18,36 @@
 
       {% include "tasks_panel.html" %}
 
+      {% if pending_sources is defined %}
+      <div class="panel" id="pending-sources">
+        <h2>Pending admission <span class="pending-count">{{ pending_sources|length }}</span></h2>
+        <p>
+          Sources this stage owes work but has no work-unit for. They are not listed above because no
+          work-unit exists for them yet.
+        </p>
+        {% if pending_sources %}
+        <table class="pending">
+          <thead>
+            <tr>
+              <th>source_id</th>
+              <th>title</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for source in pending_sources %}
+            <tr data-pending-source="{{ source.source_id }}">
+              <td class="mono uuid">{{ source.source_id }}</td>
+              <td class="title-cell">{{ source.title }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="empty" aria-live="polite">Nothing is behind this stage.</p>
+        {% endif %}
+      </div>
+      {% endif %}
+
       <div id="drilldown"></div>
     </div>
   </body>

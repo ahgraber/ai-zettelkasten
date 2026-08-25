@@ -104,7 +104,13 @@ def monitor(
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ):
-    """Render a stage's task monitor (full page, or the panel partial on ``HX-Request``)."""
+    """Render a stage's task monitor (full page, or the panel partial on ``HX-Request``).
+
+    A stage that declares a pending-work derivation also gets its pending sources
+    listed on the full page — work behind the stage, which by definition has no
+    work-unit and so cannot appear in the unit table. The listing is resolved only
+    for the full page, not for the panel partial an htmx filter or sort swaps in.
+    """
     descriptor = _require_descriptor(stage)
     page = descriptor.list_units(
         session,
@@ -116,8 +122,12 @@ def monitor(
         limit=limit,
         offset=offset,
     )
-    template = "tasks_panel.html" if request.headers.get("HX-Request") else "tasks.html"
-    return TEMPLATES.TemplateResponse(request, template, _monitor_context(descriptor, page))
+    context = _monitor_context(descriptor, page)
+    if request.headers.get("HX-Request"):
+        return TEMPLATES.TemplateResponse(request, "tasks_panel.html", context)
+    if descriptor.pending_list is not None:
+        context["pending_sources"] = descriptor.pending_list(session, _principal)
+    return TEMPLATES.TemplateResponse(request, "tasks.html", context)
 
 
 @router.post("/{stage}/actions")
