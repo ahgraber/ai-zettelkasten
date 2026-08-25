@@ -22,7 +22,6 @@ from fastapi.testclient import TestClient
 
 from aizk.graph.datamodel import ExtractionJob
 from aizk.graph.extraction_events import EXTRACTION_STAGE
-from aizk.graph.mention_store import extraction_derivation_key
 from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
@@ -183,47 +182,14 @@ def _row_for_job(body: str, job_id: int) -> str:
     return match.group(0)
 
 
-def _make_stale(session: Session, *, source_id: UUID, current: bool) -> None:
-    """Give a source an active chunking run and an extraction run that consumed it or an earlier one.
-
-    ``current=False`` records an extraction whose consumed upstream key no longer
-    matches the source's active chunking run — the state the re-extract action
-    exists for.
-    """
-    consumed = "chunking-current" if current else "chunking-superseded"
-    session.add(
-        PipelineRun(
-            stage=CHUNKING_STAGE,
-            scope_id=str(source_id),
-            status=RunStatus.ACTIVE,
-            derivation_key="chunking-current",
-        )
-    )
-    session.add(
-        PipelineRun(
-            stage=EXTRACTION_STAGE,
-            scope_id=str(source_id),
-            status=RunStatus.ACTIVE,
-            derivation_key=extraction_derivation_key(
-                extractor_version="stub/v1",
-                materializer_version="v1",
-                input_policy="raw",
-                upstream_derivation_key=consumed,
-            ),
-            version_stamps_json='{"input_policy":"raw"}',
-        )
-    )
-    session.commit()
-
-
 def test_bulk_re_extract_applies_to_stale_units_and_skips_the_rest(
-    client: TestClient, db_session, seed_source, seed_extraction_job
+    client: TestClient, db_session, seed_source, seed_extraction_job, seed_extraction_state
 ) -> None:
     """A mixed selection re-extracts the stale sources and reports the current ones skipped."""
     stale_source = seed_source(db_session, karakeep_id="bm_stale", title="Stale Doc")
     current_source = seed_source(db_session, karakeep_id="bm_current", title="Current Doc")
-    _make_stale(db_session, source_id=stale_source.source_id, current=False)
-    _make_stale(db_session, source_id=current_source.source_id, current=True)
+    seed_extraction_state(db_session, source_id=stale_source.source_id, current=False)
+    seed_extraction_state(db_session, source_id=current_source.source_id, current=True)
     stale_job = seed_extraction_job(db_session, source_id=stale_source.source_id, status=WorkUnitStatus.SUCCEEDED)
     current_job = seed_extraction_job(db_session, source_id=current_source.source_id, status=WorkUnitStatus.SUCCEEDED)
 
@@ -288,13 +254,13 @@ def test_a_stage_without_a_derivation_offers_no_pending_listing(client: TestClie
 
 
 def test_stale_units_are_marked_and_selectable_in_the_monitor(
-    client: TestClient, db_session, seed_source, seed_extraction_job
+    client: TestClient, db_session, seed_source, seed_extraction_job, seed_extraction_state
 ) -> None:
     """Stale units are identifiable in the listing and carry the selection input a declared action reads."""
     stale_source = seed_source(db_session, karakeep_id="bm_stale_row", title="Stale Doc")
     current_source = seed_source(db_session, karakeep_id="bm_current_row", title="Current Doc")
-    _make_stale(db_session, source_id=stale_source.source_id, current=False)
-    _make_stale(db_session, source_id=current_source.source_id, current=True)
+    seed_extraction_state(db_session, source_id=stale_source.source_id, current=False)
+    seed_extraction_state(db_session, source_id=current_source.source_id, current=True)
     stale_job = seed_extraction_job(db_session, source_id=stale_source.source_id, status=WorkUnitStatus.SUCCEEDED)
     current_job = seed_extraction_job(db_session, source_id=current_source.source_id, status=WorkUnitStatus.SUCCEEDED)
 
@@ -303,7 +269,7 @@ def test_stale_units_are_marked_and_selectable_in_the_monitor(
     stale_row = _row_for_job(body, stale_job.id)
     current_row = _row_for_job(body, current_job.id)
     assert 'data-stale="true"' in stale_row
-    assert 'class="row-select stale-select"' in stale_row, "a stale unit is selectable as one"
+    assert 'class="row-select stale-select"' in stale_row
     assert "data-stale=" not in current_row
     assert body.count('data-stale="true"') == 1
 
