@@ -33,32 +33,6 @@ from aizk.pipeline.events import PipelineEvent
 _CONVERSION_STAGE = "conversion"
 
 
-def _make_conversion_job(
-    session: Session,
-    *,
-    source_id: UUID,
-    idempotency_key: str,
-    status: ConversionJobStatus,
-    owner_id: str = "self",
-    title: str = "Submit-Time Title",
-    attempts: int = 0,
-) -> ConversionJob:
-    """Insert and return a conversion job (owner ``self`` unless overridden)."""
-    job = ConversionJob(
-        source_id=source_id,
-        owner_id=owner_id,
-        title=title,
-        payload_version=1,
-        status=status,
-        attempts=attempts,
-        idempotency_key=idempotency_key,
-    )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    return job
-
-
 def _dashboard_row(body: str, stage_key: str) -> str:
     """Return the dashboard table row for ``stage_key`` (fails if absent)."""
     match = re.search(rf'<tr data-stage="{stage_key}".*?</tr>', body, re.DOTALL)
@@ -70,15 +44,15 @@ def _dashboard_row(body: str, stage_key: str) -> str:
 
 
 def test_delete_removes_terminal_jobs_and_output_and_skips_active(
-    client: TestClient, db_session: Session, seed_source, seed_conversion_output
+    client: TestClient, db_session: Session, seed_conversion_job, seed_source, seed_conversion_output
 ) -> None:
     """Delete removes terminal jobs and their output, skips an active job, and reports both."""
     source = seed_source(db_session, karakeep_id="bm_del", title="Delete Doc")
-    terminal = _make_conversion_job(
+    terminal = seed_conversion_job(
         db_session, source_id=source.source_id, idempotency_key="del-terminal", status=ConversionJobStatus.FAILED_PERM
     )
     seed_conversion_output(db_session, job_id=terminal.id, source_id=source.source_id)
-    active = _make_conversion_job(
+    active = seed_conversion_job(
         db_session, source_id=source.source_id, idempotency_key="del-active", status=ConversionJobStatus.RUNNING
     )
     terminal_id = terminal.id
@@ -100,7 +74,7 @@ def test_graph_stage_rejects_delete_as_undeclared(
     client: TestClient, db_session: Session, seed_source, seed_contextualization_job
 ) -> None:
     """A graph stage declares no Delete; the console rejects it as undeclared (400)."""
-    source = seed_source(db_session, karakeep_id="bm_nodel", title="No-Delete Doc")
+    source = seed_source(db_session, karakeep_id="bm_no_delete", title="No-Delete Doc")
     job = seed_contextualization_job(db_session, source_id=source.source_id, conversion_output_id=1)
 
     response = client.post("/ui/tasks/contextualization/actions", data={"action": "delete", "job_ids": [job.id]})
@@ -112,18 +86,18 @@ def test_graph_stage_rejects_delete_as_undeclared(
 
 
 def test_monitor_displays_native_statuses_and_title_fallback(
-    client: TestClient, db_session: Session, seed_source
+    client: TestClient, db_session: Session, seed_conversion_job, seed_source
 ) -> None:
     """Rows show the native status verbatim and fall back to the submit-time title."""
     source = seed_source(db_session, karakeep_id="bm_native", title=None)
-    _make_conversion_job(
+    seed_conversion_job(
         db_session,
         source_id=source.source_id,
         idempotency_key="native-upload",
         status=ConversionJobStatus.UPLOAD_PENDING,
         title="Placeholder Title",
     )
-    _make_conversion_job(
+    seed_conversion_job(
         db_session,
         source_id=source.source_id,
         idempotency_key="native-perm",
@@ -145,14 +119,16 @@ def test_monitor_displays_native_statuses_and_title_fallback(
 # --- KaraKeep search ----------------------------------------------------------
 
 
-def test_search_by_karakeep_id_returns_the_job(client: TestClient, db_session: Session, seed_source) -> None:
+def test_search_by_karakeep_id_returns_the_job(
+    client: TestClient, db_session: Session, seed_conversion_job, seed_source
+) -> None:
     """The stage-declared KaraKeep identifier is matched through the generic search path."""
     matched = seed_source(db_session, karakeep_id="bm_findme", title="Findable Doc")
     other = seed_source(db_session, karakeep_id="bm_other", title="Other Doc")
-    hit = _make_conversion_job(
+    hit = seed_conversion_job(
         db_session, source_id=matched.source_id, idempotency_key="search-hit", status=ConversionJobStatus.QUEUED
     )
-    miss = _make_conversion_job(
+    miss = seed_conversion_job(
         db_session, source_id=other.source_id, idempotency_key="search-miss", status=ConversionJobStatus.QUEUED
     )
 
@@ -169,13 +145,15 @@ def test_search_by_karakeep_id_returns_the_job(client: TestClient, db_session: S
 # --- stage-native eligibility -------------------------------------------------
 
 
-def test_cancel_skips_upload_pending_as_ineligible(client: TestClient, db_session: Session, seed_source) -> None:
+def test_cancel_skips_upload_pending_as_ineligible(
+    client: TestClient, db_session: Session, seed_conversion_job, seed_source
+) -> None:
     """Cancel is not eligible from ``UPLOAD_PENDING``; that job is skipped while a queued job cancels."""
     source = seed_source(db_session, karakeep_id="bm_cancel", title="Cancel Doc")
-    queued = _make_conversion_job(
+    queued = seed_conversion_job(
         db_session, source_id=source.source_id, idempotency_key="cancel-queued", status=ConversionJobStatus.QUEUED
     )
-    uploading = _make_conversion_job(
+    uploading = seed_conversion_job(
         db_session,
         source_id=source.source_id,
         idempotency_key="cancel-upload",
@@ -211,21 +189,23 @@ def _queued_event(session: Session, job_id: int) -> PipelineEvent:
     return events[0]
 
 
-def test_console_retry_equals_the_shared_domain_retry(client: TestClient, db_session: Session, seed_source) -> None:
+def test_console_retry_equals_the_shared_domain_retry(
+    client: TestClient, db_session: Session, seed_conversion_job, seed_source
+) -> None:
     """A console retry and a direct ``apply_job_retry`` reach the same state and requeue event.
 
     ``apply_job_retry`` is the shared domain helper the conversion JSON API and the
     worker call, so a console retry converging on it evidences one implementation.
     """
     source = seed_source(db_session, karakeep_id="bm_equiv", title="Equivalence Doc")
-    via_console = _make_conversion_job(
+    via_console = seed_conversion_job(
         db_session,
         source_id=source.source_id,
         idempotency_key="equiv-console",
         status=ConversionJobStatus.FAILED_RETRYABLE,
         attempts=1,
     )
-    via_helper = _make_conversion_job(
+    via_helper = seed_conversion_job(
         db_session,
         source_id=source.source_id,
         idempotency_key="equiv-helper",
@@ -258,7 +238,9 @@ def test_console_retry_equals_the_shared_domain_retry(client: TestClient, db_ses
 # --- dashboard rollup ---------------------------------------------------------
 
 
-def test_dashboard_rollup_is_lossless_and_splits_failed(client: TestClient, db_session: Session, seed_source) -> None:
+def test_dashboard_rollup_is_lossless_and_splits_failed(
+    client: TestClient, db_session: Session, seed_conversion_job, seed_source
+) -> None:
     """Every native status counts under one category; the total equals the job count; failed splits."""
     source = seed_source(db_session, karakeep_id="bm_roll", title="Rollup Doc")
     seeded = [
@@ -273,7 +255,7 @@ def test_dashboard_rollup_is_lossless_and_splits_failed(client: TestClient, db_s
         ConversionJobStatus.CANCELLED,
     ]
     for index, status in enumerate(seeded):
-        _make_conversion_job(db_session, source_id=source.source_id, idempotency_key=f"roll-{index}", status=status)
+        seed_conversion_job(db_session, source_id=source.source_id, idempotency_key=f"roll-{index}", status=status)
 
     response = client.get("/ui")
 
@@ -295,14 +277,14 @@ def test_dashboard_rollup_is_lossless_and_splits_failed(client: TestClient, db_s
 
 
 def test_foreign_owner_jobs_are_invisible_across_console_surfaces(
-    client: TestClient, db_session: Session, seed_source
+    client: TestClient, db_session: Session, seed_conversion_job, seed_source
 ) -> None:
     """A job owned by another principal is absent from the listing, counts, and drill-down."""
     source = seed_source(db_session, karakeep_id="bm_scope", title="Scope Doc")
-    mine = _make_conversion_job(
+    mine = seed_conversion_job(
         db_session, source_id=source.source_id, idempotency_key="scope-mine", status=ConversionJobStatus.QUEUED
     )
-    theirs = _make_conversion_job(
+    theirs = seed_conversion_job(
         db_session,
         source_id=source.source_id,
         idempotency_key="scope-theirs",
@@ -324,17 +306,17 @@ def test_foreign_owner_jobs_are_invisible_across_console_surfaces(
 
 
 def test_bulk_action_reports_foreign_job_as_not_found_without_failing(
-    client: TestClient, db_session: Session, seed_source
+    client: TestClient, db_session: Session, seed_conversion_job, seed_source
 ) -> None:
     """A bulk action spanning a foreign job applies to the owner's and reports the other not-found."""
     source = seed_source(db_session, karakeep_id="bm_scopebulk", title="Scope Bulk Doc")
-    mine = _make_conversion_job(
+    mine = seed_conversion_job(
         db_session,
         source_id=source.source_id,
         idempotency_key="bulk-mine",
         status=ConversionJobStatus.FAILED_RETRYABLE,
     )
-    theirs = _make_conversion_job(
+    theirs = seed_conversion_job(
         db_session,
         source_id=source.source_id,
         idempotency_key="bulk-theirs",
