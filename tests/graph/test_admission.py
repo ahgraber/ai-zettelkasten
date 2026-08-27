@@ -21,7 +21,10 @@ import pytest
 from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from aizk.console.stages.contextualization import DESCRIPTOR as CONTEXTUALIZATION_DESCRIPTOR
+from aizk.console.stages.extraction import DESCRIPTOR as EXTRACTION_DESCRIPTOR
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.conversion.datamodel.source import Source
 from aizk.graph.admission import (
     AdmissionLoop,
     admission_adapter_for,
@@ -46,6 +49,8 @@ _UUID_C = UUID("33333333-3333-3333-3333-333333333333")
 _EPOCH = dt.datetime(2026, 3, 1, tzinfo=dt.timezone.utc)
 
 _SCHEMA_TABLES = [
+    # ``sources`` carries the titles the console's pending listing resolves against.
+    Source.__table__,
     ConversionOutput.__table__,
     ContextualizationJob.__table__,
     ExtractionJob.__table__,
@@ -229,6 +234,73 @@ def test_an_admitted_unit_equals_a_manually_enqueued_one(tmp_path: Path) -> None
     (admitted_unit,) = _units(admitted_engine, ContextualizationJob)
     (enqueued_unit,) = _units(enqueued_engine, ContextualizationJob)
     assert _fields(admitted_unit) == _fields(enqueued_unit)
+
+
+# --- what a pass admits equals what observers are told ----------------------
+
+
+def _reported_then_admitted(engine: Engine, descriptor, adapter, model: type) -> tuple[set[UUID], set[UUID]]:
+    """Read the console-reported pending sources, then run an unconstrained pass.
+
+    Returns the reported set and the sources the pass created units for, so the two
+    can be compared as sets of the same thing.
+    """
+    with Session(engine) as session:
+        reported = {UUID(row["source_id"]) for row in descriptor.pending_list(session, None)}
+
+    before = {unit.source_id for unit in _units(engine, model)}
+    run_admission_pass(engine, adapter)
+    after = {unit.source_id for unit in _units(engine, model)}
+    return reported, after - before
+
+
+def test_the_reported_contextualization_pending_set_is_what_a_pass_admits(tmp_path: Path) -> None:
+    """What the console says is behind contextualization is exactly what a pass takes up.
+
+    The count and listing an operator reads and the work an admission pass creates
+    resolve through one derivation, so the operator surface cannot disagree with
+    what admission will actually do.
+    """
+    engine = _make_engine(tmp_path)
+    _seed_converted_sources(engine, 3)
+    with Session(engine) as session:
+        # One source is already covered, so the pending set is a strict subset of the corpus.
+        enqueue_output(session, 1, queue_max_depth=0)
+        session.commit()
+
+    reported, admitted = _reported_then_admitted(
+        engine,
+        CONTEXTUALIZATION_DESCRIPTOR,
+        contextualization_adapter(_config(admission_contextualization_enabled=True)),
+        ContextualizationJob,
+    )
+
+    assert len(reported) == 2, "the corpus must hold pending work for the comparison to mean anything"
+    assert reported == admitted
+    with Session(engine) as session:
+        assert CONTEXTUALIZATION_DESCRIPTOR.pending_list(session, None) == []
+
+
+def test_the_reported_extraction_pending_set_is_what_a_pass_admits(tmp_path: Path) -> None:
+    """What the console says is behind extraction is exactly what a pass takes up."""
+    engine = _make_engine(tmp_path)
+    _seed_chunked_sources(engine, _UUID_A, _UUID_B, _UUID_C)
+    with Session(engine) as session:
+        # One source is already covered, so the pending set is a strict subset of the corpus.
+        enqueue_extraction(session, source_id=_UUID_A, queue_max_depth=0)
+        session.commit()
+
+    reported, admitted = _reported_then_admitted(
+        engine,
+        EXTRACTION_DESCRIPTOR,
+        extraction_adapter(_config(admission_extraction_enabled=True)),
+        ExtractionJob,
+    )
+
+    assert reported == {_UUID_B, _UUID_C}
+    assert reported == admitted
+    with Session(engine) as session:
+        assert EXTRACTION_DESCRIPTOR.pending_list(session, None) == []
 
 
 # --- capacity ---------------------------------------------------------------
