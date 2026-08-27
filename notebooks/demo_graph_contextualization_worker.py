@@ -644,7 +644,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     print(f"  4. summary_run_id={summary_run.id} stage={summary_run.stage}")
     assert summary_run.stage == SUMMARY_STAGE
 
-    chain_agrees = chunking.scope_id == str(primary.source_id) == summary_run.scope_id == chunk.source_id
+    chain_agrees = chunking.scope_id == str(primary.source_id) == summary_run.scope_id == str(chunk.source_id)
     print(
         f"  5. source_id={primary.source_id}; chunk.source_id + chunking + summary scopes all agree -> {chain_agrees}"
     )

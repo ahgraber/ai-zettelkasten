@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -138,7 +139,7 @@ def _seed_chunk(
     row = Chunk(
         chunk_id=chunk_id,
         content_hash=xxhash.xxh64(text.encode("utf-8")).hexdigest(),
-        source_id=source_id,
+        source_id=UUID(source_id),
         heading_path_json=heading_path_json,
         ordinal=ordinal,
         text=text,
@@ -206,7 +207,7 @@ def _extract_chunk(
     )
     run = open_extraction_run(
         session,
-        source_id=chunk.source_id,
+        source_id=str(chunk.source_id),
         extractor_version=extractor.extractor_version,
         materializer_version=MATERIALIZER_VERSION,
         input_policy="contextualized",
@@ -301,7 +302,7 @@ def test_source_two_spans_coincide(session: Session) -> None:
 def test_revision_only_name_emitted_as_revision_anchored(session: Session) -> None:
     """A revision-resolved name absent from the raw chunk is emitted as one revision-anchored mention."""
     chunk = _seed_chunk(session, chunk_id="c1", text="The company announced results today.")
-    variant_run = _seed_variant_run(session, source_id=chunk.source_id, derivation_key="variant-key-1")
+    variant_run = _seed_variant_run(session, source_id=str(chunk.source_id), derivation_key="variant-key-1")
     variant = _seed_contextualized_chunk(
         session,
         chunk_id=chunk.chunk_id,
@@ -358,7 +359,7 @@ def test_near_miss_surface_is_revision_anchored_not_fuzzily_matched(
     split forbids.
     """
     chunk = _seed_chunk(session, chunk_id="c1", text=raw_text)
-    variant_run = _seed_variant_run(session, source_id=chunk.source_id, derivation_key="variant-key-1")
+    variant_run = _seed_variant_run(session, source_id=str(chunk.source_id), derivation_key="variant-key-1")
     variant = _seed_contextualized_chunk(
         session,
         chunk_id=chunk.chunk_id,
@@ -440,7 +441,7 @@ def test_cross_chunk_no_cooccurrence(session: Session) -> None:
 def test_extracts_from_variant_when_available(session: Session) -> None:
     """A chunk with a variant in its document's active contextualization run is resolved to read it."""
     chunk = _seed_chunk(session, chunk_id="c1", text="The firm announced results.")
-    variant_run = _seed_variant_run(session, source_id=chunk.source_id, derivation_key="variant-key-1")
+    variant_run = _seed_variant_run(session, source_id=str(chunk.source_id), derivation_key="variant-key-1")
     variant = _seed_contextualized_chunk(
         session,
         chunk_id=chunk.chunk_id,
@@ -466,11 +467,11 @@ def test_falls_back_to_raw(session: Session) -> None:
     assert select_extraction_input(session, chunk) == ExtractionInput(text=chunk.text, input_kind="raw")
 
     # A variant exists, but only under a run that is then superseded: still ignored.
-    stale_run = _seed_variant_run(session, source_id=chunk.source_id, derivation_key="stale-key")
+    stale_run = _seed_variant_run(session, source_id=str(chunk.source_id), derivation_key="stale-key")
     _seed_contextualized_chunk(
         session, chunk_id=chunk.chunk_id, run_id=stale_run.id, contextualized_text="Acme Corp announced results."
     )
-    _seed_variant_run(session, source_id=chunk.source_id, derivation_key="fresh-key")
+    _seed_variant_run(session, source_id=str(chunk.source_id), derivation_key="fresh-key")
     session.refresh(stale_run)
     assert stale_run.status == RunStatus.SUPERSEDED
 
@@ -487,7 +488,7 @@ def test_present_empty_variant_consumed_as_raw(session: Session) -> None:
     path stays raw for such a chunk.
     """
     chunk = _seed_chunk(session, chunk_id="c1", text="Acme Corp announced results today.")
-    variant_run = _seed_variant_run(session, source_id=chunk.source_id, derivation_key="variant-key-1")
+    variant_run = _seed_variant_run(session, source_id=str(chunk.source_id), derivation_key="variant-key-1")
     _seed_contextualized_chunk(session, chunk_id=chunk.chunk_id, run_id=variant_run.id, contextualized_text="")
     stub = StubExtractor({chunk.text: [Detection(surface_form="Acme Corp", span_start=0, span_end=9)]})
 

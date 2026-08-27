@@ -655,7 +655,7 @@ def test_variant_traces_back_to_source_text_and_source_id(session: Session) -> N
     # 5. the whole chain belongs to one source_id.
     assert chunking.scope_id == _AIZK_UUID
     assert summary.scope_id == _AIZK_UUID
-    assert chunk_row.source_id == _AIZK_UUID
+    assert str(chunk_row.source_id) == _AIZK_UUID
 
 
 # --------------------------------------------------------------------------- #

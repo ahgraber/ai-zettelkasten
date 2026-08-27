@@ -160,10 +160,14 @@ def escape_fts_query(query: str) -> str | None:
 #: returned row has a ``span_start`` to order by. ``kind`` is bound to honor the
 #: type filter ('chunk', 'contextualized', or both via the OR).
 _SEARCH_SQL = (
-    "SELECT f.kind, f.chunk_id, f.source_id, m.span_start, bm25(graph_content_fts) AS score "
+    # The index's ``scope_id`` is the source identity in the same dashed form
+    # ``pipeline_runs.scope_id`` holds, which is what makes both joins below legal;
+    # it is aliased back to ``source_id`` because that is what a result means to a
+    # caller.
+    "SELECT f.kind, f.chunk_id, f.scope_id AS source_id, m.span_start, bm25(graph_content_fts) AS score "
     "FROM graph_content_fts AS f "
     "JOIN pipeline_runs AS cr "
-    "  ON cr.stage = :chunking_stage AND cr.scope_id = f.source_id AND cr.status = 'active' "
+    "  ON cr.stage = :chunking_stage AND cr.scope_id = f.scope_id AND cr.status = 'active' "
     # Anchoring on the active chunking-run manifest is an intentional currency
     # decision, not merely a way to obtain a span_start. It deliberately drops a
     # kind='contextualized' hit whose chunk_id is absent from the *current* active
@@ -177,7 +181,7 @@ _SEARCH_SQL = (
     "JOIN graph_chunk_run_manifest AS m "
     "  ON m.run_id = cr.id AND m.chunk_id = f.chunk_id "
     "LEFT JOIN pipeline_runs AS vr "
-    "  ON vr.stage = :variant_stage AND vr.scope_id = f.source_id AND vr.status = 'active' "
+    "  ON vr.stage = :variant_stage AND vr.scope_id = f.scope_id AND vr.status = 'active' "
     "WHERE graph_content_fts MATCH :match "
     "  AND ( "
     "    (f.kind = 'chunk' AND :want_chunk = 1) "

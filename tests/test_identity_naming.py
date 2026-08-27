@@ -54,13 +54,10 @@ def test_models_use_canonical_identity_names(model: type[SQLModel], present: str
 
 #: Identity columns that deviate from the type their name implies, each with its reason.
 #:
-#: An entry belongs here only as a reviewed decision; anything else reaching the
-#: list is drift. ``graph_chunks.source_id`` holds the dashed string so it compares
-#: directly against ``PipelineRun.scope_id`` — named for the contract term, typed as
-#: a scope key. Reconciling it is a schema change, tracked separately.
-_TYPE_DEVIATIONS: dict[tuple[str, str], str] = {
-    ("graph_chunks", "source_id"): "typed as a scope key so it compares against PipelineRun.scope_id",
-}
+#: An entry belongs here only as a reviewed decision; anything else reaching the list
+#: is drift. Empty: every registered ``source_id`` is a UUID and every ``scope_id`` a
+#: string, so the name alone tells a reader which form a column holds.
+_TYPE_DEVIATIONS: dict[tuple[str, str], str] = {}
 
 _EXPECTED_TYPE = {"source_id": Uuid, "scope_id": String}
 

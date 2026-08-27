@@ -123,7 +123,7 @@ def _seed_chunking_run(session: Session, *, source_id: UUID, texts: "Sequence[st
         chunk = Chunk(
             chunk_id=str(uuid4()),
             content_hash=xxhash.xxh64(text.encode("utf-8")).hexdigest(),
-            source_id=str(source_id),
+            source_id=source_id,
             heading_path_json="[]",
             ordinal=ordinal,
             text=text,

@@ -98,13 +98,13 @@ def _seed_chunking_run(engine: Engine, *, source_id: str, derivation_key: str) -
         session.flush()
         content_hash = xxhash.xxh64(_CHUNK_TEXT.encode("utf-8")).hexdigest()
         chunk = session.exec(
-            select(Chunk).where(Chunk.source_id == source_id, Chunk.content_hash == content_hash)
+            select(Chunk).where(Chunk.source_id == UUID(source_id), Chunk.content_hash == content_hash)
         ).one_or_none()
         if chunk is None:
             chunk = Chunk(
                 chunk_id=str(uuid4()),
                 content_hash=content_hash,
-                source_id=source_id,
+                source_id=UUID(source_id),
                 heading_path_json="[]",
                 ordinal=0,
                 text=_CHUNK_TEXT,

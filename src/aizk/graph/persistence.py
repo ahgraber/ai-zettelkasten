@@ -34,7 +34,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import TYPE_CHECKING
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import delete
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -89,11 +89,17 @@ def to_chunk_row(chunk: SplitterChunk, *, chunk_id: str) -> Chunk:
     produce one). Only the chunk's stable identity facts are carried onto the row;
     the generation-varying facts (``markdown_hash_xx64``, ``splitter_version``,
     ``span``) are recorded against the emitting run, not here.
+
+    The splitter carries the source identity as a string and the row holds a
+    ``UUID``; this is the boundary that converts.
+
+    Raises:
+        ValueError: If the chunk's ``source_id`` is not a UUID.
     """
     return Chunk(
         chunk_id=chunk_id,
         content_hash=chunk.content_hash,
-        source_id=chunk.source_id,
+        source_id=UUID(chunk.source_id),
         heading_path_json=_heading_path_to_json(chunk.heading_path),
         ordinal=chunk.ordinal,
         text=chunk.text,
@@ -108,8 +114,11 @@ def _stable_facts(row: Chunk) -> tuple[str, str, str, int, str, int]:
     them against an incoming chunk detects an existing row whose remaining facts
     (``text`` / ``char_count``) conflict under an equal ``content_hash`` — a hash
     collision that surrogate reuse must not silently absorb.
+
+    The row's ``source_id`` is rendered as a string so the tuple compares against
+    :func:`_incoming_facts`, which reads the splitter's string form.
     """
-    return (row.content_hash, row.source_id, row.heading_path_json, row.ordinal, row.text, row.char_count)
+    return (row.content_hash, str(row.source_id), row.heading_path_json, row.ordinal, row.text, row.char_count)
 
 
 def _incoming_facts(chunk: SplitterChunk) -> tuple[str, str, str, int, str, int]:
@@ -130,10 +139,13 @@ def _chunk_by_sameness_key(session: "Session", chunk: SplitterChunk) -> Chunk | 
     The sameness-key ``(source_id, heading_path, ordinal, content_hash)`` is the
     reuse key (backed by ``ix_graph_chunks_sameness_key``): a match carries the
     surrogate ``chunk_id`` to reuse, its absence means a new surrogate is minted.
+
+    Raises:
+        ValueError: If the chunk's ``source_id`` is not a UUID.
     """
     return session.exec(
         select(Chunk).where(
-            Chunk.source_id == chunk.source_id,
+            Chunk.source_id == UUID(chunk.source_id),
             Chunk.heading_path_json == _heading_path_to_json(chunk.heading_path),
             Chunk.ordinal == chunk.ordinal,
             Chunk.content_hash == chunk.content_hash,
@@ -161,7 +173,7 @@ def reconstruct_chunk(
     return SplitterChunk(
         chunk_id=row.chunk_id,
         content_hash=row.content_hash,
-        source_id=row.source_id,
+        source_id=str(row.source_id),
         heading_path=tuple(json.loads(row.heading_path_json)),
         ordinal=row.ordinal,
         text=row.text,
@@ -209,8 +221,9 @@ def persist_chunks(
 
     Args:
         session: Active session; the caller owns commit/rollback.
-        source_id: The durable source identity (``str(source_id)``); the run's
-            scope and the chunks' ``source_id``.
+        source_id: The durable source identity in string form. Used verbatim as
+            the run's ``scope_id`` and, converted to a ``UUID``, as each chunk
+            row's ``source_id``.
         conversion_output_id: Locator for the source Markdown this run consumed;
             recorded as run input provenance (not a derivation input).
         markdown_hash_xx64: Content hash of the source markdown; part of the
@@ -318,7 +331,7 @@ def persist_chunks(
                 text_=chunk.text,
                 chunk_id=chunk_id,
                 run_id=run.id,
-                source_id=source_id,
+                scope_id=source_id,
             )
         else:
             chunk_id = row.chunk_id

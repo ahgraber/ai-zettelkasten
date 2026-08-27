@@ -447,7 +447,9 @@ def _validate_provenance(session: "Session", *, run: PipelineRun, mentions: "Seq
             "a mention's source chunk must be resolvable"
         )
 
-    cross_source = sorted({d.chunk_id for d in mentions if chunks_by_id[d.chunk_id].source_id != run.scope_id})
+    # ``run.scope_id`` is the string form of the source identity and the chunk's is a
+    # UUID, so the comparison converts; without it every chunk would read as foreign.
+    cross_source = sorted({d.chunk_id for d in mentions if str(chunks_by_id[d.chunk_id].source_id) != run.scope_id})
     if cross_source:
         raise ValueError(
             f"chunk_id(s) {cross_source} belong to a source other than run.scope_id={run.scope_id!r}; "

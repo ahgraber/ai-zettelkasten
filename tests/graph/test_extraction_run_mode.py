@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import Engine
@@ -106,7 +106,7 @@ def _seed_chunking_run(
         chunk = Chunk(
             chunk_id=str(uuid4()),
             content_hash=xxhash.xxh64(text.encode("utf-8")).hexdigest(),
-            source_id=source_id,
+            source_id=UUID(source_id),
             heading_path_json="[]",
             ordinal=ordinal,
             text=text,
@@ -185,7 +185,8 @@ def _extraction_snapshot(engine: Engine, source_ids: "Sequence[str]") -> tuple[s
             run = active_extraction_run(session, source_id)
             assert run is not None, f"no active extraction run for {source_id!r}"
             ordinal_by_chunk_id = {
-                c.chunk_id: c.ordinal for c in session.exec(select(Chunk).where(Chunk.source_id == source_id)).all()
+                c.chunk_id: c.ordinal
+                for c in session.exec(select(Chunk).where(Chunk.source_id == UUID(source_id))).all()
             }
             mentions_by_id = {
                 m.mention_id: m for m in session.exec(select(Mention).where(Mention.run_id == run.id)).all()
