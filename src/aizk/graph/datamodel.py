@@ -15,8 +15,8 @@ Facts that vary by generation live on the run instead:
 - :class:`Chunk` — immutable, run-independent chunk rows whose ``chunk_id`` is a
   stable surrogate assigned once at persistence (reused across generations when
   the sameness-key ``(source_id, heading_path, ordinal, content_hash)`` matches),
-  carrying stable facts only (the source ``source_id`` ``= str(source_id)``,
-  ``text``, ``content_hash``, ``char_count``, ``heading_path``, ``ordinal``). An
+  carrying stable facts only (the owning ``source_id``, ``text``,
+  ``content_hash``, ``char_count``, ``heading_path``, ``ordinal``). An
   unchanged chunk keeps its identity and its single row across re-chunks. Ordinary
   processing never mutates a row.
 - :class:`ChunkRunInput` — one row per chunking run recording what the run
@@ -136,6 +136,12 @@ class Chunk(SQLModel, table=True):
     report whichever generation wrote the row first. ``heading_path`` (a tuple) is
     stored as a canonical JSON array in ``heading_path_json``; the persistence
     layer owns the lossless mapping back to the in-memory contract.
+
+    ``source_id`` is a ``UUID`` — the referential source identity, as everywhere
+    else in the schema. The splitter's in-memory chunk carries the same identity
+    as a string, so the persistence layer converts at that boundary. A comparison
+    against a scope key (``pipeline_runs.scope_id``) must convert too, because
+    the two forms do not compare in SQL.
     """
 
     __tablename__ = "graph_chunks"
@@ -156,7 +162,7 @@ class Chunk(SQLModel, table=True):
 
     chunk_id: str = Field(primary_key=True, nullable=False)
     content_hash: str = Field(nullable=False)
-    source_id: str = Field(nullable=False)
+    source_id: UUID = Field(nullable=False)
     heading_path_json: str = Field(sa_column=Column(Text, nullable=False))
     ordinal: int = Field(nullable=False)
     text: str = Field(sa_column=Column(Text, nullable=False))

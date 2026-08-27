@@ -967,7 +967,7 @@ def contextualize_chunks(
             text_=revision if revision != "" else chunk.text,
             chunk_id=chunk.chunk_id,
             run_id=run.id,
-            source_id=source_id,
+            scope_id=source_id,
         )
 
     session.flush()

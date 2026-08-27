@@ -301,6 +301,63 @@ def test_rebuild_reproduces_content(session: Session) -> None:
     assert all(chunk_id == chunk.chunk_id for _, chunk_id in after)
 
 
+def test_rebuild_indexes_the_scope_key_form_the_search_join_uses(session: Session) -> None:
+    """A rebuilt row's ``scope_id`` equals the chunking run's ``scope_id``.
+
+    The index is joined to ``pipeline_runs.scope_id`` while ``graph_chunks`` stores
+    the ``UUID`` form, so the rebuild renders one from the other. A regression here
+    costs no error — the join just stops matching — so the two are compared directly.
+    """
+    _seed_chunk_and_variant(
+        session,
+        source_id=_AIZK_UUID,
+        chunk_text="tardigrades survive vacuum exposure",
+        revision="",
+    )
+
+    rebuild_content_index(session.connection())
+    session.commit()
+
+    indexed = {
+        row[0] for row in session.connection().execute(text("SELECT DISTINCT scope_id FROM graph_content_fts")).all()
+    }
+    scopes = {
+        row[0]
+        for row in session.connection()
+        .execute(text("SELECT DISTINCT scope_id FROM pipeline_runs WHERE stage = 'chunking'"))
+        .all()
+    }
+    assert indexed == scopes == {_AIZK_UUID}
+
+
+@pytest.mark.parametrize(
+    ("stored", "reason"),
+    [
+        ("11111111-1111-1111-1111-111111111111", "dashed"),
+        ("1111111111111111111111111111111", "too short"),
+        ("0F8CD1A200344B0080CD000000000ABC", "uppercase"),
+    ],
+    ids=["dashed", "too-short", "uppercase"],
+)
+def test_rebuild_refuses_a_chunk_identity_outside_the_storage_form(session: Session, stored: str, reason: str) -> None:
+    """A stored identity the scope-key rendering would mangle stops the rebuild.
+
+    The rendering slices at fixed offsets, so each of these would produce a
+    plausible-looking scope key matching no run. Uppercase is included because the
+    join is case-sensitive.
+    """
+    _seed_chunk_and_variant(
+        session,
+        source_id=_AIZK_UUID,
+        chunk_text="a chunk whose identity is about to be corrupted",
+        revision="",
+    )
+    session.connection().execute(text("UPDATE graph_chunks SET source_id = :stored"), {"stored": stored})
+
+    with pytest.raises(ValueError, match="32 lowercase hex characters"):
+        rebuild_content_index(session.connection())
+
+
 # --------------------------------------------------------------------------- #
 # Live write-sites
 # --------------------------------------------------------------------------- #
@@ -449,7 +506,7 @@ def test_index_excludes_other_source(session: Session) -> None:
     rows = (
         session.connection()
         .execute(
-            text("SELECT source_id, chunk_id FROM graph_content_fts WHERE graph_content_fts MATCH :t"),
+            text("SELECT scope_id, chunk_id FROM graph_content_fts WHERE graph_content_fts MATCH :t"),
             {"t": "alpha"},
         )
         .all()

@@ -219,7 +219,7 @@ def test_shared_chunk_current_via_new_generation(session: Session) -> None:
     # facts (span, markdown hash, splitter version) are supplied by gen B's run.
     row = session.get(Chunk, shared.chunk_id)
     assert row is not None
-    assert (row.text, row.content_hash, row.source_id) == (shared.text, shared.content_hash, shared.source_id)
+    assert (row.text, row.content_hash, str(row.source_id)) == (shared.text, shared.content_hash, shared.source_id)
     reconstructed = {c.chunk_id: c for c in chunks_of_run(session, active.id)}
     # Reconstructed under gen B, the shared chunk carries gen B's conversion output + markdown hash.
     assert reconstructed[shared.chunk_id].converted_artifact_id == _OUTPUT_B

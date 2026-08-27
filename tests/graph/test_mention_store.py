@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from pydantic import ValidationError
 import pytest
@@ -91,7 +92,7 @@ def _seed_chunk(
     row = Chunk(
         chunk_id=chunk_id,
         content_hash=xxhash.xxh64(text.encode("utf-8")).hexdigest(),
-        source_id=source_id,
+        source_id=UUID(source_id),
         heading_path_json=heading_path_json,
         ordinal=ordinal,
         text=text,
@@ -923,7 +924,7 @@ def _seed_chunking_run(
             Chunk(
                 chunk_id=chunk_id,
                 content_hash=xxhash.xxh64(text.encode("utf-8")).hexdigest(),
-                source_id=source_id,
+                source_id=UUID(source_id),
                 heading_path_json="[]",
                 ordinal=ordinal,
                 text=text,

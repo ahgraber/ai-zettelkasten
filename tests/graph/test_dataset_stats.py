@@ -17,6 +17,7 @@ case, and that a superseded run's rows are excluded from the corpus dataset.
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from sqlalchemy import Engine
@@ -61,7 +62,7 @@ def _seed_chunk(session: Session, *, chunk_id: str, text: str, source_id: str) -
         Chunk(
             chunk_id=chunk_id,
             content_hash=f"hash-{chunk_id}",
-            source_id=source_id,
+            source_id=UUID(source_id),
             heading_path_json="[]",
             ordinal=0,
             text=text,
