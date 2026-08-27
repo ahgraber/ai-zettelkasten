@@ -1,6 +1,6 @@
 # Chunk-contextualization Specification
 
-> Synced from change `chunk-persistence-contextualization` on 2026-06-03
+> Synced from change `pipeline-work-admission` on 2026-08-27
 
 ## Purpose
 
@@ -245,6 +245,35 @@ Until a contextualization attempt completes successfully, the active run, summar
 - **GIVEN** a document with an active contextualization generation, whose re-contextualization under changed inputs obtains a new summary and some revisions and then fails before completing
 - **WHEN** the source's active run, summary, and variants are inspected
 - **THEN** they remain the prior completed generation's, unchanged from before the failed attempt
+
+### Requirement: Contextualization declares its pending work over conversion outputs
+
+The contextualization stage SHALL declare a pending-work derivation in which a source is pending exactly when its newest conversion output has no contextualization work-unit.
+This makes a never-contextualized source pending, a source whose newest output already has a work-unit not pending, a source re-converted after its work-unit was created pending again, and a source with no conversion output not pending.
+
+#### Scenario: A never-contextualized source is pending
+
+- **GIVEN** a source with a conversion output and no contextualization work-unit
+- **WHEN** the pending set is evaluated
+- **THEN** the source is pending
+
+#### Scenario: A source with a unit for its newest output is not pending
+
+- **GIVEN** a source whose newest conversion output has a contextualization work-unit in any status
+- **WHEN** the pending set is evaluated
+- **THEN** the source is not pending
+
+#### Scenario: A re-converted source is pending again
+
+- **GIVEN** a source with a work-unit for an earlier conversion output and a newer output with none
+- **WHEN** the pending set is evaluated
+- **THEN** the source is pending
+
+#### Scenario: A source without a conversion output is not pending
+
+- **GIVEN** a source that has never produced a conversion output
+- **WHEN** the pending set is evaluated
+- **THEN** the source is not pending
 
 ## Technical Notes
 

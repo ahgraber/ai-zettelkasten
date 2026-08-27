@@ -2,6 +2,12 @@
 
 conversion-api-openapi.json:
   type: openapi
-  generated: 2026-08-05
+  generated: 2026-08-27
   source: uv run python -c 'from aizk.conversion.api.main import create_app; import json; print(json.dumps(create_app().openapi(), indent=2))'
-  change: converter-image-admission
+  change: pipeline-work-admission
+
+graph-api-openapi.json:
+  type: openapi
+  generated: 2026-08-27
+  source: uv run python -c 'from aizk.graph.api.main import create_app; import json; print(json.dumps(create_app().openapi(), indent=2))'
+  change: pipeline-work-admission
