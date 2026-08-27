@@ -89,3 +89,15 @@ Groups 4–6 are mutually independent once groups 1–3 exist.
 - [x] Capture `schemas/after/` snapshots and check the diff against `schemas/expected.md`.
   Conversion unchanged; graph gained the two `post` operations and the three request/refusal schemas, as expected.
 - [x] Full validation: `uv run pytest -n auto -m "not integration_lifecycle" tests/`, then `uv run pytest -m integration_lifecycle tests/`, then the pre-commit hooks over everything changed since `HEAD`.
+
+## 10. Evidence gaps closed after verification
+
+Clauses the implementation satisfied structurally but no test executed.
+
+- [x] Capacity's one-transaction clause, on all five creation paths (admission pass, both backfill commands, both intake routes).
+  `tests/graph/integration/test_capacity_transaction.py`: each path is probed at capacity-evaluation time for whether a second connection can begin a write, and asserts the lock is free beforehand so the result cannot come from an unrelated writer.
+- [x] Conformance test pinning the console-reported pending set to what an unconstrained pass admits, one per stage, mirroring the staleness resolver's conformance test.
+- [x] Cross-service equality of the capacity refusal: drive both services at capacity in one run and compare status, body, and `Retry-After` rather than each asserting its own literal.
+- [x] Title-contract fallback for the pending listing, matching the work-unit monitor's existing NULL-title test.
+- [x] Bulk re-extract over a selection whose members are all stale, alongside the existing mixed-eligibility case.
+- [x] Record the `graph_chunks.source_id` retype in `design.md` — it carries no delta requirement because it closes a baseline `pipeline-identity` gap, and a persisted-schema change should not be discoverable only from git history.

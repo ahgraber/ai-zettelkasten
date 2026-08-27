@@ -7,9 +7,7 @@
   "paths": {
     "/health/live": {
       "get": {
-        "tags": [
-          "health"
-        ],
+        "tags": ["health"],
         "summary": "Liveness",
         "description": "Liveness probe \u2014 returns 200 if the process is running.",
         "operationId": "liveness_health_live_get",
@@ -29,9 +27,7 @@
     },
     "/health/ready": {
       "get": {
-        "tags": [
-          "health"
-        ],
+        "tags": ["health"],
         "summary": "Readiness",
         "description": "Readiness probe \u2014 validates DB connectivity and S3 reachability.",
         "operationId": "readiness_health_ready_get",
@@ -51,9 +47,7 @@
     },
     "/v1/jobs": {
       "post": {
-        "tags": [
-          "jobs"
-        ],
+        "tags": ["jobs"],
         "summary": "Submit Job",
         "description": "Submit a new conversion job.",
         "operationId": "submit_job_v1_jobs_post",
@@ -101,9 +95,7 @@
         }
       },
       "get": {
-        "tags": [
-          "jobs"
-        ],
+        "tags": ["jobs"],
         "summary": "List Jobs",
         "description": "List conversion jobs with filters, scoped to the caller.",
         "operationId": "list_jobs_v1_jobs_get",
@@ -225,9 +217,7 @@
     },
     "/v1/jobs/status-counts": {
       "get": {
-        "tags": [
-          "jobs"
-        ],
+        "tags": ["jobs"],
         "summary": "Get Job Status Counts",
         "description": "Return aggregated counts of jobs by status, scoped to the caller.",
         "operationId": "get_job_status_counts_v1_jobs_status_counts_get",
@@ -247,9 +237,7 @@
     },
     "/v1/jobs/{job_id}": {
       "get": {
-        "tags": [
-          "jobs"
-        ],
+        "tags": ["jobs"],
         "summary": "Get Job",
         "description": "Get conversion job details.",
         "operationId": "get_job_v1_jobs__job_id__get",
@@ -290,9 +278,7 @@
     },
     "/v1/jobs/{job_id}/retry": {
       "post": {
-        "tags": [
-          "jobs"
-        ],
+        "tags": ["jobs"],
         "summary": "Retry Job",
         "description": "Retry a failed or cancelled job.",
         "operationId": "retry_job_v1_jobs__job_id__retry_post",
@@ -333,9 +319,7 @@
     },
     "/v1/jobs/{job_id}/cancel": {
       "post": {
-        "tags": [
-          "jobs"
-        ],
+        "tags": ["jobs"],
         "summary": "Cancel Job",
         "description": "Cancel a queued or running job.",
         "operationId": "cancel_job_v1_jobs__job_id__cancel_post",
@@ -376,9 +360,7 @@
     },
     "/v1/jobs/actions": {
       "post": {
-        "tags": [
-          "jobs"
-        ],
+        "tags": ["jobs"],
         "summary": "Bulk Job Actions",
         "description": "Apply retry or cancel actions across multiple jobs.",
         "operationId": "bulk_job_actions_v1_jobs_actions_post",
@@ -418,9 +400,7 @@
     },
     "/v1/bookmarks/{source_id}/outputs": {
       "get": {
-        "tags": [
-          "bookmarks"
-        ],
+        "tags": ["bookmarks"],
         "summary": "Get Bookmark Outputs",
         "description": "Return conversion outputs for a bookmark ordered by creation time descending.\n\nPass ``?latest=true`` to receive only the most recently created output.\nOutput rows are scoped to ``ConversionOutput.owner_id`` so a shared Source\ncannot leak another principal's outputs.",
         "operationId": "get_bookmark_outputs_v1_bookmarks__source_id__outputs_get",
@@ -476,9 +456,7 @@
     },
     "/v1/outputs/{output_id}/manifest": {
       "get": {
-        "tags": [
-          "outputs"
-        ],
+        "tags": ["outputs"],
         "summary": "Get Output Manifest",
         "description": "Return the raw manifest JSON for a conversion output.",
         "operationId": "get_output_manifest_v1_outputs__output_id__manifest_get",
@@ -517,9 +495,7 @@
     },
     "/v1/outputs/{output_id}/markdown": {
       "get": {
-        "tags": [
-          "outputs"
-        ],
+        "tags": ["outputs"],
         "summary": "Get Output Markdown",
         "description": "Return the converted markdown for a conversion output.",
         "operationId": "get_output_markdown_v1_outputs__output_id__markdown_get",
@@ -558,9 +534,7 @@
     },
     "/v1/outputs/{output_id}/figures/{filename}": {
       "get": {
-        "tags": [
-          "outputs"
-        ],
+        "tags": ["outputs"],
         "summary": "Get Output Figure",
         "description": "Return a figure image for a conversion output by bare filename.",
         "operationId": "get_output_figure_v1_outputs__output_id__figures__filename__get",
@@ -629,12 +603,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "s3_prefix",
-          "markdown_key",
-          "manifest_key",
-          "figure_count"
-        ],
+        "required": ["s3_prefix", "markdown_key", "manifest_key", "figure_count"],
         "title": "ArtifactSummary",
         "description": "Summary of conversion artifacts for completed jobs."
       },
@@ -663,9 +632,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "arxiv_id"
-        ],
+        "required": ["arxiv_id"],
         "title": "ArxivRef",
         "description": "Reference to an arXiv paper."
       },
@@ -673,10 +640,7 @@
         "properties": {
           "action": {
             "type": "string",
-            "enum": [
-              "retry",
-              "cancel"
-            ],
+            "enum": ["retry", "cancel"],
             "title": "Action"
           },
           "results": {
@@ -691,11 +655,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "action",
-          "results",
-          "summary"
-        ],
+        "required": ["action", "results", "summary"],
         "title": "BulkActionResponse",
         "description": "Response schema for bulk job actions."
       },
@@ -707,10 +667,7 @@
           },
           "status": {
             "type": "string",
-            "enum": [
-              "success",
-              "error"
-            ],
+            "enum": ["success", "error"],
             "title": "Status"
           },
           "error": {
@@ -726,10 +683,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "job_id",
-          "status"
-        ],
+        "required": ["job_id", "status"],
         "title": "BulkActionResult",
         "description": "Per-job result for bulk actions."
       },
@@ -745,10 +699,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "success",
-          "errors"
-        ],
+        "required": ["success", "errors"],
         "title": "BulkActionSummary",
         "description": "Summary counts for bulk actions."
       },
@@ -756,10 +707,7 @@
         "properties": {
           "action": {
             "type": "string",
-            "enum": [
-              "retry",
-              "cancel"
-            ],
+            "enum": ["retry", "cancel"],
             "title": "Action"
           },
           "job_ids": {
@@ -773,10 +721,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "action",
-          "job_ids"
-        ],
+        "required": ["action", "job_ids"],
         "title": "BulkJobActionRequest",
         "description": "Request schema for bulk job actions."
       },
@@ -788,10 +733,7 @@
           },
           "status": {
             "type": "string",
-            "enum": [
-              "ok",
-              "unavailable"
-            ],
+            "enum": ["ok", "unavailable"],
             "title": "Status"
           },
           "detail": {
@@ -807,24 +749,13 @@
           }
         },
         "type": "object",
-        "required": [
-          "name",
-          "status"
-        ],
+        "required": ["name", "status"],
         "title": "CheckResult",
         "description": "Result of an individual health check."
       },
       "ContentType": {
         "type": "string",
-        "enum": [
-          "pdf",
-          "html",
-          "image",
-          "docx",
-          "pptx",
-          "xlsx",
-          "csv"
-        ],
+        "enum": ["pdf", "html", "image", "docx", "pptx", "xlsx", "csv"],
         "title": "ContentType",
         "description": "Closed enumeration of content types the pipeline can handle."
       },
@@ -872,10 +803,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "owner",
-          "repo"
-        ],
+        "required": ["owner", "repo"],
         "title": "GithubReadmeRef",
         "description": "Reference to a GitHub repo README.\n\n``branch`` is accepted for forward compatibility but currently ignored by\n``GithubReadmeFetcher``, which hardcodes a ``main``/``master`` fallback.\nWiring ``branch`` through to the fetcher is deferred until ``IngressPolicy``\nwidens to admit ``github_readme`` for public submission. The field is also\nexcluded from ``to_dedup_payload()`` so identity is ``(owner, repo)``."
       },
@@ -896,10 +824,7 @@
         "properties": {
           "status": {
             "type": "string",
-            "enum": [
-              "ok",
-              "unavailable"
-            ],
+            "enum": ["ok", "unavailable"],
             "title": "Status"
           },
           "checks": {
@@ -911,9 +836,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "status"
-        ],
+        "required": ["status"],
         "title": "HealthResponse",
         "description": "Health endpoint response."
       },
@@ -932,9 +855,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "body"
-        ],
+        "required": ["body"],
         "title": "InlineHtmlRef",
         "description": "Reference carrying inline HTML/text bytes directly, capped at 64 KiB raw."
       },
@@ -961,12 +882,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "jobs",
-          "total",
-          "limit",
-          "offset"
-        ],
+        "required": ["jobs", "total", "limit", "offset"],
         "title": "JobList",
         "description": "Response schema for job listing."
       },
@@ -1197,10 +1113,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "counts",
-          "total"
-        ],
+        "required": ["counts", "total"],
         "title": "JobStatusCounts",
         "description": "Aggregated conversion job counts by status."
       },
@@ -1240,9 +1153,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "source_ref"
-        ],
+        "required": ["source_ref"],
         "title": "JobSubmission",
         "description": "Request schema for job submission."
       },
@@ -1261,9 +1172,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "bookmark_id"
-        ],
+        "required": ["bookmark_id"],
         "title": "KarakeepBookmarkRef",
         "description": "Reference to a KaraKeep bookmark; resolved to a more specific ref by the resolver."
       },
@@ -1355,10 +1264,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "detail",
-          "retry_after"
-        ],
+        "required": ["detail", "retry_after"],
         "title": "QueueFullResponse",
         "description": "Response schema when the job queue is at capacity."
       },
@@ -1376,9 +1282,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "url"
-        ],
+        "required": ["url"],
         "title": "SingleFileRef",
         "description": "Reference to a SingleFile-archived page.\n\nSkeleton variant: unused at cutover; kept in the union so future wiring\ndoes not require a SourceRef migration."
       },
@@ -1406,9 +1310,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "url"
-        ],
+        "required": ["url"],
         "title": "UrlRef",
         "description": "Reference to a URL. The URL is stored in normalized form for stable identity.\n\nThe URL is normalized for dedup-payload stability but NOT validated against\nthe egress policy at construction time. The load-bearing security check is\nthe fetch-time call to ``async_assert_egress_allowed`` inside the fetcher\npath (``UrlFetcher``, ``ArxivFetcher``, ``GithubReadmeFetcher``, and\n``prefetch_images`` via ``egress_fetch_bytes``).\n\nSee ``.specs/changes/network-egress-policy/design.md`` \u00a7 \"Defer egress\nvalidation to fetch time only\" for the rationale (KaraKeep private\nbase-URL paradox; redundant DNS in API + worker rehydration paths)."
       },
@@ -1445,11 +1347,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "loc",
-          "msg",
-          "type"
-        ],
+        "required": ["loc", "msg", "type"],
         "title": "ValidationError"
       }
     }

@@ -160,6 +160,22 @@ A stage that supplies no adapter is untouched; feature detection is the establis
 
 **Rationale:** The graph API gains public operations; an API change with no tracked schema gives verification nothing to diff.
 
+### Decision: ChunkSourceIdentityRetypedAlongside
+
+**Chosen:** This change also retypes `graph_chunks.source_id` from the dashed string form to `sa.Uuid`, and renames the content index's key from `source_id` to `scope_id` to say what it joins (migration `c4d5e6f7a8b9`).
+
+**Why it carries no delta requirement:** the baseline `pipeline-identity` capability already requires that a column named `source_id` hold a UUID.
+`graph_chunks.source_id` was the last column violating that, recorded as the sole entry in the type-deviation list `tests/test_identity_naming.py` enforces; that list is now empty.
+The code moved into conformance with a contract that already exists, so there is no new contract to state and nothing for `sdd-sync` to merge.
+It is recorded here because a persisted-schema change should not be discoverable only from git history.
+
+**Scope note:** this is a distinct concern from admission and would have been defensible as its own change.
+It is carried here because the deviation was the last one outstanding and the graph tables it touches are the ones admission drives work into.
+The cost is that reverting this change would revert the retype with it.
+
+**Evidence:** `tests/db/migrations/test_chunk_source_id_retype.py` covers the upgrade, the downgrade, and the refusal of a row outside the storage form — the rewrites slice at fixed offsets, so an off-form row would be reshaped into a wrong identity rather than rejected.
+`tests/test_identity_naming.py::test_every_identity_column_carries_the_type_its_name_implies` guards the reconciled state, and `::test_each_recorded_type_deviation_still_exists` keeps the deviation list from rotting.
+
 ## Architecture
 
 ```text
