@@ -33,7 +33,7 @@ from aizk.graph.datamodel import (
     Mention,
     MentionCooccurrence,
 )
-from aizk.graph.extraction_run import extract_document, stale_extraction_sources
+from aizk.graph.extraction_run import extract_document, is_extraction_stale, stale_extraction_sources
 from aizk.graph.extraction_workunit import pending_extraction_sources
 from aizk.graph.job_actions import apply_extraction_readmission
 from aizk.graph.mention_store import active_extraction_run
@@ -221,6 +221,33 @@ def test_the_staleness_verdict_agrees_with_what_re_extraction_reads(
         active = active_extraction_run(session, _SOURCE_A)
         assert active is not None
         assert active.id == second_run_id
+
+
+@pytest.mark.parametrize("supersede", [True, False], ids=["stale", "current"])
+def test_the_single_source_check_agrees_with_the_corpus_derivation(tmp_path: Path, supersede: bool) -> None:
+    """The per-unit check and the corpus scan return the same verdict for a source.
+
+    The re-extract action asks about one source and the dashboard counts them all.
+    If those diverged, a unit could be marked stale and then refused as ineligible.
+    """
+    engine = _make_engine(tmp_path)
+    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
+    _extract(engine, _SOURCE_A)
+    if supersede:
+        _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v2")
+
+    with Session(engine) as session:
+        assert is_extraction_stale(session, _SOURCE_A) is (_SOURCE_A in stale_extraction_sources(session))
+        assert is_extraction_stale(session, _SOURCE_A) is supersede
+
+
+def test_the_single_source_check_is_false_for_an_unextracted_source(tmp_path: Path) -> None:
+    """A source with no active extraction run has nothing to be behind."""
+    engine = _make_engine(tmp_path)
+    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
+
+    with Session(engine) as session:
+        assert is_extraction_stale(session, _SOURCE_A) is False
 
 
 def _seed_unit(engine: Engine, source_id: str, status: WorkUnitStatus) -> int:

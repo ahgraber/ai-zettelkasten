@@ -9,7 +9,7 @@
       "post": {
         "tags": ["contextualizations"],
         "summary": "Submit Job",
-        "description": "Submit one converted document for contextualization.\n\nAnswers 201 with the created work-unit, 200 with the existing one when the\nsubmission resolves to work already enqueued, 404 when no such conversion\noutput exists, and 503 when the stage is at its declared capacity.",
+        "description": "Submit one converted document for contextualization.\n\nAnswers 201 with the created work-unit, 200 with the existing one when the\noutput is already enqueued, 404 when no such output exists, and 503 when the\nstage is at capacity.",
         "operationId": "submit_job_v1_contextualizations_post",
         "requestBody": {
           "required": true,
@@ -34,6 +34,14 @@
           },
           "503": {
             "description": "Stage is at capacity",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before resubmitting.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -41,6 +49,19 @@
                 }
               }
             }
+          },
+          "200": {
+            "description": "Work was already enqueued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextualizationJobResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such conversion output"
           },
           "422": {
             "description": "Validation Error",
@@ -251,7 +272,7 @@
       "post": {
         "tags": ["extractions"],
         "summary": "Submit Job",
-        "description": "Submit one source for entity-mention extraction.\n\nAnswers 201 with the created work-unit, 200 with the existing one when the\nsubmission resolves to work already enqueued, 404 when no such source exists,\nand 503 when the stage is at its declared capacity.",
+        "description": "Submit one source for entity-mention extraction.\n\nAnswers 201 with the created work-unit, 200 with the existing one when the\nsource is already enqueued, 404 when no such source exists, and 503 when the\nstage is at capacity.",
         "operationId": "submit_job_v1_extractions_post",
         "requestBody": {
           "required": true,
@@ -276,6 +297,14 @@
           },
           "503": {
             "description": "Stage is at capacity",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before resubmitting.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -283,6 +312,19 @@
                 }
               }
             }
+          },
+          "200": {
+            "description": "Work was already enqueued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtractionJobResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such source"
           },
           "422": {
             "description": "Validation Error",
@@ -644,6 +686,8 @@
         "properties": {
           "conversion_output_id": {
             "type": "integer",
+            "maximum": 9.223372036854776e18,
+            "minimum": 1.0,
             "title": "Conversion Output Id"
           }
         },

@@ -27,6 +27,7 @@ from dataclasses import dataclass
 import logging
 from typing import TYPE_CHECKING
 
+from sqlalchemy import text
 from sqlmodel import Session, func, select
 
 from aizk.graph.datamodel import ContextualizationJob, ExtractionJob
@@ -71,7 +72,7 @@ def run_contextualization_backfill(
     limit: int | None,
     confirmed: bool,
     dry_run: bool,
-    queue_max_depth: int = 0,
+    queue_max_depth: int,
 ) -> BackfillResult:
     """Enqueue contextualization work-units for conversion outputs.
 
@@ -94,7 +95,7 @@ def run_contextualization_backfill(
             ``output_ids`` is supplied or when ``dry_run`` is set.
         dry_run: Resolve and enqueue, then roll back instead of committing.
         queue_max_depth: The stage's declared capacity over its actionable
-            backlog; ``0`` (the default) declares no limit.
+            backlog; ``0`` declares no limit, and every caller must say which it means.
 
     Returns:
         The run's :class:`BackfillResult`.
@@ -107,6 +108,12 @@ def run_contextualization_backfill(
         ValueError: If a named output id has no conversion output.
     """
     with Session(engine) as session:
+        # Take the writer lock before reading the backlog. The capacity check counts
+        # and then inserts; under a deferred transaction another writer can commit
+        # between the two, and the insert either overshoots the limit or fails on a
+        # snapshot conflict. Holding the lock across the pair makes the bound exact
+        # here, as it already is on the intake and admission paths.
+        session.exec(text("BEGIN IMMEDIATE"))
         targets = list(output_ids) if output_ids is not None else latest_output_ids_per_source(session, limit=limit)
         before = _unit_count(session, ContextualizationJob)
 
@@ -144,7 +151,7 @@ def run_extraction_backfill(
     source_ids: "Sequence[UUID] | None",
     confirmed: bool,
     dry_run: bool,
-    queue_max_depth: int = 0,
+    queue_max_depth: int,
 ) -> BackfillResult:
     """Enqueue extraction work-units for sources with something to extract.
 
@@ -165,7 +172,7 @@ def run_extraction_backfill(
             ``source_ids`` is supplied or when ``dry_run`` is set.
         dry_run: Resolve and enqueue, then roll back instead of committing.
         queue_max_depth: The stage's declared capacity over its actionable
-            backlog; ``0`` (the default) declares no limit.
+            backlog; ``0`` declares no limit, and every caller must say which it means.
 
     Returns:
         The run's :class:`BackfillResult`.
@@ -177,6 +184,8 @@ def run_extraction_backfill(
             stage is at capacity.
     """
     with Session(engine) as session:
+        # Writer lock first, for the reason given in the contextualization backfill.
+        session.exec(text("BEGIN IMMEDIATE"))
         before = _unit_count(session, ExtractionJob)
 
         if source_ids is not None:

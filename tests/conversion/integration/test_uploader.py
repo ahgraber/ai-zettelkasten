@@ -479,4 +479,3 @@ def test_upload_converted_uploads_when_hash_differs(monkeypatch, db_session: Ses
     assert len(outputs) == 1
     assert outputs[0].markdown_key == f"{bookmark.source_id}/output.md", "markdown_key must be a bare S3 key"
     assert outputs[0].manifest_key == f"{bookmark.source_id}/manifest.json", "manifest_key must be a bare S3 key"
-

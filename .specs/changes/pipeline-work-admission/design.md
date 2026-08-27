@@ -44,7 +44,11 @@ Extraction Worker Process:
 
 **Rationale:** There is no shared composition root that enumerates stages; each worker wires only its own handler and runner, and admission inherits that shape.
 No new process, no new supervision, no cross-stage registry.
-Pausing admission without stopping execution — the operational reason to want a separate command — is served by the per-stage enable flag, which takes effect on the next loop iteration.
+
+**Enablement is read once, at worker startup.**
+The flag comes from the process environment, which a running process cannot observe changing, so there is no live-reload to build — pausing admission means restarting that stage's worker.
+This is the cost of the in-worker design: a separate scheduled command would have been pausable without touching execution.
+It is accepted because the worker drains its in-flight units on restart and admission is idempotent, so a restart loses no work.
 
 **Alternatives considered:**
 
@@ -69,10 +73,32 @@ Per-batch headroom avoids a `COUNT` per row on bulk paths.
 **Capacity definition:** actionable backlog = units in `QUEUED` status plus failed units awaiting retry, mirroring conversion's actionable set.
 The refusal raises a dedicated exception type; each surface maps it (intake → HTTP 503 + `Retry-After`; admission loop → stop admitting, log remainder; CLI → non-zero exit with message).
 
+**Every caller states its limit.**
+The enqueue primitives take the limit as a required argument rather than defaulting to unlimited.
+A default would make the "no bypass" claim above false for any caller that forgot it, and forgetting is silent — the work is enqueued and the limit simply does not apply.
+Callers that genuinely want no limit pass `0` and say so.
+
+**The count and the insert share one transaction on every path.**
+The check counts the actionable backlog and then inserts; those are two statements, so a writer committing between them would let the backlog pass the limit.
+Every path — intake, admission, and both backfill commands — now takes the writer lock with `BEGIN IMMEDIATE` before the count, so on SQLite the pair is serialized and the bound is exact.
+
+Requiring the pair to share a transaction is the portable half of that, and it is what the delta spec states.
+Whether sharing a transaction is _sufficient_ is the backend's business: SQLite gives it for free because there is one writer, while Postgres permits two concurrent transactions to read the same backlog and both insert.
+The spec therefore obliges the transaction, not a particular locking mechanism — which keeps the contract at the intersection of what both declared backends can honor, per the contract-floor rule, while still forbidding the implementation that would be unfixable.
+
+**Preparing for Postgres:** because the count and insert are already adjacent inside one caller-owned transaction, making the bound exact there is a change at one seam — `SELECT ... FOR UPDATE` on a per-stage limits row, an advisory lock keyed by stage, or `SERIALIZABLE` with retry.
+A path that counted in one transaction and inserted in another could not be fixed at the seam at all, which is the failure the spec clause exists to prevent.
+
 ### Decision: IntakeCallsDomainEnqueueInProcess
 
 **Chosen:** `POST /v1/contextualizations` and `POST /v1/extractions` are routes on the existing graph service that resolve the referenced upstream artifact, then call the stage's domain enqueue in the request transaction.
 The capacity refusal maps to the same 503 + `Retry-After` response shape the conversion API returns.
+
+**Deployment invariant:** the graph service resolves a single deployment principal (`trust_network`) and its listener binds `0.0.0.0`, because the console is reached from a different machine than the one serving it.
+Intake is therefore reachable by anything that can reach the listener, and — unlike the read, retry and cancel operations beside it — submitting work commits external inference spend.
+**The network is the authorization boundary**: the service must run on a trusted network, not one it does not control.
+Application-layer tokens were considered and rejected: for a single-owner system the minting, rotation and revocation cost is ongoing and the threat it addresses is already excluded by the deployment.
+The spend exposure is bounded instead by the stage's capacity limit and by automatic admission being off by default.
 
 **Rationale:** The throttle is already universal at the enqueue seam, so intake needs no gate of its own; HTTP indirection between the worker and the service would only break the worker's independence.
 Request handling mirrors conversion's submission ordering: resolve → dedupe lookup (200 with existing unit) → capacity → create (201).

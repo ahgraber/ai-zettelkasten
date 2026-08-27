@@ -172,7 +172,7 @@ def test_an_intake_unit_equals_a_domain_enqueued_unit(client: TestClient, engine
 
     client.post("/v1/extractions", json={"source_id": str(_SOURCE_A)})
     with Session(engine) as session:
-        enqueue_extraction(session, source_id=_SOURCE_B)
+        enqueue_extraction(session, source_id=_SOURCE_B, queue_max_depth=0)
         session.commit()
 
     with Session(engine) as session:

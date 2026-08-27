@@ -53,6 +53,8 @@ from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from sqlmodel import Session
 
 logger = logging.getLogger(__name__)
@@ -76,7 +78,7 @@ def _idempotency_key(source_id: UUID) -> str:
     return f"source:{source_id}"
 
 
-def enqueue_extraction(session: "Session", *, source_id: UUID, queue_max_depth: int = 0) -> ExtractionJob:
+def enqueue_extraction(session: "Session", *, source_id: UUID, queue_max_depth: int) -> ExtractionJob:
     """Enqueue one source's extraction work-unit (incremental mode), deduped on ``idempotency_key``.
 
     If a work-unit for this source already exists — in **any** status,
@@ -97,7 +99,7 @@ def enqueue_extraction(session: "Session", *, source_id: UUID, queue_max_depth: 
         session: Active session; the caller owns commit/rollback.
         source_id: The durable source identity to extract.
         queue_max_depth: The stage's declared capacity over its actionable
-            backlog; ``0`` (the default) declares no limit.
+            backlog; ``0`` declares no limit, and every caller must say which it means.
 
     Returns:
         The existing or newly-created :class:`~aizk.graph.datamodel.ExtractionJob`.
@@ -142,6 +144,13 @@ def _sources_with_active_chunking_run(session: "Session") -> list[UUID]:
     return [UUID(scope_id) for scope_id in scope_ids]
 
 
+def _enqueued_sources(session: "Session", source_ids: "Sequence[UUID]") -> set[UUID]:
+    """Return which of ``source_ids`` already have an extraction work-unit."""
+    if not source_ids:
+        return set()
+    return set(session.exec(select(ExtractionJob.source_id).where(ExtractionJob.source_id.in_(source_ids))).all())
+
+
 def pending_extraction_sources(session: "Session", *, limit: int | None = None) -> list[UUID]:
     """Return the sources that should have an extraction work-unit but do not.
 
@@ -183,7 +192,7 @@ def enqueue_extraction_backfill(
     session: "Session",
     *,
     confirmed: bool = False,
-    queue_max_depth: int = 0,
+    queue_max_depth: int,
 ) -> list[ExtractionJob]:
     """Enqueue extraction work-units for every eligible source (bulk/backfill mode).
 
@@ -205,7 +214,7 @@ def enqueue_extraction_backfill(
         confirmed: Explicit human approval for the corpus-wide operation; when
             ``False`` (the default) nothing is enqueued and the gate raises.
         queue_max_depth: The stage's declared capacity over its actionable
-            backlog; ``0`` (the default) declares no limit.
+            backlog; ``0`` declares no limit, and every caller must say which it means.
 
     Returns:
         The enqueued (or reused) work-units, one per admitted source.
@@ -214,11 +223,15 @@ def enqueue_extraction_backfill(
         ReprocessingConfirmationError: When ``confirmed`` is ``False``.
     """
     require_reprocessing_confirmation("corpus-wide extraction backfill", confirmed=confirmed)
+    eligible = _sources_with_active_chunking_run(session)
     admitted = within_headroom(
         session,
         ExtractionJob,
-        _sources_with_active_chunking_run(session),
+        eligible,
         stage=EXTRACTION_STAGE,
         limit=queue_max_depth,
+        already_enqueued=_enqueued_sources(session, eligible),
     )
-    return [enqueue_extraction(session, source_id=source_id) for source_id in admitted]
+    return [
+        enqueue_extraction(session, source_id=source_id, queue_max_depth=queue_max_depth) for source_id in admitted
+    ]

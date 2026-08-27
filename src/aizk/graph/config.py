@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -163,6 +164,18 @@ class AdmissionConfig(BaseSettings):
     spend, so starting the flow must be deliberate. Enabling one stage never
     enables the other. ``admission_interval_seconds`` is how often an enabled
     stage's worker evaluates its pending set.
+
+    Every numeric field is bounded, because each one fails quietly rather than
+    loudly when it is out of range: a negative depth reads as "no limit" — the
+    opposite of what someone setting ``-1`` to mean "block everything" intends — a
+    negative ``Retry-After`` is not a valid header value, and a non-positive or
+    non-finite interval makes the admission loop's wait return at once, spinning
+    the pass against the database as fast as it can. (CPython's
+    ``threading.Condition.wait`` takes its non-blocking branch for any timeout
+    that is not greater than zero, and ``nan`` compares false against every bound;
+    the documented contract says only that a timeout "should be" a number of
+    seconds, so the behavior is not one to lean on.) Rejecting these at
+    construction keeps them from reaching the runtime at all.
     """
 
     model_config = SettingsConfigDict(
@@ -171,10 +184,10 @@ class AdmissionConfig(BaseSettings):
         extra="ignore",
     )
 
-    contextualization_queue_max_depth: int = 0
-    extraction_queue_max_depth: int = 0
-    queue_retry_after_seconds: int = 30
+    contextualization_queue_max_depth: int = Field(default=0, ge=0)
+    extraction_queue_max_depth: int = Field(default=0, ge=0)
+    queue_retry_after_seconds: int = Field(default=30, ge=1)
 
     admission_contextualization_enabled: bool = False
     admission_extraction_enabled: bool = False
-    admission_interval_seconds: float = 60.0
+    admission_interval_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)

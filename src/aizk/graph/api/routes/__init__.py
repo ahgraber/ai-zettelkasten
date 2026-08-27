@@ -16,7 +16,7 @@ unit — the worker resolves the outcome from its slot state).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 from sqlalchemy import func, text
 from sqlmodel import select
@@ -63,6 +63,24 @@ def _get_or_404(session: "Session", job_id: int) -> ContextualizationJob:
     return job
 
 
+#: The capacity refusal, declared so a generated client knows to read the header
+#: rather than discovering it at runtime. Each intake route adds its own 200 and
+#: 404 to this, since both are returned from the handler body and neither is
+#: inferable from the decorator's ``status_code``.
+INTAKE_RESPONSES: dict[int | str, dict[str, Any]] = {
+    503: {
+        "model": QueueFullResponse,
+        "description": "Stage is at capacity",
+        "headers": {
+            "Retry-After": {
+                "description": "Seconds to wait before resubmitting.",
+                "schema": {"type": "integer"},
+            }
+        },
+    },
+}
+
+
 def queue_full_response(retry_after_seconds: int) -> JSONResponse:
     """Return the fleet's capacity refusal: 503 carrying ``Retry-After``.
 
@@ -81,7 +99,11 @@ def queue_full_response(retry_after_seconds: int) -> JSONResponse:
     "",
     response_model=ContextualizationJobResponse,
     status_code=status.HTTP_201_CREATED,
-    responses={503: {"model": QueueFullResponse, "description": "Stage is at capacity"}},
+    responses=INTAKE_RESPONSES
+    | {
+        200: {"model": ContextualizationJobResponse, "description": "Work was already enqueued"},
+        404: {"description": "No such conversion output"},
+    },
 )
 def submit_job(
     submission: ContextualizationSubmission,

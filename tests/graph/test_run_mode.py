@@ -142,9 +142,14 @@ def _process(engine, *, mode: str) -> dict:
     """Enqueue the document in ``mode``, run the unit-of-work, and return its snapshot."""
     with Session(engine) as session:
         if mode == "bulk":
-            enqueue_backfill(session, [(_OTHER_OUTPUT_ID, _OTHER_AIZK_UUID), (_OUTPUT_ID, _AIZK_UUID)], confirmed=True)
+            enqueue_backfill(
+                session,
+                [(_OTHER_OUTPUT_ID, _OTHER_AIZK_UUID), (_OUTPUT_ID, _AIZK_UUID)],
+                confirmed=True,
+                queue_max_depth=0,
+            )
         else:
-            enqueue_document(session, conversion_output_id=_OUTPUT_ID, source_id=_AIZK_UUID)
+            enqueue_document(session, conversion_output_id=_OUTPUT_ID, source_id=_AIZK_UUID, queue_max_depth=0)
         session.commit()
     _run(engine)
     return _snapshot(engine)
@@ -178,12 +183,12 @@ def test_enqueue_dedupes_on_idempotency_key(tmp_path: Path) -> None:
     """Re-enqueueing the same conversion output reuses the open work-unit, in either mode."""
     engine = _make_engine(tmp_path, "dedupe.db")
     with Session(engine) as session:
-        first = enqueue_document(session, conversion_output_id=_OUTPUT_ID, source_id=_AIZK_UUID)
+        first = enqueue_document(session, conversion_output_id=_OUTPUT_ID, source_id=_AIZK_UUID, queue_max_depth=0)
         session.commit()
         first_id = first.id
 
-        again = enqueue_document(session, conversion_output_id=_OUTPUT_ID, source_id=_AIZK_UUID)
-        (backfilled,) = enqueue_backfill(session, [(_OUTPUT_ID, _AIZK_UUID)], confirmed=True)
+        again = enqueue_document(session, conversion_output_id=_OUTPUT_ID, source_id=_AIZK_UUID, queue_max_depth=0)
+        (backfilled,) = enqueue_backfill(session, [(_OUTPUT_ID, _AIZK_UUID)], confirmed=True, queue_max_depth=0)
         session.commit()
 
         assert again.id == first_id

@@ -7,6 +7,7 @@ only the environment the test itself sets and never the developer's `.env`.
 
 from __future__ import annotations
 
+from pydantic import ValidationError
 import pytest
 
 from aizk.graph.config import AdmissionConfig
@@ -41,6 +42,30 @@ def test_each_field_reads_its_own_environment_variable(
     monkeypatch.setenv(env_var, "17")
 
     assert getattr(AdmissionConfig(_env_file=None), field) == 17
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("contextualization_queue_max_depth", -1),
+        ("extraction_queue_max_depth", -1),
+        ("queue_retry_after_seconds", 0),
+        ("queue_retry_after_seconds", -30),
+        ("admission_interval_seconds", 0),
+        ("admission_interval_seconds", -1.0),
+        ("admission_interval_seconds", float("inf")),
+        ("admission_interval_seconds", float("nan")),
+    ],
+)
+def test_out_of_range_settings_are_rejected_at_construction(field: str, value: float) -> None:
+    """Each of these fails quietly rather than loudly at runtime, so it is refused up front.
+
+    A negative depth reads as "no limit" — the opposite of what setting it to -1
+    suggests. A non-positive or non-finite interval makes the loop's wait return
+    immediately, spinning the admission pass against the database.
+    """
+    with pytest.raises(ValidationError):
+        AdmissionConfig(_env_file=None, **{field: value})
 
 
 def test_automatic_admission_is_off_by_default() -> None:

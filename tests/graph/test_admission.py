@@ -183,7 +183,7 @@ def test_a_pass_admits_exactly_the_pending_set(tmp_path: Path) -> None:
     _seed_chunked_sources(engine, _UUID_A, _UUID_B)
     with Session(engine) as session:
         # _UUID_A already has a unit; _UUID_C is unchunked. Only _UUID_B is pending.
-        enqueue_extraction(session, source_id=_UUID_A)
+        enqueue_extraction(session, source_id=_UUID_A, queue_max_depth=0)
         _add_output(session, output_id=99, source_id=_UUID_C)
         session.commit()
 
@@ -220,7 +220,7 @@ def test_an_admitted_unit_equals_a_manually_enqueued_one(tmp_path: Path) -> None
 
     run_admission_pass(admitted_engine, contextualization_adapter(_config(admission_contextualization_enabled=True)))
     with Session(enqueued_engine) as session:
-        enqueue_output(session, 1)
+        enqueue_output(session, 1, queue_max_depth=0)
         session.commit()
 
     def _fields(unit: ContextualizationJob) -> tuple:

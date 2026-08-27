@@ -26,6 +26,7 @@ from aizk.graph.enqueue import (
     latest_output_ids_per_source,
     pending_contextualization_outputs,
 )
+from aizk.graph.markdown_source import ConversionOutputFreshness
 from aizk.graph.workunit import enqueue_backfill
 from aizk.pipeline.invalidation import ReprocessingConfirmationError
 from aizk.pipeline.lifecycle import WorkUnitStatus
@@ -77,7 +78,7 @@ def test_enqueue_output_resolves_source_id_from_the_conversion_output(tmp_path: 
         _add_output(session, output_id=42, source_id=_UUID_A)
         session.commit()
 
-        job = enqueue_output(session, 42)
+        job = enqueue_output(session, 42, queue_max_depth=0)
         session.commit()
 
         assert job.conversion_output_id == 42
@@ -90,7 +91,7 @@ def test_enqueue_output_rejects_unknown_output(tmp_path: Path) -> None:
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
         with pytest.raises(ValueError, match="conversion output 7 not found"):
-            enqueue_output(session, 7)
+            enqueue_output(session, 7, queue_max_depth=0)
         assert session.exec(select(ContextualizationJob)).all() == []
 
 
@@ -102,10 +103,10 @@ def test_enqueue_backfill_resolves_each_and_dedupes(tmp_path: Path) -> None:
         _add_output(session, output_id=2, source_id=_UUID_B)
         session.commit()
 
-        first = enqueue_backfill_outputs(session, [1, 2], confirmed=True)
+        first = enqueue_backfill_outputs(session, [1, 2], confirmed=True, queue_max_depth=0)
         session.commit()
         # A second backfill overlapping the same outputs reuses the open units.
-        second = enqueue_backfill_outputs(session, [1, 2], confirmed=True)
+        second = enqueue_backfill_outputs(session, [1, 2], confirmed=True, queue_max_depth=0)
         session.commit()
 
         assert {j.source_id for j in first} == {_UUID_A, _UUID_B}
@@ -121,7 +122,7 @@ def test_enqueue_backfill_outputs_requires_confirmation(tmp_path: Path) -> None:
         session.commit()
 
         with pytest.raises(ReprocessingConfirmationError, match="will not run until it is explicitly confirmed"):
-            enqueue_backfill_outputs(session, [1])
+            enqueue_backfill_outputs(session, [1], queue_max_depth=0)
         assert session.exec(select(ContextualizationJob)).all() == [], "nothing is enqueued without confirmation"
 
 
@@ -168,8 +169,8 @@ def test_enqueue_output_without_a_declared_limit_accepts_work(tmp_path: Path) ->
         _add_output(session, output_id=2, source_id=_UUID_B)
         session.commit()
 
-        enqueue_output(session, 1)
-        enqueue_output(session, 2)
+        enqueue_output(session, 1, queue_max_depth=0)
+        enqueue_output(session, 2, queue_max_depth=0)
         session.commit()
 
         assert len(session.exec(select(ContextualizationJob)).all()) == 2
@@ -205,6 +206,32 @@ def test_enqueue_backfill_admits_only_the_batch_headroom(tmp_path: Path) -> None
 
 
 # --- pending-work derivation ------------------------------------------------
+
+
+def test_the_pending_derivation_and_the_freshness_gate_pick_the_same_output(tmp_path: Path) -> None:
+    """Admission and the execute-time gate agree on which output is current.
+
+    Pinned against ids and timestamps that disagree, because that is when the two
+    could diverge. A divergence is silent and unrecoverable: admission enqueues the
+    output it thinks is current, the worker rejects it as superseded and writes
+    nothing, and the source counts as covered from then on.
+    """
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        # The lower id carries the later timestamp, so ordering by created_at and
+        # ordering by id disagree about the winner.
+        _add_output(session, output_id=1, source_id=_UUID_A, created_at=_EPOCH + dt.timedelta(days=1))
+        _add_output(session, output_id=2, source_id=_UUID_A, created_at=_EPOCH)
+        session.commit()
+
+        (pending_output_id,) = pending_contextualization_outputs(session)
+        freshness = ConversionOutputFreshness()
+
+        assert freshness.is_current(session, _UUID_A, pending_output_id), (
+            "the output admission would enqueue is the one the worker accepts"
+        )
+        assert not freshness.is_current(session, _UUID_A, 1), "the superseded output is not current"
+        assert pending_output_id == 2
 
 
 def test_a_never_contextualized_source_is_pending(tmp_path: Path) -> None:

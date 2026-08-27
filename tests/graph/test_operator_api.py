@@ -179,6 +179,16 @@ def test_submitting_an_unknown_output_is_rejected_cleanly(client: TestClient, en
         assert session.exec(select(ContextualizationJob)).all() == []
 
 
+@pytest.mark.parametrize("output_id", [0, -1, 2**63], ids=["zero", "negative", "beyond-rowid"])
+def test_an_id_outside_the_key_range_is_a_rejection_not_a_crash(client: TestClient, engine, output_id: int) -> None:
+    """An id that cannot name a row is refused at the boundary rather than reaching SQLite."""
+    response = client.post("/v1/contextualizations", json={"conversion_output_id": output_id})
+
+    assert response.status_code == 422
+    with Session(engine) as session:
+        assert session.exec(select(ContextualizationJob)).all() == []
+
+
 def test_submit_refuses_new_work_at_capacity(client_factory, engine) -> None:
     """At the stage's declared capacity a new submission is refused with the fleet's rejection shape."""
     _add_output(engine, output_id=1)
@@ -216,7 +226,7 @@ def test_an_intake_unit_equals_a_domain_enqueued_unit(client: TestClient, engine
 
     client.post("/v1/contextualizations", json={"conversion_output_id": 1})
     with Session(engine) as session:
-        enqueue_output(session, 2)
+        enqueue_output(session, 2, queue_max_depth=0)
         session.commit()
 
     with Session(engine) as session:

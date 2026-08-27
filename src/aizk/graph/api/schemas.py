@@ -11,15 +11,19 @@ from __future__ import annotations
 import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from aizk.pipeline.lifecycle import WorkUnitStatus
+
+#: Upper bound for a persisted integer key. A value beyond it cannot name a row,
+#: and reaches SQLite as an ``OverflowError`` — a 500 — rather than a rejection.
+_MAX_ROWID = 2**63 - 1
 
 
 class ContextualizationSubmission(BaseModel):
     """A request to contextualize one converted document."""
 
-    conversion_output_id: int
+    conversion_output_id: int = Field(ge=1, le=_MAX_ROWID)
 
 
 class ExtractionSubmission(BaseModel):

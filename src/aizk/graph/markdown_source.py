@@ -13,10 +13,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from sqlalchemy import func
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.graph.enqueue import latest_output_id
 from aizk.graph.workunit import LoadedMarkdown
 
 if TYPE_CHECKING:
@@ -85,7 +85,4 @@ class ConversionOutputFreshness:
         output = session.get(ConversionOutput, conversion_output_id)
         if output is None or output.source_id != source_id:
             return False
-        latest_id = session.exec(
-            select(func.max(ConversionOutput.id)).where(ConversionOutput.source_id == source_id)
-        ).one()
-        return conversion_output_id >= latest_id
+        return conversion_output_id >= latest_output_id(session, source_id)
