@@ -21,37 +21,19 @@ from fastapi.testclient import TestClient
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
-
-def _make_conversion_job(session: Session, *, source_id, idempotency_key, status, owner_id="self", title="Doc"):
-    """Insert and return a conversion job."""
-    job = ConversionJob(
-        source_id=source_id,
-        owner_id=owner_id,
-        title=title,
-        payload_version=1,
-        status=status,
-        attempts=0,
-        idempotency_key=idempotency_key,
-    )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    return job
-
-
 # --- L1: LIKE metacharacters match literally ---------------------------------
 
 
 def test_search_treats_underscore_as_a_literal_not_a_wildcard(
-    client: TestClient, db_session: Session, seed_source
+    client: TestClient, db_session: Session, seed_conversion_job, seed_source
 ) -> None:
     """A search containing ``_`` matches the character literally, not as a single-char wildcard."""
     literal = seed_source(db_session, karakeep_id="bm_underscore", title="a_c")
     wildcardish = seed_source(db_session, karakeep_id="bm_abc", title="abc")
-    hit = _make_conversion_job(
+    hit = seed_conversion_job(
         db_session, source_id=literal.source_id, idempotency_key="us-hit", status=ConversionJobStatus.QUEUED
     )
-    miss = _make_conversion_job(
+    miss = seed_conversion_job(
         db_session, source_id=wildcardish.source_id, idempotency_key="us-miss", status=ConversionJobStatus.QUEUED
     )
 
@@ -101,10 +83,12 @@ def test_orphan_source_unit_lists_and_counts_consistently(
 # --- L2 + L3: delete leaves a trace and its control confirms ------------------
 
 
-def test_delete_emits_a_structured_audit_log(client: TestClient, db_session: Session, seed_source, caplog) -> None:
+def test_delete_emits_a_structured_audit_log(
+    client: TestClient, db_session: Session, seed_conversion_job, seed_source, caplog
+) -> None:
     """A delete records a structured audit line — the only durable trace of the event-less delete."""
     source = seed_source(db_session, karakeep_id="bm_auditlog", title="Audit Doc")
-    job = _make_conversion_job(
+    job = seed_conversion_job(
         db_session, source_id=source.source_id, idempotency_key="audit-del", status=ConversionJobStatus.FAILED_PERM
     )
 
@@ -120,10 +104,12 @@ def test_delete_emits_a_structured_audit_log(client: TestClient, db_session: Ses
     assert record.principal == "self"
 
 
-def test_delete_control_carries_a_confirmation_guard(client: TestClient, db_session: Session, seed_source) -> None:
+def test_delete_control_carries_a_confirmation_guard(
+    client: TestClient, db_session: Session, seed_conversion_job, seed_source
+) -> None:
     """The conversion monitor's Delete button carries an htmx confirmation guard; Retry does not."""
     source = seed_source(db_session, karakeep_id="bm_confirm", title="Confirm Doc")
-    _make_conversion_job(
+    seed_conversion_job(
         db_session, source_id=source.source_id, idempotency_key="confirm-job", status=ConversionJobStatus.FAILED_PERM
     )
 
