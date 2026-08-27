@@ -206,6 +206,35 @@ def test_bulk_re_extract_applies_to_stale_units_and_skips_the_rest(
     assert db_session.get(ExtractionJob, current_job.id).status is WorkUnitStatus.SUCCEEDED
 
 
+def test_bulk_re_extract_applies_to_every_stale_unit_in_the_selection(
+    client: TestClient, db_session, seed_source, seed_extraction_job, seed_extraction_state
+) -> None:
+    """Stale units selected together are all re-extracted, not just the first.
+
+    The mixed-selection case covers eligibility; this covers the bulk arm of
+    "individually or in bulk", where every member of the selection is eligible.
+    """
+    jobs = []
+    for index in range(2):
+        source = seed_source(db_session, karakeep_id=f"bm_stale_bulk_{index}", title=f"Stale Doc {index}")
+        seed_extraction_state(db_session, source_id=source.source_id, current=False)
+        jobs.append(seed_extraction_job(db_session, source_id=source.source_id, status=WorkUnitStatus.SUCCEEDED))
+
+    response = client.post(
+        "/ui/tasks/extraction/actions",
+        data={"action": "re-extract", "job_ids": [job.id for job in jobs]},
+    )
+
+    assert response.status_code == 200
+    assert "2 jobs re-extracted" in response.text
+    assert "skipped as ineligible" not in response.text
+    db_session.expire_all()
+    assert [db_session.get(ExtractionJob, job.id).status for job in jobs] == [
+        WorkUnitStatus.QUEUED,
+        WorkUnitStatus.QUEUED,
+    ]
+
+
 # --- coverage: pending listing and stale marking ------------------------------
 
 
@@ -222,6 +251,28 @@ def test_pending_sources_are_listed_with_their_identity_and_title(client: TestCl
     assert response.status_code == 200
     assert f'data-pending-source="{source.source_id}"' in response.text
     assert "Behind Doc" in response.text
+
+
+def test_a_pending_source_without_a_title_falls_back_to_its_identity(
+    client: TestClient, db_session, seed_source
+) -> None:
+    """The pending listing applies the monitor's title contract, source-id fallback included.
+
+    The requirement is that a pending source reads the same way as a listed
+    work-unit, so the fallback both surfaces use needs evidence on both sides —
+    the work-unit side has ``test_jobs_table_title_falls_back_to_source_id_when_title_null``.
+    """
+    source = seed_source(db_session, karakeep_id="bm_behind_untitled", title=None)
+    db_session.add(
+        PipelineRun(stage=CHUNKING_STAGE, scope_id=str(source.source_id), status=RunStatus.ACTIVE, derivation_key="dk")
+    )
+    db_session.commit()
+
+    response = client.get("/ui/tasks", params={"stage": "extraction"})
+
+    assert response.status_code == 200
+    assert f'data-pending-source="{source.source_id}"' in response.text
+    assert f'<td class="title-cell">{source.source_id}</td>' in response.text
 
 
 def test_the_pending_listing_matches_the_dashboard_count(client: TestClient, db_session, seed_source) -> None:
