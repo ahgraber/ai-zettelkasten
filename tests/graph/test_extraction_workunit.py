@@ -42,7 +42,7 @@ def test_enqueue_extraction_creates_a_queued_unit(tmp_path: Path) -> None:
     """A first enqueue for a source inserts a QUEUED work-unit carrying its source_id."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        job = enqueue_extraction(session, source_id=_UUID_A)
+        job = enqueue_extraction(session, source_id=_UUID_A, queue_max_depth=0)
         session.commit()
 
         assert job.source_id == _UUID_A
@@ -53,9 +53,9 @@ def test_enqueue_extraction_reuses_the_open_unit(tmp_path: Path) -> None:
     """Re-enqueueing the same source reuses its open work-unit rather than duplicating it (idempotency)."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        first = enqueue_extraction(session, source_id=_UUID_A)
+        first = enqueue_extraction(session, source_id=_UUID_A, queue_max_depth=0)
         session.commit()
-        second = enqueue_extraction(session, source_id=_UUID_A)
+        second = enqueue_extraction(session, source_id=_UUID_A, queue_max_depth=0)
         session.commit()
 
         assert second.id == first.id
@@ -70,9 +70,9 @@ def test_enqueue_extraction_backfill_resolves_eligible_sources_and_dedupes(tmp_p
         record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_B), derivation_key="dk-b")
         session.commit()
 
-        first = enqueue_extraction_backfill(session, confirmed=True)
+        first = enqueue_extraction_backfill(session, confirmed=True, queue_max_depth=0)
         session.commit()
-        second = enqueue_extraction_backfill(session, confirmed=True)
+        second = enqueue_extraction_backfill(session, confirmed=True, queue_max_depth=0)
         session.commit()
 
         assert {j.source_id for j in first} == {_UUID_A, _UUID_B}
@@ -87,7 +87,7 @@ def test_enqueue_extraction_backfill_excludes_sources_without_a_chunking_run(tmp
         record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
         session.commit()
 
-        jobs = enqueue_extraction_backfill(session, confirmed=True)
+        jobs = enqueue_extraction_backfill(session, confirmed=True, queue_max_depth=0)
         session.commit()
 
         assert {j.source_id for j in jobs} == {_UUID_A}
@@ -226,8 +226,8 @@ def test_enqueue_extraction_without_a_declared_limit_accepts_work(tmp_path: Path
     """A stage declaring no capacity limit enqueues without a capacity refusal."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        enqueue_extraction(session, source_id=_UUID_A)
-        enqueue_extraction(session, source_id=_UUID_B)
+        enqueue_extraction(session, source_id=_UUID_A, queue_max_depth=0)
+        enqueue_extraction(session, source_id=_UUID_B, queue_max_depth=0)
         session.commit()
 
         assert len(session.exec(select(ExtractionJob)).all()) == 2
@@ -258,5 +258,5 @@ def test_enqueue_extraction_backfill_requires_confirmation(tmp_path: Path) -> No
         session.commit()
 
         with pytest.raises(ReprocessingConfirmationError, match="will not run until it is explicitly confirmed"):
-            enqueue_extraction_backfill(session)
+            enqueue_extraction_backfill(session, queue_max_depth=0)
         assert session.exec(select(ExtractionJob)).all() == [], "nothing is enqueued without confirmation"

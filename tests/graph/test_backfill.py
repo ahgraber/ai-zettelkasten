@@ -81,7 +81,9 @@ def test_contextualization_backfill_enqueues_the_latest_output_per_source(tmp_pa
         _add_output(session, output_id=3, source_id=_UUID_B, created_at=_EPOCH)
         session.commit()
 
-    result = run_contextualization_backfill(engine, output_ids=None, limit=None, confirmed=True, dry_run=False)
+    result = run_contextualization_backfill(
+        engine, output_ids=None, limit=None, confirmed=True, dry_run=False, queue_max_depth=0
+    )
 
     assert (result.targeted, result.enqueued, result.reused) == (2, 2, 0)
     with Session(engine) as session:
@@ -97,8 +99,12 @@ def test_contextualization_backfill_rerun_enqueues_nothing_new(tmp_path: Path) -
         _add_output(session, output_id=2, source_id=_UUID_B)
         session.commit()
 
-    run_contextualization_backfill(engine, output_ids=None, limit=None, confirmed=True, dry_run=False)
-    second = run_contextualization_backfill(engine, output_ids=None, limit=None, confirmed=True, dry_run=False)
+    run_contextualization_backfill(
+        engine, output_ids=None, limit=None, confirmed=True, dry_run=False, queue_max_depth=0
+    )
+    second = run_contextualization_backfill(
+        engine, output_ids=None, limit=None, confirmed=True, dry_run=False, queue_max_depth=0
+    )
 
     assert (second.targeted, second.enqueued, second.reused) == (2, 0, 2)
     assert _count(engine, ContextualizationJob) == 2
@@ -112,7 +118,9 @@ def test_contextualization_backfill_dry_run_writes_nothing(tmp_path: Path) -> No
         _add_output(session, output_id=2, source_id=_UUID_B)
         session.commit()
 
-    result = run_contextualization_backfill(engine, output_ids=None, limit=None, confirmed=True, dry_run=True)
+    result = run_contextualization_backfill(
+        engine, output_ids=None, limit=None, confirmed=True, dry_run=True, queue_max_depth=0
+    )
 
     assert (result.targeted, result.enqueued, result.reused) == (2, 2, 0)
     assert _count(engine, ContextualizationJob) == 0, "a dry run must not persist work-units"
@@ -125,7 +133,9 @@ def test_contextualization_backfill_dry_run_needs_no_confirmation(tmp_path: Path
         _add_output(session, output_id=1, source_id=_UUID_A)
         session.commit()
 
-    result = run_contextualization_backfill(engine, output_ids=None, limit=None, confirmed=False, dry_run=True)
+    result = run_contextualization_backfill(
+        engine, output_ids=None, limit=None, confirmed=False, dry_run=True, queue_max_depth=0
+    )
 
     assert result.targeted == 1
     assert _count(engine, ContextualizationJob) == 0
@@ -139,7 +149,9 @@ def test_contextualization_backfill_corpus_scan_requires_confirmation(tmp_path: 
         session.commit()
 
     with pytest.raises(ReprocessingConfirmationError):
-        run_contextualization_backfill(engine, output_ids=None, limit=None, confirmed=False, dry_run=False)
+        run_contextualization_backfill(
+            engine, output_ids=None, limit=None, confirmed=False, dry_run=False, queue_max_depth=0
+        )
     assert _count(engine, ContextualizationJob) == 0
 
 
@@ -151,7 +163,9 @@ def test_contextualization_backfill_explicit_output_ids_bypass_the_gate(tmp_path
         _add_output(session, output_id=2, source_id=_UUID_B)
         session.commit()
 
-    result = run_contextualization_backfill(engine, output_ids=[1], limit=None, confirmed=False, dry_run=False)
+    result = run_contextualization_backfill(
+        engine, output_ids=[1], limit=None, confirmed=False, dry_run=False, queue_max_depth=0
+    )
 
     assert (result.targeted, result.enqueued) == (1, 1)
     with Session(engine) as session:
@@ -167,7 +181,9 @@ def test_contextualization_backfill_limit_caps_a_corpus_scan(tmp_path: Path) -> 
         _add_output(session, output_id=2, source_id=_UUID_B, created_at=_EPOCH + dt.timedelta(days=1))
         session.commit()
 
-    result = run_contextualization_backfill(engine, output_ids=None, limit=1, confirmed=True, dry_run=False)
+    result = run_contextualization_backfill(
+        engine, output_ids=None, limit=1, confirmed=True, dry_run=False, queue_max_depth=0
+    )
 
     assert result.targeted == 1
     assert _count(engine, ContextualizationJob) == 1
@@ -210,7 +226,9 @@ def test_contextualization_backfill_rejects_an_unknown_output_id(tmp_path: Path)
     engine = _make_engine(tmp_path)
 
     with pytest.raises(ValueError, match="conversion output 99 not found"):
-        run_contextualization_backfill(engine, output_ids=[99], limit=None, confirmed=False, dry_run=False)
+        run_contextualization_backfill(
+            engine, output_ids=[99], limit=None, confirmed=False, dry_run=False, queue_max_depth=0
+        )
 
 
 # --- extraction -------------------------------------------------------------
@@ -224,7 +242,7 @@ def test_extraction_backfill_enqueues_sources_with_an_active_chunking_run(tmp_pa
         record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_B), derivation_key="dk-b")
         session.commit()
 
-    result = run_extraction_backfill(engine, source_ids=None, confirmed=True, dry_run=False)
+    result = run_extraction_backfill(engine, source_ids=None, confirmed=True, dry_run=False, queue_max_depth=0)
 
     assert (result.targeted, result.enqueued, result.reused) == (2, 2, 0)
     assert _count(engine, ExtractionJob) == 2
@@ -237,8 +255,8 @@ def test_extraction_backfill_rerun_enqueues_nothing_new(tmp_path: Path) -> None:
         record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
         session.commit()
 
-    run_extraction_backfill(engine, source_ids=None, confirmed=True, dry_run=False)
-    second = run_extraction_backfill(engine, source_ids=None, confirmed=True, dry_run=False)
+    run_extraction_backfill(engine, source_ids=None, confirmed=True, dry_run=False, queue_max_depth=0)
+    second = run_extraction_backfill(engine, source_ids=None, confirmed=True, dry_run=False, queue_max_depth=0)
 
     assert (second.targeted, second.enqueued, second.reused) == (1, 0, 1)
     assert _count(engine, ExtractionJob) == 1
@@ -251,7 +269,7 @@ def test_extraction_backfill_dry_run_writes_nothing(tmp_path: Path) -> None:
         record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
         session.commit()
 
-    result = run_extraction_backfill(engine, source_ids=None, confirmed=True, dry_run=True)
+    result = run_extraction_backfill(engine, source_ids=None, confirmed=True, dry_run=True, queue_max_depth=0)
 
     assert (result.targeted, result.enqueued) == (1, 1)
     assert _count(engine, ExtractionJob) == 0, "a dry run must not persist work-units"
@@ -264,7 +282,7 @@ def test_extraction_backfill_dry_run_needs_no_confirmation(tmp_path: Path) -> No
         record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
         session.commit()
 
-    result = run_extraction_backfill(engine, source_ids=None, confirmed=False, dry_run=True)
+    result = run_extraction_backfill(engine, source_ids=None, confirmed=False, dry_run=True, queue_max_depth=0)
 
     assert result.targeted == 1
     assert _count(engine, ExtractionJob) == 0
@@ -278,7 +296,7 @@ def test_extraction_backfill_corpus_scan_requires_confirmation(tmp_path: Path) -
         session.commit()
 
     with pytest.raises(ReprocessingConfirmationError):
-        run_extraction_backfill(engine, source_ids=None, confirmed=False, dry_run=False)
+        run_extraction_backfill(engine, source_ids=None, confirmed=False, dry_run=False, queue_max_depth=0)
     assert _count(engine, ExtractionJob) == 0
 
 
@@ -286,7 +304,7 @@ def test_extraction_backfill_explicit_source_ids_bypass_the_gate(tmp_path: Path)
     """An operator-named target set is deliberate intent and is never confirmation-gated."""
     engine = _make_engine(tmp_path)
 
-    result = run_extraction_backfill(engine, source_ids=[_UUID_A], confirmed=False, dry_run=False)
+    result = run_extraction_backfill(engine, source_ids=[_UUID_A], confirmed=False, dry_run=False, queue_max_depth=0)
 
     assert (result.targeted, result.enqueued) == (1, 1)
     with Session(engine) as session:

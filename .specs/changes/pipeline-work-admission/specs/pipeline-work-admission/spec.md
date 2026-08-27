@@ -94,7 +94,8 @@ Serves: bounded-inference-spend, automatic-graph-admission
 ### Requirement: A declared capacity limit bounds work-unit creation on every path
 
 A stage MAY declare a capacity limit over its actionable backlog — its work-units queued or awaiting retry.
-While the backlog is at or above the limit, creation of a new work-unit SHALL be refused on every path that creates work for the stage; a request that resolves to an existing work-unit SHALL return that unit rather than be refused.
+Every path that creates work for the stage SHALL evaluate the limit and refuse creation when the backlog is at or above it; a request that resolves to an existing work-unit SHALL return that unit rather than be refused, since reuse adds nothing to the backlog.
+The evaluation and the creation SHALL occur within one transaction, so that a backend providing serializable writes admits no unit beyond the limit.
 An admission pass SHALL NOT admit beyond capacity; work left unadmitted remains pending.
 A stage declaring no limit SHALL accept new work without capacity refusal.
 

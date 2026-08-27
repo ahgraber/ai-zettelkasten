@@ -50,7 +50,16 @@ Three surfaces create work, all through the same two enqueue primitives:
 **Capacity sits at the enqueue seam**, not in front of any one caller: a stage may declare a limit over its _actionable backlog_ (units queued, plus failures awaiting retry), and every path is subject to it with no bypass.
 A single enqueue is refused at the limit; a bulk enqueue truncates to the batch's remaining headroom and logs the remainder; a request resolving to an existing work-unit is returned rather than refused, since reusing a unit adds no work.
 Each surface maps the refusal its own way — intake answers `503` with a `Retry-After` header (the conversion service's shape), an admission pass stops and leaves the rest pending, a command exits non-zero.
-Unset (`0`) declares no limit.
+The limit is a required argument on every enqueue primitive, so a caller cannot omit it by accident; `0` declares no limit and has to be said.
+Reuse never consumes headroom — only creation does — so a batch whose leading entries already have work-units cannot starve the new work behind them.
+
+On SQLite the count-and-insert pair runs inside `BEGIN IMMEDIATE`, so the bound holds exactly.
+That is a property of this backend: it bounds what any one caller admits rather than being an invariant on the table, and on a backend without that serialization two concurrent callers could both observe room.
+
+**Intake is reachable by anything that can reach the listener.**
+The service resolves a single deployment principal and binds `0.0.0.0`, since the console is used from a different machine than the one serving it.
+Submitting work commits external inference spend, so **the network is the authorization boundary** — run this on a trusted network.
+Capacity and the off-by-default admission flags bound the exposure; there are no application-layer tokens.
 
 ## How we slice identity and provenance
 

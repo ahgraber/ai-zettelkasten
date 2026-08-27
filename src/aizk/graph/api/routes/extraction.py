@@ -24,11 +24,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import JSONResponse
 
 from aizk.conversion.api.dependencies import get_principal
-from aizk.conversion.api.schemas import QueueFullResponse
 from aizk.conversion.auth.principal import Principal
 from aizk.conversion.datamodel.source import Source
 from aizk.graph.api.dependencies import get_admission_config, get_db_session
-from aizk.graph.api.routes import queue_full_response
+from aizk.graph.api.routes import INTAKE_RESPONSES, queue_full_response
 from aizk.graph.api.schemas import ExtractionJobList, ExtractionJobResponse, ExtractionSubmission
 from aizk.graph.capacity import StageAtCapacityError
 from aizk.graph.datamodel import ExtractionJob
@@ -61,7 +60,11 @@ def _get_or_404(session: "Session", job_id: int) -> ExtractionJob:
     "",
     response_model=ExtractionJobResponse,
     status_code=status.HTTP_201_CREATED,
-    responses={503: {"model": QueueFullResponse, "description": "Stage is at capacity"}},
+    responses=INTAKE_RESPONSES
+    | {
+        200: {"model": ExtractionJobResponse, "description": "Work was already enqueued"},
+        404: {"description": "No such source"},
+    },
 )
 def submit_job(
     submission: ExtractionSubmission,

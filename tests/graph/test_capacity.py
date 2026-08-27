@@ -145,3 +145,46 @@ def test_within_headroom_passes_a_batch_that_fits(tmp_path: Path) -> None:
     with Session(engine) as session:
         assert within_headroom(session, ExtractionJob, [1, 2], stage="extraction", limit=5) == [1, 2]
         assert within_headroom(session, ExtractionJob, [1, 2], stage="extraction", limit=0) == [1, 2]
+
+
+def test_already_enqueued_work_does_not_consume_headroom(tmp_path: Path) -> None:
+    """Reuse adds nothing to the backlog, so it must not spend the allowance new work needs.
+
+    A corpus scan yields its candidates in the same order every run. If the
+    already-covered ones ahead of the new work consumed the headroom, the new work
+    would be dropped every pass and never admitted at all.
+    """
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        _add_unit(session, WorkUnitStatus.QUEUED)
+        session.commit()
+
+        admitted = within_headroom(
+            session,
+            ExtractionJob,
+            ["covered", "new"],
+            stage="extraction",
+            limit=2,
+            already_enqueued={"covered"},
+        )
+
+        assert admitted == ["covered", "new"], "the one free slot goes to the new work"
+
+
+def test_new_work_beyond_the_headroom_is_still_dropped(tmp_path: Path) -> None:
+    """Exempting reuse does not exempt creation: the limit still bounds new units."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        _add_unit(session, WorkUnitStatus.QUEUED)
+        session.commit()
+
+        admitted = within_headroom(
+            session,
+            ExtractionJob,
+            ["covered", "new-a", "new-b"],
+            stage="extraction",
+            limit=2,
+            already_enqueued={"covered"},
+        )
+
+        assert admitted == ["covered", "new-a"]

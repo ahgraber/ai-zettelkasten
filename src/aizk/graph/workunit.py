@@ -71,7 +71,7 @@ from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.utilities.hashing import compute_markdown_hash
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Sequence
     from uuid import UUID
 
     from sqlalchemy import Engine
@@ -359,6 +359,23 @@ def process_document(
     return result
 
 
+def enqueued_outputs(session: "Session", conversion_output_ids: "Sequence[int]") -> set[int]:
+    """Return which of ``conversion_output_ids`` already have a contextualization work-unit.
+
+    Bulk enqueue paths read this to tell reuse from creation before applying
+    capacity, since only creation consumes headroom.
+    """
+    if not conversion_output_ids:
+        return set()
+    return set(
+        session.exec(
+            select(ContextualizationJob.conversion_output_id).where(
+                ContextualizationJob.conversion_output_id.in_(conversion_output_ids)
+            )
+        ).all()
+    )
+
+
 def _idempotency_key(conversion_output_id: int) -> str:
     """Return the enqueue-dedupe key for a conversion output.
 
@@ -374,7 +391,7 @@ def enqueue_document(
     *,
     conversion_output_id: int,
     source_id: "UUID",
-    queue_max_depth: int = 0,
+    queue_max_depth: int,
 ) -> ContextualizationJob:
     """Enqueue one document's work-unit (incremental mode), deduped on ``idempotency_key``.
 
@@ -395,7 +412,7 @@ def enqueue_document(
         source_id: The durable source identity, resolved by the caller from the
             conversion output and carried onto the unit's runs and events.
         queue_max_depth: The stage's declared capacity over its actionable
-            backlog; ``0`` (the default) declares no limit.
+            backlog; ``0`` declares no limit, and every caller must say which it means.
 
     Returns:
         The existing or newly-created :class:`ContextualizationJob`.
@@ -438,7 +455,7 @@ def enqueue_backfill(
     documents: "Iterable[tuple[int, UUID]]",
     *,
     confirmed: bool = False,
-    queue_max_depth: int = 0,
+    queue_max_depth: int,
 ) -> list[ContextualizationJob]:
     """Enqueue work-units for many documents (bulk/backfill mode) through the single path.
 
@@ -461,7 +478,7 @@ def enqueue_backfill(
         confirmed: Explicit human approval for the corpus-wide operation; when
             ``False`` (the default) nothing is enqueued and the gate raises.
         queue_max_depth: The stage's declared capacity over its actionable
-            backlog; ``0`` (the default) declares no limit.
+            backlog; ``0`` declares no limit, and every caller must say which it means.
 
     Returns:
         The enqueued (or reused) work-units, one per admitted document.
@@ -470,9 +487,22 @@ def enqueue_backfill(
         ReprocessingConfirmationError: When ``confirmed`` is ``False``.
     """
     require_reprocessing_confirmation("corpus-wide contextualization backfill", confirmed=confirmed)
+    candidates = list(documents)
+    enqueued = enqueued_outputs(session, [conversion_output_id for conversion_output_id, _ in candidates])
+    admitted = within_headroom(
+        session,
+        ContextualizationJob,
+        candidates,
+        stage=CONTEXTUALIZATION_STAGE,
+        limit=queue_max_depth,
+        already_enqueued=[pair for pair in candidates if pair[0] in enqueued],
+    )
     return [
-        enqueue_document(session, conversion_output_id=conversion_output_id, source_id=source_id)
-        for conversion_output_id, source_id in within_headroom(
-            session, ContextualizationJob, documents, stage=CONTEXTUALIZATION_STAGE, limit=queue_max_depth
+        enqueue_document(
+            session,
+            conversion_output_id=conversion_output_id,
+            source_id=source_id,
+            queue_max_depth=queue_max_depth,
         )
+        for conversion_output_id, source_id in admitted
     ]

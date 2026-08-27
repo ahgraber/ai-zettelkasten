@@ -56,6 +56,7 @@ from aizk.graph.mention_store import (
     MENTION_EXTRACTION_STAGE,
     InputPolicy,
     MentionDraft,
+    active_extraction_run,
     open_extraction_run,
     persist_mentions,
 )
@@ -162,6 +163,44 @@ def _recorded_upstream(run: PipelineRun) -> tuple[str, InputPolicy] | None:
     return upstream_key, input_policy
 
 
+def _run_is_stale(session: "Session", run: PipelineRun) -> bool:
+    """Return whether an active extraction run consumed since-superseded upstream state.
+
+    The staleness rule, in one place: both the corpus-wide derivation and the
+    single-source check read it, so a stage's stale count and the eligibility of
+    the action that acts on it cannot diverge.
+    """
+    recorded = _recorded_upstream(run)
+    if recorded is None:
+        return False
+    recorded_key, input_policy = recorded
+    chunking_run = active_chunking_run(session, run.scope_id)
+    if chunking_run is None:
+        # Nothing active to re-extract from, so there is no different generation to
+        # be behind; a source in this state is not re-admittable work.
+        return False
+    current_key = _resolve_upstream_derivation_key(
+        session, source_id=run.scope_id, input_policy=input_policy, chunking_run=chunking_run
+    )
+    return current_key != recorded_key
+
+
+def is_extraction_stale(session: "Session", scope_id: str) -> bool:
+    """Return whether one source's extraction consumed since-superseded upstream state.
+
+    Reads only that source's runs. A per-unit caller — the re-extract action's
+    eligibility check — uses this rather than :func:`stale_extraction_sources`, so
+    applying the action over a selection costs one small query per unit instead of
+    a corpus scan per unit.
+
+    Args:
+        session: Active, read-only session.
+        scope_id: The source's ``str(source_id)``.
+    """
+    run = active_extraction_run(session, scope_id)
+    return run is not None and _run_is_stale(session, run)
+
+
 def stale_extraction_sources(session: "Session") -> set[str]:
     """Return the scope ids whose active extraction run consumed since-superseded upstream state.
 
@@ -182,35 +221,22 @@ def stale_extraction_sources(session: "Session") -> set[str]:
     Staleness never makes a source pending — no staleness condition admits work
     automatically. It marks work an operator may choose to re-admit.
 
+    This scans every active extraction run, so it suits a count or a listing. A
+    caller asking about one source wants :func:`is_extraction_stale`.
+
     Args:
         session: Active, read-only session.
 
     Returns:
         The stale sources' ``scope_id`` values (``str(source_id)``).
     """
-    stale: set[str] = set()
     active_runs = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == MENTION_EXTRACTION_STAGE,
             PipelineRun.status == RunStatus.ACTIVE,
         )
     ).all()
-    for run in active_runs:
-        recorded = _recorded_upstream(run)
-        if recorded is None:
-            continue
-        recorded_key, input_policy = recorded
-        chunking_run = active_chunking_run(session, run.scope_id)
-        if chunking_run is None:
-            # Nothing active to re-extract from, so there is no different generation
-            # to be behind; a source in this state is not re-admittable work.
-            continue
-        current_key = _resolve_upstream_derivation_key(
-            session, source_id=run.scope_id, input_policy=input_policy, chunking_run=chunking_run
-        )
-        if current_key != recorded_key:
-            stale.add(run.scope_id)
-    return stale
+    return {run.scope_id for run in active_runs if _run_is_stale(session, run)}
 
 
 def _resolve_extraction_input(session: "Session", chunk: "Chunk", *, input_policy: InputPolicy) -> ExtractionInput:

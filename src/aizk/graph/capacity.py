@@ -30,7 +30,7 @@ from sqlmodel import func, or_, select
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Container, Iterable
 
     from sqlmodel import Session
 
@@ -121,11 +121,20 @@ def within_headroom(
     *,
     stage: str,
     limit: int,
+    already_enqueued: "Container[T]" = (),
 ) -> list[T]:
-    """Truncate a bulk enqueue's input to the stage's remaining capacity.
+    """Drop the work a bulk enqueue has no capacity for, keeping the rest in order.
 
-    Reads the headroom once for the whole batch. What is dropped is logged, not
-    silently discarded; the remainder stays pending for a later batch.
+    Reads the headroom once for the whole batch. Only **new** work counts against
+    it: an item already in ``already_enqueued`` resolves to an existing work-unit,
+    which adds nothing to the backlog, so it is always kept. Charging those items
+    headroom would let a batch whose leading entries are all already-enqueued
+    consume the whole allowance and starve the new work behind them — and because
+    a corpus scan yields the same order every run, that work would never be
+    admitted at all.
+
+    What is dropped is logged, not silently discarded; the remainder stays pending
+    for a later batch.
 
     Args:
         session: Active session.
@@ -133,20 +142,34 @@ def within_headroom(
         items: The work the caller intends to enqueue, in admission order.
         stage: The stage name carried on the truncation log record.
         limit: The declared capacity; ``0`` or below declares no limit.
+        already_enqueued: The subset of ``items`` that already has a work-unit.
+            Defaults to empty, which charges every item against the headroom.
 
     Returns:
-        The prefix of ``items`` the stage has room for.
+        The items the stage has room for, in the order given.
     """
     candidates = list(items)
     room = headroom(session, model, limit=limit)
-    if room is None or room >= len(candidates):
+    if room is None:
         return candidates
-    logger.info(
-        "Truncating %s bulk enqueue at capacity: admitting %d of %d, %d left pending",
-        stage,
-        room,
-        len(candidates),
-        len(candidates) - room,
-        extra={"stage": stage, "admitted": room, "requested": len(candidates), "limit": limit},
-    )
-    return candidates[:room]
+
+    admitted: list[T] = []
+    dropped = 0
+    for item in candidates:
+        if item in already_enqueued:
+            admitted.append(item)
+        elif room > 0:
+            admitted.append(item)
+            room -= 1
+        else:
+            dropped += 1
+    if dropped:
+        logger.info(
+            "Truncating %s bulk enqueue at capacity: admitting %d of %d, %d left pending",
+            stage,
+            len(admitted),
+            len(candidates),
+            dropped,
+            extra={"stage": stage, "admitted": len(admitted), "requested": len(candidates), "limit": limit},
+        )
+    return admitted

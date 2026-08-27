@@ -363,7 +363,7 @@ for chunk, revision in zip(chunks, revisions, strict=True):
 # %%
 handler = ContextualizationStageHandler(engine, client, markdown_source, ConversionOutputFreshness())
 with Session(engine) as session:
-    enqueue_output(session, focal_output_id)
+    enqueue_output(session, focal_output_id, queue_max_depth=0)
     session.commit()
 StageRunner(
     engine=engine, handler=handler, poll_interval=0.05, stale_recovery_interval=3600.0, cancel_grace=2.0
@@ -512,7 +512,7 @@ def contextualize_more_documents() -> list[UUID]:
             engine, text=text, label=label, markdown_source=markdown_source, blob_reader=blob_reader
         )
         with Session(engine) as session:
-            enqueue_output(session, output_id)
+            enqueue_output(session, output_id, queue_max_depth=0)
             session.commit()
         ids.append(source_id)
     StageRunner(

@@ -31,11 +31,11 @@ from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.graph.capacity import within_headroom
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
-from aizk.graph.workunit import enqueue_document
+from aizk.graph.workunit import enqueue_document, enqueued_outputs
 from aizk.pipeline.invalidation import require_reprocessing_confirmation
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
     from uuid import UUID
 
     from sqlalchemy import Select
@@ -55,40 +55,43 @@ def _require_bounding_limit(limit: int | None) -> None:
         raise ValueError(f"limit must be a positive integer, got {limit}")
 
 
-def _newest_output_per_source() -> "Select":
-    """Return the selection of each source's newest conversion output, in a reproducible order.
+def latest_output_id(session: "Session", source_id: "UUID") -> int | None:
+    """Return the source's current conversion output id, or ``None`` if it has none.
 
-    Within a source, the newest output is the one with the greatest
-    ``created_at``, with the greater ``id`` breaking a timestamp tie. Across
-    sources the result is ordered by that output's ``created_at`` with
-    ``source_id`` as the tiebreaker — a total order, so a ``limit`` sample stays
-    reproducible even when several outputs share one ``created_at`` timestamp.
+    **The** definition of "current" for a source, in one place. A conversion output
+    id is assigned by the single serialized writer and only increases, so the
+    greatest id is the newest output — no timestamp comparison, which a clock
+    adjustment or an imported row could order differently from the ids.
+
+    Admission and the execute-time freshness gate
+    (:class:`~aizk.graph.markdown_source.ConversionOutputFreshness`) both resolve
+    through this rule. If they disagreed, admission could enqueue an output the
+    worker then rejects as superseded, and the source would count as covered
+    forever while never being contextualized.
+    """
+    return session.exec(select(func.max(ConversionOutput.id)).where(ConversionOutput.source_id == source_id)).one()
+
+
+def _newest_output_per_source() -> "Select":
+    """Return each source's current conversion output, in a reproducible order.
+
+    The winner within a source is the greatest ``id``, matching
+    :func:`latest_output_id`. Across sources the result is ordered by that
+    output's ``created_at`` with ``source_id`` as the tiebreaker — a total order,
+    so a ``limit`` sample stays reproducible even when several outputs share one
+    timestamp.
 
     Selects ``(output_id, source_id, created_at)`` so callers can bound it, or
-    anti-join it against the work-unit table, without restating the tie-breaking.
+    anti-join it against the work-unit table, without restating the rule.
     """
-    newest_per_source = (
-        select(
-            ConversionOutput.source_id,
-            func.max(ConversionOutput.created_at).label("created_at"),
-        )
-        .group_by(ConversionOutput.source_id)
-        .subquery()
-    )
-    # max(id) resolves a same-timestamp tie within a source; the outer ordering is
-    # over the winning output's own created_at, then source_id.
+    winners = select(func.max(ConversionOutput.id).label("output_id")).group_by(ConversionOutput.source_id).subquery()
     return (
         select(
-            func.max(ConversionOutput.id).label("output_id"),
+            ConversionOutput.id.label("output_id"),
             ConversionOutput.source_id,
             ConversionOutput.created_at,
         )
-        .join(
-            newest_per_source,
-            (ConversionOutput.source_id == newest_per_source.c.source_id)
-            & (ConversionOutput.created_at == newest_per_source.c.created_at),
-        )
-        .group_by(ConversionOutput.source_id, ConversionOutput.created_at)
+        .join(winners, ConversionOutput.id == winners.c.output_id)
         .order_by(ConversionOutput.created_at, ConversionOutput.source_id)
     )
 
@@ -187,7 +190,7 @@ def enqueue_output(
     session: "Session",
     conversion_output_id: int,
     *,
-    queue_max_depth: int = 0,
+    queue_max_depth: int,
 ) -> "ContextualizationJob":
     """Enqueue one document's work-unit, resolving its source identity from the output.
 
@@ -198,7 +201,7 @@ def enqueue_output(
         session: Active session; the caller owns commit/rollback.
         conversion_output_id: The conversion artifact locator to process.
         queue_max_depth: The stage's declared capacity over its actionable
-            backlog; ``0`` (the default) declares no limit.
+            backlog; ``0`` declares no limit, and every caller must say which it means.
 
     Raises:
         ValueError: If no conversion output exists for ``conversion_output_id``.
@@ -221,7 +224,7 @@ def enqueue_backfill_outputs(
     conversion_output_ids: "Iterable[int]",
     *,
     confirmed: bool = False,
-    queue_max_depth: int = 0,
+    queue_max_depth: int,
 ) -> list["ContextualizationJob"]:
     """Enqueue work-units for many conversion outputs (bulk/backfill mode).
 
@@ -244,7 +247,7 @@ def enqueue_backfill_outputs(
         confirmed: Explicit human approval for the corpus-wide operation; when
             ``False`` (the default) nothing is enqueued and the gate raises.
         queue_max_depth: The stage's declared capacity over its actionable
-            backlog; ``0`` (the default) declares no limit.
+            backlog; ``0`` declares no limit, and every caller must say which it means.
 
     Returns:
         The enqueued (or reused) work-units, one per admitted output.
@@ -253,11 +256,16 @@ def enqueue_backfill_outputs(
         ReprocessingConfirmationError: When ``confirmed`` is ``False``.
     """
     require_reprocessing_confirmation("corpus-wide contextualization backfill", confirmed=confirmed)
+    candidates = list(conversion_output_ids)
     admitted = within_headroom(
         session,
         ContextualizationJob,
-        conversion_output_ids,
+        candidates,
         stage=CONTEXTUALIZATION_STAGE,
         limit=queue_max_depth,
+        already_enqueued=enqueued_outputs(session, candidates),
     )
-    return [enqueue_output(session, conversion_output_id) for conversion_output_id in admitted]
+    return [
+        enqueue_output(session, conversion_output_id, queue_max_depth=queue_max_depth)
+        for conversion_output_id in admitted
+    ]

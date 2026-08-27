@@ -129,12 +129,12 @@ def test_corpus_recontextualization_requires_confirmation(session: Session) -> N
     documents = [(101, UUID(_SOURCE_A)), (102, UUID(_SOURCE_B))]
 
     with pytest.raises(ReprocessingConfirmationError, match="will not run until it is explicitly confirmed"):
-        enqueue_backfill(session, documents, confirmed=False)
+        enqueue_backfill(session, documents, confirmed=False, queue_max_depth=0)
     from aizk.graph.datamodel import ContextualizationJob
 
     assert session.exec(select(ContextualizationJob)).all() == [], "nothing is enqueued without confirmation"
 
-    jobs = enqueue_backfill(session, documents, confirmed=True)
+    jobs = enqueue_backfill(session, documents, confirmed=True, queue_max_depth=0)
     session.commit()
     assert len(jobs) == 2, "explicit confirmation lets the corpus-wide backfill enqueue"
 

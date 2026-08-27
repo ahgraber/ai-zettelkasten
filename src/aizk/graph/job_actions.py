@@ -37,7 +37,7 @@ from aizk.graph.extraction_events import (
     ExtractionEventKind,
     RequeuedPayload as ExtractionRequeuedPayload,
 )
-from aizk.graph.extraction_run import stale_extraction_sources
+from aizk.graph.extraction_run import is_extraction_stale
 from aizk.pipeline.events import record_transition
 from aizk.pipeline.lifecycle import WorkUnitStatus, is_terminal
 
@@ -167,7 +167,7 @@ def apply_extraction_readmission(session: "Session", job: Any) -> None:
     """
     if not is_terminal(job.status):
         raise ValueError(f"cannot re-extract a work-unit in status {job.status.value!r}")
-    if str(job.source_id) not in stale_extraction_sources(session):
+    if not is_extraction_stale(session, str(job.source_id)):
         raise ValueError("cannot re-extract a source that is not stale")
     now = _utcnow()
     job.attempts = 0
