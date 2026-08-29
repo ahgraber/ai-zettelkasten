@@ -18,6 +18,12 @@ that overlaps an intake submission or a backfill creates nothing twice.
 :class:`AdmissionLoop` runs the pass on an interval inside a stage's existing
 worker process, so admission needs no scheduler, no queue broker, and no new
 process to supervise.
+
+The loop runs on its own thread, so an admitting worker holds two writers rather
+than one: the loop and the runner's claim/finalize path, both taking the writer
+lock on the same engine. Under SQLite's single-writer serialization they take
+turns rather than conflict, which is why the pass keeps its transaction short —
+a long pass does not corrupt anything, it stalls the claim path beside it.
 """
 
 from __future__ import annotations

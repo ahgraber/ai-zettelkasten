@@ -203,7 +203,7 @@ class ChunkRunManifest(SQLModel, table=True):
     within the same run idempotent (no duplicate entry) and never mutates an
     existing row. ``span_start`` / ``span_end`` capture where the chunk sat in
     *this* generation's markdown — a generation-varying fact that does not belong
-    on the shared content-addressed identity. ``run_id`` is a logical reference to
+    on the shared chunk identity. ``run_id`` is a logical reference to
     ``pipeline_runs.id`` (no foreign key); ``chunk_id`` foreign keys into
     :class:`Chunk`.
     """

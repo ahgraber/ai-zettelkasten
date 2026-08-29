@@ -428,7 +428,7 @@ def members_of_run(session: "Session", run_id: int) -> list[str]:
 def chunks_of_run(session: "Session", run_id: int) -> list[SplitterChunk]:
     """Reconstruct a chunking run's emitted chunks by joining identity ⋈ manifest ⋈ input ⋈ run.
 
-    Each chunk is rebuilt field-for-field from its content-addressed identity row,
+    Each chunk is rebuilt field-for-field from its identity row,
     its ``span`` from the run's manifest entry, the consumed artifact locator and
     markdown hash from the run's input, and the ``splitter_version`` from the run's
     version stamps. Returned in ``chunk_id`` order (the manifest's order).

@@ -8,7 +8,7 @@ corpus is a replayable substrate rather than recomputed-and-discarded output.
 The pipeline reads a conversion Markdown artifact, runs ``aizk.chunking.split``
 in-process, persists the resulting chunks under a chunking run, and then
 produces a per-document summary and a per-chunk contextualized revision. Chunk
-content rows are content-addressed and immutable; invalidation is expressed only
+content rows are immutable; invalidation is expressed only
 as a run-status transition on the shared ``pipeline_runs`` primitive, never as a
 row mutation.
 
