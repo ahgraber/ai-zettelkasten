@@ -29,15 +29,12 @@ from aizk.conversion.api.dependencies import get_principal
 from aizk.conversion.auth import Principal
 from aizk.graph.api.dependencies import get_db_session
 from aizk.pipeline.events import PipelineEvent
+from aizk.pipeline.lifecycle import MAX_BULK_SELECTION
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from aizk.console.monitor import MonitorPage
-
-#: Maximum work-units a single bulk action may target, keeping the write
-#: transaction bounded (mirrors the JSON bulk endpoint's ``1..100`` bound).
-MAX_BULK_SELECTION = 100
 
 router = APIRouter(prefix="/ui/tasks", tags=["console"])
 
