@@ -3,6 +3,7 @@
 import pytest
 
 from aizk.conversion.api.main import create_app
+from aizk.pipeline.lifecycle import MAX_BULK_SELECTION
 
 
 def test_jobs_endpoints_registered():
@@ -67,6 +68,19 @@ def test_bulk_actions_request_schema_shape():
     schema = app_spec["components"]["schemas"]["BulkJobActionRequest"]
     assert set(schema["properties"].keys()) >= {"action", "job_ids"}
     assert set(schema.get("required", [])) >= {"action", "job_ids"}
+
+
+def test_bulk_action_ceiling_is_the_shared_fleet_bound():
+    """The JSON bulk bound is the same ceiling every operator surface applies.
+
+    The console enforces the same limit on its own bulk actions. Publishing the
+    number from one place is what stops the two surfaces drifting to different
+    ceilings over the same work-units.
+    """
+    app_spec = create_app().openapi()
+    published = app_spec["components"]["schemas"]["BulkJobActionRequest"]["properties"]["job_ids"]
+
+    assert published["maxItems"] == MAX_BULK_SELECTION
 
 
 def test_openapi_source_ref_unions_are_distinct():

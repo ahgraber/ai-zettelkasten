@@ -11,6 +11,7 @@ from pydantic import AnyUrl, BaseModel, Field
 from aizk.conversion.api.schemas.ingress import IngressSourceRef
 from aizk.conversion.core.source_ref import SourceRef
 from aizk.conversion.datamodel.job import ConversionJobStatus
+from aizk.pipeline.lifecycle import MAX_BULK_SELECTION
 
 
 class JobSubmission(BaseModel):
@@ -102,7 +103,7 @@ class BulkJobActionRequest(BaseModel):
     """Request schema for bulk job actions."""
 
     action: Literal["retry", "cancel"]
-    job_ids: list[int] = Field(..., min_length=1, max_length=100)
+    job_ids: list[int] = Field(..., min_length=1, max_length=MAX_BULK_SELECTION)
 
 
 class BulkActionResult(BaseModel):

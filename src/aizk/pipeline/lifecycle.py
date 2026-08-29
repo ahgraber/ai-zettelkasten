@@ -13,6 +13,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+#: Maximum work-units one bulk action may target, on any operator surface.
+#: Bounds the write transaction a single action opens. Stated once so the JSON
+#: bulk endpoint and the console cannot drift to different ceilings.
+MAX_BULK_SELECTION = 100
+
 
 class WorkUnitStatus(str, Enum):
     """Generic lifecycle states a work-unit passes through.
