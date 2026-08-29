@@ -22,10 +22,11 @@ guards that a rebuild and the live inserts agree on today's schema.
 The index's identity column is ``scope_id``, matching what it exists to join:
 ``pipeline_runs.scope_id``. It therefore holds the dashed scope-key string, not the
 ``UUID`` storage form ``graph_chunks.source_id`` holds, and the rebuild renders one
-from the other. Nothing errors if the two forms diverge — the join simply matches
-nothing — so the rebuild first rejects any stored value the rendering would not be
-correct for. Keeping the rendering in the statement is deliberate: the backfill SQL
-stays executable on an ordinary connection, which is what lets a migration copy it.
+from the other. A diverged value inserts without error and simply matches no run, so
+both write paths reject one first: the rebuild checks the stored form its rendering
+slices, and the live inserts check the scope key they are handed. Keeping the
+rendering in the statement is deliberate: the backfill SQL stays executable on an
+ordinary connection, which is what lets a migration copy it.
 
 The FTS ``run_id`` column is load-bearing only for contextualized rows: a
 contextualized row's ``run_id`` is the variant run id, used at query time to keep
@@ -33,12 +34,13 @@ only the active variant run's rows. A chunk row's ``run_id`` is not query
 load-bearing (chunk membership is decided by joining the active chunking-run
 manifest on ``chunk_id``); the live insert records the creating chunking run id,
 while the backfill/rebuild — where the creating run is not recoverable from the
-content-addressed chunk row — leaves it ``NULL``.
+stored chunk row — leaves it ``NULL``.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from sqlalchemy import text
 
@@ -71,7 +73,7 @@ CONTENT_FTS_DDL = (
 )
 
 #: Backfill the chunk side from every committed ``graph_chunks`` row. The creating
-#: chunking run is not recoverable from the content-addressed row, so ``run_id`` is
+#: chunking run is not recoverable from the stored chunk row, so ``run_id`` is
 #: ``NULL`` (chunk membership is a manifest join, not an FTS ``run_id`` filter).
 _BACKFILL_CHUNKS_SQL = (
     "INSERT INTO graph_content_fts (text, kind, chunk_id, run_id, scope_id) "  # noqa: S608 — fragment is a constant
@@ -102,6 +104,34 @@ _INSERT_CONTEXTUALIZED_SQL = (
 )
 
 
+def _assert_scope_key_form(scope_id: str) -> None:
+    """Reject a scope key the search join could never match.
+
+    The index's ``scope_id`` is joined against ``pipeline_runs.scope_id``, which
+    holds the canonical dashed lowercase form. A value in any other form inserts
+    without error and simply matches no run, so the content stays committed but
+    unfindable. Rejecting at the insert makes the mismatch an error naming the
+    value, rather than silence discovered later as missing search results. This is
+    the live-insert counterpart to :func:`_assert_uuid_storage_form`, which guards
+    the rebuild's rendering of the same value.
+
+    Args:
+        scope_id: The scope key about to be indexed.
+
+    Raises:
+        ValueError: If ``scope_id`` is not a canonical dashed lowercase UUID.
+    """
+    try:
+        canonical = str(UUID(scope_id))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError(f"scope_id {scope_id!r} is not a UUID; the content index would match no run") from exc
+    if scope_id != canonical:
+        raise ValueError(
+            f"scope_id {scope_id!r} is not the canonical dashed lowercase form {canonical!r}; "
+            "the content index would match no run"
+        )
+
+
 def index_chunk_content(
     session: Session,
     *,
@@ -119,11 +149,15 @@ def index_chunk_content(
     Args:
         session: Active session whose connection carries the open write transaction.
         text_: The raw chunk text to index.
-        chunk_id: The content-addressed chunk identity.
+        chunk_id: The surrogate chunk identity.
         run_id: The creating chunking run id (not query load-bearing for chunks).
         scope_id: The chunking run's scope — the dashed source identity the search
             join matches against ``pipeline_runs.scope_id``.
+
+    Raises:
+        ValueError: If ``scope_id`` is not a canonical dashed lowercase UUID.
     """
+    _assert_scope_key_form(scope_id)
     session.connection().execute(
         text(_INSERT_CHUNK_SQL),
         {"text": text_, "chunk_id": chunk_id, "run_id": run_id, "scope_id": scope_id},
@@ -152,7 +186,11 @@ def index_contextualized_content(
         run_id: The variant run id (query load-bearing — the active-variant filter).
         scope_id: The variant run's scope — the dashed source identity the search
             join matches against ``pipeline_runs.scope_id``.
+
+    Raises:
+        ValueError: If ``scope_id`` is not a canonical dashed lowercase UUID.
     """
+    _assert_scope_key_form(scope_id)
     session.connection().execute(
         text(_INSERT_CONTEXTUALIZED_SQL),
         {"text": text_, "chunk_id": chunk_id, "run_id": run_id, "scope_id": scope_id},

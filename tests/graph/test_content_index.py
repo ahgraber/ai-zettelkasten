@@ -11,6 +11,7 @@ internal call shapes.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import importlib.util
 from pathlib import Path
 
@@ -25,7 +26,7 @@ from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
 from aizk.db.migrations.versions.d3e4f5a6b7c8_add_graph_content_fts import (
     _assert_fts5_available,
 )
-from aizk.graph.content_index import rebuild_content_index
+from aizk.graph.content_index import index_chunk_content, index_contextualized_content, rebuild_content_index
 from aizk.graph.contextualization import contextualize_chunks, summarize_document
 from aizk.graph.llm import StubLLMClient
 from aizk.graph.persistence import persist_chunks
@@ -361,6 +362,50 @@ def test_rebuild_refuses_a_chunk_identity_outside_the_storage_form(session: Sess
 # --------------------------------------------------------------------------- #
 # Live write-sites
 # --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "indexer",
+    [index_chunk_content, index_contextualized_content],
+    ids=["chunk", "contextualized"],
+)
+@pytest.mark.parametrize(
+    "scope_id",
+    [
+        "11111111111111111111111111111111",
+        "11111111-1111-1111-1111-11111111111",
+        "11111111-1111-1111-1111-11111111111Z",
+        "0F8CD1A2-0034-4B00-80CD-000000000ABC",
+        "",
+    ],
+    ids=["dashless", "too-short", "non-hex", "uppercase", "empty"],
+)
+def test_live_insert_refuses_a_scope_key_the_search_join_could_not_match(
+    session: Session,
+    indexer: Callable[..., None],
+    scope_id: str,
+) -> None:
+    """A scope key outside the canonical dashed lowercase form is refused at the insert.
+
+    The index's ``scope_id`` is joined against ``pipeline_runs.scope_id``. Any other
+    form inserts happily and matches no run, leaving the content committed but
+    unfindable, so both live inserts reject it rather than write it.
+    """
+    with pytest.raises(ValueError, match="content index would match no run"):
+        indexer(session, text_="some indexable text", chunk_id="chunk-1", run_id=None, scope_id=scope_id)
+
+
+@pytest.mark.parametrize(
+    "indexer",
+    [index_chunk_content, index_contextualized_content],
+    ids=["chunk", "contextualized"],
+)
+def test_live_insert_accepts_the_canonical_scope_key(session: Session, indexer: Callable[..., None]) -> None:
+    """The dashed lowercase form the run primitive stores is indexed without complaint."""
+    indexer(session, text_="some indexable text", chunk_id="chunk-1", run_id=None, scope_id=_AIZK_UUID)
+
+    indexed = session.connection().execute(text("SELECT scope_id FROM graph_content_fts")).scalars().all()
+    assert indexed == [_AIZK_UUID]
 
 
 def test_persisted_chunk_is_searchable(session: Session) -> None:
