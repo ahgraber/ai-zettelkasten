@@ -84,7 +84,7 @@ class SearchResult:
 
     Attributes:
         source_id: The source identity (``str(source_id)``) the chunk belongs to.
-        chunk_id: The content-addressed chunk identity.
+        chunk_id: The surrogate chunk identity.
         span_start: The chunk's start offset in the active generation's markdown;
             the within-document ordering key.
         score: The chunk's relevance score (best ``bm25()`` over its matching
