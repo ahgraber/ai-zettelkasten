@@ -44,10 +44,14 @@ Three surfaces create work, all through the same two enqueue primitives:
 
 - **Automatic admission** — a loop in each stage's existing worker process, on `ADMISSION_INTERVAL_SECONDS`.
   Off unless enabled per stage, so switching the flow on is a deliberate act.
+  A pass admits at most `MAX_BULK_SELECTION` units, and repeated passes drain the rest.
 - **Intake** — `POST /v1/contextualizations` (a conversion-output reference) and `POST /v1/extractions` (a source identity) on the graph service, mirroring the conversion service's job submission.
 - **Bulk commands** — `aizk-graph backfill` and `aizk-graph extraction-backfill`.
 
+Each primitive writes the unit's creation event — origin and principal — in the same transaction as the unit, so the drill-down trail begins at creation, and a request that reuses an existing unit writes no event.
+
 **Capacity sits at the enqueue seam**, not in front of any one caller: a stage may declare a limit over its _actionable backlog_ (units queued, plus failures awaiting retry), and every path is subject to it with no bypass.
+The limit is a creation gate measured against the instantaneous actionable backlog, not a bound on cumulative work or external spend; an operator retry or re-admission is exempt because it creates no unit.
 A single enqueue is refused at the limit; a bulk enqueue truncates to the batch's remaining headroom and logs the remainder; a request resolving to an existing work-unit is returned rather than refused, since reusing a unit adds no work.
 Each surface maps the refusal its own way — intake answers `503` with a `Retry-After` header (the conversion service's shape), an admission pass stops and leaves the rest pending, a command exits non-zero.
 The limit is a required argument on every enqueue primitive, so a caller cannot omit it by accident; `0` declares no limit and has to be said.
@@ -59,7 +63,7 @@ That is a property of this backend: it bounds what any one caller admits rather 
 **Intake is reachable by anything that can reach the listener.**
 The service resolves a single deployment principal and binds `0.0.0.0`, since the console is used from a different machine than the one serving it.
 Submitting work commits external inference spend, so **the network is the authorization boundary** — run this on a trusted network.
-Capacity and the off-by-default admission flags bound the exposure; there are no application-layer tokens.
+There are no application-layer tokens.
 
 ## How we slice identity and provenance
 

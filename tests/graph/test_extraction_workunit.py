@@ -14,16 +14,19 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from aizk.graph.capacity import StageAtCapacityError
 from aizk.graph.datamodel import ExtractionJob
+from aizk.graph.extraction_events import QueuedPayload
 from aizk.graph.extraction_workunit import (
     enqueue_extraction,
     enqueue_extraction_backfill,
     pending_extraction_sources,
 )
 from aizk.graph.persistence import CHUNKING_STAGE
+from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.invalidation import ReprocessingConfirmationError
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, record_run
@@ -34,7 +37,9 @@ _UUID_B = UUID("22222222-2222-2222-2222-222222222222")
 
 def _make_engine(tmp_path: Path):
     engine = create_engine(f"sqlite:///{tmp_path / 'extraction_enqueue.db'}")
-    SQLModel.metadata.create_all(engine, tables=[ExtractionJob.__table__, PipelineRun.__table__])
+    SQLModel.metadata.create_all(
+        engine, tables=[ExtractionJob.__table__, PipelineRun.__table__, PipelineEvent.__table__]
+    )
     return engine
 
 
@@ -42,23 +47,31 @@ def test_enqueue_extraction_creates_a_queued_unit(tmp_path: Path) -> None:
     """A first enqueue for a source inserts a QUEUED work-unit carrying its source_id."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        job = enqueue_extraction(session, source_id=_UUID_A, queue_max_depth=0)
+        job, created = enqueue_extraction(
+            session, source_id=_UUID_A, queue_max_depth=0, origin="backfill", principal="test"
+        )
         session.commit()
 
         assert job.source_id == _UUID_A
         assert job.status is WorkUnitStatus.QUEUED
+        assert created is True
 
 
 def test_enqueue_extraction_reuses_the_open_unit(tmp_path: Path) -> None:
     """Re-enqueueing the same source reuses its open work-unit rather than duplicating it (idempotency)."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        first = enqueue_extraction(session, source_id=_UUID_A, queue_max_depth=0)
+        first, _created = enqueue_extraction(
+            session, source_id=_UUID_A, queue_max_depth=0, origin="backfill", principal="test"
+        )
         session.commit()
-        second = enqueue_extraction(session, source_id=_UUID_A, queue_max_depth=0)
+        second, created_second = enqueue_extraction(
+            session, source_id=_UUID_A, queue_max_depth=0, origin="backfill", principal="test"
+        )
         session.commit()
 
         assert second.id == first.id
+        assert created_second is False
         assert len(session.exec(select(ExtractionJob)).all()) == 1
 
 
@@ -70,9 +83,9 @@ def test_enqueue_extraction_backfill_resolves_eligible_sources_and_dedupes(tmp_p
         record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_B), derivation_key="dk-b")
         session.commit()
 
-        first = enqueue_extraction_backfill(session, confirmed=True, queue_max_depth=0)
+        first = enqueue_extraction_backfill(session, confirmed=True, queue_max_depth=0, principal="test")
         session.commit()
-        second = enqueue_extraction_backfill(session, confirmed=True, queue_max_depth=0)
+        second = enqueue_extraction_backfill(session, confirmed=True, queue_max_depth=0, principal="test")
         session.commit()
 
         assert {j.source_id for j in first} == {_UUID_A, _UUID_B}
@@ -87,7 +100,7 @@ def test_enqueue_extraction_backfill_excludes_sources_without_a_chunking_run(tmp
         record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
         session.commit()
 
-        jobs = enqueue_extraction_backfill(session, confirmed=True, queue_max_depth=0)
+        jobs = enqueue_extraction_backfill(session, confirmed=True, queue_max_depth=0, principal="test")
         session.commit()
 
         assert {j.source_id for j in jobs} == {_UUID_A}
@@ -198,11 +211,11 @@ def test_enqueue_extraction_refuses_new_work_at_capacity(tmp_path: Path) -> None
     """At the declared capacity a new work-unit is refused and nothing is added."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        enqueue_extraction(session, source_id=_UUID_A, queue_max_depth=1)
+        enqueue_extraction(session, source_id=_UUID_A, queue_max_depth=1, origin="backfill", principal="test")
         session.commit()
 
         with pytest.raises(StageAtCapacityError, match="mention_extraction stage is at capacity"):
-            enqueue_extraction(session, source_id=_UUID_B, queue_max_depth=1)
+            enqueue_extraction(session, source_id=_UUID_B, queue_max_depth=1, origin="backfill", principal="test")
         session.rollback()
 
         assert len(session.exec(select(ExtractionJob)).all()) == 1
@@ -212,13 +225,18 @@ def test_enqueue_extraction_at_capacity_returns_the_existing_unit(tmp_path: Path
     """A duplicate bypasses the capacity check: reusing a unit adds no work to the backlog."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        first = enqueue_extraction(session, source_id=_UUID_A, queue_max_depth=1)
+        first, _created = enqueue_extraction(
+            session, source_id=_UUID_A, queue_max_depth=1, origin="backfill", principal="test"
+        )
         session.commit()
 
-        again = enqueue_extraction(session, source_id=_UUID_A, queue_max_depth=1)
+        again, created_again = enqueue_extraction(
+            session, source_id=_UUID_A, queue_max_depth=1, origin="backfill", principal="test"
+        )
         session.commit()
 
         assert again.id == first.id
+        assert created_again is False
         assert len(session.exec(select(ExtractionJob)).all()) == 1
 
 
@@ -226,8 +244,8 @@ def test_enqueue_extraction_without_a_declared_limit_accepts_work(tmp_path: Path
     """A stage declaring no capacity limit enqueues without a capacity refusal."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        enqueue_extraction(session, source_id=_UUID_A, queue_max_depth=0)
-        enqueue_extraction(session, source_id=_UUID_B, queue_max_depth=0)
+        enqueue_extraction(session, source_id=_UUID_A, queue_max_depth=0, origin="backfill", principal="test")
+        enqueue_extraction(session, source_id=_UUID_B, queue_max_depth=0, origin="backfill", principal="test")
         session.commit()
 
         assert len(session.exec(select(ExtractionJob)).all()) == 2
@@ -241,7 +259,7 @@ def test_enqueue_extraction_backfill_admits_only_the_batch_headroom(tmp_path: Pa
         record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_B), derivation_key="dk-b")
         session.commit()
 
-        admitted = enqueue_extraction_backfill(session, confirmed=True, queue_max_depth=1)
+        admitted = enqueue_extraction_backfill(session, confirmed=True, queue_max_depth=1, principal="test")
         session.commit()
 
         persisted = session.exec(select(ExtractionJob)).all()
@@ -258,5 +276,64 @@ def test_enqueue_extraction_backfill_requires_confirmation(tmp_path: Path) -> No
         session.commit()
 
         with pytest.raises(ReprocessingConfirmationError, match="will not run until it is explicitly confirmed"):
-            enqueue_extraction_backfill(session, queue_max_depth=0)
+            enqueue_extraction_backfill(session, queue_max_depth=0, principal="test")
         assert session.exec(select(ExtractionJob)).all() == [], "nothing is enqueued without confirmation"
+
+
+# --- creation events ---------------------------------------------------------
+
+
+def test_enqueue_extraction_records_one_creation_event_carrying_origin_and_principal(tmp_path: Path) -> None:
+    """A newly-created unit gets exactly one ``queued`` event, recording its origin and principal."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        job, created = enqueue_extraction(
+            session, source_id=_UUID_A, queue_max_depth=0, origin="backfill", principal="operator-1"
+        )
+        session.commit()
+
+        assert created is True
+        events = session.exec(
+            select(PipelineEvent).where(PipelineEvent.work_unit_ref == str(job.id), PipelineEvent.kind == "queued")
+        ).all()
+        assert len(events) == 1
+        (event,) = events
+        assert event.from_status is None
+        assert event.to_status == "queued"
+        payload = QueuedPayload.model_validate_json(event.payload_json)
+        assert payload.origin == "backfill"
+        assert payload.principal == "operator-1"
+
+
+def test_enqueue_extraction_reuse_writes_no_creation_event(tmp_path: Path) -> None:
+    """Re-enqueueing the same source resolves to the existing unit and writes no new event."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        job, _created = enqueue_extraction(
+            session, source_id=_UUID_A, queue_max_depth=0, origin="backfill", principal="test"
+        )
+        session.commit()
+
+        _again, created_again = enqueue_extraction(
+            session, source_id=_UUID_A, queue_max_depth=0, origin="backfill", principal="test"
+        )
+        session.commit()
+
+        assert created_again is False
+        events = session.exec(
+            select(PipelineEvent).where(PipelineEvent.work_unit_ref == str(job.id), PipelineEvent.kind == "queued")
+        ).all()
+        assert len(events) == 1
+
+
+def test_a_rolled_back_extraction_creation_leaves_neither_the_unit_nor_the_event(tmp_path: Path) -> None:
+    """A creation whose transaction rolls back before commit leaves no work-unit and no event."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        session.exec(text("BEGIN IMMEDIATE"))
+        enqueue_extraction(session, source_id=_UUID_A, queue_max_depth=0, origin="backfill", principal="test")
+        session.rollback()
+
+    with Session(engine) as session:
+        assert session.exec(select(ExtractionJob)).all() == []
+        assert session.exec(select(PipelineEvent)).all() == []

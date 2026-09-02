@@ -127,6 +127,17 @@ class StageDescriptor:
     #: derivation shows no stale figure and no stale marking on its monitor rows.
     stale_count: Callable[["Session", "Principal"], int] | None = None
 
+    def __post_init__(self) -> None:
+        """Reject a descriptor that declares only one half of the pending capability.
+
+        A pending-work derivation is one capability: the console needs both the
+        count and the listing, so a descriptor declares both or neither.
+        """
+        if self.pending_count is not None and self.pending_list is None:
+            raise ValueError(f"stage {self.key!r} declares pending_count without pending_list")
+        if self.pending_list is not None and self.pending_count is None:
+            raise ValueError(f"stage {self.key!r} declares pending_list without pending_count")
+
 
 #: Module-level ordered registry of stage descriptors, keyed by stage key.
 _REGISTRY: dict[str, StageDescriptor] = {}

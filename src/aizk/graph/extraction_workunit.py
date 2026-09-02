@@ -46,8 +46,9 @@ from sqlmodel import select
 
 from aizk.graph.capacity import check_capacity, within_headroom
 from aizk.graph.datamodel import ExtractionJob
-from aizk.graph.extraction_events import EXTRACTION_STAGE
+from aizk.graph.extraction_events import EXTRACTION_STAGE, ExtractionEventKind, QueuedPayload
 from aizk.graph.persistence import CHUNKING_STAGE
+from aizk.pipeline.events import record_transition
 from aizk.pipeline.invalidation import require_reprocessing_confirmation
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus
@@ -56,6 +57,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from sqlmodel import Session
+
+    from aizk.pipeline.events import CreationOrigin
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +81,14 @@ def _idempotency_key(source_id: UUID) -> str:
     return f"source:{source_id}"
 
 
-def enqueue_extraction(session: "Session", *, source_id: UUID, queue_max_depth: int) -> ExtractionJob:
+def enqueue_extraction(
+    session: "Session",
+    *,
+    source_id: UUID,
+    queue_max_depth: int,
+    origin: "CreationOrigin",
+    principal: str,
+) -> tuple[ExtractionJob, bool]:
     """Enqueue one source's extraction work-unit (incremental mode), deduped on ``idempotency_key``.
 
     If a work-unit for this source already exists — in **any** status,
@@ -87,7 +97,8 @@ def enqueue_extraction(session: "Session", *, source_id: UUID, queue_max_depth: 
     backfill reuses the row, and re-enqueueing an already-``SUCCEEDED``
     source is a no-op (this function is not a re-extraction trigger; see the
     module docstring). Otherwise a new ``QUEUED`` unit is inserted and
-    flushed (so its ``id`` is available).
+    flushed (so its ``id`` is available) and its creation event is staged in
+    the same session, so the caller's commit lands both or neither.
 
     The capacity check runs **after** the dedupe branch, so a request that resolves
     to an existing unit is never refused. This is the only place extraction
@@ -100,9 +111,12 @@ def enqueue_extraction(session: "Session", *, source_id: UUID, queue_max_depth: 
         source_id: The durable source identity to extract.
         queue_max_depth: The stage's declared capacity over its actionable
             backlog; ``0`` declares no limit, and every caller must say which it means.
+        origin: The path creating the unit, recorded on its creation event.
+        principal: The acting principal, recorded on its creation event.
 
     Returns:
-        The existing or newly-created :class:`~aizk.graph.datamodel.ExtractionJob`.
+        The existing or newly-created :class:`~aizk.graph.datamodel.ExtractionJob`,
+        and whether this call created it.
 
     Raises:
         StageAtCapacityError: When the backlog is at or above ``queue_max_depth``
@@ -112,7 +126,7 @@ def enqueue_extraction(session: "Session", *, source_id: UUID, queue_max_depth: 
     existing = session.exec(select(ExtractionJob).where(ExtractionJob.idempotency_key == key)).one_or_none()
     if existing is not None:
         logger.debug("Reusing extraction work-unit id=%s for source_id=%s", existing.id, source_id)
-        return existing
+        return existing, False
 
     check_capacity(session, ExtractionJob, stage=EXTRACTION_STAGE, limit=queue_max_depth)
 
@@ -124,8 +138,20 @@ def enqueue_extraction(session: "Session", *, source_id: UUID, queue_max_depth: 
     )
     session.add(job)
     session.flush()
+    record_transition(
+        session,
+        job,
+        stage=EXTRACTION_STAGE,
+        work_unit_ref=str(job.id),
+        source_id=job.source_id,
+        to_status=WorkUnitStatus.QUEUED,
+        kind=ExtractionEventKind.QUEUED,
+        attempt=0,
+        payload=QueuedPayload(origin=origin, principal=principal),
+        from_status=None,
+    )
     logger.debug("Enqueued extraction work-unit id=%s for source_id=%s", job.id, source_id)
-    return job
+    return job, True
 
 
 def _sources_with_active_chunking_run(session: "Session") -> list[UUID]:
@@ -193,14 +219,15 @@ def enqueue_extraction_backfill(
     *,
     confirmed: bool = False,
     queue_max_depth: int,
+    principal: str,
 ) -> list[ExtractionJob]:
     """Enqueue extraction work-units for every eligible source (bulk/backfill mode).
 
     Eligible sources are those with an active chunking run (see
     :func:`_sources_with_active_chunking_run`). Each is enqueued via
-    :func:`enqueue_extraction`, so the same ``idempotency_key`` dedupe applies
-    and the resulting units are identical to incremental enqueue — only volume
-    and scheduling differ.
+    :func:`enqueue_extraction` with ``origin="backfill"``, so the same
+    ``idempotency_key`` dedupe applies and the resulting units are identical to
+    incremental enqueue — only volume and scheduling differ.
 
     Capacity is read once for the batch and the eligible set truncated to it.
     Sources beyond the headroom stay eligible for a later batch.
@@ -215,6 +242,8 @@ def enqueue_extraction_backfill(
             ``False`` (the default) nothing is enqueued and the gate raises.
         queue_max_depth: The stage's declared capacity over its actionable
             backlog; ``0`` declares no limit, and every caller must say which it means.
+        principal: The operator identity recorded on each created unit's
+            creation event.
 
     Returns:
         The enqueued (or reused) work-units, one per admitted source.
@@ -233,5 +262,8 @@ def enqueue_extraction_backfill(
         already_enqueued=_enqueued_sources(session, eligible),
     )
     return [
-        enqueue_extraction(session, source_id=source_id, queue_max_depth=queue_max_depth) for source_id in admitted
+        enqueue_extraction(
+            session, source_id=source_id, queue_max_depth=queue_max_depth, origin="backfill", principal=principal
+        )[0]
+        for source_id in admitted
     ]

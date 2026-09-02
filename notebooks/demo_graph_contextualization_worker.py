@@ -403,7 +403,9 @@ print(f"built handler over {DatabaseConfig().database_url}")
 # %%
 with Session(get_engine(DatabaseConfig().database_url)) as session:
     for doc in seeded:
-        unit = enqueue_output(session, doc.conversion_output_id, queue_max_depth=0)
+        unit, _created = enqueue_output(
+            session, doc.conversion_output_id, queue_max_depth=0, origin="backfill", principal="notebook"
+        )
         print(f"enqueued {doc.label!r}: work-unit id={unit.id} status={unit.status.value}")
     session.commit()
 
@@ -660,10 +662,14 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
 
 # %%
 with Session(get_engine(DatabaseConfig().database_url)) as session:
-    incremental = enqueue_output(session, primary.conversion_output_id, queue_max_depth=0)
+    incremental, _created = enqueue_output(
+        session, primary.conversion_output_id, queue_max_depth=0, origin="backfill", principal="notebook"
+    )
     # A corpus-wide backfill has a large blast radius, so it is gated behind explicit
     # confirmation; this is the approved bulk example.
-    (bulk,) = enqueue_backfill_outputs(session, [primary.conversion_output_id], confirmed=True, queue_max_depth=0)
+    (bulk,) = enqueue_backfill_outputs(
+        session, [primary.conversion_output_id], confirmed=True, queue_max_depth=0, principal="notebook"
+    )
     session.commit()
     units = session.exec(
         select(ContextualizationJob).where(ContextualizationJob.conversion_output_id == primary.conversion_output_id)
@@ -756,7 +762,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     session.commit()
 markdown_source.register(old_output, _SUPERSEDE_OLD, compute_markdown_hash(_SUPERSEDE_OLD))
 with Session(get_engine(DatabaseConfig().database_url)) as session:
-    enqueue_output(session, old_output, queue_max_depth=0)
+    enqueue_output(session, old_output, queue_max_depth=0, origin="backfill", principal="notebook")
     session.commit()
 drain(handler)
 show_runs(f"after rev 1 (output {old_output}):", chunking_runs(supersede_uuid))
@@ -778,7 +784,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     session.commit()
 markdown_source.register(new_output, _SUPERSEDE_NEW, compute_markdown_hash(_SUPERSEDE_NEW))
 with Session(get_engine(DatabaseConfig().database_url)) as session:
-    enqueue_output(session, new_output, queue_max_depth=0)
+    enqueue_output(session, new_output, queue_max_depth=0, origin="backfill", principal="notebook")
     session.commit()
 drain(handler)
 after = chunking_runs(supersede_uuid)

@@ -75,12 +75,16 @@ def _build_transitions(
     def apply_retry(session: "Session", job: Any) -> None:
         """Re-queue a terminal work-unit, clearing error/retry-wait fields and recording the event.
 
+        Resets ``attempts`` to zero, so an operator retry grants a fresh retry
+        budget rather than inheriting the exhausted count that failed it.
+
         Raises :class:`ValueError` when the unit is not in a re-queueable terminal
         status (the message is the operator-facing reason).
         """
         if job.status not in RETRYABLE_FROM:
             raise ValueError(f"cannot retry a work-unit in status {job.status.value!r}")
         now = _utcnow()
+        job.attempts = 0
         job.error_code = None
         job.error_message = None
         job.earliest_next_attempt_at = None

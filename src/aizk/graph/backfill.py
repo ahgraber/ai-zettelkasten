@@ -73,6 +73,7 @@ def run_contextualization_backfill(
     confirmed: bool,
     dry_run: bool,
     queue_max_depth: int,
+    principal: str,
 ) -> BackfillResult:
     """Enqueue contextualization work-units for conversion outputs.
 
@@ -96,6 +97,8 @@ def run_contextualization_backfill(
         dry_run: Resolve and enqueue, then roll back instead of committing.
         queue_max_depth: The stage's declared capacity over its actionable
             backlog; ``0`` declares no limit, and every caller must say which it means.
+        principal: The operator identity recorded on each created unit's
+            creation event.
 
     Returns:
         The run's :class:`BackfillResult`.
@@ -118,10 +121,15 @@ def run_contextualization_backfill(
         before = _unit_count(session, ContextualizationJob)
 
         if output_ids is not None:
-            units = [enqueue_output(session, output_id, queue_max_depth=queue_max_depth) for output_id in targets]
+            units = [
+                enqueue_output(
+                    session, output_id, queue_max_depth=queue_max_depth, origin="backfill", principal=principal
+                )[0]
+                for output_id in targets
+            ]
         else:
             units = enqueue_backfill_outputs(
-                session, targets, confirmed=confirmed or dry_run, queue_max_depth=queue_max_depth
+                session, targets, confirmed=confirmed or dry_run, queue_max_depth=queue_max_depth, principal=principal
             )
 
         session.flush()
@@ -152,6 +160,7 @@ def run_extraction_backfill(
     confirmed: bool,
     dry_run: bool,
     queue_max_depth: int,
+    principal: str,
 ) -> BackfillResult:
     """Enqueue extraction work-units for sources with something to extract.
 
@@ -173,6 +182,8 @@ def run_extraction_backfill(
         dry_run: Resolve and enqueue, then roll back instead of committing.
         queue_max_depth: The stage's declared capacity over its actionable
             backlog; ``0`` declares no limit, and every caller must say which it means.
+        principal: The operator identity recorded on each created unit's
+            creation event.
 
     Returns:
         The run's :class:`BackfillResult`.
@@ -190,12 +201,18 @@ def run_extraction_backfill(
 
         if source_ids is not None:
             units = [
-                enqueue_extraction(session, source_id=source_id, queue_max_depth=queue_max_depth)
+                enqueue_extraction(
+                    session,
+                    source_id=source_id,
+                    queue_max_depth=queue_max_depth,
+                    origin="backfill",
+                    principal=principal,
+                )[0]
                 for source_id in source_ids
             ]
         else:
             units = enqueue_extraction_backfill(
-                session, confirmed=confirmed or dry_run, queue_max_depth=queue_max_depth
+                session, confirmed=confirmed or dry_run, queue_max_depth=queue_max_depth, principal=principal
             )
 
         session.flush()

@@ -21,6 +21,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from aizk.pipeline.events import CreationOrigin
+
 #: Stage identifier stamped on the work-unit's transition events.
 CONTEXTUALIZATION_STAGE = "contextualization"
 
@@ -28,6 +30,7 @@ CONTEXTUALIZATION_STAGE = "contextualization"
 class GraphEventKind(str, Enum):
     """Event kinds recorded for a contextualization work-unit's lifecycle."""
 
+    QUEUED = "queued"
     CLAIMED = "claimed"
     SUCCEEDED = "succeeded"
     SKIPPED_SUPERSEDED = "skipped_superseded"
@@ -36,6 +39,15 @@ class GraphEventKind(str, Enum):
     TIMED_OUT = "timed_out"
     RECOVERED_STALE = "recovered_stale"
     REQUEUED = "requeued"
+
+
+class QueuedPayload(BaseModel):
+    """Payload for the creation event: the path that created the unit and the acting principal."""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["queued"] = "queued"
+    origin: CreationOrigin
+    principal: str
 
 
 class ClaimedPayload(BaseModel):

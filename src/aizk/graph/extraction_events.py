@@ -22,6 +22,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from aizk.graph.mention_store import MENTION_EXTRACTION_STAGE
+from aizk.pipeline.events import CreationOrigin
 
 #: Stage identifier stamped on the work-unit's transition events. Extraction's
 #: runtime work-unit stage coincides exactly with the underlying
@@ -42,6 +43,7 @@ class ExtractionEventKind(str, Enum):
     extraction run or raises.
     """
 
+    QUEUED = "queued"
     CLAIMED = "claimed"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
@@ -49,6 +51,15 @@ class ExtractionEventKind(str, Enum):
     TIMED_OUT = "timed_out"
     RECOVERED_STALE = "recovered_stale"
     REQUEUED = "requeued"
+
+
+class QueuedPayload(BaseModel):
+    """Payload for the creation event: the path that created the unit and the acting principal."""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["queued"] = "queued"
+    origin: CreationOrigin
+    principal: str
 
 
 class ClaimedPayload(BaseModel):

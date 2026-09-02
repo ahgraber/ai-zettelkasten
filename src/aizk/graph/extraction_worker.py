@@ -22,14 +22,16 @@ its own. It admits nothing unless automatic admission is switched on for the sta
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import TYPE_CHECKING
 
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
-from aizk.graph.admission import AdmissionLoop, extraction_adapter
+from aizk.graph.admission import AdmissionLoop, admission_adapter_for
 from aizk.graph.config import AdmissionConfig
 from aizk.graph.extraction import EntityExtractor, Gliner2Extractor, SpacyExtractor
+from aizk.graph.extraction_events import EXTRACTION_STAGE
 from aizk.graph.extraction_handler import ExtractionStageHandler
 from aizk.pipeline.runner import StageRunner
 
@@ -92,10 +94,11 @@ def run_extraction_worker(
         extraction_config.input_policy,
         extraction_config.worker_concurrency,
     )
-    admission = AdmissionLoop(
-        engine,
-        extraction_adapter(admission_config),
-        interval_seconds=admission_config.admission_interval_seconds,
+    adapter = admission_adapter_for(EXTRACTION_STAGE, admission_config)
+    admission = (
+        AdmissionLoop(engine, adapter, interval_seconds=admission_config.admission_interval_seconds)
+        if adapter is not None
+        else contextlib.nullcontext()
     )
     with admission:
         return runner.run()

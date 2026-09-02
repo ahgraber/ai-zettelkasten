@@ -102,6 +102,28 @@ def test_rollup_counts_fails_closed_on_an_unmapped_native_status() -> None:
 # --- optional coverage capabilities ------------------------------------------
 
 
+def test_a_descriptor_rejects_a_half_declared_pending_capability() -> None:
+    """``pending_count`` and ``pending_list`` are one capability: neither alone is valid."""
+    base_kwargs = {
+        "key": "half",
+        "label": "Half",
+        "list_units": lambda *a, **k: None,
+        "count_by_status": lambda *a, **k: {},
+        "get_unit": lambda *a, **k: None,
+        "columns_template": "",
+        "native_statuses": [],
+        "rollup": GRAPH_ROLLUP,
+        "events_stage": "half",
+        "actions": [],
+    }
+
+    with pytest.raises(ValueError, match="declares pending_count without pending_list"):
+        StageDescriptor(**base_kwargs, pending_count=lambda *a, **k: 0)
+
+    with pytest.raises(ValueError, match="declares pending_list without pending_count"):
+        StageDescriptor(**base_kwargs, pending_list=lambda *a, **k: [])
+
+
 def test_a_descriptor_declares_no_coverage_capabilities_by_default() -> None:
     """The coverage callables are optional, so a stage is never obliged to have the concept."""
     descriptor = StageDescriptor(

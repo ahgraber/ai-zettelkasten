@@ -30,7 +30,7 @@ from __future__ import annotations
 import datetime
 from enum import Enum
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -41,6 +41,9 @@ if TYPE_CHECKING:
     from sqlmodel import Session
 
 logger = logging.getLogger(__name__)
+
+#: The paths that create a work-unit; recorded on the creation event.
+CreationOrigin = Literal["intake", "admission", "backfill"]
 
 
 def _utcnow() -> datetime.datetime:

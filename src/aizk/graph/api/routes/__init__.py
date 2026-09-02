@@ -110,7 +110,7 @@ def submit_job(
     api_response: Response,
     session: Annotated["Session", Depends(get_db_session)],
     admission_config: Annotated["AdmissionConfig", Depends(get_admission_config)],
-    _principal: _Principal,
+    principal: _Principal,
 ) -> ContextualizationJobResponse | JSONResponse:
     """Submit one converted document for contextualization.
 
@@ -119,16 +119,13 @@ def submit_job(
     stage is at capacity.
     """
     session.exec(text("BEGIN IMMEDIATE"))
-    existing = session.exec(
-        select(ContextualizationJob).where(
-            ContextualizationJob.conversion_output_id == submission.conversion_output_id
-        )
-    ).first()
     try:
-        job = enqueue_output(
+        job, created = enqueue_output(
             session,
             submission.conversion_output_id,
             queue_max_depth=admission_config.contextualization_queue_max_depth,
+            origin="intake",
+            principal=principal.subject,
         )
     except ValueError as exc:
         session.rollback()
@@ -138,7 +135,7 @@ def submit_job(
         return queue_full_response(admission_config.queue_retry_after_seconds)
     session.commit()
     session.refresh(job)
-    if existing is not None:
+    if not created:
         api_response.status_code = status.HTTP_200_OK
     return ContextualizationJobResponse.model_validate(job)
 

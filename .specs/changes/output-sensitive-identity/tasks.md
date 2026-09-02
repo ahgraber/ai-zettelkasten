@@ -8,32 +8,32 @@ Production never runs the new binary against the old database; the pave is part 
 
 ### Capacity posture
 
-- [ ] Correct `src/aizk/graph/README.md`: capacity is a creation gate over the actionable backlog; the network is the authorization boundary; remove the bounded-exposure claim.
-- [ ] Cap `run_admission_pass` admissions at `MAX_BULK_SELECTION` per pass, independent of `queue_max_depth`.
-- [ ] Test: `enabled` with `queue_max_depth=0` and pending work beyond the ceiling admits exactly the ceiling in one short transaction, remainder stays pending (`tests/graph/test_admission.py`).
-- [ ] Test: repeated passes drain the pending set to empty with no capacity limit declared.
-- [ ] Test: with headroom above the ceiling, a pass admits at most the ceiling; with headroom below it, at most the headroom.
-- [ ] Test: cost of a bounded pending evaluation does not grow with the admitted corpus (statement/row-count assertion on two corpora differing only in admitted sources).
-- [ ] Reset `job.attempts` to `0` in `apply_retry` (matching `apply_extraction_readmission`).
-- [ ] Test: `apply_retry` and `apply_extraction_readmission` succeed while the stage is at capacity — both actions, both stages (`tests/graph/test_job_actions.py`).
-- [ ] Test: both operator actions reset the attempt counter.
+- [x] Correct `src/aizk/graph/README.md`: capacity is a creation gate over the actionable backlog; the network is the authorization boundary; remove the bounded-exposure claim.
+- [x] Cap `run_admission_pass` admissions at `MAX_BULK_SELECTION` per pass, independent of `queue_max_depth`.
+- [x] Test: `enabled` with `queue_max_depth=0` and pending work beyond the ceiling admits exactly the ceiling in one short transaction, remainder stays pending (`tests/graph/test_admission.py`).
+- [x] Test: repeated passes drain the pending set to empty with no capacity limit declared.
+- [x] Test: with headroom above the ceiling, a pass admits at most the ceiling; with headroom below it, at most the headroom.
+- [x] Test: cost of a bounded pending evaluation does not grow with the admitted corpus (statement/row-count assertion on two corpora differing only in admitted sources).
+- [x] Reset `job.attempts` to `0` in `apply_retry` (matching `apply_extraction_readmission`).
+- [x] Test: `apply_retry` and `apply_extraction_readmission` succeed while the stage is at capacity — both actions, both stages (`tests/graph/test_job_actions.py`).
+- [x] Test: both operator actions reset the attempt counter.
 
 ### Creation events and intake
 
-- [ ] Change enqueue primitives (`enqueue_document`, `enqueue_extraction`, `enqueue_output`) to return `(job, created)`; update all production and test call sites.
-- [ ] Thread `origin` (`intake` | `admission` | `backfill`) and principal into the primitives; emit the creation event via `record_transition` inside the creating transaction when `created` is true.
-- [ ] Test per creation write-site: intake, admission pass, and backfill each produce exactly one creation event carrying the correct origin and principal — both stages.
-- [ ] Test: a request resolving to an existing unit (dedupe branch) writes no creation event.
-- [ ] Test: a rolled-back creation leaves neither the work-unit nor the event (co-commit).
-- [ ] Intake routes: drop the redundant pre-lookup; decide 201-created vs 200-reused from `created`.
-- [ ] Contract test: `POST /v1/contextualizations` and `POST /v1/extractions` return 201 for a new unit and 200 for a resubmission.
-- [ ] Test: intake accepts a submission while automatic admission is disabled for the target stage.
+- [x] Change enqueue primitives (`enqueue_document`, `enqueue_extraction`, `enqueue_output`) to return `(job, created)`; update all production and test call sites.
+- [x] Thread `origin` (`intake` | `admission` | `backfill`) and principal into the primitives; emit the creation event via `record_transition` inside the creating transaction when `created` is true.
+- [x] Test per creation write-site: intake, admission pass, and backfill each produce exactly one creation event carrying the correct origin and principal — both stages.
+- [x] Test: a request resolving to an existing unit (dedupe branch) writes no creation event.
+- [x] Test: a rolled-back creation leaves neither the work-unit nor the event (co-commit).
+- [x] Intake routes: drop the redundant pre-lookup; decide 201-created vs 200-reused from `created`.
+- [x] Contract test: `POST /v1/contextualizations` and `POST /v1/extractions` return 201 for a new unit and 200 for a resubmission.
+- [x] Test: intake accepts a submission while automatic admission is disabled for the target stage.
 
 ### Console and small fixes
 
-- [ ] `StageDescriptor`: enforce `pending_count`/`pending_list` both-or-neither in `__post_init__`; test rejects a half-declared capability.
-- [ ] `enqueue_backfill`: pass `already_enqueued` as a set.
-- [ ] Resolve the unconsumed `admission_adapter_for` surface: route the admission loop's adapter resolution through it; test the feature-detection scenario against the registry.
+- [x] `StageDescriptor`: enforce `pending_count`/`pending_list` both-or-neither in `__post_init__`; test rejects a half-declared capability.
+- [x] `enqueue_backfill`: pass `already_enqueued` as a set.
+- [x] Resolve the unconsumed `admission_adapter_for` surface: route the admission loop's adapter resolution through it; test the feature-detection scenario against the registry.
 
 ## Phase 2 — Retype (schema only; the pave carries the data)
 

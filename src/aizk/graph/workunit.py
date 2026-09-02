@@ -64,8 +64,9 @@ from aizk.graph.contextualization import (
 )
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.db import begin_immediate
-from aizk.graph.events import CONTEXTUALIZATION_STAGE
+from aizk.graph.events import CONTEXTUALIZATION_STAGE, GraphEventKind, QueuedPayload
 from aizk.graph.persistence import memo_delete_keys, persist_chunks
+from aizk.pipeline.events import record_transition
 from aizk.pipeline.invalidation import require_reprocessing_confirmation
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.utilities.hashing import compute_markdown_hash
@@ -77,6 +78,7 @@ if TYPE_CHECKING:
     from sqlalchemy import Engine
 
     from aizk.graph.llm import LLMClient
+    from aizk.pipeline.events import CreationOrigin
 
 logger = logging.getLogger(__name__)
 
@@ -392,13 +394,17 @@ def enqueue_document(
     conversion_output_id: int,
     source_id: "UUID",
     queue_max_depth: int,
-) -> ContextualizationJob:
+    origin: "CreationOrigin",
+    principal: str,
+) -> tuple[ContextualizationJob, bool]:
     """Enqueue one document's work-unit (incremental mode), deduped on ``idempotency_key``.
 
     If a work-unit for this conversion output already exists, it is returned
     unchanged rather than duplicated — so an incremental re-ingest, or a backfill
     overlapping an already-queued unit, reuses the open unit. Otherwise a new
-    ``QUEUED`` unit is inserted and flushed (so its ``id`` is available).
+    ``QUEUED`` unit is inserted and flushed (so its ``id`` is available) and its
+    creation event is staged in the same session, so the caller's commit lands
+    both or neither.
 
     The capacity check runs **after** the dedupe branch, so a request that resolves
     to an existing unit is never refused. This is the only place contextualization
@@ -413,9 +419,12 @@ def enqueue_document(
             conversion output and carried onto the unit's runs and events.
         queue_max_depth: The stage's declared capacity over its actionable
             backlog; ``0`` declares no limit, and every caller must say which it means.
+        origin: The path creating the unit, recorded on its creation event.
+        principal: The acting principal, recorded on its creation event.
 
     Returns:
-        The existing or newly-created :class:`ContextualizationJob`.
+        The existing or newly-created :class:`ContextualizationJob`, and whether
+        this call created it.
 
     Raises:
         StageAtCapacityError: When the backlog is at or above ``queue_max_depth``
@@ -431,7 +440,7 @@ def enqueue_document(
             existing.id,
             conversion_output_id,
         )
-        return existing
+        return existing, False
 
     check_capacity(session, ContextualizationJob, stage=CONTEXTUALIZATION_STAGE, limit=queue_max_depth)
 
@@ -444,10 +453,22 @@ def enqueue_document(
     )
     session.add(job)
     session.flush()
+    record_transition(
+        session,
+        job,
+        stage=CONTEXTUALIZATION_STAGE,
+        work_unit_ref=str(job.id),
+        source_id=job.source_id,
+        to_status=WorkUnitStatus.QUEUED,
+        kind=GraphEventKind.QUEUED,
+        attempt=0,
+        payload=QueuedPayload(origin=origin, principal=principal),
+        from_status=None,
+    )
     logger.debug(
         "Enqueued contextualization work-unit id=%s for conversion_output_id=%s", job.id, conversion_output_id
     )
-    return job
+    return job, True
 
 
 def enqueue_backfill(
@@ -456,14 +477,16 @@ def enqueue_backfill(
     *,
     confirmed: bool = False,
     queue_max_depth: int,
+    principal: str,
 ) -> list[ContextualizationJob]:
     """Enqueue work-units for many documents (bulk/backfill mode) through the single path.
 
     Each ``(conversion_output_id, source_id)`` pair is enqueued via
-    :func:`enqueue_document`, so the same dedupe applies and the resulting units
-    are identical to incremental enqueue — only volume and scheduling differ.
-    Throttling and per-document commit batching are the caller's concern; this
-    function only stages the rows and does not commit.
+    :func:`enqueue_document` with ``origin="backfill"``, so the same dedupe
+    applies and the resulting units are identical to incremental enqueue — only
+    volume and scheduling differ. Throttling and per-document commit batching
+    are the caller's concern; this function only stages the rows and does not
+    commit.
 
     Capacity is read once for the batch and the input truncated to it. Documents
     beyond the headroom stay pending for a later batch.
@@ -479,6 +502,8 @@ def enqueue_backfill(
             ``False`` (the default) nothing is enqueued and the gate raises.
         queue_max_depth: The stage's declared capacity over its actionable
             backlog; ``0`` declares no limit, and every caller must say which it means.
+        principal: The operator identity recorded on each created unit's
+            creation event.
 
     Returns:
         The enqueued (or reused) work-units, one per admitted document.
@@ -495,7 +520,7 @@ def enqueue_backfill(
         candidates,
         stage=CONTEXTUALIZATION_STAGE,
         limit=queue_max_depth,
-        already_enqueued=[pair for pair in candidates if pair[0] in enqueued],
+        already_enqueued={pair for pair in candidates if pair[0] in enqueued},
     )
     return [
         enqueue_document(
@@ -503,6 +528,8 @@ def enqueue_backfill(
             conversion_output_id=conversion_output_id,
             source_id=source_id,
             queue_max_depth=queue_max_depth,
-        )
+            origin="backfill",
+            principal=principal,
+        )[0]
         for conversion_output_id, source_id in admitted
     ]

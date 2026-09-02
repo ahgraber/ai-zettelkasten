@@ -398,6 +398,32 @@ def test_a_backfill_command_forwards_its_stages_declared_capacity(
     ],
     ids=["contextualization", "extraction"],
 )
+def test_a_backfill_command_forwards_the_operator_as_principal(
+    monkeypatch: pytest.MonkeyPatch, argv: list[str], run_attr: str
+) -> None:
+    """Each command records the shell operator's identity on the units it creates."""
+    _stub_backfill_engine(monkeypatch)
+    monkeypatch.setattr(cli.getpass, "getuser", lambda: "operator-1")
+    captured: dict[str, object] = {}
+
+    def fake_backfill(_engine: object, **kwargs: object) -> cli.BackfillResult:
+        captured.update(kwargs)
+        return cli.BackfillResult(targeted=0, enqueued=0, reused=0)
+
+    monkeypatch.setattr(cli, run_attr, fake_backfill)
+
+    assert cli.main(argv) == 0
+    assert captured["principal"] == "operator-1"
+
+
+@pytest.mark.parametrize(
+    ("argv", "run_attr"),
+    [
+        (["backfill", "--yes"], "run_contextualization_backfill"),
+        (["extraction-backfill", "--yes"], "run_extraction_backfill"),
+    ],
+    ids=["contextualization", "extraction"],
+)
 def test_a_backfill_command_reports_a_capacity_refusal_as_a_usage_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], argv: list[str], run_attr: str
 ) -> None:

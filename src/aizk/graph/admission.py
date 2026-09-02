@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import os
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -40,6 +41,7 @@ from aizk.graph.enqueue import enqueue_output, pending_contextualization_outputs
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
 from aizk.graph.extraction_events import EXTRACTION_STAGE
 from aizk.graph.extraction_workunit import enqueue_extraction, pending_extraction_sources
+from aizk.pipeline.lifecycle import MAX_BULK_SELECTION
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -62,9 +64,10 @@ class AdmissionAdapter:
         pending_work: The stage's pending-work derivation, ``(session, limit) ->
             keys``. Each key identifies work that should have a work-unit and does
             not; the ``limit`` bounds the result after the derivation is applied.
-        enqueue: The stage's enqueue primitive, ``(session, key, queue_max_depth)
-            -> unit``. Admission calls this rather than constructing rows, so an
-            admitted unit is identical to one any other path creates.
+        enqueue: The stage's enqueue primitive, ``(session, key, queue_max_depth,
+            principal) -> (unit, created)``. Admission calls this rather than
+            constructing rows, so an admitted unit is identical to one any other
+            path creates.
         queue_max_depth: The stage's declared capacity; ``0`` declares no limit.
         enabled: Whether automatic admission is switched on for this stage.
             Off by default, so turning the flow on is a deliberate act.
@@ -73,7 +76,7 @@ class AdmissionAdapter:
     stage: str
     model: Any
     pending_work: "Callable[[Session, int | None], list[Any]]"
-    enqueue: "Callable[[Session, Any, int], Any]"
+    enqueue: "Callable[[Session, Any, int, str], tuple[Any, bool]]"
     queue_max_depth: int
     enabled: bool
 
@@ -84,7 +87,9 @@ def contextualization_adapter(config: "AdmissionConfig") -> AdmissionAdapter:
         stage=CONTEXTUALIZATION_STAGE,
         model=ContextualizationJob,
         pending_work=lambda session, limit: pending_contextualization_outputs(session, limit=limit),
-        enqueue=lambda session, key, queue_max_depth: enqueue_output(session, key, queue_max_depth=queue_max_depth),
+        enqueue=lambda session, key, queue_max_depth, principal: enqueue_output(
+            session, key, queue_max_depth=queue_max_depth, origin="admission", principal=principal
+        ),
         queue_max_depth=config.contextualization_queue_max_depth,
         enabled=config.admission_contextualization_enabled,
     )
@@ -96,8 +101,8 @@ def extraction_adapter(config: "AdmissionConfig") -> AdmissionAdapter:
         stage=EXTRACTION_STAGE,
         model=ExtractionJob,
         pending_work=lambda session, limit: pending_extraction_sources(session, limit=limit),
-        enqueue=lambda session, key, queue_max_depth: enqueue_extraction(
-            session, source_id=key, queue_max_depth=queue_max_depth
+        enqueue=lambda session, key, queue_max_depth, principal: enqueue_extraction(
+            session, source_id=key, queue_max_depth=queue_max_depth, origin="admission", principal=principal
         ),
         queue_max_depth=config.extraction_queue_max_depth,
         enabled=config.admission_extraction_enabled,
@@ -134,8 +139,11 @@ def run_admission_pass(engine: "Engine", adapter: AdmissionAdapter) -> int:
     Over unchanged state a repeat pass creates nothing: the admitted work is no
     longer pending.
 
-    Admission stops at capacity; what it does not admit stays pending for the next
-    pass. A stage with automatic admission switched off admits nothing.
+    The pass admits at most :data:`~aizk.pipeline.lifecycle.MAX_BULK_SELECTION`
+    units, whatever the declared capacity, so one pass never grows with the
+    pending corpus; the remainder stays pending for the next pass. Admission also
+    stops at capacity when the declared limit is smaller than that ceiling. A
+    stage with automatic admission switched off admits nothing.
 
     Args:
         engine: The shared engine; the pass opens its own short transaction.
@@ -148,6 +156,7 @@ def run_admission_pass(engine: "Engine", adapter: AdmissionAdapter) -> int:
         return 0
 
     admitted = 0
+    principal = f"worker:{os.getpid()}"
     with begin_immediate(engine) as session:
         room = headroom(session, adapter.model, limit=adapter.queue_max_depth)
         if room == 0:
@@ -157,10 +166,11 @@ def run_admission_pass(engine: "Engine", adapter: AdmissionAdapter) -> int:
                 extra={"stage": adapter.stage, "limit": adapter.queue_max_depth},
             )
             return 0
-        pending = adapter.pending_work(session, room)
+        batch = MAX_BULK_SELECTION if room is None else min(room, MAX_BULK_SELECTION)
+        pending = adapter.pending_work(session, batch)
         for key in pending:
             try:
-                adapter.enqueue(session, key, adapter.queue_max_depth)
+                _unit, created = adapter.enqueue(session, key, adapter.queue_max_depth, principal)
             except StageAtCapacityError:
                 # A concurrent writer took the room this pass measured. The
                 # remainder is still pending; the next pass admits it.
@@ -171,7 +181,8 @@ def run_admission_pass(engine: "Engine", adapter: AdmissionAdapter) -> int:
                     extra={"stage": adapter.stage, "admitted": admitted},
                 )
                 break
-            admitted += 1
+            if created:
+                admitted += 1
     if admitted:
         logger.info(
             "Admitted %d %s work-unit(s)",

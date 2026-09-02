@@ -44,6 +44,7 @@ Registered as the ``aizk-graph`` console script; also runnable via
 from __future__ import annotations
 
 import argparse
+import getpass
 import logging
 import sys
 from uuid import UUID
@@ -189,6 +190,7 @@ def _cmd_backfill(args: argparse.Namespace) -> int:
             confirmed=args.yes,
             dry_run=args.dry_run,
             queue_max_depth=AdmissionConfig().contextualization_queue_max_depth,
+            principal=getpass.getuser(),
         )
     except ReprocessingConfirmationError:
         return refuse_unconfirmed("corpus-wide contextualization backfill", explicit_flag="--output-id")
@@ -219,6 +221,7 @@ def _cmd_extraction_backfill(args: argparse.Namespace) -> int:
             confirmed=args.yes,
             dry_run=args.dry_run,
             queue_max_depth=AdmissionConfig().extraction_queue_max_depth,
+            principal=getpass.getuser(),
         )
     except ReprocessingConfirmationError:
         return refuse_unconfirmed("corpus-wide extraction backfill", explicit_flag="--source-id")

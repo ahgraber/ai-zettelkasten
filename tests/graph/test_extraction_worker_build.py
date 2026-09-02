@@ -17,6 +17,7 @@ from pydantic import ValidationError
 import pytest
 
 from aizk.graph import extraction_worker as extraction_worker_module
+from aizk.graph.admission import AdmissionAdapter
 from aizk.graph.config import AdmissionConfig, ExtractionConfig
 from aizk.graph.extraction_events import EXTRACTION_STAGE
 from aizk.graph.extraction_worker import build_extractor, run_extraction_worker
@@ -139,3 +140,35 @@ def test_the_worker_reads_admission_settings_when_none_are_supplied(stubbed_work
 
     (loop,) = _RecordingAdmissionLoop.instances
     assert loop.adapter.enabled is False
+
+
+def test_the_worker_starts_no_admission_loop_when_the_stage_declares_no_adapter(
+    stubbed_worker: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stage with no declared adapter runs no admission loop, but the worker still builds and starts."""
+    monkeypatch.setattr(extraction_worker_module, "admission_adapter_for", lambda _stage, _config: None)
+
+    assert run_extraction_worker(ExtractionConfig(_env_file=None)) == 0
+
+    assert _RecordingAdmissionLoop.instances == []
+    assert stubbed_worker == ["runner"]
+
+
+def test_the_worker_hands_the_loop_the_adapter_admission_adapter_for_resolves(
+    stubbed_worker: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The loop receives the adapter object ``admission_adapter_for`` returns for this stage."""
+    resolved = AdmissionAdapter(
+        stage=EXTRACTION_STAGE,
+        model=object(),
+        pending_work=lambda *_a, **_k: [],
+        enqueue=lambda *_a, **_k: None,
+        queue_max_depth=99,
+        enabled=True,
+    )
+    monkeypatch.setattr(extraction_worker_module, "admission_adapter_for", lambda _stage, _config: resolved)
+
+    run_extraction_worker(ExtractionConfig(_env_file=None))
+
+    (loop,) = _RecordingAdmissionLoop.instances
+    assert loop.adapter is resolved

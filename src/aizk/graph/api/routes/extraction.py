@@ -71,7 +71,7 @@ def submit_job(
     api_response: Response,
     session: Annotated["Session", Depends(get_db_session)],
     admission_config: Annotated["AdmissionConfig", Depends(get_admission_config)],
-    _principal: _Principal,
+    principal: _Principal,
 ) -> ExtractionJobResponse | JSONResponse:
     """Submit one source for entity-mention extraction.
 
@@ -85,19 +85,20 @@ def submit_job(
     if known_source is None:
         session.rollback()
         raise HTTPException(status_code=404, detail=f"source {submission.source_id} not found")
-    existing = session.exec(select(ExtractionJob).where(ExtractionJob.source_id == submission.source_id)).first()
     try:
-        job = enqueue_extraction(
+        job, created = enqueue_extraction(
             session,
             source_id=submission.source_id,
             queue_max_depth=admission_config.extraction_queue_max_depth,
+            origin="intake",
+            principal=principal.subject,
         )
     except StageAtCapacityError:
         session.rollback()
         return queue_full_response(admission_config.queue_retry_after_seconds)
     session.commit()
     session.refresh(job)
-    if existing is not None:
+    if not created:
         api_response.status_code = status.HTTP_200_OK
     return ExtractionJobResponse.model_validate(job)
 

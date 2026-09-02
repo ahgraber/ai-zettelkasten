@@ -15,6 +15,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from sqlalchemy import text
 from sqlmodel import Session, create_engine, select
 
 from aizk.conversion.datamodel.output import ConversionOutput
@@ -26,8 +27,10 @@ from aizk.graph.enqueue import (
     latest_output_ids_per_source,
     pending_contextualization_outputs,
 )
+from aizk.graph.events import QueuedPayload
 from aizk.graph.markdown_source import ConversionOutputFreshness
 from aizk.graph.workunit import enqueue_backfill
+from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.invalidation import ReprocessingConfirmationError
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
@@ -42,6 +45,7 @@ def _make_engine(tmp_path: Path):
     engine = create_engine(f"sqlite:///{tmp_path / 'enqueue.db'}")
     ConversionOutput.__table__.create(engine)
     ContextualizationJob.__table__.create(engine)
+    PipelineEvent.__table__.create(engine)
     return engine
 
 
@@ -78,12 +82,13 @@ def test_enqueue_output_resolves_source_id_from_the_conversion_output(tmp_path: 
         _add_output(session, output_id=42, source_id=_UUID_A)
         session.commit()
 
-        job = enqueue_output(session, 42, queue_max_depth=0)
+        job, created = enqueue_output(session, 42, queue_max_depth=0, origin="backfill", principal="test")
         session.commit()
 
         assert job.conversion_output_id == 42
         assert job.source_id == _UUID_A
         assert job.status is WorkUnitStatus.QUEUED
+        assert created is True
 
 
 def test_enqueue_output_rejects_unknown_output(tmp_path: Path) -> None:
@@ -91,7 +96,7 @@ def test_enqueue_output_rejects_unknown_output(tmp_path: Path) -> None:
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
         with pytest.raises(ValueError, match="conversion output 7 not found"):
-            enqueue_output(session, 7, queue_max_depth=0)
+            enqueue_output(session, 7, queue_max_depth=0, origin="backfill", principal="test")
         assert session.exec(select(ContextualizationJob)).all() == []
 
 
@@ -103,10 +108,10 @@ def test_enqueue_backfill_resolves_each_and_dedupes(tmp_path: Path) -> None:
         _add_output(session, output_id=2, source_id=_UUID_B)
         session.commit()
 
-        first = enqueue_backfill_outputs(session, [1, 2], confirmed=True, queue_max_depth=0)
+        first = enqueue_backfill_outputs(session, [1, 2], confirmed=True, queue_max_depth=0, principal="test")
         session.commit()
         # A second backfill overlapping the same outputs reuses the open units.
-        second = enqueue_backfill_outputs(session, [1, 2], confirmed=True, queue_max_depth=0)
+        second = enqueue_backfill_outputs(session, [1, 2], confirmed=True, queue_max_depth=0, principal="test")
         session.commit()
 
         assert {j.source_id for j in first} == {_UUID_A, _UUID_B}
@@ -122,7 +127,7 @@ def test_enqueue_backfill_outputs_requires_confirmation(tmp_path: Path) -> None:
         session.commit()
 
         with pytest.raises(ReprocessingConfirmationError, match="will not run until it is explicitly confirmed"):
-            enqueue_backfill_outputs(session, [1], queue_max_depth=0)
+            enqueue_backfill_outputs(session, [1], queue_max_depth=0, principal="test")
         assert session.exec(select(ContextualizationJob)).all() == [], "nothing is enqueued without confirmation"
 
 
@@ -134,11 +139,11 @@ def test_enqueue_output_refuses_new_work_at_capacity(tmp_path: Path) -> None:
         _add_output(session, output_id=2, source_id=_UUID_B)
         session.commit()
 
-        enqueue_output(session, 1, queue_max_depth=1)
+        enqueue_output(session, 1, queue_max_depth=1, origin="backfill", principal="test")
         session.commit()
 
         with pytest.raises(StageAtCapacityError, match="contextualization stage is at capacity"):
-            enqueue_output(session, 2, queue_max_depth=1)
+            enqueue_output(session, 2, queue_max_depth=1, origin="backfill", principal="test")
         session.rollback()
 
         assert len(session.exec(select(ContextualizationJob)).all()) == 1
@@ -151,13 +156,14 @@ def test_enqueue_output_at_capacity_returns_the_existing_unit(tmp_path: Path) ->
         _add_output(session, output_id=1, source_id=_UUID_A)
         session.commit()
 
-        first = enqueue_output(session, 1, queue_max_depth=1)
+        first, _created = enqueue_output(session, 1, queue_max_depth=1, origin="backfill", principal="test")
         session.commit()
 
-        again = enqueue_output(session, 1, queue_max_depth=1)
+        again, created_again = enqueue_output(session, 1, queue_max_depth=1, origin="backfill", principal="test")
         session.commit()
 
         assert again.id == first.id
+        assert created_again is False
         assert len(session.exec(select(ContextualizationJob)).all()) == 1
 
 
@@ -169,8 +175,8 @@ def test_enqueue_output_without_a_declared_limit_accepts_work(tmp_path: Path) ->
         _add_output(session, output_id=2, source_id=_UUID_B)
         session.commit()
 
-        enqueue_output(session, 1, queue_max_depth=0)
-        enqueue_output(session, 2, queue_max_depth=0)
+        enqueue_output(session, 1, queue_max_depth=0, origin="backfill", principal="test")
+        enqueue_output(session, 2, queue_max_depth=0, origin="backfill", principal="test")
         session.commit()
 
         assert len(session.exec(select(ContextualizationJob)).all()) == 2
@@ -185,7 +191,7 @@ def test_enqueue_backfill_outputs_admits_only_the_batch_headroom(tmp_path: Path)
         _add_output(session, output_id=3, source_id=_UUID_C)
         session.commit()
 
-        admitted = enqueue_backfill_outputs(session, [1, 2, 3], confirmed=True, queue_max_depth=2)
+        admitted = enqueue_backfill_outputs(session, [1, 2, 3], confirmed=True, queue_max_depth=2, principal="test")
         session.commit()
 
         assert [job.conversion_output_id for job in admitted] == [1, 2]
@@ -198,11 +204,74 @@ def test_enqueue_backfill_admits_only_the_batch_headroom(tmp_path: Path) -> None
     with Session(engine) as session:
         documents = [(1, _UUID_A), (2, _UUID_B), (3, _UUID_C)]
 
-        admitted = enqueue_backfill(session, documents, confirmed=True, queue_max_depth=2)
+        admitted = enqueue_backfill(session, documents, confirmed=True, queue_max_depth=2, principal="test")
         session.commit()
 
         assert [job.conversion_output_id for job in admitted] == [1, 2]
         assert {job.conversion_output_id for job in session.exec(select(ContextualizationJob)).all()} == {1, 2}
+
+
+# --- creation events ---------------------------------------------------------
+
+
+def test_enqueue_output_records_one_creation_event_carrying_origin_and_principal(tmp_path: Path) -> None:
+    """A newly-created unit gets exactly one ``queued`` event, recording its origin and principal."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        _add_output(session, output_id=1, source_id=_UUID_A)
+        session.commit()
+
+        job, created = enqueue_output(session, 1, queue_max_depth=0, origin="backfill", principal="operator-1")
+        session.commit()
+
+        assert created is True
+        events = session.exec(
+            select(PipelineEvent).where(PipelineEvent.work_unit_ref == str(job.id), PipelineEvent.kind == "queued")
+        ).all()
+        assert len(events) == 1
+        (event,) = events
+        assert event.from_status is None
+        assert event.to_status == "queued"
+        payload = QueuedPayload.model_validate_json(event.payload_json)
+        assert payload.origin == "backfill"
+        assert payload.principal == "operator-1"
+
+
+def test_enqueue_output_reuse_writes_no_creation_event(tmp_path: Path) -> None:
+    """Re-enqueueing the same output resolves to the existing unit and writes no new event."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        _add_output(session, output_id=1, source_id=_UUID_A)
+        session.commit()
+
+        job, _created = enqueue_output(session, 1, queue_max_depth=0, origin="backfill", principal="test")
+        session.commit()
+
+        _again, created_again = enqueue_output(session, 1, queue_max_depth=0, origin="backfill", principal="test")
+        session.commit()
+
+        assert created_again is False
+        events = session.exec(
+            select(PipelineEvent).where(PipelineEvent.work_unit_ref == str(job.id), PipelineEvent.kind == "queued")
+        ).all()
+        assert len(events) == 1
+
+
+def test_a_rolled_back_creation_leaves_neither_the_unit_nor_the_event(tmp_path: Path) -> None:
+    """A creation whose transaction rolls back before commit leaves no work-unit and no event."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        _add_output(session, output_id=1, source_id=_UUID_A)
+        session.commit()
+
+    with Session(engine) as session:
+        session.exec(text("BEGIN IMMEDIATE"))
+        enqueue_output(session, 1, queue_max_depth=0, origin="backfill", principal="test")
+        session.rollback()
+
+    with Session(engine) as session:
+        assert session.exec(select(ContextualizationJob)).all() == []
+        assert session.exec(select(PipelineEvent)).all() == []
 
 
 # --- pending-work derivation ------------------------------------------------

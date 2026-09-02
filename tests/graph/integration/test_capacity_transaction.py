@@ -158,6 +158,7 @@ def test_the_contextualization_backfill_evaluates_capacity_under_its_write_lock(
             confirmed=True,
             dry_run=False,
             queue_max_depth=_LIMIT,
+            principal="test",
         )
 
     _assert_evaluated_under_the_write_lock(observed)
@@ -182,6 +183,7 @@ def test_the_extraction_backfill_evaluates_capacity_under_its_write_lock(
             confirmed=True,
             dry_run=False,
             queue_max_depth=_LIMIT,
+            principal="test",
         )
 
     _assert_evaluated_under_the_write_lock(observed)

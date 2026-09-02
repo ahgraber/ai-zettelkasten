@@ -41,6 +41,8 @@ if TYPE_CHECKING:
     from sqlalchemy import Select
     from sqlmodel import Session
 
+    from aizk.pipeline.events import CreationOrigin
+
 
 def _require_bounding_limit(limit: int | None) -> None:
     """Reject a ``limit`` that would widen a scan instead of narrowing it.
@@ -191,7 +193,9 @@ def enqueue_output(
     conversion_output_id: int,
     *,
     queue_max_depth: int,
-) -> "ContextualizationJob":
+    origin: "CreationOrigin",
+    principal: str,
+) -> "tuple[ContextualizationJob, bool]":
     """Enqueue one document's work-unit, resolving its source identity from the output.
 
     Looks up the conversion output to resolve ``source_id``, then enqueues (or
@@ -202,6 +206,11 @@ def enqueue_output(
         conversion_output_id: The conversion artifact locator to process.
         queue_max_depth: The stage's declared capacity over its actionable
             backlog; ``0`` declares no limit, and every caller must say which it means.
+        origin: The path creating the unit, recorded on its creation event.
+        principal: The acting principal, recorded on its creation event.
+
+    Returns:
+        The existing or newly-created work-unit, and whether this call created it.
 
     Raises:
         ValueError: If no conversion output exists for ``conversion_output_id``.
@@ -216,6 +225,8 @@ def enqueue_output(
         conversion_output_id=conversion_output_id,
         source_id=output.source_id,
         queue_max_depth=queue_max_depth,
+        origin=origin,
+        principal=principal,
     )
 
 
@@ -225,14 +236,16 @@ def enqueue_backfill_outputs(
     *,
     confirmed: bool = False,
     queue_max_depth: int,
+    principal: str,
 ) -> list["ContextualizationJob"]:
     """Enqueue work-units for many conversion outputs (bulk/backfill mode).
 
-    Each output is resolved and enqueued via :func:`enqueue_output`, so the same
-    source-identity resolution and ``idempotency_key`` dedupe apply and the
-    resulting units are identical to incremental enqueue — only volume and
-    scheduling differ. Throttling and per-document commit batching are the
-    caller's concern; this only stages the rows and does not commit.
+    Each output is resolved and enqueued via :func:`enqueue_output` with
+    ``origin="backfill"``, so the same source-identity resolution and
+    ``idempotency_key`` dedupe apply and the resulting units are identical to
+    incremental enqueue — only volume and scheduling differ. Throttling and
+    per-document commit batching are the caller's concern; this only stages the
+    rows and does not commit.
 
     Capacity is read once for the batch and the input truncated to it. Outputs
     beyond the headroom stay pending for a later batch.
@@ -248,6 +261,8 @@ def enqueue_backfill_outputs(
             ``False`` (the default) nothing is enqueued and the gate raises.
         queue_max_depth: The stage's declared capacity over its actionable
             backlog; ``0`` declares no limit, and every caller must say which it means.
+        principal: The operator identity recorded on each created unit's
+            creation event.
 
     Returns:
         The enqueued (or reused) work-units, one per admitted output.
@@ -266,6 +281,8 @@ def enqueue_backfill_outputs(
         already_enqueued=enqueued_outputs(session, candidates),
     )
     return [
-        enqueue_output(session, conversion_output_id, queue_max_depth=queue_max_depth)
+        enqueue_output(
+            session, conversion_output_id, queue_max_depth=queue_max_depth, origin="backfill", principal=principal
+        )[0]
         for conversion_output_id in admitted
     ]

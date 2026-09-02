@@ -24,6 +24,7 @@ from aizk.conversion.datamodel.source import Source
 from aizk.db.engine import get_engine
 from aizk.graph.api.main import create_app
 from aizk.graph.datamodel import ExtractionJob
+from aizk.graph.extraction_events import QueuedPayload
 from aizk.graph.extraction_workunit import enqueue_extraction
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
@@ -115,6 +116,37 @@ def test_submit_creates_a_queued_work_unit(client: TestClient, engine) -> None:
         assert len(session.exec(select(ExtractionJob)).all()) == 1
 
 
+def test_submit_records_one_creation_event_with_origin_intake(client: TestClient, engine) -> None:
+    """A submission that creates a unit records exactly one ``queued`` event naming intake and the principal."""
+    _add_source(engine, _SOURCE_A)
+
+    response = client.post("/v1/extractions", json={"source_id": str(_SOURCE_A)})
+
+    job_id = response.json()["id"]
+    with Session(engine) as session:
+        events = session.exec(
+            select(PipelineEvent).where(PipelineEvent.work_unit_ref == str(job_id), PipelineEvent.kind == "queued")
+        ).all()
+        assert len(events) == 1
+        (event,) = events
+        assert event.from_status is None
+        assert event.to_status == "queued"
+        payload = QueuedPayload.model_validate_json(event.payload_json)
+        assert payload.origin == "intake"
+        assert payload.principal == "self"
+
+
+def test_submit_while_admission_is_disabled_still_creates_the_unit(client_factory, engine) -> None:
+    """Intake accepts a submission even while automatic admission is switched off for the stage."""
+    _add_source(engine, _SOURCE_A)
+    with client_factory(AIZK_GRAPH__ADMISSION_EXTRACTION_ENABLED=False) as client:
+        response = client.post("/v1/extractions", json={"source_id": str(_SOURCE_A)})
+
+    assert response.status_code == 201
+    with Session(engine) as session:
+        assert len(session.exec(select(ExtractionJob)).all()) == 1
+
+
 def test_resubmitting_returns_the_existing_unit(client: TestClient, engine) -> None:
     """The same work submitted twice returns the original unit rather than duplicating it."""
     _add_source(engine, _SOURCE_A)
@@ -172,7 +204,7 @@ def test_an_intake_unit_equals_a_domain_enqueued_unit(client: TestClient, engine
 
     client.post("/v1/extractions", json={"source_id": str(_SOURCE_A)})
     with Session(engine) as session:
-        enqueue_extraction(session, source_id=_SOURCE_B, queue_max_depth=0)
+        enqueue_extraction(session, source_id=_SOURCE_B, queue_max_depth=0, origin="backfill", principal="test")
         session.commit()
 
     with Session(engine) as session:

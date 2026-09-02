@@ -133,7 +133,14 @@ def test_queued_unit_runs_to_success_with_events_and_records(tmp_path: Path) -> 
     """A queued unit runs through the runner to SUCCEEDED, emitting events and persisting records."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        job = enqueue_document(session, conversion_output_id=_OUTPUT_ID, source_id=_AIZK_UUID, queue_max_depth=0)
+        job, _created = enqueue_document(
+            session,
+            conversion_output_id=_OUTPUT_ID,
+            source_id=_AIZK_UUID,
+            queue_max_depth=0,
+            origin="backfill",
+            principal="test",
+        )
         session.commit()
         job_id = job.id
 
@@ -166,7 +173,7 @@ def test_queued_unit_runs_to_success_with_events_and_records(tmp_path: Path) -> 
             .order_by(PipelineEvent.event_id)
         ).all()
         kinds = [e.kind for e in events]
-        assert kinds == ["claimed", "succeeded"]
+        assert kinds == ["queued", "claimed", "succeeded"]
         assert all(e.source_id == _AIZK_UUID for e in events)
         succeeded = next(e for e in events if e.kind == "succeeded")
         assert succeeded.run_id == active["chunking"].id
@@ -176,7 +183,14 @@ def test_reexecution_is_idempotent(tmp_path: Path) -> None:
     """A unit re-executed after stale recovery creates no duplicate runs/rows and re-succeeds."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        job = enqueue_document(session, conversion_output_id=_OUTPUT_ID, source_id=_AIZK_UUID, queue_max_depth=0)
+        job, _created = enqueue_document(
+            session,
+            conversion_output_id=_OUTPUT_ID,
+            source_id=_AIZK_UUID,
+            queue_max_depth=0,
+            origin="backfill",
+            principal="test",
+        )
         session.commit()
         job_id = job.id
 

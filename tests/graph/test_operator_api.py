@@ -29,6 +29,7 @@ from aizk.db.engine import get_engine
 from aizk.graph.api.main import create_app
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.enqueue import enqueue_output
+from aizk.graph.events import QueuedPayload
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
@@ -157,6 +158,37 @@ def test_submit_creates_a_queued_work_unit(client: TestClient, engine) -> None:
         assert len(session.exec(select(ContextualizationJob)).all()) == 1
 
 
+def test_submit_records_one_creation_event_with_origin_intake(client: TestClient, engine) -> None:
+    """A submission that creates a unit records exactly one ``queued`` event naming intake and the principal."""
+    _add_output(engine, output_id=7)
+
+    response = client.post("/v1/contextualizations", json={"conversion_output_id": 7})
+
+    job_id = response.json()["id"]
+    with Session(engine) as session:
+        events = session.exec(
+            select(PipelineEvent).where(PipelineEvent.work_unit_ref == str(job_id), PipelineEvent.kind == "queued")
+        ).all()
+        assert len(events) == 1
+        (event,) = events
+        assert event.from_status is None
+        assert event.to_status == "queued"
+        payload = QueuedPayload.model_validate_json(event.payload_json)
+        assert payload.origin == "intake"
+        assert payload.principal == "self"
+
+
+def test_submit_while_admission_is_disabled_still_creates_the_unit(client_factory, engine) -> None:
+    """Intake accepts a submission even while automatic admission is switched off for the stage."""
+    _add_output(engine, output_id=7)
+    with client_factory(AIZK_GRAPH__ADMISSION_CONTEXTUALIZATION_ENABLED=False) as client:
+        response = client.post("/v1/contextualizations", json={"conversion_output_id": 7})
+
+    assert response.status_code == 201
+    with Session(engine) as session:
+        assert len(session.exec(select(ContextualizationJob)).all()) == 1
+
+
 def test_resubmitting_returns_the_existing_unit(client: TestClient, engine) -> None:
     """The same work submitted twice returns the original unit rather than duplicating it."""
     _add_output(engine, output_id=7)
@@ -226,7 +258,7 @@ def test_an_intake_unit_equals_a_domain_enqueued_unit(client: TestClient, engine
 
     client.post("/v1/contextualizations", json={"conversion_output_id": 1})
     with Session(engine) as session:
-        enqueue_output(session, 2, queue_max_depth=0)
+        enqueue_output(session, 2, queue_max_depth=0, origin="backfill", principal="test")
         session.commit()
 
     with Session(engine) as session:

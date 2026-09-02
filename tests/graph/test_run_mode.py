@@ -147,9 +147,17 @@ def _process(engine, *, mode: str) -> dict:
                 [(_OTHER_OUTPUT_ID, _OTHER_AIZK_UUID), (_OUTPUT_ID, _AIZK_UUID)],
                 confirmed=True,
                 queue_max_depth=0,
+                principal="test",
             )
         else:
-            enqueue_document(session, conversion_output_id=_OUTPUT_ID, source_id=_AIZK_UUID, queue_max_depth=0)
+            enqueue_document(
+                session,
+                conversion_output_id=_OUTPUT_ID,
+                source_id=_AIZK_UUID,
+                queue_max_depth=0,
+                origin="backfill",
+                principal="test",
+            )
         session.commit()
     _run(engine)
     return _snapshot(engine)
@@ -183,15 +191,32 @@ def test_enqueue_dedupes_on_idempotency_key(tmp_path: Path) -> None:
     """Re-enqueueing the same conversion output reuses the open work-unit, in either mode."""
     engine = _make_engine(tmp_path, "dedupe.db")
     with Session(engine) as session:
-        first = enqueue_document(session, conversion_output_id=_OUTPUT_ID, source_id=_AIZK_UUID, queue_max_depth=0)
+        first, _created = enqueue_document(
+            session,
+            conversion_output_id=_OUTPUT_ID,
+            source_id=_AIZK_UUID,
+            queue_max_depth=0,
+            origin="backfill",
+            principal="test",
+        )
         session.commit()
         first_id = first.id
 
-        again = enqueue_document(session, conversion_output_id=_OUTPUT_ID, source_id=_AIZK_UUID, queue_max_depth=0)
-        (backfilled,) = enqueue_backfill(session, [(_OUTPUT_ID, _AIZK_UUID)], confirmed=True, queue_max_depth=0)
+        again, created_again = enqueue_document(
+            session,
+            conversion_output_id=_OUTPUT_ID,
+            source_id=_AIZK_UUID,
+            queue_max_depth=0,
+            origin="backfill",
+            principal="test",
+        )
+        (backfilled,) = enqueue_backfill(
+            session, [(_OUTPUT_ID, _AIZK_UUID)], confirmed=True, queue_max_depth=0, principal="test"
+        )
         session.commit()
 
         assert again.id == first_id
+        assert created_again is False
         assert backfilled.id == first_id
         rows = session.exec(
             select(ContextualizationJob).where(ContextualizationJob.conversion_output_id == _OUTPUT_ID)

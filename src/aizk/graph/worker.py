@@ -19,6 +19,7 @@ its own. It admits nothing unless automatic admission is switched on for the sta
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import TYPE_CHECKING
 
@@ -26,8 +27,9 @@ from aizk.conversion.storage.s3_client import S3Client
 from aizk.conversion.utilities.startup import StartupValidationError
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
-from aizk.graph.admission import AdmissionLoop, contextualization_adapter
+from aizk.graph.admission import AdmissionLoop, admission_adapter_for
 from aizk.graph.config import AdmissionConfig
+from aizk.graph.events import CONTEXTUALIZATION_STAGE
 from aizk.graph.handler import ContextualizationStageHandler
 from aizk.graph.llm import PydanticAILLMClient
 from aizk.graph.markdown_source import ConversionOutputFreshness, S3MarkdownSource
@@ -105,10 +107,11 @@ def run_graph_worker(
         contextualization_config.llm_model,
         contextualization_config.worker_concurrency,
     )
-    admission = AdmissionLoop(
-        engine,
-        contextualization_adapter(admission_config),
-        interval_seconds=admission_config.admission_interval_seconds,
+    adapter = admission_adapter_for(CONTEXTUALIZATION_STAGE, admission_config)
+    admission = (
+        AdmissionLoop(engine, adapter, interval_seconds=admission_config.admission_interval_seconds)
+        if adapter is not None
+        else contextlib.nullcontext()
     )
     with admission:
         return runner.run()
