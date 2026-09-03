@@ -94,7 +94,7 @@ def _seed_chunked(db_session: Session, seed_source, tag: str) -> UUID:
     db_session.add(
         PipelineRun(
             stage=CHUNKING_STAGE,
-            scope_id=str(source.source_id),
+            scope_id=source.source_id,
             status=RunStatus.ACTIVE,
             derivation_key=f"dk-{tag}",
         )

@@ -158,7 +158,7 @@ def test_queued_unit_runs_to_success_with_events_and_records(tmp_path: Path) -> 
         # The three source-scoped runs and their rows are persisted.
         active = _active_runs_by_stage(session)
         assert set(active) == {"chunking", "document_summary", "chunk_contextualization"}
-        assert all(r.scope_id == str(_AIZK_UUID) for r in active.values())
+        assert all(r.scope_id == _AIZK_UUID for r in active.values())
         chunks = session.exec(select(Chunk)).all()
         variants = session.exec(select(ContextualizedChunk)).all()
         assert len(chunks) >= 1

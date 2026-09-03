@@ -55,7 +55,7 @@ from aizk.utilities.hashing import compute_markdown_hash
 
 _AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")
 _OTHER_AIZK_UUID = UUID("22222222-2222-2222-2222-222222222222")
-_SCOPE = str(_AIZK_UUID)
+_SCOPE = _AIZK_UUID
 _OUTPUT_ID = 42
 _HASH = "0011223344556677"
 _DOC_TEXT = "# Title\n\nThe document body the summary pass reads."
@@ -116,12 +116,12 @@ class _AlwaysCurrent:
         return True
 
 
-def _chunk(text: str, ordinal: int, *, scope: str = _SCOPE, markdown_hash: str = _HASH) -> SplitterChunk:
+def _chunk(text: str, ordinal: int, *, scope: UUID = _SCOPE, markdown_hash: str = _HASH) -> SplitterChunk:
     """Build a splitter chunk for a single source (no chunk_id — identity is assigned at persistence)."""
     content_hash = xxhash.xxh64(text.encode("utf-8")).hexdigest()
     return SplitterChunk(
         content_hash=content_hash,
-        source_id=scope,
+        source_id=str(scope),
         heading_path=(),
         ordinal=ordinal,
         text=text,
@@ -176,7 +176,7 @@ def _fail_after_k_context(k: int, *, summary: str = "the document summary"):
     return respond
 
 
-def _memo_rows(engine: Engine, scope: str, kind: str | None = None) -> list[ContextualizationOutputMemo]:
+def _memo_rows(engine: Engine, scope: UUID, kind: str | None = None) -> list[ContextualizationOutputMemo]:
     """Return the memo rows for a source, optionally filtered by kind."""
     with Session(engine) as session:
         statement = select(ContextualizationOutputMemo).where(ContextualizationOutputMemo.scope_id == scope)
@@ -185,7 +185,7 @@ def _memo_rows(engine: Engine, scope: str, kind: str | None = None) -> list[Cont
         return list(session.exec(statement).all())
 
 
-def _active_runs(engine: Engine, scope: str) -> dict[str, PipelineRun]:
+def _active_runs(engine: Engine, scope: UUID) -> dict[str, PipelineRun]:
     """Return the active runs for a source keyed by stage."""
     with Session(engine) as session:
         return {
@@ -217,7 +217,7 @@ def _process(
     return result
 
 
-def _variant_snapshot(engine: Engine, scope: str) -> dict[str, object]:
+def _variant_snapshot(engine: Engine, scope: UUID) -> dict[str, object]:
     """Reduce a source's active generation to a DB-independent comparable form."""
     active = _active_runs(engine, scope)
     chunking, summary_run, variant_run = (
@@ -303,7 +303,7 @@ def test_active_variant_run_precheck_skips_all_generation(engine: Engine) -> Non
     # (the splitter's ordinal ties across sections, so it is not a sort key).
     ordered = split(
         _MARKDOWN,
-        source_id=_SCOPE,
+        source_id=str(_SCOPE),
         converted_artifact_id=str(_OUTPUT_ID),
         markdown_hash_xx64=compute_markdown_hash(_MARKDOWN),
     )
@@ -724,7 +724,7 @@ def test_stale_plan_error_is_classified_retryable_not_permanent() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def memo_get_via(engine: Engine, kind: str, scope: str, derivation_key: str) -> str | None:
+def memo_get_via(engine: Engine, kind: str, scope: UUID, derivation_key: str) -> str | None:
     """Read a memo value through a short-lived session."""
     with Session(engine) as session:
         return memo_get(session, kind, scope, derivation_key)
@@ -748,7 +748,7 @@ def _revision_key(chunk: SplitterChunk) -> str:
     )
 
 
-def _all_runs(engine: Engine, scope: str) -> Iterator[PipelineRun]:
+def _all_runs(engine: Engine, scope: UUID) -> Iterator[PipelineRun]:
     """Yield all runs (any status) for a source."""
     with Session(engine) as session:
         yield from session.exec(select(PipelineRun).where(PipelineRun.scope_id == scope)).all()

@@ -19,14 +19,16 @@ refactors, so they do not import this module, and each migration's copy targets
 the schema as of that revision; the ``test_rebuild_reproduces_content`` test
 guards that a rebuild and the live inserts agree on today's schema.
 
-The index's identity column is ``scope_id``, matching what it exists to join:
-``pipeline_runs.scope_id``. It therefore holds the dashed scope-key string, not the
-``UUID`` storage form ``graph_chunks.source_id`` holds, and the rebuild renders one
-from the other. A diverged value inserts without error and simply matches no run, so
-both write paths reject one first: the rebuild checks the stored form its rendering
-slices, and the live inserts check the scope key they are handed. Keeping the
-rendering in the statement is deliberate: the backfill SQL stays executable on an
-ordinary connection, which is what lets a migration copy it.
+The index's ``scope_id`` and ``chunk_id`` columns match what they exist to join:
+``pipeline_runs.scope_id`` and ``graph_chunks.chunk_id`` /
+``graph_chunk_run_manifest.chunk_id``. All four columns bind through the ORM
+``Uuid`` type, so each pair shares one storage form (dashless hex under SQLite):
+the live inserts bind a ``uuid.UUID`` through that type, and the rebuild copies
+``graph_chunks.source_id`` and ``graph_chunks.chunk_id`` verbatim rather than
+rendering them. A diverged value inserts without error and simply matches no run
+or no manifest entry, so both write paths reject one first: the rebuild checks the
+stored form of the columns it copies, and the live inserts check that the values
+handed to them are ``uuid.UUID`` instances.
 
 The FTS ``run_id`` column is load-bearing only for contextualized rows: a
 contextualized row's ``run_id`` is the variant run id, used at query time to keep
@@ -42,27 +44,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import Uuid, bindparam, text
 
 if TYPE_CHECKING:
     from sqlalchemy import Connection
     from sqlmodel import Session
 
 #: Match exactly 32 lowercase hex characters — the form ``sa.Uuid`` stores under
-#: SQLite. Bound as a parameter, never interpolated. ``GLOB`` is case-sensitive, so
-#: an uppercase value is rejected too: it would render to an uppercase scope key
-#: that no ``pipeline_runs.scope_id`` matches.
+#: SQLite. Bound as a parameter, never interpolated.
 _UUID_STORAGE_GLOB = "[0-9a-f]" * 32
-
-#: Render ``graph_chunks.source_id`` as the scope-key string the index stores.
-#: ``sa.Uuid`` stores dashless hex under SQLite; the index's value is joined against
-#: ``pipeline_runs.scope_id``, which is dashed, so the dashes go back in at the
-#: 8-4-4-4-12 group boundaries. Correct only for the storage form
-#: :data:`_UUID_STORAGE_GLOB` describes, which is why the rebuild checks first.
-_SCOPE_KEY_SQL = (
-    "substr(c.source_id, 1, 8) || '-' || substr(c.source_id, 9, 4) || '-' || "
-    "substr(c.source_id, 13, 4) || '-' || substr(c.source_id, 17, 4) || '-' || substr(c.source_id, 21, 12)"
-)
 
 #: DDL creating the discriminated FTS5 content index. ``text`` is the only indexed
 #: column; ``kind``/``chunk_id``/``run_id``/``scope_id`` are ``UNINDEXED`` so the
@@ -72,22 +62,25 @@ CONTENT_FTS_DDL = (
     "text, kind UNINDEXED, chunk_id UNINDEXED, run_id UNINDEXED, scope_id UNINDEXED)"
 )
 
-#: Backfill the chunk side from every committed ``graph_chunks`` row. The creating
-#: chunking run is not recoverable from the stored chunk row, so ``run_id`` is
-#: ``NULL`` (chunk membership is a manifest join, not an FTS ``run_id`` filter).
+#: Backfill the chunk side from every committed ``graph_chunks`` row. ``scope_id``
+#: and ``chunk_id`` copy ``c.source_id`` and ``c.chunk_id`` verbatim: all four
+#: columns bind through the ORM ``Uuid`` type, so each pair already shares one
+#: storage form. The creating chunking run is not recoverable from the stored
+#: chunk row, so ``run_id`` is ``NULL`` (chunk membership is a manifest join, not
+#: an FTS ``run_id`` filter).
 _BACKFILL_CHUNKS_SQL = (
     "INSERT INTO graph_content_fts (text, kind, chunk_id, run_id, scope_id) "  # noqa: S608 — fragment is a constant
-    f"SELECT c.text, 'chunk', c.chunk_id, NULL, {_SCOPE_KEY_SQL} FROM graph_chunks c"
+    "SELECT c.text, 'chunk', c.chunk_id, NULL, c.source_id FROM graph_chunks c"
 )
 
 #: Backfill the contextualized side from every committed variant. An empty revision
 #: indexes the raw chunk text (a self-contained chunk's contextualized
-#: representation is its raw text); the scope key and the raw text come from the
+#: representation is its raw text); the scope id and the raw text come from the
 #: joined ``graph_chunks`` row. ``run_id`` is the variant run id (query load-bearing).
 _BACKFILL_CONTEXTUALIZED_SQL = (
     "INSERT INTO graph_content_fts (text, kind, chunk_id, run_id, scope_id) "  # noqa: S608 — fragment is a constant
     "SELECT CASE WHEN cc.contextualized_text = '' THEN c.text ELSE cc.contextualized_text END, "
-    f"'contextualized', cc.chunk_id, cc.run_id, {_SCOPE_KEY_SQL} "
+    "'contextualized', cc.chunk_id, cc.run_id, c.source_id "
     "FROM graph_contextualized_chunks cc JOIN graph_chunks c ON c.chunk_id = cc.chunk_id"
 )
 
@@ -104,41 +97,52 @@ _INSERT_CONTEXTUALIZED_SQL = (
 )
 
 
-def _assert_scope_key_form(scope_id: str) -> None:
-    """Reject a scope key the search join could never match.
+def _assert_scope_key_form(scope_id: object) -> None:
+    """Reject a scope identity the search join could never match.
 
-    The index's ``scope_id`` is joined against ``pipeline_runs.scope_id``, which
-    holds the canonical dashed lowercase form. A value in any other form inserts
-    without error and simply matches no run, so the content stays committed but
+    The index's ``scope_id`` binds through the ORM ``Uuid`` type, matching
+    ``pipeline_runs.scope_id``. A value that is not a ``uuid.UUID`` instance would
+    bind incorrectly (or not at all) and the content would stay committed but
     unfindable. Rejecting at the insert makes the mismatch an error naming the
-    value, rather than silence discovered later as missing search results. This is
-    the live-insert counterpart to :func:`_assert_uuid_storage_form`, which guards
-    the rebuild's rendering of the same value.
+    value, rather than silence discovered later as missing search results.
 
     Args:
-        scope_id: The scope key about to be indexed.
+        scope_id: The scope identity about to be indexed.
 
     Raises:
-        ValueError: If ``scope_id`` is not a canonical dashed lowercase UUID.
+        TypeError: If ``scope_id`` is not a ``uuid.UUID`` instance.
     """
-    try:
-        canonical = str(UUID(scope_id))
-    except (AttributeError, TypeError, ValueError) as exc:
-        raise ValueError(f"scope_id {scope_id!r} is not a UUID; the content index would match no run") from exc
-    if scope_id != canonical:
-        raise ValueError(
-            f"scope_id {scope_id!r} is not the canonical dashed lowercase form {canonical!r}; "
-            "the content index would match no run"
-        )
+    if not isinstance(scope_id, UUID):
+        raise TypeError(f"scope_id {scope_id!r} is not a UUID; the content index would match no run")
+
+
+def _assert_chunk_identity(chunk_id: object) -> None:
+    """Reject a chunk identity the manifest join could never match.
+
+    The index's ``chunk_id`` binds through the ORM ``Uuid`` type, matching
+    ``graph_chunk_run_manifest.chunk_id``. A value that is not a ``uuid.UUID``
+    instance would bind incorrectly (or not at all) and the content would stay
+    committed but unjoinable to any manifest entry. Rejecting at the insert makes
+    the mismatch an error naming the value, rather than silence discovered later
+    as missing search results.
+
+    Args:
+        chunk_id: The chunk identity about to be indexed.
+
+    Raises:
+        TypeError: If ``chunk_id`` is not a ``uuid.UUID`` instance.
+    """
+    if not isinstance(chunk_id, UUID):
+        raise TypeError(f"chunk_id {chunk_id!r} is not a UUID; the content index would match no manifest entry")
 
 
 def index_chunk_content(
     session: Session,
     *,
     text_: str,
-    chunk_id: str,
+    chunk_id: UUID,
     run_id: int | None,
-    scope_id: str,
+    scope_id: UUID,
 ) -> None:
     """Append one ``kind='chunk'`` row to the content index in the caller's transaction.
 
@@ -151,15 +155,16 @@ def index_chunk_content(
         text_: The raw chunk text to index.
         chunk_id: The surrogate chunk identity.
         run_id: The creating chunking run id (not query load-bearing for chunks).
-        scope_id: The chunking run's scope — the dashed source identity the search
-            join matches against ``pipeline_runs.scope_id``.
+        scope_id: The chunking run's scope — the source identity the search join
+            matches against ``pipeline_runs.scope_id``.
 
     Raises:
-        ValueError: If ``scope_id`` is not a canonical dashed lowercase UUID.
+        TypeError: If ``scope_id`` or ``chunk_id`` is not a ``uuid.UUID`` instance.
     """
     _assert_scope_key_form(scope_id)
+    _assert_chunk_identity(chunk_id)
     session.connection().execute(
-        text(_INSERT_CHUNK_SQL),
+        text(_INSERT_CHUNK_SQL).bindparams(bindparam("scope_id", type_=Uuid()), bindparam("chunk_id", type_=Uuid())),
         {"text": text_, "chunk_id": chunk_id, "run_id": run_id, "scope_id": scope_id},
     )
 
@@ -168,9 +173,9 @@ def index_contextualized_content(
     session: Session,
     *,
     text_: str,
-    chunk_id: str,
+    chunk_id: UUID,
     run_id: int | None,
-    scope_id: str,
+    scope_id: UUID,
 ) -> None:
     """Append one ``kind='contextualized'`` row to the content index in the caller's transaction.
 
@@ -184,33 +189,38 @@ def index_contextualized_content(
         text_: The text to index (the revision, or the raw chunk text when empty).
         chunk_id: The source chunk identity.
         run_id: The variant run id (query load-bearing — the active-variant filter).
-        scope_id: The variant run's scope — the dashed source identity the search
-            join matches against ``pipeline_runs.scope_id``.
+        scope_id: The variant run's scope — the source identity the search join
+            matches against ``pipeline_runs.scope_id``.
 
     Raises:
-        ValueError: If ``scope_id`` is not a canonical dashed lowercase UUID.
+        TypeError: If ``scope_id`` or ``chunk_id`` is not a ``uuid.UUID`` instance.
     """
     _assert_scope_key_form(scope_id)
+    _assert_chunk_identity(chunk_id)
     session.connection().execute(
-        text(_INSERT_CONTEXTUALIZED_SQL),
+        text(_INSERT_CONTEXTUALIZED_SQL).bindparams(
+            bindparam("scope_id", type_=Uuid()), bindparam("chunk_id", type_=Uuid())
+        ),
         {"text": text_, "chunk_id": chunk_id, "run_id": run_id, "scope_id": scope_id},
     )
 
 
 def _assert_uuid_storage_form(connection: Connection) -> None:
-    """Fail before rendering if any stored chunk identity is not the ``sa.Uuid`` form.
+    """Fail before the backfill copies a stored chunk identity that is not the ``sa.Uuid`` form.
 
-    :data:`_SCOPE_KEY_SQL` slices at fixed offsets, so it renders whatever it is
-    given: a value of the wrong length or case yields a plausible-looking scope key
-    that silently matches no run. Rejecting first turns that into an error naming
-    the count, at the point where the data is still inspectable.
+    :data:`_BACKFILL_CHUNKS_SQL` and :data:`_BACKFILL_CONTEXTUALIZED_SQL` copy
+    ``graph_chunks.source_id`` and ``graph_chunks.chunk_id`` verbatim into the
+    index's ``scope_id`` and ``chunk_id``, so a value of the wrong length or case
+    on either column would carry a corrupted identity into the index rather than
+    raising. Rejecting first turns that into an error naming the count, at the
+    point where the data is still inspectable.
 
     Args:
         connection: The connection the rebuild statements will run on.
 
     Raises:
-        ValueError: If any ``graph_chunks.source_id`` is not 32 lowercase hex
-            characters.
+        ValueError: If any ``graph_chunks.source_id`` or ``graph_chunks.chunk_id``
+            is not 32 lowercase hex characters.
     """
     offenders = connection.execute(
         text("SELECT count(*) FROM graph_chunks WHERE source_id NOT GLOB :storage_form"),
@@ -219,7 +229,16 @@ def _assert_uuid_storage_form(connection: Connection) -> None:
     if offenders:
         raise ValueError(
             f"{offenders} graph_chunks row(s) hold a source_id that is not 32 lowercase hex characters; "
-            "the content index cannot render a scope key from them"
+            "the content index cannot copy a scope id from them"
+        )
+    offenders = connection.execute(
+        text("SELECT count(*) FROM graph_chunks WHERE chunk_id NOT GLOB :storage_form"),
+        {"storage_form": _UUID_STORAGE_GLOB},
+    ).scalar_one()
+    if offenders:
+        raise ValueError(
+            f"{offenders} graph_chunks row(s) hold a chunk_id that is not 32 lowercase hex characters; "
+            "the content index cannot copy a chunk id from them"
         )
 
 
@@ -237,7 +256,7 @@ def rebuild_content_index(connection: Connection) -> None:
 
     Raises:
         ValueError: If any stored chunk identity is not the ``sa.Uuid`` storage
-            form the scope-key rendering requires.
+            form the backfill's verbatim copy requires.
     """
     _assert_uuid_storage_form(connection)
     connection.execute(text("DELETE FROM graph_content_fts"))

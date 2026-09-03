@@ -107,7 +107,7 @@ def _seed_chunked_sources(engine: Engine, *source_ids: UUID) -> None:
     """Give each source an active chunking run, so each is pending extraction."""
     with Session(engine) as session:
         for source_id in source_ids:
-            record_run(session, stage=CHUNKING_STAGE, scope_id=str(source_id), derivation_key=f"dk-{source_id}")
+            record_run(session, stage=CHUNKING_STAGE, scope_id=source_id, derivation_key=f"dk-{source_id}")
         session.commit()
 
 
@@ -552,18 +552,7 @@ def _seed_extraction_cost_corpus(engine: Engine, *, admitted_count: int) -> None
     ("adapter_factory", "seed"),
     [
         pytest.param(contextualization_adapter, _seed_contextualization_cost_corpus, id="contextualization"),
-        pytest.param(
-            extraction_adapter,
-            _seed_extraction_cost_corpus,
-            id="extraction",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "pending_extraction_sources resolves its anti-join in Python; the SQL anti-join "
-                    "lands with the scope_id retype"
-                ),
-            ),
-        ),
+        pytest.param(extraction_adapter, _seed_extraction_cost_corpus, id="extraction"),
     ],
 )
 def test_a_bounded_pending_evaluation_does_not_scale_with_the_admitted_corpus(

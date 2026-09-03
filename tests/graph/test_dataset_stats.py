@@ -17,7 +17,7 @@ case, and that a superseded run's rows are excluded from the corpus dataset.
 from __future__ import annotations
 
 from pathlib import Path
-from uuid import UUID
+from uuid import NAMESPACE_OID, UUID, uuid5
 
 import pytest
 from sqlalchemy import Engine
@@ -36,8 +36,13 @@ _SCHEMA_TABLES = [
     PipelineRun.__table__,
 ]
 
-_SOURCE_A = "11111111-1111-1111-1111-111111111111"
-_SOURCE_B = "22222222-2222-2222-2222-222222222222"
+_SOURCE_A = UUID("11111111-1111-1111-1111-111111111111")
+_SOURCE_B = UUID("22222222-2222-2222-2222-222222222222")
+
+
+def _cid(label: str) -> UUID:
+    """Return a deterministic surrogate ``chunk_id`` for a readable test label."""
+    return uuid5(NAMESPACE_OID, label)
 
 
 @pytest.fixture
@@ -56,13 +61,13 @@ def session(engine: Engine) -> Session:
         yield sess
 
 
-def _seed_chunk(session: Session, *, chunk_id: str, text: str, source_id: str) -> None:
+def _seed_chunk(session: Session, *, chunk_id: UUID, text: str, source_id: UUID) -> None:
     """Insert and commit a minimal :class:`Chunk` row."""
     session.add(
         Chunk(
             chunk_id=chunk_id,
             content_hash=f"hash-{chunk_id}",
-            source_id=UUID(source_id),
+            source_id=source_id,
             heading_path_json="[]",
             ordinal=0,
             text=text,
@@ -73,7 +78,7 @@ def _seed_chunk(session: Session, *, chunk_id: str, text: str, source_id: str) -
 
 
 def _seed_contextualized_chunk(
-    session: Session, *, chunk_id: str, contextualized_text: str, run_id: int, context_version: int = 1
+    session: Session, *, chunk_id: UUID, contextualized_text: str, run_id: int, context_version: int = 1
 ) -> None:
     """Insert and commit a :class:`ContextualizedChunk` row, the locator target for revision-anchored drafts."""
     session.add(
@@ -90,7 +95,7 @@ def _seed_contextualized_chunk(
     session.commit()
 
 
-def _open_run(session: Session, *, source_id: str, upstream_derivation_key: str) -> PipelineRun:
+def _open_run(session: Session, *, source_id: UUID, upstream_derivation_key: str) -> PipelineRun:
     """Open (or reuse) an extraction run for ``source_id`` and commit it."""
     run = open_extraction_run(
         session,
@@ -105,7 +110,7 @@ def _open_run(session: Session, *, source_id: str, upstream_derivation_key: str)
     return run
 
 
-def _source_draft(*, chunk_id: str, surface_form: str, span: tuple[int, int]) -> MentionDraft:
+def _source_draft(*, chunk_id: UUID, surface_form: str, span: tuple[int, int]) -> MentionDraft:
     """Build a source-anchored, raw-input draft for ``surface_form`` at ``span`` in ``chunk_id``."""
     return MentionDraft(
         chunk_id=chunk_id,
@@ -122,7 +127,7 @@ def _source_draft(*, chunk_id: str, surface_form: str, span: tuple[int, int]) ->
 
 def _revision_draft(
     *,
-    chunk_id: str,
+    chunk_id: UUID,
     surface_form: str,
     contextualization_run_id: int,
     input_span: tuple[int, int],
@@ -165,46 +170,46 @@ def _seed_corpus(session: Session) -> None:
       corpus-wide-singleton mention, alone in its chunk (no co-occurrence
       link; excluded from the co-occurrence density denominator).
     """
-    _seed_chunk(session, chunk_id="chunk-a1", text="Acme Corp met Globex Inc today.", source_id=_SOURCE_A)
-    _seed_chunk(session, chunk_id="chunk-a2", text="Acme Corp returned.", source_id=_SOURCE_A)
-    _seed_chunk(session, chunk_id="chunk-a3", text="He founded the firm alone.", source_id=_SOURCE_A)
-    _seed_chunk(session, chunk_id="chunk-b1", text="Initech Corp is here.", source_id=_SOURCE_B)
+    _seed_chunk(session, chunk_id=_cid("chunk-a1"), text="Acme Corp met Globex Inc today.", source_id=_SOURCE_A)
+    _seed_chunk(session, chunk_id=_cid("chunk-a2"), text="Acme Corp returned.", source_id=_SOURCE_A)
+    _seed_chunk(session, chunk_id=_cid("chunk-a3"), text="He founded the firm alone.", source_id=_SOURCE_A)
+    _seed_chunk(session, chunk_id=_cid("chunk-b1"), text="Initech Corp is here.", source_id=_SOURCE_B)
 
     run_a = _open_run(session, source_id=_SOURCE_A, upstream_derivation_key="a-key-1")
     assert run_a.id is not None
     _seed_contextualized_chunk(
         session,
-        chunk_id="chunk-a1",
+        chunk_id=_cid("chunk-a1"),
         contextualized_text="The Investor met with executives.",
         run_id=run_a.id,
     )
     _seed_contextualized_chunk(
         session,
-        chunk_id="chunk-a3",
+        chunk_id=_cid("chunk-a3"),
         contextualized_text="The Founder met the Advisor.",
         run_id=run_a.id,
         context_version=2,
     )
 
     drafts_a = [
-        _source_draft(chunk_id="chunk-a1", surface_form="Acme Corp", span=(0, 9)),
-        _source_draft(chunk_id="chunk-a1", surface_form="Globex Inc", span=(14, 24)),
+        _source_draft(chunk_id=_cid("chunk-a1"), surface_form="Acme Corp", span=(0, 9)),
+        _source_draft(chunk_id=_cid("chunk-a1"), surface_form="Globex Inc", span=(14, 24)),
         _revision_draft(
-            chunk_id="chunk-a1",
+            chunk_id=_cid("chunk-a1"),
             surface_form="Investor",
             contextualization_run_id=run_a.id,
             input_span=(4, 12),
         ),
-        _source_draft(chunk_id="chunk-a2", surface_form="Acme Corp", span=(0, 9)),
+        _source_draft(chunk_id=_cid("chunk-a2"), surface_form="Acme Corp", span=(0, 9)),
         _revision_draft(
-            chunk_id="chunk-a3",
+            chunk_id=_cid("chunk-a3"),
             surface_form="Founder",
             contextualization_run_id=run_a.id,
             input_span=(4, 11),
             context_version=2,
         ),
         _revision_draft(
-            chunk_id="chunk-a3",
+            chunk_id=_cid("chunk-a3"),
             surface_form="Advisor",
             contextualization_run_id=run_a.id,
             input_span=(20, 27),
@@ -215,7 +220,7 @@ def _seed_corpus(session: Session) -> None:
     session.commit()
 
     run_b = _open_run(session, source_id=_SOURCE_B, upstream_derivation_key="b-key-1")
-    drafts_b = [_source_draft(chunk_id="chunk-b1", surface_form="Initech Corp", span=(0, 12))]
+    drafts_b = [_source_draft(chunk_id=_cid("chunk-b1"), surface_form="Initech Corp", span=(0, 12))]
     persist_mentions(session, run=run_b, mentions=drafts_b)
     session.commit()
 
@@ -305,12 +310,12 @@ def test_singleton_counts_are_per_partition_and_non_additive(session: Session) -
     singleton in both, yet occurs twice in the combined total — so per-class
     singleton counts do not sum to the total's, unlike mention counts.
     """
-    _seed_chunk(session, chunk_id="chunk-1", text="Acme Corp announced results.", source_id=_SOURCE_A)
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp announced results.", source_id=_SOURCE_A)
     run = _open_run(session, source_id=_SOURCE_A, upstream_derivation_key="key-1")
     assert run.id is not None
     _seed_contextualized_chunk(
         session,
-        chunk_id="chunk-1",
+        chunk_id=_cid("chunk-1"),
         contextualized_text="Acme Corp announced its results.",
         run_id=run.id,
     )
@@ -318,9 +323,9 @@ def test_singleton_counts_are_per_partition_and_non_additive(session: Session) -
         session,
         run=run,
         mentions=[
-            _source_draft(chunk_id="chunk-1", surface_form="Acme Corp", span=(0, 9)),
+            _source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9)),
             _revision_draft(
-                chunk_id="chunk-1",
+                chunk_id=_cid("chunk-1"),
                 surface_form="Acme Corp",
                 contextualization_run_id=run.id,
                 input_span=(0, 9),
@@ -347,17 +352,17 @@ def test_singleton_counts_are_per_partition_and_non_additive(session: Session) -
 
 def test_dataset_statistics_excludes_superseded_runs(session: Session) -> None:
     """Only the union of *active* extraction runs is counted; a superseded run's mentions are excluded."""
-    _seed_chunk(session, chunk_id="chunk-1", text="Acme Corp announced results.", source_id=_SOURCE_A)
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp announced results.", source_id=_SOURCE_A)
     run1 = _open_run(session, source_id=_SOURCE_A, upstream_derivation_key="key-1")
     persist_mentions(
-        session, run=run1, mentions=[_source_draft(chunk_id="chunk-1", surface_form="Acme Corp", span=(0, 9))]
+        session, run=run1, mentions=[_source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9))]
     )
     session.commit()
 
     # Re-extract the source with a changed derivation key: opens a superseding run.
     run2 = _open_run(session, source_id=_SOURCE_A, upstream_derivation_key="key-2")
     persist_mentions(
-        session, run=run2, mentions=[_source_draft(chunk_id="chunk-1", surface_form="Acme Corp", span=(0, 9))]
+        session, run=run2, mentions=[_source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9))]
     )
     session.commit()
 

@@ -20,6 +20,7 @@ from fastapi import HTTPException
 
 from aizk.console.descriptors import GRAPH_ROLLUP, StageAction, StageDescriptor
 from aizk.console.monitor import (
+    MAX_LIMIT,
     MonitorPage,
     clamp_limit_offset,
     escape_like_term,
@@ -66,8 +67,9 @@ def build_graph_descriptor(
     apply_cancel: Callable[["Session", Any], None],
     id_search_columns: list[Any],
     extra_actions: list[StageAction] | None = None,
-    pending_sources: "Callable[[Session], list[UUID]] | None" = None,
-    stale_sources: "Callable[[Session], set[str]] | None" = None,
+    pending_count: "Callable[[Session], int] | None" = None,
+    pending_sources: "Callable[[Session, int], list[UUID]] | None" = None,
+    stale_sources: "Callable[[Session], set[UUID]] | None" = None,
 ) -> StageDescriptor:
     """Build a :class:`StageDescriptor` for one graph pipeline stage.
 
@@ -79,10 +81,14 @@ def build_graph_descriptor(
     text search (beyond the id, source id, and source title). ``extra_actions`` are
     actions only this stage offers, appended after the shared Retry and Cancel.
 
-    ``pending_sources`` and ``stale_sources`` are the stage's optional derivations:
-    ``pending_sources`` gives the stage a pending count and listing; ``stale_sources``
-    gives it a stale count and marks its stale monitor rows, so an operator can
-    select them together. Omitting either leaves that console surface absent.
+    ``pending_count`` and ``pending_sources`` are the stage's pending-work
+    derivation: ``pending_count`` gives the exact backlog size and ``pending_sources``
+    lists it, bounded to the console's page-size ceiling so the listing does bounded
+    work whatever the backlog's size. Declare both or neither — a descriptor
+    declaring only one is rejected by :class:`~aizk.console.descriptors.StageDescriptor`.
+    ``stale_sources`` gives the stage a stale count and marks its stale monitor rows,
+    so an operator can select them together. Omitting it leaves that console surface
+    absent.
     """
     sortable_columns: dict[str, Any] = {
         "job_id": model.id,
@@ -157,7 +163,7 @@ def build_graph_descriptor(
                     "started_at": format_dt(job.started_at),
                     "finished_at": format_dt(job.finished_at),
                     "error_code": job.error_code or "",
-                    "stale": None if stale is None else str(job.source_id) in stale,
+                    "stale": None if stale is None else job.source_id in stale,
                 }
             )
 
@@ -196,11 +202,10 @@ def build_graph_descriptor(
 
     def detail(session: "Session", unit: Any) -> dict[str, Any]:
         """Compose the runs section: each declared run stage, present or absent."""
-        scope_id = str(unit.source_id)
         stage_names = [stage for stage, _ in drilldown_stages]
         runs = session.exec(
             select(PipelineRun)
-            .where(PipelineRun.scope_id == scope_id)
+            .where(PipelineRun.scope_id == unit.source_id)
             .where(PipelineRun.stage.in_(stage_names))  # type: ignore[attr-defined]
             .order_by(PipelineRun.created_at.asc())  # type: ignore[attr-defined]
         ).all()
@@ -220,17 +225,19 @@ def build_graph_descriptor(
         ]
         return {"stages": stages}
 
-    def pending_count(session: "Session", _principal: "Principal") -> int:
+    def _pending_count(session: "Session", _principal: "Principal") -> int:
         """Count the sources this stage owes a work-unit but has none for."""
-        return len(pending_sources(session))  # type: ignore[misc] -- only wired when declared
+        return pending_count(session)  # type: ignore[misc] -- only wired when declared
 
-    def pending_list(session: "Session", _principal: "Principal") -> list[dict[str, Any]]:
-        """List those pending sources with the same title contract the monitor applies.
+    def _pending_list(session: "Session", _principal: "Principal") -> list[dict[str, Any]]:
+        """List the stage's pending sources, bounded to the console's page-size ceiling.
 
         Titles come from the ``sources`` table, falling back to the source identity,
-        so a pending source reads the same way as a listed work-unit.
+        so a pending source reads the same way as a listed work-unit. The bound keeps
+        the listing's cost from growing with the backlog; ``pending_count`` reports
+        the exact size regardless.
         """
-        source_ids = pending_sources(session)  # type: ignore[misc] -- only wired when declared
+        source_ids = pending_sources(session, limit=MAX_LIMIT)  # type: ignore[misc] -- only wired when declared
         titles = {
             source.source_id: source.title
             for source in session.exec(select(Source).where(Source.source_id.in_(source_ids))).all()
@@ -265,7 +272,7 @@ def build_graph_descriptor(
         detail=detail,
         detail_template="detail_graph_runs.html",
         failed_split=failed_split,
-        pending_count=pending_count if pending_sources is not None else None,
-        pending_list=pending_list if pending_sources is not None else None,
+        pending_count=_pending_count if pending_count is not None else None,
+        pending_list=_pending_list if pending_sources is not None else None,
         stale_count=stale_count if stale_sources is not None else None,
     )

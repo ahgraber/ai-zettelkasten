@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import importlib.util
 from pathlib import Path
+from uuid import UUID
 
 from alembic import command
 from alembic.config import Config
@@ -31,8 +32,8 @@ from aizk.graph.contextualization import contextualize_chunks, summarize_documen
 from aizk.graph.llm import StubLLMClient
 from aizk.graph.persistence import persist_chunks
 
-_AIZK_UUID = "11111111-1111-1111-1111-111111111111"
-_AIZK_UUID_B = "22222222-2222-2222-2222-222222222222"
+_AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")
+_AIZK_UUID_B = UUID("22222222-2222-2222-2222-222222222222")
 _OUTPUT = "output-1"
 _HASH_A = "0011223344556677"
 _HASH_B = "aabbccddeeff0011"
@@ -52,7 +53,7 @@ def _make_chunk(
     text_: str,
     *,
     ordinal: int,
-    source_id: str = _AIZK_UUID,
+    source_id: UUID = _AIZK_UUID,
     markdown_hash: str = _HASH_A,
     conversion_output_id: str = _OUTPUT,
     splitter_version: int = SPLITTER_VERSION,
@@ -61,7 +62,7 @@ def _make_chunk(
     content_hash = xxhash.xxh64(text_.encode("utf-8")).hexdigest()
     return SplitterChunk(
         content_hash=content_hash,
-        source_id=source_id,
+        source_id=str(source_id),
         heading_path=(),
         ordinal=ordinal,
         text=text_,
@@ -93,7 +94,7 @@ def _alembic_cfg(database_url: str) -> Config:
 def _seed_chunk_and_variant(
     session: Session,
     *,
-    source_id: str,
+    source_id: UUID,
     chunk_text: str,
     revision: str,
     ordinal: int = 0,
@@ -299,15 +300,16 @@ def test_rebuild_reproduces_content(session: Session) -> None:
 
     assert before == after, "rebuild reproduces the same searchable rows"
     assert {kind for kind, _ in after} == {"chunk", "contextualized"}
-    assert all(chunk_id == chunk.chunk_id for _, chunk_id in after)
+    assert all(UUID(chunk_id) == UUID(chunk.chunk_id) for _, chunk_id in after)
 
 
 def test_rebuild_indexes_the_scope_key_form_the_search_join_uses(session: Session) -> None:
     """A rebuilt row's ``scope_id`` equals the chunking run's ``scope_id``.
 
-    The index is joined to ``pipeline_runs.scope_id`` while ``graph_chunks`` stores
-    the ``UUID`` form, so the rebuild renders one from the other. A regression here
-    costs no error — the join just stops matching — so the two are compared directly.
+    Both columns bind through the ORM ``Uuid`` type and the rebuild copies
+    ``graph_chunks.source_id`` verbatim, so the two stored (dashless hex) values
+    are compared directly. A regression here costs no error — the join just stops
+    matching — so the two are compared directly rather than trusting no exception.
     """
     _seed_chunk_and_variant(
         session,
@@ -328,7 +330,7 @@ def test_rebuild_indexes_the_scope_key_form_the_search_join_uses(session: Sessio
         .execute(text("SELECT DISTINCT scope_id FROM pipeline_runs WHERE stage = 'chunking'"))
         .all()
     }
-    assert indexed == scopes == {_AIZK_UUID}
+    assert indexed == scopes == {_AIZK_UUID.hex}
 
 
 @pytest.mark.parametrize(
@@ -372,26 +374,26 @@ def test_rebuild_refuses_a_chunk_identity_outside_the_storage_form(session: Sess
 @pytest.mark.parametrize(
     "scope_id",
     [
+        "11111111-1111-1111-1111-111111111111",
         "11111111111111111111111111111111",
-        "11111111-1111-1111-1111-11111111111",
-        "11111111-1111-1111-1111-11111111111Z",
-        "0F8CD1A2-0034-4B00-80CD-000000000ABC",
-        "",
+        1,
+        None,
     ],
-    ids=["dashless", "too-short", "non-hex", "uppercase", "empty"],
+    ids=["dashed-string", "dashless-string", "int", "none"],
 )
 def test_live_insert_refuses_a_scope_key_the_search_join_could_not_match(
     session: Session,
     indexer: Callable[..., None],
-    scope_id: str,
+    scope_id: object,
 ) -> None:
-    """A scope key outside the canonical dashed lowercase form is refused at the insert.
+    """A scope value that is not a ``uuid.UUID`` instance is refused at the insert.
 
-    The index's ``scope_id`` is joined against ``pipeline_runs.scope_id``. Any other
-    form inserts happily and matches no run, leaving the content committed but
-    unfindable, so both live inserts reject it rather than write it.
+    The index's ``scope_id`` binds through the same ORM ``Uuid`` type as
+    ``pipeline_runs.scope_id``. Any other Python type would bind incorrectly (or
+    not at all) and match no run, leaving the content committed but unfindable, so
+    both live inserts reject it rather than write it.
     """
-    with pytest.raises(ValueError, match="content index would match no run"):
+    with pytest.raises(TypeError, match="content index would match no run"):
         indexer(session, text_="some indexable text", chunk_id="chunk-1", run_id=None, scope_id=scope_id)
 
 
@@ -400,12 +402,69 @@ def test_live_insert_refuses_a_scope_key_the_search_join_could_not_match(
     [index_chunk_content, index_contextualized_content],
     ids=["chunk", "contextualized"],
 )
-def test_live_insert_accepts_the_canonical_scope_key(session: Session, indexer: Callable[..., None]) -> None:
-    """The dashed lowercase form the run primitive stores is indexed without complaint."""
-    indexer(session, text_="some indexable text", chunk_id="chunk-1", run_id=None, scope_id=_AIZK_UUID)
+@pytest.mark.parametrize(
+    "chunk_id",
+    [
+        "22222222-2222-2222-2222-222222222222",
+        "22222222222222222222222222222222",
+        1,
+        None,
+    ],
+    ids=["dashed-string", "dashless-string", "int", "none"],
+)
+def test_live_insert_refuses_a_chunk_identity_the_manifest_join_could_not_match(
+    session: Session,
+    indexer: Callable[..., None],
+    chunk_id: object,
+) -> None:
+    """A chunk value that is not a ``uuid.UUID`` instance is refused at the insert.
 
-    indexed = session.connection().execute(text("SELECT scope_id FROM graph_content_fts")).scalars().all()
-    assert indexed == [_AIZK_UUID]
+    The index's ``chunk_id`` binds through the same ORM ``Uuid`` type as
+    ``graph_chunk_run_manifest.chunk_id``. Any other Python type would bind
+    incorrectly (or not at all) and match no manifest entry, leaving the content
+    committed but unfindable, so both live inserts reject it rather than write it.
+    """
+    with pytest.raises(TypeError, match="content index would match no manifest entry"):
+        indexer(session, text_="some indexable text", chunk_id=chunk_id, run_id=None, scope_id=_AIZK_UUID)
+
+
+@pytest.mark.parametrize(
+    "indexer",
+    [index_chunk_content, index_contextualized_content],
+    ids=["chunk", "contextualized"],
+)
+def test_live_insert_accepts_the_canonical_scope_key(session: Session, indexer: Callable[..., None]) -> None:
+    """A ``UUID`` scope is indexed in the same storage form ``pipeline_runs.scope_id`` holds.
+
+    Persisting a real chunking run for the same source and joining the two tables
+    on ``scope_id`` — rather than just observing that the insert did not raise —
+    proves the search join would actually match.
+    """
+    probe_chunk_id = UUID("33333333-3333-3333-3333-333333333333")
+    indexer(session, text_="some indexable text", chunk_id=probe_chunk_id, run_id=None, scope_id=_AIZK_UUID)
+    persist_chunks(
+        session,
+        source_id=_AIZK_UUID,
+        conversion_output_id=_OUTPUT,
+        markdown_hash_xx64=_HASH_A,
+        splitter_version=SPLITTER_VERSION,
+        chunks=[_make_chunk("distinct join probe text", ordinal=0)],
+    )
+    session.commit()
+
+    joined = (
+        session.connection()
+        .execute(
+            text(
+                "SELECT count(*) FROM graph_content_fts AS f "
+                "JOIN pipeline_runs AS cr ON cr.stage = 'chunking' AND cr.scope_id = f.scope_id "
+                "WHERE cr.status = 'active' AND f.chunk_id = :chunk_id"
+            ),
+            {"chunk_id": probe_chunk_id.hex},
+        )
+        .scalar()
+    )
+    assert joined == 1, "the live-inserted scope_id matches the stored pipeline_runs.scope_id form"
 
 
 def test_persisted_chunk_is_searchable(session: Session) -> None:
@@ -422,7 +481,7 @@ def test_persisted_chunk_is_searchable(session: Session) -> None:
     session.commit()
 
     hits = _search(session, "mitochondria")
-    assert hits == [("chunk", persisted[0].chunk_id)], "the new chunk's raw text is searchable as kind=chunk"
+    assert hits == [("chunk", UUID(persisted[0].chunk_id).hex)], "the new chunk's raw text is searchable as kind=chunk"
 
 
 def test_reused_chunk_id_is_not_indexed_twice(session: Session) -> None:
@@ -446,7 +505,7 @@ def test_reused_chunk_id_is_not_indexed_twice(session: Session) -> None:
     session.commit()
 
     hits = _search(session, "antidisestablishment", kind="chunk")
-    assert hits == [("chunk", persisted[0].chunk_id)], "exactly one chunk index row despite the re-persist"
+    assert hits == [("chunk", UUID(persisted[0].chunk_id).hex)], "exactly one chunk index row despite the re-persist"
 
 
 def test_persisted_variant_is_searchable(session: Session) -> None:
@@ -473,7 +532,7 @@ def test_self_contained_chunk_indexes_raw_text_as_contextualized(session: Sessio
         revision="",  # empty revision => self-contained
     )
     hits = _search(session, "bioluminescence", kind="contextualized")
-    assert hits == [("contextualized", chunk.chunk_id)], (
+    assert hits == [("contextualized", UUID(chunk.chunk_id).hex)], (
         "the self-contained chunk's contextualized representation is its raw text"
     )
 
@@ -522,7 +581,7 @@ def test_reused_variant_run_does_not_reindex(session: Session) -> None:
     _contextualize()  # unchanged inputs => active run reused, no new variant, no new index row
 
     hits = _search(session, "passage", kind="contextualized")
-    assert hits == [("contextualized", chunk_p.chunk_id)], "exactly one contextualized index row after reuse"
+    assert hits == [("contextualized", UUID(chunk_p.chunk_id).hex)], "exactly one contextualized index row after reuse"
 
 
 def test_index_excludes_other_source(session: Session) -> None:
@@ -556,4 +615,4 @@ def test_index_excludes_other_source(session: Session) -> None:
         )
         .all()
     )
-    assert [(r[0], r[1]) for r in rows] == [(_AIZK_UUID, chunk_a_p.chunk_id)]
+    assert [(r[0], r[1]) for r in rows] == [(_AIZK_UUID.hex, UUID(chunk_a_p.chunk_id).hex)]

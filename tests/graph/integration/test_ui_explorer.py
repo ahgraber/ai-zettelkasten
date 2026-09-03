@@ -19,6 +19,7 @@ chunks present, no contextualized representation, no retained intermediate revis
 from __future__ import annotations
 
 from collections.abc import Sequence
+from uuid import UUID
 
 from sqlmodel import Session
 import xxhash
@@ -41,7 +42,7 @@ def _make_chunk(
     *,
     ordinal: int,
     span_start: int,
-    source_id: str,
+    source_id: UUID,
     conversion_output_id: int,
     heading_path: tuple[str, ...] = (),
     markdown_hash: str = _HASH,
@@ -50,7 +51,7 @@ def _make_chunk(
     content_hash = xxhash.xxh64(text_.encode("utf-8")).hexdigest()
     return SplitterChunk(
         content_hash=content_hash,
-        source_id=source_id,
+        source_id=str(source_id),
         heading_path=heading_path,
         ordinal=ordinal,
         text=text_,
@@ -66,7 +67,7 @@ def _seed_chunks(
     db_session: Session,
     chunks: list[SplitterChunk],
     *,
-    source_id: str,
+    source_id: UUID,
     conversion_output_id: int,
     markdown_hash: str = _HASH,
 ) -> tuple[int, list[SplitterChunk]]:
@@ -93,7 +94,7 @@ def _seed_contextualization(
     chunks: list[SplitterChunk],
     revisions: Sequence[str],
     *,
-    source_id: str,
+    source_id: UUID,
     conversion_output_id: int,
     chunking_run_id: int,
     markdown_hash: str = _HASH,
@@ -121,7 +122,7 @@ def _seed_contextualization(
 
 
 def _seed_source_and_output(db_session: Session, seed_source, seed_conversion_output, *, karakeep_id: str, title: str):
-    """Seed a source, its conversion job, and a conversion output; return ``(source_id_str, conversion_output_id)``.
+    """Seed a source, its conversion job, and a conversion output; return ``(source_id, conversion_output_id)``.
 
     The migration-built schema enforces the ``conversion_outputs.job_id`` →
     ``conversion_jobs.id`` foreign key, so a job is seeded before the output.
@@ -139,7 +140,7 @@ def _seed_source_and_output(db_session: Session, seed_source, seed_conversion_ou
     output = seed_conversion_output(
         db_session, job_id=job.id, source_id=source.source_id, title=title, markdown_hash_xx64=_HASH
     )
-    return str(source.source_id), output.id
+    return source.source_id, output.id
 
 
 # --------------------------------------------------------------------------- #
@@ -318,7 +319,10 @@ def test_explorer_select_result_opens_document_at_chunk_with_contextualized_deta
     )
     assert opened.status_code == 200
     body = opened.text
-    assert 'class="spine-chunk selected"' in body or "selected" in body
+    # A dict.get miss or a UUID/str mismatch in the selection compare fails
+    # silently (the class never applies), so this asserts the exact class rather
+    # than the weaker "the word 'selected' appears somewhere in the page."
+    assert 'class="spine-chunk selected"' in body
     assert revision in body
     assert "variant run #" in body
 
@@ -345,11 +349,12 @@ def test_explorer_search_highlights_contextualized_only_and_both_sides(
     )
     run_id, persisted = _seed_chunks(db_session, [ctx_only, both], source_id=source_id, conversion_output_id=output_id)
     ctx_only_p, both_p = persisted
+    ctx_only_revision = "photosynthesis improves throughput"
     _seed_contextualization(
         db_session,
         [ctx_only_p, both_p],
         [
-            "photosynthesis improves throughput",
+            ctx_only_revision,
             "photosynthesis converts sunlight into chemical energy",
         ],
         source_id=source_id,
@@ -366,6 +371,12 @@ def test_explorer_search_highlights_contextualized_only_and_both_sides(
     # The contextualized-only chunk matched only on the contextualized side.
     assert f'data-chunk-id="{ctx_only_p.chunk_id}"' in body
     assert "match: contextualized only" in body
+    # The per-chunk variant lookup (keyed by chunk_id) resolved the real variant,
+    # not a dict.get miss silently falling back to raw text: "photosynthesis"
+    # (the matched, <mark>-wrapped term) appears only in the seeded contextualized
+    # representation for this chunk, never in its raw text ("it improves
+    # throughput"), so its presence proves the lookup found the real variant.
+    assert "<mark>photosynthesis</mark> improves throughput" in body
     # The both-sides chunk is a single row marked on both.
     assert f'data-chunk-id="{both_p.chunk_id}"' in body
     assert "match: both" in body

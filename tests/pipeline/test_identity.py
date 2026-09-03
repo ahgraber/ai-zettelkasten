@@ -8,6 +8,8 @@ whose derivation key is unchanged reuses the active run rather than superseding 
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from sqlalchemy import Engine
 from sqlmodel import Session, func, select
 
@@ -15,7 +17,7 @@ from aizk.pipeline.identity import derivation_key
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run, reuse_or_record_run
 
 _STAGE = "chunking"
-_SCOPE = "source:abc"
+_SCOPE = UUID("11111111-1111-1111-1111-111111111111")
 
 
 def test_derivation_key_excludes_db_local_ids() -> None:

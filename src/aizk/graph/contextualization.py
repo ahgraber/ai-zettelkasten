@@ -4,7 +4,7 @@ This module owns the contextualization domain logic: one LLM pass per document
 produces a :class:`~aizk.graph.datamodel.DocumentSummary` under a **summary run**,
 and one LLM pass per chunk produces a :class:`~aizk.graph.datamodel.ContextualizedChunk`
 **revision** under a separate **variant run**. Both runs are scoped to the
-durable source identity (``str(source_id)``) and recorded on the shared
+durable source identity and recorded on the shared
 :func:`~aizk.pipeline.run.record_run` primitive; each supersedes independently:
 
 - the summary run is keyed by the markdown hash, ``summary_version``,
@@ -54,6 +54,7 @@ import hashlib
 import json
 import logging
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from sqlmodel import Session, select
 
@@ -425,7 +426,7 @@ def _validate_contextualized_text(working_text: str, contextualized_text: str) -
     return normalized
 
 
-def _active_run(session: "Session", stage: str, scope_id: str) -> PipelineRun | None:
+def _active_run(session: "Session", stage: str, scope_id: UUID) -> PipelineRun | None:
     """Return the active run for ``(stage, scope_id)``, or ``None``."""
     return session.exec(
         select(PipelineRun).where(
@@ -438,7 +439,7 @@ def _active_run(session: "Session", stage: str, scope_id: str) -> PipelineRun | 
 
 def _verify_chunking_provenance(
     session: "Session",
-    source_id: str,
+    source_id: UUID,
     chunking_run_id: int,
     splitter_version: int,
     chunks: "Sequence[SplitterChunk]",
@@ -470,7 +471,9 @@ def _verify_chunking_provenance(
             f"(recorded {recorded_version})"
         )
     manifest = {(m.chunk_id, m.span_start, m.span_end) for m in manifest_of_run(session, chunking_run_id)}
-    absent = [c.chunk_id for c in chunks if (c.chunk_id, c.span[0], c.span[1]) not in manifest]
+    absent = [
+        c.chunk_id for c in chunks if c.chunk_id is None or (UUID(c.chunk_id), c.span[0], c.span[1]) not in manifest
+    ]
     if absent:
         raise ValueError(
             f"chunks {absent} are not in chunking run {chunking_run_id!r}'s manifest at their supplied span"
@@ -490,7 +493,7 @@ def resolve_summary_text(
     engine: "Engine",
     client: "LLMClient",
     *,
-    source_id: str,
+    source_id: UUID,
     markdown_hash_xx64: str,
     document_text: str,
     summary_version: int = SUMMARY_VERSION,
@@ -523,8 +526,7 @@ def resolve_summary_text(
         engine: The shared engine; reads and the autonomous memo write each open
             their own short session/transaction off it.
         client: The single model access point for the summary pass.
-        source_id: The durable source identity (``str(source_id)``); the memo
-            ``scope_id``.
+        source_id: The durable source identity; the memo ``scope_id``.
         markdown_hash_xx64: Content hash of the source markdown (in the derivation key).
         document_text: The document the summary pass reads on a miss.
         summary_version: The summary behavior version.
@@ -589,7 +591,7 @@ def resolve_revisions(
     engine: "Engine",
     client: "LLMClient",
     *,
-    source_id: str,
+    source_id: UUID,
     summary_text: str,
     markdown_hash_xx64: str,
     ordered_chunks: "Sequence[SplitterChunk]",
@@ -620,8 +622,7 @@ def resolve_revisions(
         engine: The shared engine; reads and autonomous memo writes open their own
             short sessions/transactions off it.
         client: The single model access point for the per-chunk passes.
-        source_id: The durable source identity (``str(source_id)``); the memo
-            ``scope_id``.
+        source_id: The durable source identity; the memo ``scope_id``.
         summary_text: The resolved summary the revisions are conditioned on.
         markdown_hash_xx64: Content hash of the source markdown (in the summary
             identity).
@@ -711,7 +712,7 @@ def summarize_document(
     session: "Session",
     client: "LLMClient",
     *,
-    source_id: str,
+    source_id: UUID,
     conversion_output_id: str,
     markdown_hash_xx64: str,
     document_text: str,
@@ -791,7 +792,7 @@ def contextualize_chunks(
     session: "Session",
     client: "LLMClient",
     *,
-    source_id: str,
+    source_id: UUID,
     summary: DocumentSummary,
     chunks: "Sequence[SplitterChunk]",
     chunking_run_id: int,
@@ -822,8 +823,8 @@ def contextualize_chunks(
     Args:
         session: Active session; the caller owns commit/rollback.
         client: The single model access point.
-        source_id: The durable source identity (``str(source_id)``); the run's
-            scope and the chunks' ``source_id``.
+        source_id: The durable source identity; the run's scope and the chunks'
+            ``source_id``.
         summary: The active document summary the variants are built from.
         chunks: The source's persisted chunks in document order.
         chunking_run_id: The chunking run whose manifest these chunks were read
@@ -869,7 +870,9 @@ def contextualize_chunks(
         raise ValueError(f"summary run {summary.run_id!r} is missing")
     if summary_run.scope_id != source_id:
         raise ValueError(f"summary belongs to source {summary_run.scope_id!r}, not {source_id!r}")
-    foreign = [c.chunk_id for c in ordered if c.source_id != source_id]
+    # A chunk's source_id is the splitter's string form of the identity, so the
+    # comparison converts; without it every chunk would read as foreign.
+    foreign = [c.chunk_id for c in ordered if c.source_id != str(source_id)]
     if foreign:
         raise ValueError(f"chunks {foreign} do not belong to source {source_id!r}")
     _verify_chunking_provenance(session, source_id, chunking_run_id, splitter_version, ordered)
@@ -938,11 +941,12 @@ def contextualize_chunks(
     )
     variants: list[ContextualizedChunk] = []
     for chunk, prior_2, prior_1, next_1, revision in generated:
+        chunk_id = UUID(chunk.chunk_id)
         variant = ContextualizedChunk(
             run_id=run.id,
             summary_run_id=summary.run_id,
             chunking_run_id=chunking_run_id,
-            chunk_id=chunk.chunk_id,
+            chunk_id=chunk_id,
             context_version=context_version,
             contextualized_text=revision,
             derivation_key=_variant_row_derivation_key(
@@ -965,7 +969,7 @@ def contextualize_chunks(
         index_contextualized_content(
             session,
             text_=revision if revision != "" else chunk.text,
-            chunk_id=chunk.chunk_id,
+            chunk_id=chunk_id,
             run_id=run.id,
             scope_id=source_id,
         )

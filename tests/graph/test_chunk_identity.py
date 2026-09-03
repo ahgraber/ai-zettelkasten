@@ -21,7 +21,7 @@ from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
 from aizk.graph.datamodel import Chunk
 from aizk.graph.persistence import persist_chunks
 
-_SOURCE_ID = "11111111-1111-1111-1111-111111111111"
+_SOURCE_ID = UUID("11111111-1111-1111-1111-111111111111")
 _OUTPUT_A = "output-a"
 _OUTPUT_B = "output-b"
 _HASH_A = "0011223344556677"
@@ -33,7 +33,7 @@ def _make_chunk(
     text: str,
     heading_path: tuple[str, ...] = ("Section",),
     ordinal: int = 0,
-    source_id: str = _SOURCE_ID,
+    source_id: UUID = _SOURCE_ID,
     conversion_output_id: str = _OUTPUT_A,
     markdown_hash: str = _HASH_A,
 ) -> SplitterChunk:
@@ -41,7 +41,7 @@ def _make_chunk(
     content_hash = xxhash.xxh64(text.encode("utf-8")).hexdigest()
     return SplitterChunk(
         content_hash=content_hash,
-        source_id=source_id,
+        source_id=str(source_id),
         heading_path=heading_path,
         ordinal=ordinal,
         text=text,
@@ -139,7 +139,7 @@ def test_re_persist_reuses_identity(session: Session) -> None:
     second = _persist(session, [_make_chunk(text="stable content")])
 
     assert first[0].chunk_id == second[0].chunk_id
-    rows = session.exec(select(Chunk).where(Chunk.chunk_id == first[0].chunk_id)).all()
+    rows = session.exec(select(Chunk).where(Chunk.chunk_id == UUID(first[0].chunk_id))).all()
     assert len(rows) == 1, "no duplicate identity for a re-persisted sameness-key"
 
 
@@ -149,5 +149,5 @@ def test_novel_chunk_stored_once(session: Session) -> None:
 
     rows = session.exec(select(Chunk)).all()
     assert len(rows) == 1
-    assert rows[0].chunk_id == persisted[0].chunk_id
+    assert str(rows[0].chunk_id) == persisted[0].chunk_id
     assert rows[0].content_hash == persisted[0].content_hash

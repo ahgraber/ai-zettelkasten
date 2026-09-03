@@ -207,13 +207,15 @@ def test_input_fingerprint_renamed_to_derivation_key_preserving_data(tmp_path: P
     cols_before = {c["name"] for c in inspect(create_engine(url)).get_columns("pipeline_runs")}
     assert "input_fingerprint" in cols_before
     assert "derivation_key" not in cols_before
+    scope = "11111111-1111-1111-1111-111111111111"
     with create_engine(url).connect() as conn:
         conn.execute(
             text(
                 "INSERT INTO pipeline_runs (stage, scope_key, status, input_fingerprint,"
                 " version_stamps_json, created_at)"
-                " VALUES ('s', 'scope', 'active', 'fp-1', '{}', '2026-01-01T00:00:00')"
-            )
+                " VALUES ('s', :scope, 'active', 'fp-1', '{}', '2026-01-01T00:00:00')"
+            ),
+            {"scope": scope},
         )
         conn.commit()
 
@@ -223,5 +225,7 @@ def test_input_fingerprint_renamed_to_derivation_key_preserving_data(tmp_path: P
     assert "derivation_key" in cols_after
     assert "input_fingerprint" not in cols_after
     with create_engine(url).connect() as conn:
-        value = conn.execute(text("SELECT derivation_key FROM pipeline_runs WHERE scope_id='scope'")).scalar_one()
+        value = conn.execute(
+            text("SELECT derivation_key FROM pipeline_runs WHERE scope_id=:scope"), {"scope": scope.replace("-", "")}
+        ).scalar_one()
     assert value == "fp-1"

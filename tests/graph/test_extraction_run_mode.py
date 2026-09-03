@@ -48,8 +48,8 @@ _SCHEMA_TABLES = [
     PipelineRun.__table__,
 ]
 
-_SOURCE_A = "11111111-1111-1111-1111-111111111111"
-_SOURCE_B = "22222222-2222-2222-2222-222222222222"
+_SOURCE_A = UUID("11111111-1111-1111-1111-111111111111")
+_SOURCE_B = UUID("22222222-2222-2222-2222-222222222222")
 
 
 class _StubExtractor:
@@ -86,7 +86,7 @@ def _make_engine(tmp_path: Path, name: str) -> Engine:
 def _seed_chunking_run(
     session: Session,
     *,
-    source_id: str,
+    source_id: UUID,
     texts: "Sequence[str]",
     derivation_key: str = "chunking-key-1",
 ) -> tuple[PipelineRun, list[Chunk]]:
@@ -104,9 +104,9 @@ def _seed_chunking_run(
     cursor = 0
     for ordinal, text in enumerate(texts):
         chunk = Chunk(
-            chunk_id=str(uuid4()),
+            chunk_id=uuid4(),
             content_hash=xxhash.xxh64(text.encode("utf-8")).hexdigest(),
-            source_id=UUID(source_id),
+            source_id=source_id,
             heading_path_json="[]",
             ordinal=ordinal,
             text=text,
@@ -125,7 +125,7 @@ def _seed_chunking_run(
     return run, chunks
 
 
-def _seed_variant_run(session: Session, *, source_id: str, derivation_key: str) -> PipelineRun:
+def _seed_variant_run(session: Session, *, source_id: UUID, derivation_key: str) -> PipelineRun:
     """Insert and commit an active :data:`VARIANT_STAGE` run for ``source_id``."""
     run = record_run(session, stage=VARIANT_STAGE, scope_id=source_id, derivation_key=derivation_key)
     session.commit()
@@ -157,7 +157,7 @@ def _seed_contextualized_chunk(
     return row
 
 
-def _mention_signature(mention: Mention, ordinal_by_chunk_id: dict[str, int], source_id: str) -> tuple[object, ...]:
+def _mention_signature(mention: Mention, ordinal_by_chunk_id: dict[str, int], source_id: UUID) -> tuple[object, ...]:
     """Return a mention's content-stable signature, normalized on chunk ordinal instead of raw chunk_id.
 
     Chunk surrogates are minted independently per database, so neither the raw
@@ -171,7 +171,7 @@ def _mention_signature(mention: Mention, ordinal_by_chunk_id: dict[str, int], so
     return ("revision", source_id, ordinal, mention.surface_form)
 
 
-def _extraction_snapshot(engine: Engine, source_ids: "Sequence[str]") -> tuple[set[tuple], set[frozenset]]:
+def _extraction_snapshot(engine: Engine, source_ids: "Sequence[UUID]") -> tuple[set[tuple], set[frozenset]]:
     """Return (mention signatures, co-occurrence-pair signatures) for the sources' active extraction runs.
 
     Each pair signature is a ``frozenset`` of its two endpoints' mention
@@ -185,8 +185,7 @@ def _extraction_snapshot(engine: Engine, source_ids: "Sequence[str]") -> tuple[s
             run = active_extraction_run(session, source_id)
             assert run is not None, f"no active extraction run for {source_id!r}"
             ordinal_by_chunk_id = {
-                c.chunk_id: c.ordinal
-                for c in session.exec(select(Chunk).where(Chunk.source_id == UUID(source_id))).all()
+                c.chunk_id: c.ordinal for c in session.exec(select(Chunk).where(Chunk.source_id == source_id)).all()
             }
             mentions_by_id = {
                 m.mention_id: m for m in session.exec(select(Mention).where(Mention.run_id == run.id)).all()

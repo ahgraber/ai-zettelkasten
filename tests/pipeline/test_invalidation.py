@@ -8,6 +8,8 @@ operation does not run until it is explicitly confirmed.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
 from sqlalchemy import Engine
 from sqlmodel import Session, select
@@ -21,7 +23,7 @@ from aizk.pipeline.invalidation import (
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 
 _STAGE = "demo_stage"
-_SCOPE = "11111111-1111-1111-1111-111111111111"
+_SCOPE = UUID("11111111-1111-1111-1111-111111111111")
 
 
 def _active(session: Session, stage: str) -> PipelineRun:

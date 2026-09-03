@@ -35,6 +35,7 @@ from __future__ import annotations
 import importlib.metadata
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import select
@@ -295,9 +296,7 @@ def select_extraction_input(session: "Session", chunk: Chunk) -> ExtractionInput
     active_run = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == VARIANT_STAGE,
-            # A scope key is the string form of the identity; the chunk's is a UUID,
-            # and the two do not compare in SQL without this conversion.
-            PipelineRun.scope_id == str(chunk.source_id),
+            PipelineRun.scope_id == chunk.source_id,
             PipelineRun.status == RunStatus.ACTIVE,
         )
     ).one_or_none()
@@ -340,7 +339,7 @@ def _raw_occurrences(raw_chunk_text: str, surface_form: str) -> list[tuple[int, 
 
 def extract_chunk_mentions(
     *,
-    chunk_id: str,
+    chunk_id: UUID,
     raw_chunk_text: str,
     extraction_input: ExtractionInput,
     extractor: "EntityExtractor",

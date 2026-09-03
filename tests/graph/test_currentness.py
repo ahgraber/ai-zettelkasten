@@ -76,7 +76,7 @@ def _active_chunking_input(engine, source_id: UUID) -> str:
         run = session.exec(
             select(PipelineRun).where(
                 PipelineRun.stage == "chunking",
-                PipelineRun.scope_id == str(source_id),
+                PipelineRun.scope_id == source_id,
                 PipelineRun.status == RunStatus.ACTIVE,
             )
         ).one()
@@ -128,7 +128,7 @@ def test_stale_output_cannot_supersede_newer(tmp_path: Path) -> None:
         active_chunking = session.exec(
             select(PipelineRun).where(
                 PipelineRun.stage == "chunking",
-                PipelineRun.scope_id == str(_AIZK_UUID),
+                PipelineRun.scope_id == _AIZK_UUID,
                 PipelineRun.status == RunStatus.ACTIVE,
             )
         ).all()
@@ -136,7 +136,7 @@ def test_stale_output_cannot_supersede_newer(tmp_path: Path) -> None:
         superseded = session.exec(
             select(PipelineRun).where(
                 PipelineRun.stage == "chunking",
-                PipelineRun.scope_id == str(_AIZK_UUID),
+                PipelineRun.scope_id == _AIZK_UUID,
                 PipelineRun.status == RunStatus.SUPERSEDED,
             )
         ).all()
@@ -264,5 +264,5 @@ def test_output_from_another_source_is_not_persisted_under_the_wrong_source(tmp_
 
     assert isinstance(result, SkippedSuperseded)
     with Session(engine) as session:
-        runs_under_a = session.exec(select(PipelineRun).where(PipelineRun.scope_id == str(_AIZK_UUID))).all()
+        runs_under_a = session.exec(select(PipelineRun).where(PipelineRun.scope_id == _AIZK_UUID)).all()
         assert runs_under_a == [], "no runs may be written under source A from source B's output"

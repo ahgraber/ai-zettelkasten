@@ -37,13 +37,13 @@ Production never runs the new binary against the old database; the pave is part 
 
 ## Phase 2 — Retype (schema only; the pave carries the data)
 
-- [ ] Retype to `Uuid` in the ORM: `pipeline_runs.scope_id`, contextualization output/memo `scope_id`, `graph_content_fts.scope_id` handling, `graph_chunks.source_id`, `chunk_id` (identity and every FK/reference column), `mention_id` and `mention_id_lo`/`mention_id_hi` — per the retype plan's boundary inventory.
-- [ ] Add the Alembic revision; update schema-equivalence fixtures; round-trip test passes.
-- [ ] Convert `UUID(scope_id)` / `str(source_id)` call sites; sweep the whole tree (`rg` including notebooks, scripts, docs) for every reference form.
-- [ ] Rewrite the FTS insert guard and raw-SQL writes to bind through the ORM `Uuid` type's representation; rewrite the guard's parametrized tests for the new storage form.
-- [ ] Extend the identity-naming conventions test to pin the new typing rule (no string-typed identity columns; enumerated from `SQLModel.metadata`).
-- [ ] Rewrite `pending_extraction_sources` as a SQL anti-join with `limit` pushed into the query; parity test against the prior semantics on a seeded corpus.
-- [ ] Wire limits through the console pending closures; test exact pending counts and a bounded listing for both graph stages.
+- [x] Retype to `Uuid` in the ORM: `pipeline_runs.scope_id`, contextualization output/memo `scope_id`, `graph_content_fts.scope_id` handling, `graph_chunks.source_id`, `chunk_id` (identity and every FK/reference column), `mention_id` and `mention_id_lo`/`mention_id_hi` — per the retype plan's boundary inventory.
+- [x] Add the Alembic revision; update schema-equivalence fixtures; round-trip test passes.
+- [x] Convert `UUID(scope_id)` / `str(source_id)` call sites; sweep the whole tree (`rg` including notebooks, scripts, docs) for every reference form.
+- [x] Rewrite the FTS insert guard and raw-SQL writes to bind through the ORM `Uuid` type's representation; rewrite the guard's parametrized tests for the new storage form.
+- [x] Extend the identity-naming conventions test to pin the new typing rule (no string-typed identity columns; enumerated from `SQLModel.metadata`).
+- [x] Rewrite `pending_extraction_sources` as a SQL anti-join with `limit` pushed into the query; parity test against the prior semantics on a seeded corpus.
+- [x] Wire limits through the console pending closures; test exact pending counts and a bounded listing for both graph stages.
 
 ## Phase 3 — Output-sensitive identity
 
@@ -102,3 +102,9 @@ Production never runs the new binary against the old database; the pave is part 
 - [ ] Rebase the open `keyterm-extraction-foundation` change against the synced identity and key contracts.
 - [ ] Clean `._scratch/`: remove the 2026-08-28 review record, L4 analysis/plan, retype plan, and `review-20260827/` diff packets; update the memory entries that point at them.
 - [ ] Archive the change (`sdd-archive`).
+
+## Follow-up — `aizk.graph` package review
+
+- [ ] Run the `simplify` skill over `src/aizk/graph`: remove duplication, dead code, needless indirection, and comment noise the phases left behind; suite and hooks green.
+- [ ] Run the `refactor` skill over `src/aizk/graph`: plan any structural change the simplify pass surfaced (oversized functions, module boundaries), get approval, land it behavior-preserving; suite and hooks green.
+- [ ] Code-review `src/aizk/graph` with Codex through the agent-fleet skill (not yet installed; the owner supplies the link), as the skill's trial run; triage its findings.

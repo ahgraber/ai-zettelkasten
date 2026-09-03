@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from collections import Counter
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import select
@@ -184,8 +185,8 @@ class _MentionRow(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    mention_id: str
-    chunk_id: str
+    mention_id: UUID
+    chunk_id: UUID
     anchor_kind: str
     surface_form: str
 
@@ -224,7 +225,7 @@ def _cooccurrence_class(class_lo: str, class_hi: str) -> str:
 
 def _cooccurrence_statistics(
     rows: "Sequence[_MentionRow]",
-    links: "Sequence[tuple[str, str, str]]",
+    links: "Sequence[tuple[UUID, UUID, UUID]]",
 ) -> CooccurrenceStatistics:
     """Compute :class:`CooccurrenceStatistics` from the corpus dataset's mentions and co-occurrence links.
 
@@ -285,7 +286,7 @@ def compute_dataset_statistics(session: "Session") -> DatasetStatistics:
     source_count = len({scope_id for _run_id, scope_id in active_runs})
 
     rows: list[_MentionRow] = []
-    links: list[tuple[str, str, str]] = []
+    links: list[tuple[UUID, UUID, UUID]] = []
     if run_ids:
         rows = [
             _MentionRow(mention_id=mention_id, chunk_id=chunk_id, anchor_kind=anchor_kind, surface_form=surface_form)

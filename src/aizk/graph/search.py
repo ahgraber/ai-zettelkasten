@@ -45,8 +45,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import Uuid, text
 
 from aizk.graph.contextualization import VARIANT_STAGE
 from aizk.graph.persistence import CHUNKING_STAGE
@@ -83,7 +84,7 @@ class SearchResult:
     seam thin for a relevance-backend swap.
 
     Attributes:
-        source_id: The source identity (``str(source_id)``) the chunk belongs to.
+        source_id: The source identity the chunk belongs to.
         chunk_id: The surrogate chunk identity.
         span_start: The chunk's start offset in the active generation's markdown;
             the within-document ordering key.
@@ -94,8 +95,8 @@ class SearchResult:
             representation.
     """
 
-    source_id: str
-    chunk_id: str
+    source_id: UUID
+    chunk_id: UUID
     span_start: int
     score: float
     matched_in_chunk: bool
@@ -160,10 +161,11 @@ def escape_fts_query(query: str) -> str | None:
 #: returned row has a ``span_start`` to order by. ``kind`` is bound to honor the
 #: type filter ('chunk', 'contextualized', or both via the OR).
 _SEARCH_SQL = (
-    # The index's ``scope_id`` is the source identity in the same dashed form
-    # ``pipeline_runs.scope_id`` holds, which is what makes both joins below legal;
-    # it is aliased back to ``source_id`` because that is what a result means to a
-    # caller.
+    # The index's ``scope_id`` and ``chunk_id`` bind through the same ORM ``Uuid``
+    # type as ``pipeline_runs.scope_id`` and ``graph_chunk_run_manifest.chunk_id``,
+    # which is what makes both joins below legal; ``scope_id`` is aliased back to
+    # ``source_id`` because that is what a result means to a caller, and both are
+    # read back through ``Uuid`` so the caller gets ``uuid.UUID`` values.
     "SELECT f.kind, f.chunk_id, f.scope_id AS source_id, m.span_start, bm25(graph_content_fts) AS score "
     "FROM graph_content_fts AS f "
     "JOIN pipeline_runs AS cr "
@@ -228,7 +230,7 @@ class Fts5SearchProvider:
         # convention), keeping search non-blocking alongside the writer.
         with self._engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
             rows = connection.execute(
-                text(_SEARCH_SQL),
+                text(_SEARCH_SQL).columns(chunk_id=Uuid(), source_id=Uuid()),
                 {
                     "chunking_stage": CHUNKING_STAGE,
                     "variant_stage": VARIANT_STAGE,
@@ -251,7 +253,7 @@ def _aggregate(rows: list) -> list[SearchResult]:  # noqa: ANN001 - DBAPI Row se
     ``span_start`` ascending. Stable, deterministic ordering for equal scores comes
     from sorting on ``(score, source_id)`` for documents and ``span_start`` for chunks.
     """
-    by_chunk: dict[str, SearchResult] = {}
+    by_chunk: dict[UUID, SearchResult] = {}
     for kind_value, chunk_id, source_id, span_start, score in rows:
         prior = by_chunk.get(chunk_id)
         matched_in_chunk = kind_value == "chunk"
@@ -274,7 +276,7 @@ def _aggregate(rows: list) -> list[SearchResult]:  # noqa: ANN001 - DBAPI Row se
                 matched_in_contextualized=prior.matched_in_contextualized or not matched_in_chunk,
             )
 
-    doc_score: dict[str, float] = {}
+    doc_score: dict[UUID, float] = {}
     for result in by_chunk.values():
         best = doc_score.get(result.source_id)
         if best is None or result.score < best:

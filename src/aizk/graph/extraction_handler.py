@@ -359,7 +359,7 @@ class ExtractionStageHandler:
         try:
             result = extract_document(
                 self._engine,
-                source_id=str(source_id),
+                source_id=source_id,
                 extractor=self._extractor,
                 input_policy=self._input_policy,
             )

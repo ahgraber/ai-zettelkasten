@@ -72,7 +72,7 @@ A user needs these because they decide what stays stable when you re-run, and wh
 
 **Source is the durable identity.**
 A _source_ is the thing a document belongs to across re-conversions; its id is `source_id`.
-Every run is scoped to it (`scope_id = str(source_id)`), never to a single conversion artifact.
+Every run is scoped to it (`scope_id = source_id`), never to a single conversion artifact.
 Re-converting the same source **supersedes** within that one scope rather than forking a parallel copy.
 The `conversion_output_id` is only a _locator_ — how we fetch the Markdown — never a scope and never an input to identity.
 

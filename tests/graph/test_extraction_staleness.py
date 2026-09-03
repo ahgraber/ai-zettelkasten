@@ -60,8 +60,8 @@ _SCHEMA_TABLES = [
 
 _NOW = dt.datetime(2026, 3, 1, tzinfo=dt.timezone.utc)
 
-_SOURCE_A = "11111111-1111-1111-1111-111111111111"
-_SOURCE_B = "22222222-2222-2222-2222-222222222222"
+_SOURCE_A = UUID("11111111-1111-1111-1111-111111111111")
+_SOURCE_B = UUID("22222222-2222-2222-2222-222222222222")
 
 _CHUNK_TEXT = "Ada Lovelace wrote the first algorithm."
 
@@ -87,7 +87,7 @@ def _make_engine(tmp_path: Path, name: str = "staleness.db") -> Engine:
     return engine
 
 
-def _seed_chunking_run(engine: Engine, *, source_id: str, derivation_key: str) -> None:
+def _seed_chunking_run(engine: Engine, *, source_id: UUID, derivation_key: str) -> None:
     """Activate a chunking run for a source and put one chunk under it.
 
     Mirrors ``persist_chunks``: the chunk is content-keyed, so a re-chunk over
@@ -98,13 +98,13 @@ def _seed_chunking_run(engine: Engine, *, source_id: str, derivation_key: str) -
         session.flush()
         content_hash = xxhash.xxh64(_CHUNK_TEXT.encode("utf-8")).hexdigest()
         chunk = session.exec(
-            select(Chunk).where(Chunk.source_id == UUID(source_id), Chunk.content_hash == content_hash)
+            select(Chunk).where(Chunk.source_id == source_id, Chunk.content_hash == content_hash)
         ).one_or_none()
         if chunk is None:
             chunk = Chunk(
-                chunk_id=str(uuid4()),
+                chunk_id=uuid4(),
                 content_hash=content_hash,
-                source_id=UUID(source_id),
+                source_id=source_id,
                 heading_path_json="[]",
                 ordinal=0,
                 text=_CHUNK_TEXT,
@@ -115,14 +115,14 @@ def _seed_chunking_run(engine: Engine, *, source_id: str, derivation_key: str) -
         session.commit()
 
 
-def _seed_variant_run(engine: Engine, *, source_id: str, derivation_key: str) -> None:
+def _seed_variant_run(engine: Engine, *, source_id: UUID, derivation_key: str) -> None:
     """Activate a contextualization run for a source."""
     with Session(engine) as session:
         record_run(session, stage=VARIANT_STAGE, scope_id=source_id, derivation_key=derivation_key)
         session.commit()
 
 
-def _extract(engine: Engine, source_id: str, *, input_policy: str = "contextualized") -> int:
+def _extract(engine: Engine, source_id: UUID, *, input_policy: str = "contextualized") -> int:
     """Run the write path for one source and return its active extraction run id."""
     return extract_document(
         engine, source_id=source_id, extractor=_SilentExtractor(), input_policy=input_policy
@@ -250,10 +250,10 @@ def test_the_single_source_check_is_false_for_an_unextracted_source(tmp_path: Pa
         assert is_extraction_stale(session, _SOURCE_A) is False
 
 
-def _seed_unit(engine: Engine, source_id: str, status: WorkUnitStatus) -> int:
+def _seed_unit(engine: Engine, source_id: UUID, status: WorkUnitStatus) -> int:
     """Insert the source's extraction work-unit in a given status; return its id."""
     with Session(engine) as session:
-        job = ExtractionJob(idempotency_key=f"source:{source_id}", source_id=UUID(source_id), status=status)
+        job = ExtractionJob(idempotency_key=f"source:{source_id}", source_id=source_id, status=status)
         session.add(job)
         session.commit()
         return job.id
@@ -358,7 +358,7 @@ def test_a_stale_source_is_not_pending(tmp_path: Path) -> None:
         session.add(
             ExtractionJob(
                 idempotency_key=f"source:{_SOURCE_A}",
-                source_id=UUID(_SOURCE_A),
+                source_id=_SOURCE_A,
                 status=WorkUnitStatus.SUCCEEDED,
             )
         )

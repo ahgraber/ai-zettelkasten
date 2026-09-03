@@ -10,6 +10,7 @@ capacity headroom, and refuses to run without explicit confirmation. These mirro
 
 from __future__ import annotations
 
+import datetime as dt
 from pathlib import Path
 from uuid import UUID
 
@@ -23,16 +24,19 @@ from aizk.graph.extraction_events import QueuedPayload
 from aizk.graph.extraction_workunit import (
     enqueue_extraction,
     enqueue_extraction_backfill,
+    pending_extraction_count,
     pending_extraction_sources,
 )
 from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.invalidation import ReprocessingConfirmationError
 from aizk.pipeline.lifecycle import WorkUnitStatus
-from aizk.pipeline.run import PipelineRun, record_run
+from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 
 _UUID_A = UUID("11111111-1111-1111-1111-111111111111")
 _UUID_B = UUID("22222222-2222-2222-2222-222222222222")
+
+_EPOCH = dt.datetime(2026, 3, 1, tzinfo=dt.timezone.utc)
 
 
 def _make_engine(tmp_path: Path):
@@ -79,8 +83,8 @@ def test_enqueue_extraction_backfill_resolves_eligible_sources_and_dedupes(tmp_p
     """Backfill enqueues one unit per source with an active chunking run; a second pass reuses the open units."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_B), derivation_key="dk-b")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_B, derivation_key="dk-b")
         session.commit()
 
         first = enqueue_extraction_backfill(session, confirmed=True, queue_max_depth=0, principal="test")
@@ -97,7 +101,7 @@ def test_enqueue_extraction_backfill_excludes_sources_without_a_chunking_run(tmp
     """A source with no active chunking run is not enqueued: it has nothing to extract."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
         session.commit()
 
         jobs = enqueue_extraction_backfill(session, confirmed=True, queue_max_depth=0, principal="test")
@@ -113,7 +117,7 @@ def test_a_chunked_never_extracted_source_is_pending(tmp_path: Path) -> None:
     """A source with an active chunking run and no work-unit is work the stage owes."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
         session.commit()
 
         assert pending_extraction_sources(session) == [_UUID_A]
@@ -124,7 +128,7 @@ def test_a_source_with_an_extraction_unit_is_not_pending(tmp_path: Path, status:
     """The work-unit is keyed by the source alone, so any status covers it — including a terminal one."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
         session.add(ExtractionJob(idempotency_key=f"source:{_UUID_A}", source_id=_UUID_A, status=status))
         session.commit()
 
@@ -135,13 +139,13 @@ def test_a_re_chunked_source_with_a_succeeded_unit_is_not_pending(tmp_path: Path
     """Superseded upstream state makes a source stale, not pending: re-extraction stays operator-initiated."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
         session.add(
             ExtractionJob(idempotency_key=f"source:{_UUID_A}", source_id=_UUID_A, status=WorkUnitStatus.SUCCEEDED)
         )
         session.commit()
         # A re-chunk supersedes the first run and leaves a new active one.
-        rechunked = record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a-v2")
+        rechunked = record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a-v2")
         session.commit()
 
         assert rechunked.supersedes_run_id is not None, "the source really was re-chunked"
@@ -159,8 +163,8 @@ def test_the_extraction_pending_set_is_a_function_of_state_alone(tmp_path: Path)
     """Two evaluations against identical state yield the identical set — the derivation has no memory."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_B), derivation_key="dk-b")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_B, derivation_key="dk-b")
         session.commit()
 
         first = pending_extraction_sources(session)
@@ -174,8 +178,8 @@ def test_unadmitted_extraction_work_stays_pending(tmp_path: Path) -> None:
     """Work a bounded evaluation left out is still pending on the next evaluation."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_B), derivation_key="dk-b")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_B, derivation_key="dk-b")
         session.commit()
 
         bounded = pending_extraction_sources(session, limit=1)
@@ -188,12 +192,12 @@ def test_the_extraction_pending_limit_applies_after_the_anti_join(tmp_path: Path
     """A bounded evaluation returns pending work, not a corpus sample that may hold none."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
         session.add(
             ExtractionJob(idempotency_key=f"source:{_UUID_A}", source_id=_UUID_A, status=WorkUnitStatus.QUEUED)
         )
         session.commit()
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_B), derivation_key="dk-b")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_B, derivation_key="dk-b")
         session.commit()
 
         assert pending_extraction_sources(session, limit=1) == [_UUID_B]
@@ -205,6 +209,59 @@ def test_the_extraction_pending_query_rejects_a_limit_that_does_not_bound(tmp_pa
     engine = _make_engine(tmp_path)
     with Session(engine) as session, pytest.raises(ValueError, match="limit must be a positive integer"):
         pending_extraction_sources(session, limit=limit)
+
+
+def test_the_sql_extraction_pending_derivation_matches_a_python_reference(tmp_path: Path) -> None:
+    """The SQL anti-join agrees with a plain-Python reference over a mixed corpus.
+
+    The corpus mixes sources with an active chunking run, a source whose only run is
+    superseded, and sources already covered by a work-unit in different statuses —
+    the same conditions the anti-join must exclude or include correctly. Checked
+    unbounded and with a limit, and against ``pending_extraction_count``, so the SQL
+    derivation is not merely equivalent in aggregate but orders, truncates, and
+    counts the same way the reference does.
+    """
+    engine = _make_engine(tmp_path)
+    scopes = [UUID(f"{index:08d}-0000-0000-0000-000000000000") for index in range(1, 6)]
+    superseded_only = UUID("99999999-0000-0000-0000-000000000000")
+    covered = {scopes[1]: WorkUnitStatus.SUCCEEDED, scopes[3]: WorkUnitStatus.FAILED}
+    with Session(engine) as session:
+        for index, source_id in enumerate(scopes):
+            session.add(
+                PipelineRun(
+                    stage=CHUNKING_STAGE,
+                    scope_id=source_id,
+                    status=RunStatus.ACTIVE,
+                    derivation_key=f"dk-{index}",
+                    created_at=_EPOCH + dt.timedelta(days=index),
+                )
+            )
+        session.add(
+            PipelineRun(
+                stage=CHUNKING_STAGE,
+                scope_id=superseded_only,
+                status=RunStatus.SUPERSEDED,
+                derivation_key="dk-superseded",
+                created_at=_EPOCH,
+            )
+        )
+        for source_id, status in covered.items():
+            session.add(ExtractionJob(idempotency_key=f"source:{source_id}", source_id=source_id, status=status))
+        session.commit()
+
+        active_scopes_in_order = list(
+            session.exec(
+                select(PipelineRun.scope_id)
+                .where(PipelineRun.stage == CHUNKING_STAGE, PipelineRun.status == RunStatus.ACTIVE)
+                .order_by(PipelineRun.created_at)
+            ).all()
+        )
+        already_covered = set(session.exec(select(ExtractionJob.source_id)).all())
+        expected = [source_id for source_id in active_scopes_in_order if source_id not in already_covered]
+
+        assert pending_extraction_sources(session) == expected
+        assert pending_extraction_sources(session, limit=2) == expected[:2]
+        assert pending_extraction_count(session) == len(expected)
 
 
 def test_enqueue_extraction_refuses_new_work_at_capacity(tmp_path: Path) -> None:
@@ -255,8 +312,8 @@ def test_enqueue_extraction_backfill_admits_only_the_batch_headroom(tmp_path: Pa
     """A bulk enqueue over more eligible sources than the headroom admits the headroom and leaves the rest."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_B), derivation_key="dk-b")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_B, derivation_key="dk-b")
         session.commit()
 
         admitted = enqueue_extraction_backfill(session, confirmed=True, queue_max_depth=1, principal="test")
@@ -272,7 +329,7 @@ def test_enqueue_extraction_backfill_requires_confirmation(tmp_path: Path) -> No
     """The corpus-wide backfill resolver refuses to enqueue until explicitly confirmed."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
         session.commit()
 
         with pytest.raises(ReprocessingConfirmationError, match="will not run until it is explicitly confirmed"):

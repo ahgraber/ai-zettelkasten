@@ -125,6 +125,23 @@ def latest_output_ids_per_source(session: "Session", *, limit: int | None = None
     return [row[0] for row in session.exec(winners).all()]
 
 
+def _pending_contextualization_query() -> "Select":
+    """Return the newest-per-source conversion outputs with no contextualization work-unit.
+
+    Anti-joins :func:`_newest_output_per_source` to ``ContextualizationJob`` on the
+    artifact locator and keeps the unmatched side, so :func:`pending_contextualization`
+    and :func:`pending_contextualization_count` read the identical derivation and
+    cannot disagree about what is pending.
+    """
+    winners = _newest_output_per_source().subquery()
+    return (
+        select(winners.c.output_id, winners.c.source_id)
+        .outerjoin(ContextualizationJob, ContextualizationJob.conversion_output_id == winners.c.output_id)
+        .where(ContextualizationJob.id.is_(None))
+        .order_by(winners.c.created_at, winners.c.source_id)
+    )
+
+
 def pending_contextualization(session: "Session", *, limit: int | None = None) -> list[tuple[int, "UUID"]]:
     """Return the work that should have a contextualization work-unit but does not.
 
@@ -157,16 +174,19 @@ def pending_contextualization(session: "Session", *, limit: int | None = None) -
         ValueError: If ``limit`` is supplied and is less than one.
     """
     _require_bounding_limit(limit)
-    winners = _newest_output_per_source().subquery()
-    pending = (
-        select(winners.c.output_id, winners.c.source_id)
-        .outerjoin(ContextualizationJob, ContextualizationJob.conversion_output_id == winners.c.output_id)
-        .where(ContextualizationJob.id.is_(None))
-        .order_by(winners.c.created_at, winners.c.source_id)
-    )
+    pending = _pending_contextualization_query()
     if limit is not None:
         pending = pending.limit(limit)
     return [(output_id, source_id) for output_id, source_id in session.exec(pending).all()]
+
+
+def pending_contextualization_count(session: "Session") -> int:
+    """Count the sources that should have a contextualization work-unit but do not.
+
+    Counts over the same anti-join :func:`pending_contextualization` lists, so the
+    count and the listing cannot disagree about what is pending.
+    """
+    return session.exec(select(func.count()).select_from(_pending_contextualization_query().subquery())).one()
 
 
 def pending_contextualization_outputs(session: "Session", *, limit: int | None = None) -> list[int]:

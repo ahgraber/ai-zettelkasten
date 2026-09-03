@@ -16,6 +16,7 @@ import datetime as dt
 import re
 from uuid import UUID
 
+import pytest
 from sqlmodel import Session
 
 from fastapi.testclient import TestClient
@@ -30,7 +31,7 @@ from aizk.pipeline.run import PipelineRun, RunStatus
 
 def _seed_run(session: Session, *, source_id: UUID, status: RunStatus = RunStatus.ACTIVE) -> PipelineRun:
     """Insert one extraction run scoped to the source identity and return it."""
-    run = PipelineRun(stage=EXTRACTION_STAGE, scope_id=str(source_id), status=status, derivation_key="dk")
+    run = PipelineRun(stage=EXTRACTION_STAGE, scope_id=source_id, status=status, derivation_key="dk")
     session.add(run)
     session.commit()
     session.refresh(run)
@@ -242,7 +243,7 @@ def test_pending_sources_are_listed_with_their_identity_and_title(client: TestCl
     """Sources behind the stage are listed by identity and title, though they have no work-unit."""
     source = seed_source(db_session, karakeep_id="bm_behind", title="Behind Doc")
     db_session.add(
-        PipelineRun(stage=CHUNKING_STAGE, scope_id=str(source.source_id), status=RunStatus.ACTIVE, derivation_key="dk")
+        PipelineRun(stage=CHUNKING_STAGE, scope_id=source.source_id, status=RunStatus.ACTIVE, derivation_key="dk")
     )
     db_session.commit()
 
@@ -264,7 +265,7 @@ def test_a_pending_source_without_a_title_falls_back_to_its_identity(
     """
     source = seed_source(db_session, karakeep_id="bm_behind_untitled", title=None)
     db_session.add(
-        PipelineRun(stage=CHUNKING_STAGE, scope_id=str(source.source_id), status=RunStatus.ACTIVE, derivation_key="dk")
+        PipelineRun(stage=CHUNKING_STAGE, scope_id=source.source_id, status=RunStatus.ACTIVE, derivation_key="dk")
     )
     db_session.commit()
 
@@ -282,7 +283,7 @@ def test_the_pending_listing_matches_the_dashboard_count(client: TestClient, db_
         db_session.add(
             PipelineRun(
                 stage=CHUNKING_STAGE,
-                scope_id=str(source.source_id),
+                scope_id=source.source_id,
                 status=RunStatus.ACTIVE,
                 derivation_key=f"dk-{index}",
             )
@@ -294,6 +295,46 @@ def test_the_pending_listing_matches_the_dashboard_count(client: TestClient, db_
 
     assert listing.count("data-pending-source=") == 3
     assert 'data-pending="3"' in dashboard
+
+
+def test_the_pending_listing_is_bounded_while_the_heading_shows_the_exact_count(
+    client: TestClient, db_session, seed_source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A small page-size ceiling truncates the listing, but the heading and note report the exact backlog."""
+    monkeypatch.setattr("aizk.console.stages._graph.MAX_LIMIT", 3)
+    for index in range(5):
+        source = seed_source(db_session, karakeep_id=f"bm_bounded_{index}", title=f"Bounded {index}")
+        db_session.add(
+            PipelineRun(
+                stage=CHUNKING_STAGE, scope_id=source.source_id, status=RunStatus.ACTIVE, derivation_key=f"dk-{index}"
+            )
+        )
+    db_session.commit()
+
+    body = client.get("/ui/tasks", params={"stage": "extraction"}).text
+
+    assert body.count("data-pending-source=") == 3
+    assert '<span class="pending-count">5</span>' in body
+    assert "Showing the first 3 of 5." in body
+
+
+def test_the_dashboard_pending_figure_is_exact_when_the_listing_is_bounded(
+    client: TestClient, db_session, seed_source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dashboard's pending count is the exact backlog size, not the bounded listing's length."""
+    monkeypatch.setattr("aizk.console.stages._graph.MAX_LIMIT", 3)
+    for index in range(5):
+        source = seed_source(db_session, karakeep_id=f"bm_dash_{index}", title=f"Dash {index}")
+        db_session.add(
+            PipelineRun(
+                stage=CHUNKING_STAGE, scope_id=source.source_id, status=RunStatus.ACTIVE, derivation_key=f"dk-{index}"
+            )
+        )
+    db_session.commit()
+
+    dashboard = client.get("/ui").text
+
+    assert 'data-pending="5"' in dashboard
 
 
 def test_a_stage_without_a_derivation_offers_no_pending_listing(client: TestClient, db_session) -> None:

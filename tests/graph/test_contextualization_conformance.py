@@ -32,20 +32,20 @@ from aizk.graph.workunit import enqueue_backfill
 from aizk.pipeline.invalidation import ReprocessingConfirmationError, generation_is_stale
 from aizk.pipeline.run import PipelineRun, RunStatus
 
-_SOURCE_A = "11111111-1111-1111-1111-111111111111"
-_SOURCE_B = "22222222-2222-2222-2222-222222222222"
+_SOURCE_A = UUID("11111111-1111-1111-1111-111111111111")
+_SOURCE_B = UUID("22222222-2222-2222-2222-222222222222")
 _HASH_A = "0011223344556677"
 _HASH_B = "aabbccddeeff0011"
 _OUTPUT = "output-1"
 _DOC_TEXT = "# Title\n\nThe document body the summary pass reads."
 
 
-def _make_chunk(text: str, *, ordinal: int, source_id: str, markdown_hash: str) -> SplitterChunk:
+def _make_chunk(text: str, *, ordinal: int, source_id: UUID, markdown_hash: str) -> SplitterChunk:
     """Build a splitter chunk (no chunk_id — identity is assigned at persistence)."""
     content_hash = xxhash.xxh64(text.encode("utf-8")).hexdigest()
     return SplitterChunk(
         content_hash=content_hash,
-        source_id=source_id,
+        source_id=str(source_id),
         heading_path=(),
         ordinal=ordinal,
         text=text,
@@ -61,7 +61,7 @@ def _contextualize_source(
     session: Session,
     client: StubLLMClient,
     *,
-    source_id: str,
+    source_id: UUID,
     markdown_hash: str,
     context_version: int = CONTEXT_VERSION,
     texts: tuple[str, ...] = ("alpha", "beta"),
@@ -98,7 +98,7 @@ def _contextualize_source(
     return variants
 
 
-def _active_variant_run(session: Session, source_id: str) -> PipelineRun:
+def _active_variant_run(session: Session, source_id: UUID) -> PipelineRun:
     """Return the active contextualization variant run for a source."""
     return session.exec(
         select(PipelineRun).where(
@@ -126,7 +126,7 @@ def test_context_version_bump_marks_stale_no_eager_recompute(session: Session) -
 
 def test_corpus_recontextualization_requires_confirmation(session: Session) -> None:
     """A corpus-wide re-contextualization enqueue does not run until explicitly confirmed."""
-    documents = [(101, UUID(_SOURCE_A)), (102, UUID(_SOURCE_B))]
+    documents = [(101, _SOURCE_A), (102, _SOURCE_B)]
 
     with pytest.raises(ReprocessingConfirmationError, match="will not run until it is explicitly confirmed"):
         enqueue_backfill(session, documents, confirmed=False, queue_max_depth=0, principal="test")

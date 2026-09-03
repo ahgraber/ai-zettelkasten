@@ -13,10 +13,12 @@ from __future__ import annotations
 import datetime as dt
 from uuid import UUID
 
+import pytest
 from sqlmodel import Session
 
 from fastapi.testclient import TestClient
 
+from aizk.conversion.datamodel.job import ConversionJobStatus
 from aizk.graph.contextualization import SUMMARY_STAGE, VARIANT_STAGE
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
@@ -34,7 +36,7 @@ def _seed_run(
     status: RunStatus = RunStatus.ACTIVE,
 ) -> PipelineRun:
     """Insert one stage run scoped to the source identity and return it."""
-    run = PipelineRun(stage=stage, scope_id=str(source_id), status=status, derivation_key="dk")
+    run = PipelineRun(stage=stage, scope_id=source_id, status=status, derivation_key="dk")
     session.add(run)
     session.commit()
     session.refresh(run)
@@ -269,6 +271,60 @@ def test_bulk_action_mixed_eligibility_distinguishes_applied_and_skipped(
     assert db_session.get(ContextualizationJob, eligible.id).status is WorkUnitStatus.QUEUED
     # The ineligible job's status is unchanged.
     assert db_session.get(ContextualizationJob, ineligible.id).status is WorkUnitStatus.SUCCEEDED
+
+
+# --- coverage: bounded pending listing ---------------------------------------
+
+
+def _seed_pending_sources(
+    session: Session, seed_source, seed_conversion_job, seed_conversion_output, count: int
+) -> None:
+    """Give ``count`` sources a converted-and-unenqueued output apiece, so each is pending contextualization."""
+    for index in range(count):
+        source = seed_source(session, karakeep_id=f"bm_pending_{index}", title=f"Pending {index}")
+        job = seed_conversion_job(
+            session,
+            source_id=source.source_id,
+            idempotency_key=f"pending-{index}",
+            status=ConversionJobStatus.SUCCEEDED,
+        )
+        seed_conversion_output(session, job_id=job.id, source_id=source.source_id)
+
+
+def test_the_pending_listing_is_bounded_while_the_heading_shows_the_exact_count(
+    client: TestClient,
+    db_session,
+    seed_source,
+    seed_conversion_job,
+    seed_conversion_output,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A small page-size ceiling truncates the listing, but the heading and note report the exact backlog."""
+    monkeypatch.setattr("aizk.console.stages._graph.MAX_LIMIT", 3)
+    _seed_pending_sources(db_session, seed_source, seed_conversion_job, seed_conversion_output, 5)
+
+    body = client.get("/ui/tasks", params={"stage": "contextualization"}).text
+
+    assert body.count("data-pending-source=") == 3
+    assert '<span class="pending-count">5</span>' in body
+    assert "Showing the first 3 of 5." in body
+
+
+def test_the_dashboard_pending_figure_is_exact_when_the_listing_is_bounded(
+    client: TestClient,
+    db_session,
+    seed_source,
+    seed_conversion_job,
+    seed_conversion_output,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The dashboard's pending count is the exact backlog size, not the bounded listing's length."""
+    monkeypatch.setattr("aizk.console.stages._graph.MAX_LIMIT", 3)
+    _seed_pending_sources(db_session, seed_source, seed_conversion_job, seed_conversion_output, 5)
+
+    dashboard = client.get("/ui").text
+
+    assert 'data-pending="5"' in dashboard
 
 
 # --- stage drill-down -------------------------------------------------------

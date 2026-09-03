@@ -190,8 +190,8 @@ def process_document(
     summary + per-chunk revision LLM passes. **Apply (one short ``BEGIN IMMEDIATE``):**
     the same freshness gate again — authoritatively and atomically with the
     supersede (the preflight is best-effort) — then persist the chunking run +
-    chunk rows, the summary, and the variants, scoped to ``str(source_id)`` and
-    keyed by content. The chunks are contextualized in document order (the
+    chunk rows, the summary, and the variants, scoped to ``source_id`` and keyed
+    by content. The chunks are contextualized in document order (the
     splitter's order), not the ``chunk_id``-ordered manifest.
 
     Cooperative cancellation: ``is_cancelled`` is checked before the (expensive)
@@ -206,7 +206,7 @@ def process_document(
     Args:
         engine: The shared engine; the apply phase opens its own ``BEGIN IMMEDIATE``.
         client: The single model access point for the summary and variant passes.
-        source_id: The durable source identity (runs scope to ``str(source_id)``).
+        source_id: The durable source identity; the runs' scope.
         conversion_output_id: The conversion artifact locator to process.
         markdown_source: The injected seam that fetches the document's Markdown.
         freshness: The injected seam deciding whether this output is still current.
@@ -222,7 +222,6 @@ def process_document(
             ``markdown_hash_xx64`` (blob/metadata drift) — guarding against
             chunking content that disagrees with the conversion stage's record.
     """
-    scope_id = str(source_id)
     locator = str(conversion_output_id)
 
     def _cancelled() -> bool:
@@ -239,7 +238,7 @@ def process_document(
             logger.info(
                 "Skipping superseded/foreign conversion output %s for source %s before fetch (preflight)",
                 conversion_output_id,
-                scope_id,
+                source_id,
             )
             return SkippedSuperseded(conversion_output_id=conversion_output_id)
 
@@ -253,7 +252,7 @@ def process_document(
         )
     chunks = split(
         loaded.text,
-        source_id=scope_id,
+        source_id=str(source_id),
         converted_artifact_id=locator,
         markdown_hash_xx64=loaded.markdown_hash_xx64,
     )
@@ -270,7 +269,7 @@ def process_document(
     summary_text = resolve_summary_text(
         engine,
         client,
-        source_id=scope_id,
+        source_id=source_id,
         markdown_hash_xx64=loaded.markdown_hash_xx64,
         document_text=loaded.text,
     )
@@ -281,7 +280,7 @@ def process_document(
     revisions = resolve_revisions(
         engine,
         client,
-        source_id=scope_id,
+        source_id=source_id,
         summary_text=summary_text,
         markdown_hash_xx64=loaded.markdown_hash_xx64,
         ordered_chunks=chunks,
@@ -298,13 +297,13 @@ def process_document(
             logger.info(
                 "Skipping superseded conversion output %s for source %s (a newer output won)",
                 conversion_output_id,
-                scope_id,
+                source_id,
             )
             return SkippedSuperseded(conversion_output_id=conversion_output_id)
 
         chunking_run, persisted_chunks = persist_chunks(
             session,
-            source_id=scope_id,
+            source_id=source_id,
             conversion_output_id=locator,
             markdown_hash_xx64=loaded.markdown_hash_xx64,
             splitter_version=SPLITTER_VERSION,
@@ -313,7 +312,7 @@ def process_document(
         summary = summarize_document(
             session,
             client,
-            source_id=scope_id,
+            source_id=source_id,
             conversion_output_id=locator,
             markdown_hash_xx64=loaded.markdown_hash_xx64,
             document_text=loaded.text,
@@ -322,7 +321,7 @@ def process_document(
         variants = contextualize_chunks(
             session,
             client,
-            source_id=scope_id,
+            source_id=source_id,
             summary=summary,
             chunks=persisted_chunks,
             chunking_run_id=chunking_run.id,
@@ -336,7 +335,7 @@ def process_document(
         # concurrent same-source attempt under different keys keeps its checkpoints.
         memo_delete_keys(
             session,
-            scope_id,
+            source_id,
             consumed_output_memo_keys(
                 summary_text,
                 markdown_hash_xx64=loaded.markdown_hash_xx64,
@@ -354,7 +353,7 @@ def process_document(
     logger.debug(
         "Processed document conversion_output_id=%s source=%s: %d chunks, %d variants",
         conversion_output_id,
-        scope_id,
+        source_id,
         result.chunk_count,
         result.variant_count,
     )

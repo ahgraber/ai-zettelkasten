@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from sqlalchemy import text
@@ -46,7 +47,7 @@ from aizk.graph.llm import StubLLMClient
 from aizk.graph.persistence import manifest_of_run, persist_chunks, run_input
 from aizk.pipeline.run import PipelineRun, RunStatus
 
-_AIZK_UUID = "11111111-1111-1111-1111-111111111111"
+_AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")
 _OUTPUT = "output-1"
 _OUTPUT_B = "output-2"
 _HASH_A = "0011223344556677"
@@ -60,14 +61,14 @@ def _make_chunk(
     ordinal: int,
     markdown_hash: str = _HASH_A,
     conversion_output_id: str = _OUTPUT,
-    source_id: str = _AIZK_UUID,
+    source_id: UUID = _AIZK_UUID,
     splitter_version: int = SPLITTER_VERSION,
 ) -> SplitterChunk:
     """Build a splitter chunk for a single source (no chunk_id — identity is assigned at persistence)."""
     content_hash = xxhash.xxh64(text.encode("utf-8")).hexdigest()
     return SplitterChunk(
         content_hash=content_hash,
-        source_id=source_id,
+        source_id=str(source_id),
         heading_path=(),
         ordinal=ordinal,
         text=text,
@@ -266,7 +267,7 @@ def test_variant_with_provenance_and_derivation_key(session: Session) -> None:
 
     assert len(variants) == len(chunks)
     by_chunk = {v.chunk_id: v for v in variants}
-    assert set(by_chunk) == {c.chunk_id for c in chunks}
+    assert set(by_chunk) == {UUID(c.chunk_id) for c in chunks}
     summary = session.exec(select(DocumentSummary)).one()
     summary_run = session.get(PipelineRun, summary.run_id)
     assert summary_run is not None
@@ -305,7 +306,7 @@ def test_variant_with_provenance_and_derivation_key(session: Session) -> None:
     assert version_stamps["context_prompt_hash"] == getattr(ctx_mod, "CONTEXT_PROMPT_HASH", None)
     assert version_stamps["context_window_policy"] == getattr(ctx_mod, "CONTEXT_WINDOW_POLICY", None)
 
-    middle = by_chunk[chunks[2].chunk_id]
+    middle = by_chunk[UUID(chunks[2].chunk_id)]
     middle_key = json.loads(middle.derivation_key)
     assert middle_key["model_profile"] == getattr(ctx_mod, "DEFAULT_MODEL_PROFILE", None)
     # The 2p/1n window is recorded by content key.
@@ -488,7 +489,7 @@ def test_changed_neighbor_supersedes_variant(session: Session) -> None:
         session, client, [a, b], markdown_hash=_HASH_A, chunking_run_id=run_a.id
     )
     first_run_id = first_variants[0].run_id
-    a_prior_text = next(v for v in first_variants if v.chunk_id == a.chunk_id).contextualized_text
+    a_prior_text = next(v for v in first_variants if v.chunk_id == UUID(a.chunk_id)).contextualized_text
 
     # Re-chunk: b is replaced by c, so a's next neighbor changes. The unchanged
     # section is re-emitted from the new markdown, so a carries _HASH_B now (same
@@ -518,7 +519,7 @@ def test_changed_neighbor_supersedes_variant(session: Session) -> None:
     # The prior variant for a remains present and unmodified.
     prior_a = session.exec(
         select(ContextualizedChunk).where(
-            ContextualizedChunk.run_id == first_run_id, ContextualizedChunk.chunk_id == a.chunk_id
+            ContextualizedChunk.run_id == first_run_id, ContextualizedChunk.chunk_id == UUID(a.chunk_id)
         )
     ).one()
     assert prior_a.contextualized_text == a_prior_text
@@ -626,7 +627,7 @@ def test_variant_traces_back_to_source_text_and_source_id(session: Session) -> N
         session, client, [prior, working], markdown_hash=_HASH_A, chunking_run_id=chunking_run.id
     )
 
-    variant = next(v for v in variants if v.chunk_id == working.chunk_id)
+    variant = next(v for v in variants if v.chunk_id == UUID(working.chunk_id))
 
     # 1. variant → chunking generation it read.
     chunking = session.get(PipelineRun, variant.chunking_run_id)
@@ -655,7 +656,7 @@ def test_variant_traces_back_to_source_text_and_source_id(session: Session) -> N
     # 5. the whole chain belongs to one source_id.
     assert chunking.scope_id == _AIZK_UUID
     assert summary.scope_id == _AIZK_UUID
-    assert str(chunk_row.source_id) == _AIZK_UUID
+    assert chunk_row.source_id == _AIZK_UUID
 
 
 # --------------------------------------------------------------------------- #
@@ -668,18 +669,20 @@ def test_source_chunk_unchanged_after_contextualization(session: Session) -> Non
     chunking_run, (chunk,) = _persist(
         session, [_make_chunk("the working chunk text", ordinal=0)], markdown_hash=_HASH_A
     )
-    before = session.get(Chunk, chunk.chunk_id)
+    before = session.get(Chunk, UUID(chunk.chunk_id))
     assert before is not None
     before_text, before_hash = before.text, before.content_hash
 
     client = StubLLMClient()
     _summarize_and_contextualize(session, client, [chunk], markdown_hash=_HASH_A, chunking_run_id=chunking_run.id)
 
-    after = session.get(Chunk, chunk.chunk_id)
+    after = session.get(Chunk, UUID(chunk.chunk_id))
     assert after is not None
-    assert (after.text, after.content_hash, after.chunk_id) == (before_text, before_hash, chunk.chunk_id)
+    assert (after.text, after.content_hash, after.chunk_id) == (before_text, before_hash, UUID(chunk.chunk_id))
     # The revision lives in a distinct row referencing the chunk; the chunk row itself is untouched.
-    variant = session.exec(select(ContextualizedChunk).where(ContextualizedChunk.chunk_id == chunk.chunk_id)).one()
+    variant = session.exec(
+        select(ContextualizedChunk).where(ContextualizedChunk.chunk_id == UUID(chunk.chunk_id))
+    ).one()
     assert variant.contextualized_text != after.text
 
 
@@ -706,7 +709,7 @@ def test_variant_supplies_cross_chunk_referent_revision(session: Session) -> Non
         session, client, [prior, working], markdown_hash=_HASH_A, chunking_run_id=chunking_run.id
     )
 
-    variant = next(v for v in variants if v.chunk_id == working.chunk_id)
+    variant = next(v for v in variants if v.chunk_id == UUID(working.chunk_id))
     assert variant.contextualized_text == revision
     row_key = json.loads(variant.derivation_key)
     assert row_key["prior_chunk_1_key"] == _content_key(prior)
@@ -937,14 +940,14 @@ def test_contextualize_rejects_summary_from_another_source(session: Session) -> 
     foreign_summary = summarize_document(
         session,
         client,
-        source_id="22222222-2222-2222-2222-222222222222",
+        source_id=UUID("22222222-2222-2222-2222-222222222222"),
         conversion_output_id="other-output",
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
     )
     session.commit()
 
-    with pytest.raises(ValueError, match="summary belongs to source '22222222-2222-2222-2222-222222222222'"):
+    with pytest.raises(ValueError, match=r"summary belongs to source UUID\('22222222-2222-2222-2222-222222222222'\)"):
         contextualize_chunks(
             session,
             client,
@@ -969,9 +972,9 @@ def test_contextualize_rejects_chunk_from_another_source(session: Session) -> No
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
     )
-    foreign_chunk = _make_chunk("foreign body", ordinal=1, source_id="22222222-2222-2222-2222-222222222222")
+    foreign_chunk = _make_chunk("foreign body", ordinal=1, source_id=UUID("22222222-2222-2222-2222-222222222222"))
 
-    with pytest.raises(ValueError, match="do not belong to source '11111111-1111-1111-1111-111111111111'"):
+    with pytest.raises(ValueError, match=r"do not belong to source UUID\('11111111-1111-1111-1111-111111111111'\)"):
         contextualize_chunks(
             session,
             client,

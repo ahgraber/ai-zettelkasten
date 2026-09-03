@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
-from uuid import UUID
+from uuid import NAMESPACE_OID, UUID, uuid5
 
 from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -52,8 +52,13 @@ _SCHEMA_TABLES = [
     PipelineRun.__table__,
 ]
 
-_SOURCE_A = "11111111-1111-1111-1111-111111111111"
-_SOURCE_B = "22222222-2222-2222-2222-222222222222"
+_SOURCE_A = UUID("11111111-1111-1111-1111-111111111111")
+_SOURCE_B = UUID("22222222-2222-2222-2222-222222222222")
+
+
+def _cid(label: str) -> UUID:
+    """Return a deterministic surrogate ``chunk_id`` for a readable test label."""
+    return uuid5(NAMESPACE_OID, label)
 
 
 # --------------------------------------------------------------------------- #
@@ -129,9 +134,9 @@ def session(engine: Engine) -> Session:
 def _seed_chunk(
     session: Session,
     *,
-    chunk_id: str,
+    chunk_id: UUID,
     text: str,
-    source_id: str = _SOURCE_A,
+    source_id: UUID = _SOURCE_A,
     ordinal: int = 0,
     heading_path_json: str = "[]",
 ) -> Chunk:
@@ -139,7 +144,7 @@ def _seed_chunk(
     row = Chunk(
         chunk_id=chunk_id,
         content_hash=xxhash.xxh64(text.encode("utf-8")).hexdigest(),
-        source_id=UUID(source_id),
+        source_id=source_id,
         heading_path_json=heading_path_json,
         ordinal=ordinal,
         text=text,
@@ -151,7 +156,7 @@ def _seed_chunk(
     return row
 
 
-def _seed_variant_run(session: Session, *, source_id: str, derivation_key: str) -> PipelineRun:
+def _seed_variant_run(session: Session, *, source_id: UUID, derivation_key: str) -> PipelineRun:
     """Insert and commit an active :data:`VARIANT_STAGE` run for ``source_id``, superseding any prior one."""
     run = record_run(session, stage=VARIANT_STAGE, scope_id=source_id, derivation_key=derivation_key)
     session.commit()
@@ -162,7 +167,7 @@ def _seed_variant_run(session: Session, *, source_id: str, derivation_key: str) 
 def _seed_contextualized_chunk(
     session: Session,
     *,
-    chunk_id: str,
+    chunk_id: UUID,
     run_id: int,
     contextualized_text: str,
     context_version: int = 1,
@@ -207,7 +212,7 @@ def _extract_chunk(
     )
     run = open_extraction_run(
         session,
-        source_id=str(chunk.source_id),
+        source_id=chunk.source_id,
         extractor_version=extractor.extractor_version,
         materializer_version=MATERIALIZER_VERSION,
         input_policy="contextualized",
@@ -219,7 +224,7 @@ def _extract_chunk(
     return run, mentions
 
 
-def _cooccurring_ids(session: Session, run_id: int, mention_id: str) -> set[str]:
+def _cooccurring_ids(session: Session, run_id: int, mention_id: UUID) -> set[UUID]:
     """Return the mention ids co-occurring with ``mention_id`` in ``run_id``, resolved off the link table."""
     lo_side = session.exec(
         select(MentionCooccurrence.mention_id_hi).where(
@@ -241,7 +246,7 @@ def _cooccurring_ids(session: Session, run_id: int, mention_id: str) -> set[str]
 
 def test_mentions_under_run(session: Session) -> None:
     """Every identified mention persists as a record belonging to the run and sourced to the chunk."""
-    chunk = _seed_chunk(session, chunk_id="c1", text="Acme Corp met Globex Inc today.")
+    chunk = _seed_chunk(session, chunk_id=_cid("c1"), text="Acme Corp met Globex Inc today.")
     stub = StubExtractor(
         {
             chunk.text: [
@@ -261,8 +266,8 @@ def test_mentions_under_run(session: Session) -> None:
 
 def test_uniform_run_versions(session: Session) -> None:
     """Mentions emitted from multiple chunks in one run all equal the run's recorded versions."""
-    chunk1 = _seed_chunk(session, chunk_id="c1", text="Acme Corp is here.")
-    chunk2 = _seed_chunk(session, chunk_id="c2", text="Globex Inc is here.", ordinal=1)
+    chunk1 = _seed_chunk(session, chunk_id=_cid("c1"), text="Acme Corp is here.")
+    chunk2 = _seed_chunk(session, chunk_id=_cid("c2"), text="Globex Inc is here.", ordinal=1)
     stub = StubExtractor(
         {
             chunk1.text: [Detection(surface_form="Acme Corp", span_start=0, span_end=9)],
@@ -288,7 +293,7 @@ def test_uniform_run_versions(session: Session) -> None:
 
 def test_source_two_spans_coincide(session: Session) -> None:
     """A once-occurring surface form's input_span and source_chunk_span both resolve to it in the raw chunk."""
-    chunk = _seed_chunk(session, chunk_id="c1", text="Acme Corp announced results.")
+    chunk = _seed_chunk(session, chunk_id=_cid("c1"), text="Acme Corp announced results.")
     stub = StubExtractor({chunk.text: [Detection(surface_form="Acme Corp", span_start=0, span_end=9)]})
 
     _, [mention] = _extract_chunk(session, chunk=chunk, extractor=stub)
@@ -301,8 +306,8 @@ def test_source_two_spans_coincide(session: Session) -> None:
 
 def test_revision_only_name_emitted_as_revision_anchored(session: Session) -> None:
     """A revision-resolved name absent from the raw chunk is emitted as one revision-anchored mention."""
-    chunk = _seed_chunk(session, chunk_id="c1", text="The company announced results today.")
-    variant_run = _seed_variant_run(session, source_id=str(chunk.source_id), derivation_key="variant-key-1")
+    chunk = _seed_chunk(session, chunk_id=_cid("c1"), text="The company announced results today.")
+    variant_run = _seed_variant_run(session, source_id=chunk.source_id, derivation_key="variant-key-1")
     variant = _seed_contextualized_chunk(
         session,
         chunk_id=chunk.chunk_id,
@@ -324,7 +329,7 @@ def test_revision_only_name_emitted_as_revision_anchored(session: Session) -> No
 def test_repeated_surface_expands_per_occurrence(session: Session) -> None:
     """A surface form occurring three times in the raw chunk yields three source-anchored mentions."""
     chunk_text = "Acme Corp met Acme Corp's rival, who then called Acme Corp again."
-    chunk = _seed_chunk(session, chunk_id="c1", text=chunk_text)
+    chunk = _seed_chunk(session, chunk_id=_cid("c1"), text=chunk_text)
     stub = StubExtractor({chunk_text: [Detection(surface_form="Acme Corp", span_start=0, span_end=9)]})
 
     _, mentions = _extract_chunk(session, chunk=chunk, extractor=stub)
@@ -358,8 +363,8 @@ def test_near_miss_surface_is_revision_anchored_not_fuzzily_matched(
     raw span positionally or by fuzzy matching, the rule the source/revision
     split forbids.
     """
-    chunk = _seed_chunk(session, chunk_id="c1", text=raw_text)
-    variant_run = _seed_variant_run(session, source_id=str(chunk.source_id), derivation_key="variant-key-1")
+    chunk = _seed_chunk(session, chunk_id=_cid("c1"), text=raw_text)
+    variant_run = _seed_variant_run(session, source_id=chunk.source_id, derivation_key="variant-key-1")
     variant = _seed_contextualized_chunk(
         session,
         chunk_id=chunk.chunk_id,
@@ -388,7 +393,7 @@ def test_near_miss_surface_is_revision_anchored_not_fuzzily_matched(
 
 def test_cooccurrence_pair_mutual(session: Session) -> None:
     """Two mentions in one chunk co-occur mutually, and neither co-occurs with itself."""
-    chunk = _seed_chunk(session, chunk_id="c1", text="Acme Corp met Globex Inc today.")
+    chunk = _seed_chunk(session, chunk_id=_cid("c1"), text="Acme Corp met Globex Inc today.")
     stub = StubExtractor(
         {
             chunk.text: [
@@ -406,7 +411,7 @@ def test_cooccurrence_pair_mutual(session: Session) -> None:
 
 def test_singleton_no_cooccurrence(session: Session) -> None:
     """A chunk from which exactly one mention is emitted has no co-occurrences."""
-    chunk = _seed_chunk(session, chunk_id="c1", text="Acme Corp announced results.")
+    chunk = _seed_chunk(session, chunk_id=_cid("c1"), text="Acme Corp announced results.")
     stub = StubExtractor({chunk.text: [Detection(surface_form="Acme Corp", span_start=0, span_end=9)]})
 
     run, [mention] = _extract_chunk(session, chunk=chunk, extractor=stub)
@@ -416,8 +421,8 @@ def test_singleton_no_cooccurrence(session: Session) -> None:
 
 def test_cross_chunk_no_cooccurrence(session: Session) -> None:
     """Mentions extracted from two different chunks in the same run do not co-occur."""
-    chunk1 = _seed_chunk(session, chunk_id="c1", text="Acme Corp announced results.")
-    chunk2 = _seed_chunk(session, chunk_id="c2", text="Globex Inc announced results.", ordinal=1)
+    chunk1 = _seed_chunk(session, chunk_id=_cid("c1"), text="Acme Corp announced results.")
+    chunk2 = _seed_chunk(session, chunk_id=_cid("c2"), text="Globex Inc announced results.", ordinal=1)
     stub = StubExtractor(
         {
             chunk1.text: [Detection(surface_form="Acme Corp", span_start=0, span_end=9)],
@@ -440,8 +445,8 @@ def test_cross_chunk_no_cooccurrence(session: Session) -> None:
 
 def test_extracts_from_variant_when_available(session: Session) -> None:
     """A chunk with a variant in its document's active contextualization run is resolved to read it."""
-    chunk = _seed_chunk(session, chunk_id="c1", text="The firm announced results.")
-    variant_run = _seed_variant_run(session, source_id=str(chunk.source_id), derivation_key="variant-key-1")
+    chunk = _seed_chunk(session, chunk_id=_cid("c1"), text="The firm announced results.")
+    variant_run = _seed_variant_run(session, source_id=chunk.source_id, derivation_key="variant-key-1")
     variant = _seed_contextualized_chunk(
         session,
         chunk_id=chunk.chunk_id,
@@ -462,16 +467,16 @@ def test_extracts_from_variant_when_available(session: Session) -> None:
 
 def test_falls_back_to_raw(session: Session) -> None:
     """A chunk with no active-run variant (none produced, or only a superseded one) resolves to raw text."""
-    chunk = _seed_chunk(session, chunk_id="c1", text="The firm announced results.")
+    chunk = _seed_chunk(session, chunk_id=_cid("c1"), text="The firm announced results.")
 
     assert select_extraction_input(session, chunk) == ExtractionInput(text=chunk.text, input_kind="raw")
 
     # A variant exists, but only under a run that is then superseded: still ignored.
-    stale_run = _seed_variant_run(session, source_id=str(chunk.source_id), derivation_key="stale-key")
+    stale_run = _seed_variant_run(session, source_id=chunk.source_id, derivation_key="stale-key")
     _seed_contextualized_chunk(
         session, chunk_id=chunk.chunk_id, run_id=stale_run.id, contextualized_text="Acme Corp announced results."
     )
-    _seed_variant_run(session, source_id=str(chunk.source_id), derivation_key="fresh-key")
+    _seed_variant_run(session, source_id=chunk.source_id, derivation_key="fresh-key")
     session.refresh(stale_run)
     assert stale_run.status == RunStatus.SUPERSEDED
 
@@ -487,8 +492,8 @@ def test_present_empty_variant_consumed_as_raw(session: Session) -> None:
     ``select_extraction_input`` -> ``extract_chunk_mentions`` -> ``persist_mentions``
     path stays raw for such a chunk.
     """
-    chunk = _seed_chunk(session, chunk_id="c1", text="Acme Corp announced results today.")
-    variant_run = _seed_variant_run(session, source_id=str(chunk.source_id), derivation_key="variant-key-1")
+    chunk = _seed_chunk(session, chunk_id=_cid("c1"), text="Acme Corp announced results today.")
+    variant_run = _seed_variant_run(session, source_id=chunk.source_id, derivation_key="variant-key-1")
     _seed_contextualized_chunk(session, chunk_id=chunk.chunk_id, run_id=variant_run.id, contextualized_text="")
     stub = StubExtractor({chunk.text: [Detection(surface_form="Acme Corp", span_start=0, span_end=9)]})
 
@@ -496,7 +501,7 @@ def test_present_empty_variant_consumed_as_raw(session: Session) -> None:
 
     assert mention.input_kind == "raw"
     assert mention.anchor_kind == "source"
-    assert json.loads(mention.input_ref) == {"chunk_id": chunk.chunk_id}
+    assert json.loads(mention.input_ref) == {"chunk_id": str(chunk.chunk_id)}
 
 
 # --------------------------------------------------------------------------- #
@@ -527,8 +532,8 @@ def test_substitute_extractor_drives_run_unchanged(session: Session) -> None:
     stub_a = StubExtractor(detections, extractor_version="extractor/v1")
     stub_b = _OtherExtractor(detections, extractor_version="extractor/v1")
 
-    chunk_a = _seed_chunk(session, chunk_id="c1", text=chunk_text, source_id=_SOURCE_A)
-    chunk_b = _seed_chunk(session, chunk_id="c2", text=chunk_text, source_id=_SOURCE_B)
+    chunk_a = _seed_chunk(session, chunk_id=_cid("c1"), text=chunk_text, source_id=_SOURCE_A)
+    chunk_b = _seed_chunk(session, chunk_id=_cid("c2"), text=chunk_text, source_id=_SOURCE_B)
     _, mentions_a = _extract_chunk(session, chunk=chunk_a, extractor=stub_a, upstream_derivation_key="key")
     _, mentions_b = _extract_chunk(session, chunk=chunk_b, extractor=stub_b, upstream_derivation_key="key")
 
@@ -542,8 +547,8 @@ def test_substitute_extractor_drives_run_unchanged(session: Session) -> None:
 
 def test_all_extractor_calls_through_single_access_point(session: Session) -> None:
     """Every extractor invocation the stage makes is observed at the single access point, and none are made outside it."""
-    chunk1 = _seed_chunk(session, chunk_id="c1", text="Acme Corp is here.")
-    chunk2 = _seed_chunk(session, chunk_id="c2", text="Globex Inc is here.", ordinal=1)
+    chunk1 = _seed_chunk(session, chunk_id=_cid("c1"), text="Acme Corp is here.")
+    chunk2 = _seed_chunk(session, chunk_id=_cid("c2"), text="Globex Inc is here.", ordinal=1)
     inner = StubExtractor(
         {
             chunk1.text: [Detection(surface_form="Acme Corp", span_start=0, span_end=9)],

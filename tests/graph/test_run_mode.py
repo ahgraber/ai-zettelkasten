@@ -101,12 +101,11 @@ def _run(engine, *, conversion_output_id: int = _OUTPUT_ID, source_id: UUID = _A
 
 def _snapshot(engine, source_id: UUID = _AIZK_UUID) -> dict:
     """Reduce a source's active run records to a DB-independent comparable form."""
-    scope = str(source_id)
     with Session(engine) as session:
         active = {
             r.stage: r
             for r in session.exec(
-                select(PipelineRun).where(PipelineRun.scope_id == scope, PipelineRun.status == RunStatus.ACTIVE)
+                select(PipelineRun).where(PipelineRun.scope_id == source_id, PipelineRun.status == RunStatus.ACTIVE)
             ).all()
         }
         chunking, summary_run, variant_run = (

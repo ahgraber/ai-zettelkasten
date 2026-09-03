@@ -42,7 +42,7 @@ import logging
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlmodel import select
+from sqlmodel import func, select
 
 from aizk.graph.capacity import check_capacity, within_headroom
 from aizk.graph.datamodel import ExtractionJob
@@ -56,6 +56,7 @@ from aizk.pipeline.run import PipelineRun, RunStatus
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from sqlalchemy import Select
     from sqlmodel import Session
 
     from aizk.pipeline.events import CreationOrigin
@@ -162,12 +163,13 @@ def _sources_with_active_chunking_run(session: "Session") -> list[UUID]:
     to sources that are actually eligible rather than enqueueing units doomed
     to a permanent failure.
     """
-    scope_ids = session.exec(
-        select(PipelineRun.scope_id)
-        .where(PipelineRun.stage == CHUNKING_STAGE, PipelineRun.status == RunStatus.ACTIVE)
-        .order_by(PipelineRun.created_at)
-    ).all()
-    return [UUID(scope_id) for scope_id in scope_ids]
+    return list(
+        session.exec(
+            select(PipelineRun.scope_id)
+            .where(PipelineRun.stage == CHUNKING_STAGE, PipelineRun.status == RunStatus.ACTIVE)
+            .order_by(PipelineRun.created_at)
+        ).all()
+    )
 
 
 def _enqueued_sources(session: "Session", source_ids: "Sequence[UUID]") -> set[UUID]:
@@ -175,6 +177,23 @@ def _enqueued_sources(session: "Session", source_ids: "Sequence[UUID]") -> set[U
     if not source_ids:
         return set()
     return set(session.exec(select(ExtractionJob.source_id).where(ExtractionJob.source_id.in_(source_ids))).all())
+
+
+def _pending_extraction_query() -> "Select":
+    """Return the sources with an active chunking run and no extraction work-unit.
+
+    Outer-joins active chunking runs to ``graph_extraction_jobs`` on
+    ``ExtractionJob.source_id == PipelineRun.scope_id`` and keeps the unmatched
+    side, so the anti-join and a subsequent bound both run in SQL: the query's cost
+    does not grow with the size of the already-admitted corpus.
+    """
+    return (
+        select(PipelineRun.scope_id)
+        .where(PipelineRun.stage == CHUNKING_STAGE, PipelineRun.status == RunStatus.ACTIVE)
+        .outerjoin(ExtractionJob, ExtractionJob.source_id == PipelineRun.scope_id)
+        .where(ExtractionJob.id.is_(None))
+        .order_by(PipelineRun.created_at, PipelineRun.scope_id)
+    )
 
 
 def pending_extraction_sources(session: "Session", *, limit: int | None = None) -> list[UUID]:
@@ -188,11 +207,6 @@ def pending_extraction_sources(session: "Session", *, limit: int | None = None) 
     Derived from current run and work-unit state alone — nothing records that a
     previous evaluation saw a source, so a source this evaluation leaves out is
     still pending for the next one.
-
-    The anti-join resolves in Python rather than SQL: a work-unit carries a UUID
-    ``source_id`` and a run carries the string ``scope_id``, so normalizing them in
-    SQL would depend on how a backend serializes a UUID. This is the boundary
-    conversion the stage applies everywhere else.
 
     Args:
         session: Active, read-only session.
@@ -209,9 +223,19 @@ def pending_extraction_sources(session: "Session", *, limit: int | None = None) 
     """
     if limit is not None and limit < 1:
         raise ValueError(f"limit must be a positive integer, got {limit}")
-    enqueued = set(session.exec(select(ExtractionJob.source_id)).all())
-    pending = [source_id for source_id in _sources_with_active_chunking_run(session) if source_id not in enqueued]
-    return pending[:limit] if limit is not None else pending
+    query = _pending_extraction_query()
+    if limit is not None:
+        query = query.limit(limit)
+    return list(session.exec(query).all())
+
+
+def pending_extraction_count(session: "Session") -> int:
+    """Count the sources that should have an extraction work-unit but do not.
+
+    Counts over the same anti-join :func:`pending_extraction_sources` lists, so
+    the count and the listing cannot disagree about what is pending.
+    """
+    return session.exec(select(func.count()).select_from(_pending_extraction_query().subquery())).one()
 
 
 def enqueue_extraction_backfill(

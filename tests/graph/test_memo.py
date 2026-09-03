@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from sqlalchemy import Engine
@@ -24,7 +25,7 @@ from aizk.graph.persistence import memo_delete_keys, memo_get, memo_upsert_and_r
 
 _SUMMARY = "summary"
 _REVISION = "revision"
-_SCOPE = "11111111-1111-1111-1111-111111111111"
+_SCOPE = UUID("11111111-1111-1111-1111-111111111111")
 
 
 @pytest.fixture
@@ -45,7 +46,7 @@ def engine(tmp_path: Path) -> Iterator[Engine]:
     eng.dispose()
 
 
-def _read(engine: Engine, kind: str, scope_id: str, derivation_key: str) -> str | None:
+def _read(engine: Engine, kind: str, scope_id: UUID, derivation_key: str) -> str | None:
     """Read a memo value through a short-lived session (no lock held across calls)."""
     with Session(engine) as session:
         return memo_get(session, kind, scope_id, derivation_key)
@@ -100,7 +101,7 @@ def test_memo_delete_keys_is_key_exact(engine: Engine) -> None:
 
 def test_memo_delete_keys_is_scoped_to_its_source(engine: Engine) -> None:
     """A delete under one source's scope does not touch an identical key under another source."""
-    other_scope = "22222222-2222-2222-2222-222222222222"
+    other_scope = UUID("22222222-2222-2222-2222-222222222222")
     # The summary derivation key omits the source, so two sources can share a derivation_key;
     # scope_id is what keeps their memo entries distinct.
     memo_upsert_and_read(engine, _SUMMARY, _SCOPE, "shared-summary-key", "mine")

@@ -40,8 +40,8 @@ _SCHEMA_TABLES = [
     PipelineRun.__table__,
 ]
 
-_SOURCE_A = "11111111-1111-1111-1111-111111111111"
-_SOURCE_B = "22222222-2222-2222-2222-222222222222"
+_SOURCE_A = UUID("11111111-1111-1111-1111-111111111111")
+_SOURCE_B = UUID("22222222-2222-2222-2222-222222222222")
 
 
 class _StubExtractor:
@@ -64,15 +64,15 @@ def _make_engine(tmp_path: Path, name: str) -> Engine:
     return engine
 
 
-def _seed_chunking_run(session: Session, *, source_id: str, text: str, derivation_key: str) -> None:
+def _seed_chunking_run(session: Session, *, source_id: UUID, text: str, derivation_key: str) -> None:
     """Seed one chunk under a source's chunking run, the shape ``extract_document`` reads."""
     run = record_run(session, stage=CHUNKING_STAGE, scope_id=source_id, derivation_key=derivation_key)
-    chunk_id = str(uuid4())
+    chunk_id = uuid4()
     session.add(
         Chunk(
             chunk_id=chunk_id,
             content_hash=xxhash.xxh64(text.encode("utf-8")).hexdigest(),
-            source_id=UUID(source_id),
+            source_id=source_id,
             heading_path_json="[]",
             ordinal=0,
             text=text,

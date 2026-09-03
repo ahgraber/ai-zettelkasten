@@ -18,6 +18,7 @@ exact model output.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from uuid import UUID
 
 import pytest
 from sqlalchemy import Engine, create_engine
@@ -53,8 +54,8 @@ def provider(db_url: str) -> Iterator[Fts5SearchProvider]:
     eng.dispose()
 
 
-_AIZK_UUID = "11111111-1111-1111-1111-111111111111"
-_AIZK_UUID_B = "22222222-2222-2222-2222-222222222222"
+_AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")
+_AIZK_UUID_B = UUID("22222222-2222-2222-2222-222222222222")
 _OUTPUT = "output-1"
 _HASH_A = "0011223344556677"
 _HASH_B = "aabbccddeeff0011"
@@ -71,14 +72,14 @@ def _make_chunk(
     *,
     ordinal: int,
     span_start: int = 0,
-    source_id: str = _AIZK_UUID,
+    source_id: UUID = _AIZK_UUID,
     markdown_hash: str = _HASH_A,
 ) -> SplitterChunk:
     """Build a splitter chunk with an explicit ``span_start`` (identity is assigned at persistence)."""
     content_hash = xxhash.xxh64(text_.encode("utf-8")).hexdigest()
     return SplitterChunk(
         content_hash=content_hash,
-        source_id=source_id,
+        source_id=str(source_id),
         heading_path=(),
         ordinal=ordinal,
         text=text_,
@@ -94,7 +95,7 @@ def _persist_chunks(
     session: Session,
     chunks: list[SplitterChunk],
     *,
-    source_id: str = _AIZK_UUID,
+    source_id: UUID = _AIZK_UUID,
     markdown_hash: str = _HASH_A,
 ) -> tuple[int, list[SplitterChunk]]:
     """Persist a chunk set; return its chunking run id and the surrogate-bearing chunks."""
@@ -117,7 +118,7 @@ def _contextualize(
     revisions: list[str],
     *,
     chunking_run_id: int,
-    source_id: str = _AIZK_UUID,
+    source_id: UUID = _AIZK_UUID,
     markdown_hash: str = _HASH_A,
 ) -> None:
     """Summarize and contextualize ``chunks`` with the given canned ``revisions``; commit."""
@@ -199,7 +200,7 @@ def test_search_returns_active_chunk_not_superseded(session: Session, provider: 
 
     assert provider.search("antidisestablishment", SearchKind.CHUNK) == []
     active_hits = provider.search("floccinaucinihilipilification", SearchKind.CHUNK)
-    assert [r.chunk_id for r in active_hits] == [active_p.chunk_id]
+    assert [r.chunk_id for r in active_hits] == [UUID(active_p.chunk_id)]
 
 
 def test_search_drops_contextualized_hit_when_chunk_left_active_manifest(
@@ -229,10 +230,10 @@ def test_search_drops_contextualized_hit_when_chunk_left_active_manifest(
 
     # Sanity: while C1 is active, the contextualized-only term is searchable.
     assert [r.chunk_id for r in provider.search("floccinaucinihilipilification", SearchKind.CONTEXTUALIZED)] == [
-        chunk_c1_p.chunk_id
+        UUID(chunk_c1_p.chunk_id)
     ]
     assert [r.chunk_id for r in provider.search("floccinaucinihilipilification", SearchKind.EITHER)] == [
-        chunk_c1_p.chunk_id
+        UUID(chunk_c1_p.chunk_id)
     ]
 
     # Re-chunk (C2 active, C1 superseded) with a disjoint chunk set that no longer
@@ -248,7 +249,9 @@ def test_search_drops_contextualized_hit_when_chunk_left_active_manifest(
     assert provider.search("floccinaucinihilipilification", SearchKind.EITHER) == []
 
     # The source is not globally broken — C2's active chunk is still searchable.
-    assert [r.chunk_id for r in provider.search("antidisestablishment", SearchKind.CHUNK)] == [chunk_c2_p.chunk_id]
+    assert [r.chunk_id for r in provider.search("antidisestablishment", SearchKind.CHUNK)] == [
+        UUID(chunk_c2_p.chunk_id)
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -272,10 +275,10 @@ def test_search_type_filter_contextualized_only_term(session: Session, provider:
     under_either = provider.search("scaled", SearchKind.EITHER)
     under_chunk = provider.search("scaled", SearchKind.CHUNK)
 
-    assert [r.chunk_id for r in under_ctx] == [chunk_p.chunk_id]
+    assert [r.chunk_id for r in under_ctx] == [UUID(chunk_p.chunk_id)]
     assert under_ctx[0].matched_in_contextualized is True
     assert under_ctx[0].matched_in_chunk is False
-    assert [r.chunk_id for r in under_either] == [chunk_p.chunk_id]
+    assert [r.chunk_id for r in under_either] == [UUID(chunk_p.chunk_id)]
     assert under_chunk == []
 
 
@@ -296,10 +299,10 @@ def test_search_type_filter_raw_only_term(session: Session, provider: Fts5Search
     under_either = provider.search("nomenclature", SearchKind.EITHER)
     under_ctx = provider.search("nomenclature", SearchKind.CONTEXTUALIZED)
 
-    assert [r.chunk_id for r in under_chunk] == [chunk_p.chunk_id]
+    assert [r.chunk_id for r in under_chunk] == [UUID(chunk_p.chunk_id)]
     assert under_chunk[0].matched_in_chunk is True
     assert under_chunk[0].matched_in_contextualized is False
-    assert [r.chunk_id for r in under_either] == [chunk_p.chunk_id]
+    assert [r.chunk_id for r in under_either] == [UUID(chunk_p.chunk_id)]
     assert under_ctx == []
 
 
@@ -314,7 +317,7 @@ def test_search_type_filter_self_contained_matches_contextualized_by_raw(
     _contextualize(session, [chunk_p], [""], chunking_run_id=run_id)  # empty => self-contained
 
     under_ctx = provider.search("bioluminescence", SearchKind.CONTEXTUALIZED)
-    assert [r.chunk_id for r in under_ctx] == [chunk_p.chunk_id]
+    assert [r.chunk_id for r in under_ctx] == [UUID(chunk_p.chunk_id)]
     assert under_ctx[0].matched_in_contextualized is True
 
 
@@ -349,7 +352,11 @@ def test_search_orders_by_document_relevance_then_span_start(
 
     results = provider.search("quantum", SearchKind.CHUNK)
 
-    assert [r.chunk_id for r in results] == [a_early_p.chunk_id, a_late_p.chunk_id, b_chunk_p.chunk_id], (
+    assert [r.chunk_id for r in results] == [
+        UUID(a_early_p.chunk_id),
+        UUID(a_late_p.chunk_id),
+        UUID(b_chunk_p.chunk_id),
+    ], (
         "A's chunks precede B's (more relevant document first), and within A the "
         "chunks follow span_start (10 before 900), not chunk_id order"
     )
@@ -378,7 +385,7 @@ def test_search_both_sides_match_yields_single_result_with_both_flags(
 
     results = provider.search("photosynthesis", SearchKind.EITHER)
     assert len(results) == 1, "the two matching FTS rows aggregate into one per-chunk result"
-    assert results[0].chunk_id == chunk_p.chunk_id
+    assert results[0].chunk_id == UUID(chunk_p.chunk_id)
     assert results[0].matched_in_chunk is True
     assert results[0].matched_in_contextualized is True
 
@@ -418,7 +425,7 @@ def test_search_finds_literal_special_character_term(session: Session, provider:
     chunk_p = persisted[0]
 
     results = provider.search("c++", SearchKind.CHUNK)
-    assert [r.chunk_id for r in results] == [chunk_p.chunk_id]
+    assert [r.chunk_id for r in results] == [UUID(chunk_p.chunk_id)]
 
 
 # --------------------------------------------------------------------------- #
@@ -442,10 +449,10 @@ def test_search_excludes_source_without_active_variant_run(
     chunk_p = persisted[0]
 
     # Raw side is searchable...
-    assert [r.chunk_id for r in provider.search("uncontextualized", SearchKind.CHUNK)] == [chunk_p.chunk_id]
+    assert [r.chunk_id for r in provider.search("uncontextualized", SearchKind.CHUNK)] == [UUID(chunk_p.chunk_id)]
     # ...but the contextualized side has no active variant run, so no contextualized hit.
     assert provider.search("uncontextualized", SearchKind.CONTEXTUALIZED) == []
     # Under either, the result has the contextualized flag unset (no active variant).
     either = provider.search("uncontextualized", SearchKind.EITHER)
-    assert [r.chunk_id for r in either] == [chunk_p.chunk_id]
+    assert [r.chunk_id for r in either] == [UUID(chunk_p.chunk_id)]
     assert either[0].matched_in_contextualized is False

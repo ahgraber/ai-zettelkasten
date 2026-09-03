@@ -5,7 +5,7 @@ from __future__ import annotations
 from aizk.console.stages._graph import build_graph_descriptor
 from aizk.graph.contextualization import SUMMARY_STAGE, VARIANT_STAGE
 from aizk.graph.datamodel import ContextualizationJob
-from aizk.graph.enqueue import pending_contextualization_sources
+from aizk.graph.enqueue import pending_contextualization_count, pending_contextualization_sources
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
 from aizk.graph.job_actions import apply_contextualization_cancel, apply_contextualization_retry
 from aizk.graph.persistence import CHUNKING_STAGE
@@ -30,5 +30,6 @@ DESCRIPTOR = build_graph_descriptor(
     # The stage's own pending-work derivation, not a re-expression of it: what an
     # operator sees behind is exactly what an admission pass would take up. No
     # staleness derivation — a re-converted source becomes pending again on its own.
+    pending_count=pending_contextualization_count,
     pending_sources=pending_contextualization_sources,
 )

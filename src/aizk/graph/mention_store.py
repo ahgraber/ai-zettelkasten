@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING, Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -103,7 +103,7 @@ def extraction_derivation_key(
 
 def derive_source_occurrence_key(
     *,
-    chunk_id: str,
+    chunk_id: UUID,
     source_span_start: int,
     source_span_end: int,
     source_anchor_text: str,
@@ -115,7 +115,9 @@ def derive_source_occurrence_key(
     way :func:`aizk.chunking.datamodel.derive_chunk_content_key` derives a chunk's
     portable content key: a compact canonical JSON array hashed with xxh64. Never
     Python's builtin ``hash()``, which is randomized per-process and not a legal
-    persisted or cross-process value.
+    persisted or cross-process value. ``chunk_id`` enters the hash input in its
+    canonical dashed string form (``str(chunk_id)``), so the key is stable
+    regardless of the identity's in-memory or storage representation.
 
     This key is a non-primary, cross-run diagnostic: two extraction runs that
     both detect the same source occurrence yield distinct :class:`Mention` rows
@@ -134,7 +136,7 @@ def derive_source_occurrence_key(
         Hex-encoded xxHash64 digest (16 characters).
     """
     canonical = json.dumps(
-        [chunk_id, source_span_start, source_span_end, source_anchor_text],
+        [str(chunk_id), source_span_start, source_span_end, source_anchor_text],
         separators=(",", ":"),
         ensure_ascii=False,
     )
@@ -187,7 +189,7 @@ class MentionDraft(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    chunk_id: str
+    chunk_id: UUID
     anchor_kind: AnchorKind
     surface_form: str = Field(min_length=1)
     input_kind: InputKind
@@ -242,15 +244,16 @@ class MentionDraft(BaseModel):
         Raw input serializes to ``{"chunk_id": ...}``; contextualized input to
         ``{"chunk_id": ..., "context_version": ..., "run_id": ...}`` — matching
         :class:`~aizk.graph.datamodel.Mention`'s documented ``input_ref`` shape.
+        ``chunk_id`` serializes to its canonical dashed string form.
         """
-        locator: dict[str, str | int] = {"chunk_id": self.chunk_id}
+        locator: dict[str, str | int] = {"chunk_id": str(self.chunk_id)}
         if self.input_kind != INPUT_KIND_RAW:
             locator["context_version"] = self.context_version  # type: ignore[assignment]
             locator["run_id"] = self.contextualization_run_id  # type: ignore[assignment]
         return json.dumps(locator, sort_keys=True, separators=(",", ":"))
 
 
-def active_extraction_run(session: "Session", source_id: str) -> PipelineRun | None:
+def active_extraction_run(session: "Session", source_id: UUID) -> PipelineRun | None:
     """Return the active extraction run for a source (``source_id``), or ``None``."""
     return session.exec(
         select(PipelineRun).where(
@@ -264,7 +267,7 @@ def active_extraction_run(session: "Session", source_id: str) -> PipelineRun | N
 def open_extraction_run(
     session: "Session",
     *,
-    source_id: str,
+    source_id: UUID,
     extractor_version: str,
     materializer_version: str,
     input_policy: InputPolicy,
@@ -272,7 +275,7 @@ def open_extraction_run(
 ) -> PipelineRun:
     """Open (or reuse) a source's extraction run under the shared run primitive.
 
-    Scoped per source (``scope_id = str(source_id)``), exactly like the chunking
+    Scoped per source (``scope_id = source_id``), exactly like the chunking
     and contextualization runs upstream. The derivation key and the recorded
     ``version_stamps`` are both derived internally from the same semantic inputs
     (mirroring how :func:`aizk.graph.persistence.persist_chunks` derives its run's
@@ -290,8 +293,7 @@ def open_extraction_run(
 
     Args:
         session: Active session; the caller owns commit/rollback.
-        source_id: The durable source identity (``str(source_id)``); the run's
-            scope.
+        source_id: The durable source identity; the run's scope.
         extractor_version: The NER extractor's version; part of the derivation
             key and recorded as a version stamp.
         materializer_version: The deterministic post-NER materialization logic's version;
@@ -386,7 +388,7 @@ def _class_tuple(run_id: int, draft: "MentionDraft") -> tuple[object, ...]:
     return (run_id, ANCHOR_KIND_REVISION, draft.chunk_id, draft.surface_form)
 
 
-def _contextualized_locator(draft: "MentionDraft") -> tuple[str, int, int]:
+def _contextualized_locator(draft: "MentionDraft") -> tuple[UUID, int, int]:
     """Return a contextualized draft's ``(chunk_id, contextualization_run_id, context_version)`` locator."""
     assert draft.contextualization_run_id is not None  # noqa: S101 — validator-enforced
     assert draft.context_version is not None  # noqa: S101 — validator-enforced
@@ -447,9 +449,7 @@ def _validate_provenance(session: "Session", *, run: PipelineRun, mentions: "Seq
             "a mention's source chunk must be resolvable"
         )
 
-    # ``run.scope_id`` is the string form of the source identity and the chunk's is a
-    # UUID, so the comparison converts; without it every chunk would read as foreign.
-    cross_source = sorted({d.chunk_id for d in mentions if str(chunks_by_id[d.chunk_id].source_id) != run.scope_id})
+    cross_source = sorted({d.chunk_id for d in mentions if chunks_by_id[d.chunk_id].source_id != run.scope_id})
     if cross_source:
         raise ValueError(
             f"chunk_id(s) {cross_source} belong to a source other than run.scope_id={run.scope_id!r}; "
@@ -467,7 +467,7 @@ def _validate_provenance(session: "Session", *, run: PipelineRun, mentions: "Seq
 
     contextualized_drafts = [d for d in mentions if d.input_kind != INPUT_KIND_RAW]
     locators = sorted({_contextualized_locator(d) for d in contextualized_drafts})
-    variants_by_locator: dict[tuple[str, int, int], ContextualizedChunk] = {}
+    variants_by_locator: dict[tuple[UUID, int, int], ContextualizedChunk] = {}
     for chunk_id, contextualization_run_id, context_version in locators:
         variant = session.exec(
             select(ContextualizedChunk).where(
@@ -496,7 +496,7 @@ def _validate_provenance(session: "Session", *, run: PipelineRun, mentions: "Seq
         )
 
     source_drafts = [d for d in mentions if d.anchor_kind == ANCHOR_KIND_SOURCE]
-    bad_source_spans: list[tuple[str, int | None, int | None]] = []
+    bad_source_spans: list[tuple[UUID, int | None, int | None]] = []
     for d in source_drafts:
         assert d.source_span_start is not None  # noqa: S101 — validator-enforced
         assert d.source_span_end is not None  # noqa: S101 — validator-enforced
@@ -515,7 +515,7 @@ def _validate_provenance(session: "Session", *, run: PipelineRun, mentions: "Seq
             "source_anchor_text and surface_form"
         )
 
-    bad_input_spans: list[tuple[str, int, int]] = []
+    bad_input_spans: list[tuple[UUID, int, int]] = []
     for d in mentions:
         chunk = chunks_by_id[d.chunk_id]
         variant = variants_by_locator.get(_contextualized_locator(d)) if d.input_kind != INPUT_KIND_RAW else None
@@ -578,12 +578,13 @@ def persist_mentions(
     chunk converges to the complete pair set rather than only the pairs newly
     introduced. Endpoints belong to the same run and chunk by construction, since
     the pairs are computed from the chunk's own run-scoped mention set; no
-    redundant runtime check is needed. Pairs are ordered canonically by Python
-    string comparison of the two ``mention_id``s (ASCII hex UUIDs — byte order
-    consistent with SQLite's and Postgres's default ``TEXT`` collation) and
-    inserted as one multi-row ``ON CONFLICT DO NOTHING`` statement per chunk (on
-    the composite primary key), so a retried chunk cannot duplicate or disorder a
-    link and a chunk's pairs cost one round trip rather than one per pair.
+    redundant runtime check is needed. Pairs are ordered canonically by comparing
+    the two ``mention_id`` ``uuid.UUID`` values (an order consistent with SQLite's
+    and Postgres's default ``TEXT`` collation over the stored dashless hex form)
+    and inserted as one multi-row ``ON CONFLICT DO NOTHING`` statement per chunk
+    (on the composite primary key), so a retried chunk cannot duplicate or
+    disorder a link and a chunk's pairs cost one round trip rather than one per
+    pair.
 
     Does **not** commit; the caller owns the surrounding transaction (mirroring
     :func:`aizk.graph.persistence.persist_chunks`).
@@ -609,7 +610,7 @@ def persist_mentions(
     assert run.id is not None  # noqa: S101 — a persisted run always carries an id
 
     persisted: list[Mention] = []
-    touched_chunks: set[str] = set()
+    touched_chunks: set[UUID] = set()
     # Rows already resolved (reused from the store or newly staged) during this
     # call, keyed by class-identity tuple, so a repeated tuple resolves from
     # memory instead of a redundant store lookup or a flush per draft.
@@ -633,7 +634,7 @@ def persist_mentions(
                     source_anchor_text=draft.source_anchor_text,
                 )
             row = Mention(
-                mention_id=str(uuid4()),
+                mention_id=uuid4(),
                 run_id=run.id,
                 chunk_id=draft.chunk_id,
                 anchor_kind=draft.anchor_kind,
@@ -660,16 +661,16 @@ def persist_mentions(
     return persisted
 
 
-def _link_chunk_cooccurrences(session: "Session", *, run_id: int, chunk_id: str) -> None:
+def _link_chunk_cooccurrences(session: "Session", *, run_id: int, chunk_id: UUID) -> None:
     """Record every unordered co-occurrence pair among a chunk's mentions in ``run_id``.
 
     Reads **all** of the chunk's mentions in the run (not only those newly
     inserted by the current call), so a retry or a second batch touching the same
     chunk converges to the complete pair set. Pairs are ordered canonically by
-    Python string comparison of the two ``mention_id``s — the ASCII hex UUIDs sort
-    consistently under SQLite's and Postgres's default ``TEXT`` collation — and
-    inserted as one multi-row ``ON CONFLICT DO NOTHING`` statement on the
-    composite primary key ``(run_id, mention_id_lo, mention_id_hi)`` (conflict
+    comparing the two ``mention_id`` ``uuid.UUID`` values — an order consistent
+    with SQLite's and Postgres's default ``TEXT`` collation over the stored
+    dashless hex form — and inserted as one multi-row ``ON CONFLICT DO NOTHING``
+    statement on the composite primary key ``(run_id, mention_id_lo, mention_id_hi)`` (conflict
     resolution applies per row, so this is idempotent exactly like the
     single-pair form it replaces), matching the memo's insert-or-ignore
     idempotency pattern (:func:`aizk.graph.persistence.memo_upsert_and_read`) at
@@ -683,7 +684,7 @@ def _link_chunk_cooccurrences(session: "Session", *, run_id: int, chunk_id: str)
     if len(chunk_mention_ids) < 2:
         return
 
-    pairs: list[dict[str, "int | str"]] = []
+    pairs: list[dict[str, "int | UUID"]] = []
     for i, id_a in enumerate(chunk_mention_ids):
         for id_b in chunk_mention_ids[i + 1 :]:
             lo, hi = (id_a, id_b) if id_a < id_b else (id_b, id_a)

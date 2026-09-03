@@ -117,11 +117,11 @@ def _seed_chunking_run(session: Session, *, source_id: UUID, texts: "Sequence[st
     and its chunks in document order), mirroring
     ``tests/graph/test_extraction_run_mode.py``'s ``_seed_chunking_run``.
     """
-    run = record_run(session, stage=CHUNKING_STAGE, scope_id=str(source_id), derivation_key="chunking-key-1")
+    run = record_run(session, stage=CHUNKING_STAGE, scope_id=source_id, derivation_key="chunking-key-1")
     cursor = 0
     for ordinal, text in enumerate(texts):
         chunk = Chunk(
-            chunk_id=str(uuid4()),
+            chunk_id=uuid4(),
             content_hash=xxhash.xxh64(text.encode("utf-8")).hexdigest(),
             source_id=source_id,
             heading_path_json="[]",
@@ -202,7 +202,7 @@ def test_queued_unit_runs_to_success_with_events_and_records(tmp_path: Path) -> 
                 PipelineRun.stage == "mention_extraction", PipelineRun.status == RunStatus.ACTIVE
             )
         ).one()
-        assert run.scope_id == str(_SOURCE_A)
+        assert run.scope_id == _SOURCE_A
 
         mentions = session.exec(select(Mention).where(Mention.run_id == run.id)).all()
         assert len(mentions) == 2

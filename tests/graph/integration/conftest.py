@@ -177,7 +177,7 @@ def seed_extraction_state() -> "Callable[..., None]":
         session.add(
             PipelineRun(
                 stage=CHUNKING_STAGE,
-                scope_id=str(source_id),
+                scope_id=source_id,
                 status=RunStatus.ACTIVE,
                 derivation_key="chunking-current",
             )
@@ -185,7 +185,7 @@ def seed_extraction_state() -> "Callable[..., None]":
         session.add(
             PipelineRun(
                 stage=EXTRACTION_STAGE,
-                scope_id=str(source_id),
+                scope_id=source_id,
                 status=RunStatus.ACTIVE,
                 derivation_key=extraction_derivation_key(
                     extractor_version="stub/v1",

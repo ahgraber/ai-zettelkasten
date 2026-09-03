@@ -20,11 +20,14 @@
 
       {% if pending_sources is defined %}
       <div class="panel" id="pending-sources">
-        <h2>Pending admission <span class="pending-count">{{ pending_sources|length }}</span></h2>
+        <h2>Pending admission <span class="pending-count">{{ pending_count }}</span></h2>
         <p>
           Sources this stage owes work but has no work-unit for. They are not listed above because no
           work-unit exists for them yet.
         </p>
+        {% if pending_count > pending_sources|length %}
+        <p class="note">Showing the first {{ pending_sources|length }} of {{ pending_count }}.</p>
+        {% endif %}
         {% if pending_sources %}
         <table class="pending">
           <thead>

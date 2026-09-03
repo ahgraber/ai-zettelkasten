@@ -71,23 +71,17 @@ def _heading_path(chunk) -> list[str]:  # noqa: ANN001 - Chunk row
     return list(json.loads(chunk.heading_path_json))
 
 
-def _source_title(session: Session, source_id: str) -> str:
+def _source_title(session: Session, source_id: UUID) -> str:
     """Return the enriched source title for a ``source_id``, falling back to the id.
 
-    ``source_id`` is the durable source identity (``str(source_id)``); the
-    :class:`Source` row keys on the typed ``UUID``, so the id is parsed before the
-    lookup. A malformed id or a missing source row falls back to the ``source_id``
-    string, mirroring the jobs page's title fallback.
+    A missing source row falls back to the ``source_id`` string, mirroring the
+    jobs page's title fallback.
     """
-    try:
-        source_uuid = UUID(source_id)
-    except ValueError:
-        return source_id
-    source = session.exec(select(Source).where(Source.source_id == source_uuid)).first()
-    return (source.title if source is not None else None) or source_id
+    source = session.exec(select(Source).where(Source.source_id == source_id)).first()
+    return (source.title if source is not None else None) or str(source_id)
 
 
-def _active_variant_run(session: Session, source_id: str) -> PipelineRun | None:
+def _active_variant_run(session: Session, source_id: UUID) -> PipelineRun | None:
     """Return the source's active contextualized-variant run, or ``None``.
 
     ``None`` means the source has no committed active variant run — a source still
@@ -103,7 +97,7 @@ def _active_variant_run(session: Session, source_id: str) -> PipelineRun | None:
     ).one_or_none()
 
 
-def _active_variants_by_chunk(session: Session, variant_run: PipelineRun | None) -> dict[str, ContextualizedChunk]:
+def _active_variants_by_chunk(session: Session, variant_run: PipelineRun | None) -> dict[UUID, ContextualizedChunk]:
     """Map ``chunk_id`` → its committed variant in the active variant run.
 
     Empty when there is no active variant run, so a source mid-contextualization
@@ -160,7 +154,7 @@ def _resolve_representation(raw_text: str, variant: ContextualizedChunk | None) 
 
 
 def _spine_chunks(
-    session: Session, source_id: str
+    session: Session, source_id: UUID
 ) -> tuple[list[dict[str, Any]], PipelineRun | None, PipelineRun | None]:
     """Build the spine entries for a source's active chunking run, in reading order.
 
@@ -194,8 +188,8 @@ def _load_detail(
     session: Session,
     blob_reader: "BlobReader",
     *,
-    source_id: str,
-    chunk_id: str,
+    source_id: UUID,
+    chunk_id: UUID,
     search_terms: list[str],
 ) -> dict[str, Any] | None:
     """Build the detail-panel context for a chunk, or ``None`` if not in the active run.
@@ -250,7 +244,7 @@ def _load_detail(
     markdown = _load_source_markdown(session, blob_reader, chunking_run.id)
 
     return {
-        "source_id": source_id,
+        "source_id": str(source_id),
         "chunk_id": chunk_id,
         "heading_path": _heading_path(chunk),
         "span_start": span_start,
@@ -301,8 +295,8 @@ def graph_ui_explorer(
     session: Annotated[Session, Depends(get_db_session)],
     blob_reader: Annotated["BlobReader", Depends(get_blob_reader)],
     _principal: Annotated[Principal, Depends(get_principal)],
-    source_id: Annotated[str | None, Query()] = None,
-    chunk_id: Annotated[str | None, Query()] = None,
+    source_id: Annotated[UUID | None, Query()] = None,
+    chunk_id: Annotated[UUID | None, Query()] = None,
 ):
     """Render the document browser: the active chunking run's spine and a detail panel.
 
@@ -320,10 +314,10 @@ def graph_ui_explorer(
         detail = _load_detail(session, blob_reader, source_id=source_id, chunk_id=chunk_id, search_terms=[])
 
     context = {
-        "source_id": source_id or "",
+        "source_id": str(source_id) if source_id else "",
         "title": title,
         "spine": spine,
-        "selected_chunk_id": chunk_id or "",
+        "selected_chunk_id": chunk_id,
         "detail": detail,
         "chunking_run_id": chunking_run.id if chunking_run is not None else None,
         "variant_run_id": variant_run.id if variant_run is not None else None,
@@ -338,8 +332,8 @@ def graph_ui_explorer_detail(
     session: Annotated[Session, Depends(get_db_session)],
     blob_reader: Annotated["BlobReader", Depends(get_blob_reader)],
     _principal: Annotated[Principal, Depends(get_principal)],
-    source_id: Annotated[str, Query()],
-    chunk_id: Annotated[str, Query()],
+    source_id: Annotated[UUID, Query()],
+    chunk_id: Annotated[UUID, Query()],
 ):
     """Render the detail panel for one chunk, or 404 if it is not in the active run."""
     detail = _load_detail(session, blob_reader, source_id=source_id, chunk_id=chunk_id, search_terms=[])
@@ -378,8 +372,8 @@ def _search_rows(
     """
     terms = query.split()
     rows: list[dict[str, Any]] = []
-    titles: dict[str, str] = {}
-    variant_caches: dict[str, dict[str, ContextualizedChunk]] = {}
+    titles: dict[UUID, str] = {}
+    variant_caches: dict[UUID, dict[UUID, ContextualizedChunk]] = {}
     for result in provider.search(query, kind):
         chunk = session.get(Chunk, result.chunk_id)
         if chunk is None:  # pragma: no cover - an indexed chunk_id always has a row
@@ -394,7 +388,7 @@ def _search_rows(
         representation, _has_variant, self_contained = _resolve_representation(chunk.text, variant)
         rows.append(
             {
-                "source_id": result.source_id,
+                "source_id": str(result.source_id),
                 "chunk_id": result.chunk_id,
                 "title": titles[result.source_id],
                 "heading_path": _heading_path(chunk),

@@ -280,8 +280,8 @@ def test_extraction_backfill_enqueues_sources_with_an_active_chunking_run(tmp_pa
     """A corpus scan enqueues one unit per source that has something to extract."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_B), derivation_key="dk-b")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_B, derivation_key="dk-b")
         session.commit()
 
     result = run_extraction_backfill(
@@ -296,8 +296,8 @@ def test_extraction_backfill_records_one_creation_event_per_unit(tmp_path: Path)
     """A confirmed run gives each created unit exactly one ``queued`` event naming the operator."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_B), derivation_key="dk-b")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_B, derivation_key="dk-b")
         session.commit()
 
     run_extraction_backfill(
@@ -319,7 +319,7 @@ def test_extraction_backfill_dry_run_records_no_creation_events(tmp_path: Path) 
     """A dry run rolls back, so it leaves no creation events behind."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
         session.commit()
 
     run_extraction_backfill(
@@ -334,7 +334,7 @@ def test_extraction_backfill_rerun_enqueues_nothing_new(tmp_path: Path) -> None:
     """Re-running over an unchanged corpus reuses every unit — the idempotency claim."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
         session.commit()
 
     run_extraction_backfill(
@@ -352,7 +352,7 @@ def test_extraction_backfill_dry_run_writes_nothing(tmp_path: Path) -> None:
     """A dry run reports the target set it would enqueue and leaves the table empty."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
         session.commit()
 
     result = run_extraction_backfill(
@@ -367,7 +367,7 @@ def test_extraction_backfill_dry_run_needs_no_confirmation(tmp_path: Path) -> No
     """Previewing a corpus scan writes nothing, so there is no blast radius to sign off on."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
         session.commit()
 
     result = run_extraction_backfill(
@@ -382,7 +382,7 @@ def test_extraction_backfill_corpus_scan_requires_confirmation(tmp_path: Path) -
     """An implicit corpus scan without confirmation is refused, enqueueing nothing."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
         session.commit()
 
     with pytest.raises(ReprocessingConfirmationError):
@@ -409,8 +409,8 @@ def test_extraction_backfill_corpus_scan_stops_at_capacity(tmp_path: Path) -> No
     """A corpus scan admits only the stage's headroom and reports what it admitted."""
     engine = _make_engine(tmp_path)
     with Session(engine) as session:
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_A), derivation_key="dk-a")
-        record_run(session, stage=CHUNKING_STAGE, scope_id=str(_UUID_B), derivation_key="dk-b")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_B, derivation_key="dk-b")
         session.commit()
 
     result = run_extraction_backfill(

@@ -19,6 +19,7 @@ import datetime
 from enum import Enum
 import json
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from sqlalchemy import Column, DateTime, Enum as SAEnum, Index, Text, func, text
 from sqlmodel import Field, SQLModel, select
@@ -42,12 +43,14 @@ class RunStatus(str, Enum):
 class PipelineRun(SQLModel, table=True):
     """A stage's derived-output generation, scoped by ``(stage, scope_id)``.
 
-    Rows are immutable once recorded except for the ``active`` → ``superseded``
-    status transition. ``supersedes_run_id`` is a logical reference to the run
-    this one replaced (no database foreign key, so superseded-run compaction
-    can delete freely). ``version_stamps_json`` holds an opaque JSON object of
-    reproducibility version identifiers the stage records; the primitive does
-    not interpret it.
+    ``scope_id`` is a UUID identity: every real scope is a source UUID, and a
+    stage whose scope is not naturally a UUID mints one (a ``uuid5`` namespace
+    identity) rather than storing a non-UUID string. Rows are immutable once
+    recorded except for the ``active`` → ``superseded`` status transition.
+    ``supersedes_run_id`` is a logical reference to the run this one replaced
+    (no database foreign key, so superseded-run compaction can delete freely).
+    ``version_stamps_json`` holds an opaque JSON object of reproducibility
+    version identifiers the stage records; the primitive does not interpret it.
     """
 
     __tablename__ = "pipeline_runs"
@@ -67,7 +70,7 @@ class PipelineRun(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True, nullable=False)
     stage: str = Field(nullable=False)
-    scope_id: str = Field(nullable=False)
+    scope_id: UUID = Field(nullable=False)
     # values_callable stores enum values ("active") not names ("ACTIVE"), matching the index predicate.
     status: RunStatus = Field(
         default=RunStatus.ACTIVE,
@@ -93,7 +96,7 @@ def record_run(
     session: "Session",
     *,
     stage: str,
-    scope_id: str,
+    scope_id: UUID,
     derivation_key: str,
     version_stamps: dict[str, str] | None = None,
 ) -> PipelineRun:
@@ -157,7 +160,7 @@ def reuse_or_record_run(
     session: "Session",
     *,
     stage: str,
-    scope_id: str,
+    scope_id: UUID,
     derivation_key: str,
     version_stamps: dict[str, str] | None = None,
 ) -> PipelineRun:

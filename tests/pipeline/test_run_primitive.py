@@ -9,6 +9,7 @@ one transaction, never leaving two active runs nor a window with none.
 from __future__ import annotations
 
 import threading
+from uuid import UUID
 
 from pyleak import no_thread_leaks
 import pytest
@@ -19,10 +20,10 @@ from sqlmodel import Session, func, select
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 
 _STAGE = "contextualization"
-_SCOPE = "document:abc"
+_SCOPE = UUID("11111111-1111-1111-1111-111111111111")
 
 
-def _active_runs(session: Session, stage: str, scope_id: str) -> list[PipelineRun]:
+def _active_runs(session: Session, stage: str, scope_id: UUID) -> list[PipelineRun]:
     """Return active runs for a scope, newest first."""
     return list(
         session.exec(
@@ -66,7 +67,7 @@ def test_atomic_supersede(engine: Engine) -> None:
 
 def test_supersession_is_scoped_per_stage_scope_id(engine: Engine) -> None:
     """One active run per ``(stage, scope_id)`` — a different scope stays active."""
-    other_scope = "document:xyz"
+    other_scope = UUID("22222222-2222-2222-2222-222222222222")
     with Session(engine) as session:
         record_run(session, stage=_STAGE, scope_id=_SCOPE, derivation_key="a")
         record_run(session, stage=_STAGE, scope_id=other_scope, derivation_key="b")
@@ -167,7 +168,7 @@ def test_direct_active_insert_violates_unique_index(engine: Engine) -> None:
                 " version_stamps_json, created_at)"
                 " VALUES (:stage, :scope, 'active', 'fp-1', '{}', :now)"
             ),
-            {"stage": _STAGE, "scope": _SCOPE, "now": now},
+            {"stage": _STAGE, "scope": _SCOPE.hex, "now": now},
         )
         conn.commit()
 
@@ -178,6 +179,6 @@ def test_direct_active_insert_violates_unique_index(engine: Engine) -> None:
                 " version_stamps_json, created_at)"
                 " VALUES (:stage, :scope, 'active', 'fp-2', '{}', :now)"
             ),
-            {"stage": _STAGE, "scope": _SCOPE, "now": now},
+            {"stage": _STAGE, "scope": _SCOPE.hex, "now": now},
         )
         conn.commit()

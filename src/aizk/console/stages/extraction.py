@@ -7,7 +7,7 @@ from aizk.console.stages._graph import build_graph_descriptor
 from aizk.graph.datamodel import ExtractionJob
 from aizk.graph.extraction_events import EXTRACTION_STAGE
 from aizk.graph.extraction_run import stale_extraction_sources
-from aizk.graph.extraction_workunit import pending_extraction_sources
+from aizk.graph.extraction_workunit import pending_extraction_count, pending_extraction_sources
 from aizk.graph.job_actions import (
     apply_extraction_cancel,
     apply_extraction_readmission,
@@ -40,6 +40,7 @@ DESCRIPTOR = build_graph_descriptor(
     # The stage's own derivations, read here rather than re-expressed: what an
     # operator sees behind is exactly what an admission pass would take up, and
     # what is marked stale is exactly what the re-extract action accepts.
+    pending_count=pending_extraction_count,
     pending_sources=pending_extraction_sources,
     stale_sources=stale_extraction_sources,
 )

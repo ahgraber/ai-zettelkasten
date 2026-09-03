@@ -171,7 +171,7 @@ def apply_extraction_readmission(session: "Session", job: Any) -> None:
     """
     if not is_terminal(job.status):
         raise ValueError(f"cannot re-extract a work-unit in status {job.status.value!r}")
-    if not is_extraction_stale(session, str(job.source_id)):
+    if not is_extraction_stale(session, job.source_id):
         raise ValueError("cannot re-extract a source that is not stale")
     now = _utcnow()
     job.attempts = 0

@@ -82,7 +82,7 @@ def _heading_path_to_json(heading_path: tuple[str, ...]) -> str:
     return json.dumps(list(heading_path), ensure_ascii=False, separators=(",", ":"))
 
 
-def to_chunk_row(chunk: SplitterChunk, *, chunk_id: str) -> Chunk:
+def to_chunk_row(chunk: SplitterChunk, *, chunk_id: UUID) -> Chunk:
     """Map an in-memory splitter chunk to its persisted stable-identity row (no I/O).
 
     The ``chunk_id`` is the persistence-assigned surrogate (the splitter does not
@@ -171,7 +171,7 @@ def reconstruct_chunk(
     is the source-artifact locator, equal to the run's ``conversion_output_id``.
     """
     return SplitterChunk(
-        chunk_id=row.chunk_id,
+        chunk_id=str(row.chunk_id),
         content_hash=row.content_hash,
         source_id=str(row.source_id),
         heading_path=tuple(json.loads(row.heading_path_json)),
@@ -188,7 +188,7 @@ def reconstruct_chunk(
 def persist_chunks(
     session: "Session",
     *,
-    source_id: str,
+    source_id: UUID,
     conversion_output_id: str,
     markdown_hash_xx64: str,
     splitter_version: int,
@@ -221,9 +221,8 @@ def persist_chunks(
 
     Args:
         session: Active session; the caller owns commit/rollback.
-        source_id: The durable source identity in string form. Used verbatim as
-            the run's ``scope_id`` and, converted to a ``UUID``, as each chunk
-            row's ``source_id``.
+        source_id: The durable source identity. Used verbatim as the run's
+            ``scope_id`` and as each chunk row's ``source_id``.
         conversion_output_id: Locator for the source Markdown this run consumed;
             recorded as run input provenance (not a derivation input).
         markdown_hash_xx64: Content hash of the source markdown; part of the
@@ -255,7 +254,7 @@ def persist_chunks(
         c.content_hash
         for c in chunks
         if (c.source_id, c.converted_artifact_id, c.markdown_hash_xx64, c.splitter_version)
-        != (source_id, conversion_output_id, markdown_hash_xx64, splitter_version)
+        != (str(source_id), conversion_output_id, markdown_hash_xx64, splitter_version)
     ]
     if mismatched:
         raise ValueError(
@@ -301,7 +300,8 @@ def persist_chunks(
                 source_id,
             )
             return active, [
-                c.model_copy(update={"chunk_id": row.chunk_id}) for row, c in zip(existing_rows, chunks, strict=True)
+                c.model_copy(update={"chunk_id": str(row.chunk_id)})
+                for row, c in zip(existing_rows, chunks, strict=True)
             ]
 
     run = record_run(
@@ -324,7 +324,7 @@ def persist_chunks(
         if row is None:
             # Mint a stable surrogate for this novel sameness-key and index its raw
             # text once, on creation; a reused chunk is not re-created or re-indexed.
-            chunk_id = str(uuid4())
+            chunk_id = uuid4()
             session.add(to_chunk_row(chunk, chunk_id=chunk_id))
             index_chunk_content(
                 session,
@@ -343,7 +343,7 @@ def persist_chunks(
                 span_end=chunk.span[1],
             )
         )
-        persisted.append(chunk.model_copy(update={"chunk_id": chunk_id}))
+        persisted.append(chunk.model_copy(update={"chunk_id": str(chunk_id)}))
 
     logger.debug(
         "Persisted %d chunks under chunking run id=%s source=%s markdown_hash=%s",
@@ -355,7 +355,7 @@ def persist_chunks(
     return run, persisted
 
 
-def active_chunking_run(session: "Session", source_id: str) -> PipelineRun | None:
+def active_chunking_run(session: "Session", source_id: UUID) -> PipelineRun | None:
     """Return the active chunking run for a source (``source_id``), or ``None``."""
     return session.exec(
         select(PipelineRun).where(
@@ -414,7 +414,7 @@ def document_order_chunks(session: "Session", run_id: int) -> list[tuple[Chunk, 
     return [(chunk, span_start, span_end) for chunk, span_start, span_end in rows]
 
 
-def members_of_run(session: "Session", run_id: int) -> list[str]:
+def members_of_run(session: "Session", run_id: int) -> list[UUID]:
     """Return the ``chunk_id``s in a chunking run's manifest, ordered by ``chunk_id``."""
     return list(
         session.exec(
@@ -462,7 +462,7 @@ def chunks_of_run(session: "Session", run_id: int) -> list[SplitterChunk]:
     return reconstructed
 
 
-def current_chunk_ids(session: "Session", source_id: str) -> set[str]:
+def current_chunk_ids(session: "Session", source_id: UUID) -> set[UUID]:
     """Return the ``chunk_id``s current for a source: the manifest of its active run.
 
     A ``chunk_id`` is current if and only if it is in the source's active chunking
@@ -487,7 +487,7 @@ def current_chunk_ids(session: "Session", source_id: str) -> set[str]:
 # --------------------------------------------------------------------------- #
 
 
-def memo_get(session: "Session", kind: "MemoKind", scope_id: str, derivation_key: str) -> str | None:
+def memo_get(session: "Session", kind: "MemoKind", scope_id: UUID, derivation_key: str) -> str | None:
     """Return the retained output for a memo key, or ``None`` if absent.
 
     Distinguishes three cases the caller must treat differently: ``None`` means the
@@ -506,7 +506,7 @@ def memo_get(session: "Session", kind: "MemoKind", scope_id: str, derivation_key
 
 
 def memo_upsert_and_read(
-    engine: "Engine", kind: "MemoKind", scope_id: str, derivation_key: str, output_text: str
+    engine: "Engine", kind: "MemoKind", scope_id: UUID, derivation_key: str, output_text: str
 ) -> str:
     """Idempotently retain ``output_text`` for a memo key and return the authoritative stored value.
 
@@ -537,7 +537,7 @@ def memo_upsert_and_read(
     return stored
 
 
-def memo_delete_keys(session: "Session", scope_id: str, keys: "Sequence[tuple[MemoKind, str]]") -> None:
+def memo_delete_keys(session: "Session", scope_id: UUID, keys: "Sequence[tuple[MemoKind, str]]") -> None:
     """Delete exactly the listed ``(kind, derivation_key)`` memo entries under ``scope_id``.
 
     Key-exact, not source-wide: it removes only the entries a completed generation

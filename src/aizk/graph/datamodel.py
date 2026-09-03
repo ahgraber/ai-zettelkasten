@@ -138,10 +138,9 @@ class Chunk(SQLModel, table=True):
     layer owns the lossless mapping back to the in-memory contract.
 
     ``source_id`` is a ``UUID`` — the referential source identity, as everywhere
-    else in the schema. The splitter's in-memory chunk carries the same identity
-    as a string, so the persistence layer converts at that boundary. A comparison
-    against a scope key (``pipeline_runs.scope_id``) must convert too, because
-    the two forms do not compare in SQL.
+    else in the schema, including ``pipeline_runs.scope_id``, so the two compare
+    directly in SQL. The splitter's in-memory chunk carries the same identity as a
+    string, so the persistence layer converts at that boundary.
     """
 
     __tablename__ = "graph_chunks"
@@ -160,7 +159,7 @@ class Chunk(SQLModel, table=True):
         ),
     )
 
-    chunk_id: str = Field(primary_key=True, nullable=False)
+    chunk_id: UUID = Field(primary_key=True, nullable=False)
     content_hash: str = Field(nullable=False)
     source_id: UUID = Field(nullable=False)
     heading_path_json: str = Field(sa_column=Column(Text, nullable=False))
@@ -212,7 +211,7 @@ class ChunkRunManifest(SQLModel, table=True):
     __table_args__ = (Index("ix_graph_chunk_run_manifest_chunk_id", "chunk_id"),)
 
     run_id: int = Field(primary_key=True, nullable=False)
-    chunk_id: str = Field(
+    chunk_id: UUID = Field(
         sa_column=Column(
             ForeignKey("graph_chunks.chunk_id"),
             primary_key=True,
@@ -230,7 +229,7 @@ class DocumentSummary(SQLModel, table=True):
     provenance (so the summary's input is retrievable as well as verifiable), and
     the ``summary_version``; the owning run carries the derivation key that
     produced it (source markdown hash, prompt identity, model profile, and
-    version) and is scoped to the durable source identity (``str(source_id)``).
+    version) and is scoped to the durable source identity.
     Re-summarizing a document whose derivation-key inputs are unchanged reuses the
     active summary run; a change to any opens a new run that supersedes the prior,
     leaving this row present and unmodified.
@@ -296,7 +295,7 @@ class ContextualizedChunk(SQLModel, table=True):
     run_id: int = Field(nullable=False)
     summary_run_id: int = Field(nullable=False)
     chunking_run_id: int = Field(nullable=False)
-    chunk_id: str = Field(sa_column=Column(ForeignKey("graph_chunks.chunk_id"), nullable=False))
+    chunk_id: UUID = Field(sa_column=Column(ForeignKey("graph_chunks.chunk_id"), nullable=False))
     context_version: int = Field(nullable=False)
     contextualized_text: str = Field(sa_column=Column(Text, nullable=False))
     derivation_key: str = Field(sa_column=Column(Text, nullable=False))
@@ -323,13 +322,12 @@ class ContextualizationOutputMemo(SQLModel, table=True):
       revision (``revision``); a single discriminated table avoids two near-identical
       tables, and the keys never collide across kinds because their JSON shapes
       differ and ``kind`` partitions them.
-    - ``scope_id`` is the durable source identity (``str(source_id)``). It is
-      load-bearing for the summary kind, whose derivation key does **not** embed the
-      source: without it two distinct sources with byte-identical Markdown would
-      share a summary entry. The revision key is already source-distinct via its
-      ``chunk_id``, so ``scope_id`` is redundant-but-harmless there and keeps the
-      schema uniform; it also makes the success-path prune key set well-defined per
-      source.
+    - ``scope_id`` is the durable source identity, a UUID. It is load-bearing for
+      the summary kind, whose derivation key does **not** embed the source: without
+      it two distinct sources with byte-identical Markdown would share a summary
+      entry. The revision key is already source-distinct via its ``chunk_id``, so
+      ``scope_id`` is redundant-but-harmless there and keeps the schema uniform; it
+      also makes the success-path prune key set well-defined per source.
     - ``derivation_key`` is the respective input-deterministic derivation key — the
       summary derivation key for ``summary``, the per-row variant derivation key for
       ``revision``.
@@ -365,7 +363,7 @@ class ContextualizationOutputMemo(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True, nullable=False)
     kind: str = Field(nullable=False)
-    scope_id: str = Field(nullable=False)
+    scope_id: UUID = Field(nullable=False)
     derivation_key: str = Field(sa_column=Column(Text, nullable=False))
     output_text: str = Field(sa_column=Column(Text, nullable=False))
     created_at: datetime.datetime = Field(
@@ -609,9 +607,9 @@ class Mention(SQLModel, table=True):
         ),
     )
 
-    mention_id: str = Field(primary_key=True, nullable=False)
+    mention_id: UUID = Field(primary_key=True, nullable=False)
     run_id: int = Field(nullable=False)
-    chunk_id: str = Field(sa_column=Column(ForeignKey("graph_chunks.chunk_id"), nullable=False))
+    chunk_id: UUID = Field(sa_column=Column(ForeignKey("graph_chunks.chunk_id"), nullable=False))
     anchor_kind: str = Field(nullable=False)
     surface_form: str = Field(sa_column=Column(Text, nullable=False))
     input_kind: str = Field(nullable=False)
@@ -654,10 +652,10 @@ class MentionCooccurrence(SQLModel, table=True):
     )
 
     run_id: int = Field(primary_key=True, nullable=False)
-    mention_id_lo: str = Field(
+    mention_id_lo: UUID = Field(
         sa_column=Column(ForeignKey("graph_mentions.mention_id"), primary_key=True, nullable=False)
     )
-    mention_id_hi: str = Field(
+    mention_id_hi: UUID = Field(
         sa_column=Column(ForeignKey("graph_mentions.mention_id"), primary_key=True, nullable=False)
     )
-    chunk_id: str = Field(nullable=False)
+    chunk_id: UUID = Field(nullable=False)

@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
-from uuid import UUID
+from uuid import NAMESPACE_OID, UUID, uuid5
 
 from pydantic import ValidationError
 import pytest
@@ -53,8 +53,13 @@ _SCHEMA_TABLES = [
     PipelineRun.__table__,
 ]
 
-_SOURCE_A = "11111111-1111-1111-1111-111111111111"
-_SOURCE_B = "22222222-2222-2222-2222-222222222222"
+_SOURCE_A = UUID("11111111-1111-1111-1111-111111111111")
+_SOURCE_B = UUID("22222222-2222-2222-2222-222222222222")
+
+
+def _cid(label: str) -> UUID:
+    """Return a deterministic surrogate ``chunk_id`` for a readable test label."""
+    return uuid5(NAMESPACE_OID, label)
 
 
 @pytest.fixture
@@ -82,9 +87,9 @@ def session(engine: Engine) -> Session:
 def _seed_chunk(
     session: Session,
     *,
-    chunk_id: str,
+    chunk_id: UUID,
     text: str,
-    source_id: str = _SOURCE_A,
+    source_id: UUID = _SOURCE_A,
     ordinal: int = 0,
     heading_path_json: str = "[]",
 ) -> Chunk:
@@ -92,7 +97,7 @@ def _seed_chunk(
     row = Chunk(
         chunk_id=chunk_id,
         content_hash=xxhash.xxh64(text.encode("utf-8")).hexdigest(),
-        source_id=UUID(source_id),
+        source_id=source_id,
         heading_path_json=heading_path_json,
         ordinal=ordinal,
         text=text,
@@ -107,7 +112,7 @@ def _seed_chunk(
 def _seed_contextualized_chunk(
     session: Session,
     *,
-    chunk_id: str,
+    chunk_id: UUID,
     contextualized_text: str,
     run_id: int = 999,
     context_version: int = 1,
@@ -133,7 +138,7 @@ def _seed_contextualized_chunk(
 def _open_run(
     session: Session,
     *,
-    source_id: str = _SOURCE_A,
+    source_id: UUID = _SOURCE_A,
     upstream_derivation_key: str = "key-1",
     extractor_version: str = "stub-v1",
 ) -> PipelineRun:
@@ -153,7 +158,7 @@ def _open_run(
 
 def _source_draft(
     *,
-    chunk_id: str,
+    chunk_id: UUID,
     surface_form: str,
     span: tuple[int, int],
     input_span: tuple[int, int] | None = None,
@@ -175,7 +180,7 @@ def _source_draft(
 
 def _revision_draft(
     *,
-    chunk_id: str,
+    chunk_id: UUID,
     surface_form: str,
     context_version: int = 1,
     contextualization_run_id: int = 999,
@@ -239,9 +244,9 @@ def test_open_extraction_run_records_key_and_stamps_from_same_inputs(session: Se
 
 def test_mentions_append_only(session: Session) -> None:
     """A persisted mention is never mutated when its source is re-extracted."""
-    _seed_chunk(session, chunk_id="chunk-1", text="Acme Corp announced results.")
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp announced results.")
     run1 = _open_run(session, upstream_derivation_key="key-1")
-    draft = _source_draft(chunk_id="chunk-1", surface_form="Acme Corp", span=(0, 9))
+    draft = _source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9))
     [original] = _persist(session, run=run1, drafts=[draft])
     session.refresh(original)
     original_state = original.model_dump()
@@ -258,15 +263,15 @@ def test_mentions_append_only(session: Session) -> None:
 
 def test_re_extraction_supersedes_and_retains(session: Session) -> None:
     """A new run for a source supersedes its prior run; another source is untouched."""
-    _seed_chunk(session, chunk_id="chunk-a1", text="Acme Corp is a company.", source_id=_SOURCE_A)
-    _seed_chunk(session, chunk_id="chunk-b1", text="Globex Inc is a company.", source_id=_SOURCE_B)
+    _seed_chunk(session, chunk_id=_cid("chunk-a1"), text="Acme Corp is a company.", source_id=_SOURCE_A)
+    _seed_chunk(session, chunk_id=_cid("chunk-b1"), text="Globex Inc is a company.", source_id=_SOURCE_B)
 
     run_a1 = _open_run(session, source_id=_SOURCE_A, upstream_derivation_key="a-key-1")
-    draft_a = _source_draft(chunk_id="chunk-a1", surface_form="Acme Corp", span=(0, 9))
+    draft_a = _source_draft(chunk_id=_cid("chunk-a1"), surface_form="Acme Corp", span=(0, 9))
     _persist(session, run=run_a1, drafts=[draft_a])
 
     run_b1 = _open_run(session, source_id=_SOURCE_B, upstream_derivation_key="b-key-1")
-    draft_b = _source_draft(chunk_id="chunk-b1", surface_form="Globex Inc", span=(0, 10))
+    draft_b = _source_draft(chunk_id=_cid("chunk-b1"), surface_form="Globex Inc", span=(0, 10))
     _persist(session, run=run_b1, drafts=[draft_b])
 
     # Re-extract source A only.
@@ -298,8 +303,8 @@ def test_re_extraction_supersedes_and_retains(session: Session) -> None:
 
 def test_run_scoped_rows_distinct_occurrence_key_stable(session: Session) -> None:
     """Same source occurrence under two runs -> two rows, equal occurrence keys; no in-run duplicate."""
-    _seed_chunk(session, chunk_id="chunk-1", text="Acme Corp announced results.")
-    draft = _source_draft(chunk_id="chunk-1", surface_form="Acme Corp", span=(0, 9))
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp announced results.")
+    draft = _source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9))
 
     run1 = _open_run(session, upstream_derivation_key="key-1")
     [mention1] = _persist(session, run=run1, drafts=[draft])
@@ -326,10 +331,12 @@ def test_revision_mention_idempotent_within_run(session: Session) -> None:
     of the idempotency contract through the real write path, complementing the
     source arm above.
     """
-    _seed_chunk(session, chunk_id="chunk-1", text="The company announced results today.")
-    _seed_contextualized_chunk(session, chunk_id="chunk-1", contextualized_text="Acme Corp announced results today.")
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="The company announced results today.")
+    _seed_contextualized_chunk(
+        session, chunk_id=_cid("chunk-1"), contextualized_text="Acme Corp announced results today."
+    )
     run = _open_run(session)
-    draft = _revision_draft(chunk_id="chunk-1", surface_form="Acme Corp", input_span=(0, 9))
+    draft = _revision_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", input_span=(0, 9))
 
     [first] = _persist(session, run=run, drafts=[draft])
     [again] = _persist(session, run=run, drafts=[draft])
@@ -348,9 +355,11 @@ def test_revision_rows_distinct_across_runs_comparable_by_chunk_and_surface(sess
     ``(chunk_id, surface_form)`` — the revision analogue of the source class's
     cross-run occurrence-key stability.
     """
-    _seed_chunk(session, chunk_id="chunk-1", text="The company announced results today.")
-    _seed_contextualized_chunk(session, chunk_id="chunk-1", contextualized_text="Acme Corp announced results today.")
-    draft = _revision_draft(chunk_id="chunk-1", surface_form="Acme Corp", input_span=(0, 9))
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="The company announced results today.")
+    _seed_contextualized_chunk(
+        session, chunk_id=_cid("chunk-1"), contextualized_text="Acme Corp announced results today."
+    )
+    draft = _revision_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", input_span=(0, 9))
 
     run1 = _open_run(session, upstream_derivation_key="key-1")
     [mention1] = _persist(session, run=run1, drafts=[draft])
@@ -371,11 +380,11 @@ def test_revision_rows_distinct_across_runs_comparable_by_chunk_and_surface(sess
 
 def test_provenance_and_spans_present_no_embedding(session: Session) -> None:
     """Every mention has full provenance; source_chunk_span iff source-anchored; no embedding or blocking-key column."""
-    _seed_chunk(session, chunk_id="chunk-1", text="Acme Corp met Globex Inc today.")
-    _seed_contextualized_chunk(session, chunk_id="chunk-1", contextualized_text="Globex Inc appears here.")
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp met Globex Inc today.")
+    _seed_contextualized_chunk(session, chunk_id=_cid("chunk-1"), contextualized_text="Globex Inc appears here.")
     run = _open_run(session)
-    source_draft = _source_draft(chunk_id="chunk-1", surface_form="Acme Corp", span=(0, 9))
-    revision_draft = _revision_draft(chunk_id="chunk-1", surface_form="Globex Inc", input_span=(0, 10))
+    source_draft = _source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9))
+    revision_draft = _revision_draft(chunk_id=_cid("chunk-1"), surface_form="Globex Inc", input_span=(0, 10))
 
     persisted = _persist(session, run=run, drafts=[source_draft, revision_draft])
 
@@ -417,9 +426,9 @@ def test_provenance_and_spans_present_no_embedding(session: Session) -> None:
 def test_source_anchor_resolves(session: Session) -> None:
     """A source-anchored mention's span, sliced against the raw chunk text, equals its surface_form."""
     chunk_text = "Acme Corp announced quarterly results today."
-    _seed_chunk(session, chunk_id="chunk-1", text=chunk_text)
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text=chunk_text)
     run = _open_run(session)
-    draft = _source_draft(chunk_id="chunk-1", surface_form="Acme Corp", span=(0, 9))
+    draft = _source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9))
 
     [mention] = _persist(session, run=run, drafts=[draft])
 
@@ -431,17 +440,17 @@ def test_source_anchor_resolves(session: Session) -> None:
 
 def test_revision_only_name_persisted_without_span(session: Session) -> None:
     """A revision-anchored draft (name absent from raw text) persists with no span/occurrence key."""
-    _seed_chunk(session, chunk_id="chunk-1", text="The company announced results today.")
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="The company announced results today.")
     _seed_contextualized_chunk(
         session,
-        chunk_id="chunk-1",
+        chunk_id=_cid("chunk-1"),
         contextualized_text="Acme Corp announced results today.",
         run_id=42,
         context_version=2,
     )
     run = _open_run(session)
     draft = _revision_draft(
-        chunk_id="chunk-1",
+        chunk_id=_cid("chunk-1"),
         surface_form="Acme Corp",
         context_version=2,
         contextualization_run_id=42,
@@ -463,7 +472,7 @@ def test_revision_only_name_persisted_without_span(session: Session) -> None:
 def test_repeated_surface_one_mention_per_occurrence(session: Session) -> None:
     """A surface form occurring three times yields three source-anchored rows, each with its own span."""
     chunk_text = "Acme Corp met Acme Corp's rival, who then called Acme Corp again."
-    _seed_chunk(session, chunk_id="chunk-1", text=chunk_text)
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text=chunk_text)
     run = _open_run(session)
 
     surface = "Acme Corp"
@@ -476,7 +485,7 @@ def test_repeated_surface_one_mention_per_occurrence(session: Session) -> None:
     assert len(spans) == 3
     for start, end in spans:
         assert chunk_text[start:end] == surface
-    drafts = [_source_draft(chunk_id="chunk-1", surface_form=surface, span=span) for span in spans]
+    drafts = [_source_draft(chunk_id=_cid("chunk-1"), surface_form=surface, span=span) for span in spans]
 
     persisted = _persist(session, run=run, drafts=drafts)
 
@@ -494,11 +503,11 @@ def test_source_and_revision_share_surface_coexist(session: Session) -> None:
     ``(run_id, chunk_id, surface_form)`` tuple (or vice versa): both persist,
     one per class, and the returned list maps each draft to its own row.
     """
-    _seed_chunk(session, chunk_id="chunk-1", text="Acme Corp announced results.")
-    _seed_contextualized_chunk(session, chunk_id="chunk-1", contextualized_text="Acme Corp is mentioned again.")
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp announced results.")
+    _seed_contextualized_chunk(session, chunk_id=_cid("chunk-1"), contextualized_text="Acme Corp is mentioned again.")
     run = _open_run(session)
-    source_draft = _source_draft(chunk_id="chunk-1", surface_form="Acme Corp", span=(0, 9))
-    revision_draft = _revision_draft(chunk_id="chunk-1", surface_form="Acme Corp", input_span=(0, 9))
+    source_draft = _source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9))
+    revision_draft = _revision_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", input_span=(0, 9))
 
     source_mention, revision_mention = _persist(session, run=run, drafts=[source_draft, revision_draft])
 
@@ -517,10 +526,10 @@ def test_source_and_revision_share_surface_coexist(session: Session) -> None:
 
 def test_cooccurrence_resolvable_off_row(session: Session) -> None:
     """Two mentions in one chunk: querying the link table from either endpoint returns the other."""
-    _seed_chunk(session, chunk_id="chunk-1", text="Acme Corp met Globex Inc today.")
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp met Globex Inc today.")
     run = _open_run(session)
-    draft_a = _source_draft(chunk_id="chunk-1", surface_form="Acme Corp", span=(0, 9))
-    draft_b = _source_draft(chunk_id="chunk-1", surface_form="Globex Inc", span=(14, 24))
+    draft_a = _source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9))
+    draft_b = _source_draft(chunk_id=_cid("chunk-1"), surface_form="Globex Inc", span=(14, 24))
 
     mention_a, mention_b = _persist(session, run=run, drafts=[draft_a, draft_b])
 
@@ -529,7 +538,7 @@ def test_cooccurrence_resolvable_off_row(session: Session) -> None:
     link = links[0]
     endpoints = {link.mention_id_lo, link.mention_id_hi}
     assert endpoints == {mention_a.mention_id, mention_b.mention_id}
-    assert link.chunk_id == "chunk-1"
+    assert link.chunk_id == _cid("chunk-1")
 
     # Resolvable from either endpoint's column, without a co-occurrence field on the mention row.
     from_lo = session.exec(
@@ -546,12 +555,12 @@ def test_cooccurrence_resolvable_off_row(session: Session) -> None:
 
 def test_cooccurrence_retry_does_not_duplicate(session: Session) -> None:
     """Persisting a chunk's mentions twice within one run leaves each pair recorded exactly once, lo < hi."""
-    _seed_chunk(session, chunk_id="chunk-1", text="Acme Corp met Globex Inc and Initech today.")
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp met Globex Inc and Initech today.")
     run = _open_run(session)
     drafts = [
-        _source_draft(chunk_id="chunk-1", surface_form="Acme Corp", span=(0, 9)),
-        _source_draft(chunk_id="chunk-1", surface_form="Globex Inc", span=(14, 24)),
-        _source_draft(chunk_id="chunk-1", surface_form="Initech", span=(29, 36)),
+        _source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9)),
+        _source_draft(chunk_id=_cid("chunk-1"), surface_form="Globex Inc", span=(14, 24)),
+        _source_draft(chunk_id=_cid("chunk-1"), surface_form="Initech", span=(29, 36)),
     ]
 
     _persist(session, run=run, drafts=drafts)
@@ -574,11 +583,13 @@ def test_cooccurrence_links_across_anchor_classes(session: Session) -> None:
     chunk's whole run-scoped mention set, so a mixed source/revision pair links
     just like a source/source pair.
     """
-    _seed_chunk(session, chunk_id="chunk-1", text="The company met Globex Inc today.")
-    _seed_contextualized_chunk(session, chunk_id="chunk-1", contextualized_text="Acme Corp met Globex Inc today.")
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="The company met Globex Inc today.")
+    _seed_contextualized_chunk(
+        session, chunk_id=_cid("chunk-1"), contextualized_text="Acme Corp met Globex Inc today."
+    )
     run = _open_run(session)
-    source_draft = _source_draft(chunk_id="chunk-1", surface_form="Globex Inc", span=(16, 26))
-    revision_draft = _revision_draft(chunk_id="chunk-1", surface_form="Acme Corp", input_span=(0, 9))
+    source_draft = _source_draft(chunk_id=_cid("chunk-1"), surface_form="Globex Inc", span=(16, 26))
+    revision_draft = _revision_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", input_span=(0, 9))
 
     source_mention, revision_mention = _persist(session, run=run, drafts=[source_draft, revision_draft])
     assert source_mention.anchor_kind == "source"
@@ -597,15 +608,15 @@ def test_cooccurrence_links_across_anchor_classes(session: Session) -> None:
 
 def test_chunk_id_resolves(session: Session) -> None:
     """A persisted mention's chunk_id looks up an existing Chunk row."""
-    _seed_chunk(session, chunk_id="chunk-1", text="Acme Corp announced results.")
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp announced results.")
     run = _open_run(session)
-    draft = _source_draft(chunk_id="chunk-1", surface_form="Acme Corp", span=(0, 9))
+    draft = _source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9))
 
     [mention] = _persist(session, run=run, drafts=[draft])
 
     chunk_row = session.get(Chunk, mention.chunk_id)
     assert chunk_row is not None
-    assert chunk_row.chunk_id == "chunk-1"
+    assert chunk_row.chunk_id == _cid("chunk-1")
 
 
 # --------------------------------------------------------------------------- #
@@ -615,11 +626,11 @@ def test_chunk_id_resolves(session: Session) -> None:
 
 def test_persist_mentions_rejects_wrong_stage_run(session: Session) -> None:
     """A run belonging to another stage is refused; no mention row is written."""
-    _seed_chunk(session, chunk_id="chunk-1", text="Acme Corp announced results.")
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp announced results.")
     other_stage_run = record_run(session, stage="chunking", scope_id=_SOURCE_A, derivation_key="k")
     session.commit()
     session.refresh(other_stage_run)
-    draft = _source_draft(chunk_id="chunk-1", surface_form="Acme Corp", span=(0, 9))
+    draft = _source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9))
 
     with pytest.raises(ValueError, match="not an active"):
         persist_mentions(session, run=other_stage_run, mentions=[draft])
@@ -629,9 +640,9 @@ def test_persist_mentions_rejects_wrong_stage_run(session: Session) -> None:
 
 def test_persist_mentions_rejects_superseded_run(session: Session) -> None:
     """A superseded extraction run is refused; the prior run's mentions are unaffected."""
-    _seed_chunk(session, chunk_id="chunk-1", text="Acme Corp announced results.")
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp announced results.")
     run1 = _open_run(session, upstream_derivation_key="key-1")
-    draft = _source_draft(chunk_id="chunk-1", surface_form="Acme Corp", span=(0, 9))
+    draft = _source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9))
     _persist(session, run=run1, drafts=[draft])
 
     run2 = _open_run(session, upstream_derivation_key="key-2")
@@ -650,9 +661,10 @@ def test_persist_mentions_rejects_superseded_run(session: Session) -> None:
 def test_persist_mentions_rejects_unknown_chunk_id(session: Session) -> None:
     """A draft whose chunk_id has no persisted Chunk row is refused; no mention row is written."""
     run = _open_run(session)
-    draft = _source_draft(chunk_id="does-not-exist", surface_form="Acme Corp", span=(0, 9))
+    unknown_chunk_id = _cid("does-not-exist")
+    draft = _source_draft(chunk_id=unknown_chunk_id, surface_form="Acme Corp", span=(0, 9))
 
-    with pytest.raises(ValueError, match="does-not-exist"):
+    with pytest.raises(ValueError, match="do not resolve to a persisted chunk"):
         persist_mentions(session, run=run, mentions=[draft])
 
     assert session.exec(select(Mention)).all() == []
@@ -660,9 +672,9 @@ def test_persist_mentions_rejects_unknown_chunk_id(session: Session) -> None:
 
 def test_persist_mentions_rejects_cross_source_chunk(session: Session) -> None:
     """A draft whose chunk belongs to a different source than the run's scope is refused."""
-    _seed_chunk(session, chunk_id="chunk-b1", text="Globex Inc is a company.", source_id=_SOURCE_B)
+    _seed_chunk(session, chunk_id=_cid("chunk-b1"), text="Globex Inc is a company.", source_id=_SOURCE_B)
     run_a = _open_run(session, source_id=_SOURCE_A)
-    draft = _source_draft(chunk_id="chunk-b1", surface_form="Globex Inc", span=(0, 10))
+    draft = _source_draft(chunk_id=_cid("chunk-b1"), surface_form="Globex Inc", span=(0, 10))
 
     with pytest.raises(ValueError, match="source other than"):
         persist_mentions(session, run=run_a, mentions=[draft])
@@ -672,12 +684,12 @@ def test_persist_mentions_rejects_cross_source_chunk(session: Session) -> None:
 
 def test_persist_mentions_rejects_source_span_not_matching_surface_and_anchor(session: Session) -> None:
     """A source span that slices to text other than surface_form/source_anchor_text is refused."""
-    _seed_chunk(session, chunk_id="chunk-1", text="Acme Corp announced results.")
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp announced results.")
     run = _open_run(session)
     # Span (0, 9) covers "Acme Corp" in the chunk text, but the draft claims a
     # different surface form for that span.
     draft = MentionDraft(
-        chunk_id="chunk-1",
+        chunk_id=_cid("chunk-1"),
         anchor_kind="source",
         surface_form="Globex Inc",
         input_kind="raw",
@@ -696,10 +708,10 @@ def test_persist_mentions_rejects_source_span_not_matching_surface_and_anchor(se
 
 def test_persist_mentions_rejects_inverted_source_span(session: Session) -> None:
     """A source span whose start is not strictly before its end is refused."""
-    _seed_chunk(session, chunk_id="chunk-1", text="Acme Corp announced results.")
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp announced results.")
     run = _open_run(session)
     draft = MentionDraft(
-        chunk_id="chunk-1",
+        chunk_id=_cid("chunk-1"),
         anchor_kind="source",
         surface_form="Acme Corp",
         input_kind="raw",
@@ -719,10 +731,10 @@ def test_persist_mentions_rejects_inverted_source_span(session: Session) -> None
 def test_persist_mentions_rejects_out_of_bounds_source_span(session: Session) -> None:
     """A source span extending past the raw chunk text's length is refused."""
     chunk_text = "Acme Corp announced results."
-    _seed_chunk(session, chunk_id="chunk-1", text=chunk_text)
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text=chunk_text)
     run = _open_run(session)
     draft = MentionDraft(
-        chunk_id="chunk-1",
+        chunk_id=_cid("chunk-1"),
         anchor_kind="source",
         surface_form="Acme Corp",
         input_kind="raw",
@@ -741,9 +753,9 @@ def test_persist_mentions_rejects_out_of_bounds_source_span(session: Session) ->
 
 def test_persist_mentions_rejects_input_span_out_of_bounds(session: Session) -> None:
     """An input span extending past the consumed input text's length is refused."""
-    _seed_chunk(session, chunk_id="chunk-1", text="Acme Corp announced results.")
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp announced results.")
     run = _open_run(session)
-    draft = _source_draft(chunk_id="chunk-1", surface_form="Acme Corp", span=(0, 9), input_span=(0, 999))
+    draft = _source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9), input_span=(0, 999))
 
     with pytest.raises(ValueError, match="input_span"):
         persist_mentions(session, run=run, mentions=[draft])
@@ -753,10 +765,10 @@ def test_persist_mentions_rejects_input_span_out_of_bounds(session: Session) -> 
 
 def test_persist_mentions_rejects_input_span_not_matching_surface(session: Session) -> None:
     """An input span that slices to text other than surface_form is refused."""
-    _seed_chunk(session, chunk_id="chunk-1", text="Acme Corp announced results.")
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp announced results.")
     run = _open_run(session)
     # input_span (10, 18) covers "announced", not the declared surface_form.
-    draft = _source_draft(chunk_id="chunk-1", surface_form="Acme Corp", span=(0, 9), input_span=(10, 18))
+    draft = _source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9), input_span=(10, 18))
 
     with pytest.raises(ValueError, match="input_span"):
         persist_mentions(session, run=run, mentions=[draft])
@@ -772,10 +784,10 @@ def test_persist_mentions_rejects_raw_input_not_source_anchored(session: Session
     ``persist_mentions`` is the sole enforcer of "a mention read from raw input
     must be source-anchored" — the raw-implies-source contract.
     """
-    _seed_chunk(session, chunk_id="chunk-1", text="Acme Corp announced results.")
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp announced results.")
     run = _open_run(session)
     draft = MentionDraft(
-        chunk_id="chunk-1",
+        chunk_id=_cid("chunk-1"),
         anchor_kind="revision",
         surface_form="Acme Corp",
         input_kind="raw",
@@ -791,11 +803,11 @@ def test_persist_mentions_rejects_raw_input_not_source_anchored(session: Session
 
 def test_persist_mentions_rejects_dangling_contextualized_locator(session: Session) -> None:
     """A contextualized draft whose locator has no matching ContextualizedChunk row is refused."""
-    _seed_chunk(session, chunk_id="chunk-1", text="The company announced results today.")
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="The company announced results today.")
     run = _open_run(session)
     # No ContextualizedChunk row seeded for this (chunk_id, run_id, context_version).
     draft = _revision_draft(
-        chunk_id="chunk-1", surface_form="Acme Corp", context_version=1, contextualization_run_id=999
+        chunk_id=_cid("chunk-1"), surface_form="Acme Corp", context_version=1, contextualization_run_id=999
     )
 
     with pytest.raises(ValueError, match="ContextualizedChunk"):
@@ -808,7 +820,7 @@ def test_mention_draft_rejects_empty_surface_form() -> None:
     """An empty surface_form is refused at the draft boundary, before persistence is ever reached."""
     with pytest.raises(ValidationError):
         MentionDraft(
-            chunk_id="chunk-1",
+            chunk_id=_cid("chunk-1"),
             anchor_kind="source",
             surface_form="",
             input_kind="raw",
@@ -829,17 +841,17 @@ def test_persist_mentions_rejects_contextualized_draft_for_present_empty_variant
     as its ``input_ref`` — a contextualized ``input_ref`` here would dereference to
     empty text.
     """
-    _seed_chunk(session, chunk_id="chunk-1", text="Acme Corp announced results today.")
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp announced results today.")
     _seed_contextualized_chunk(
         session,
-        chunk_id="chunk-1",
+        chunk_id=_cid("chunk-1"),
         contextualized_text="",
         run_id=7,
         context_version=1,
     )
     run = _open_run(session)
     draft = _revision_draft(
-        chunk_id="chunk-1",
+        chunk_id=_cid("chunk-1"),
         surface_form="Acme Corp",
         context_version=1,
         contextualization_run_id=7,
@@ -859,17 +871,17 @@ def test_persist_mentions_rejects_contextualized_draft_for_present_empty_variant
 
 def test_persist_mentions_accepts_contextualized_draft_against_real_variant(session: Session) -> None:
     """A contextualized draft validates against a real persisted ContextualizedChunk row."""
-    _seed_chunk(session, chunk_id="chunk-1", text="The company announced results today.")
+    _seed_chunk(session, chunk_id=_cid("chunk-1"), text="The company announced results today.")
     _seed_contextualized_chunk(
         session,
-        chunk_id="chunk-1",
+        chunk_id=_cid("chunk-1"),
         contextualized_text="Acme Corp announced results today.",
         run_id=42,
         context_version=3,
     )
     run = _open_run(session)
     draft = _revision_draft(
-        chunk_id="chunk-1",
+        chunk_id=_cid("chunk-1"),
         surface_form="Acme Corp",
         context_version=3,
         contextualization_run_id=42,
@@ -906,7 +918,7 @@ class _StubExtractor:
 def _seed_chunking_run(
     session: Session,
     *,
-    source_id: str,
+    source_id: UUID,
     chunk_texts: "Sequence[tuple[str, str]]",
     derivation_key: str = "chunking-key-1",
 ) -> PipelineRun:
@@ -915,16 +927,19 @@ def _seed_chunking_run(
     Bypasses ``persist_chunks`` (which also records ``ChunkRunInput`` and indexes
     raw content, neither of which ``extract_document`` reads) so the test only
     builds what :func:`~aizk.graph.persistence.document_order_chunks` needs: Chunk
-    rows and manifest entries carrying document order via ``span_start``.
+    rows and manifest entries carrying document order via ``span_start``. Each
+    ``chunk_texts`` entry names a readable label, mapped to a deterministic
+    surrogate ``chunk_id`` via :func:`_cid`.
     """
     run = record_run(session, stage=CHUNKING_STAGE, scope_id=source_id, derivation_key=derivation_key)
     cursor = 0
-    for ordinal, (chunk_id, text) in enumerate(chunk_texts):
+    for ordinal, (label, text) in enumerate(chunk_texts):
+        chunk_id = _cid(label)
         session.add(
             Chunk(
                 chunk_id=chunk_id,
                 content_hash=xxhash.xxh64(text.encode("utf-8")).hexdigest(),
-                source_id=UUID(source_id),
+                source_id=source_id,
                 heading_path_json="[]",
                 ordinal=ordinal,
                 text=text,
@@ -977,7 +992,7 @@ def test_partial_failure_exposes_no_active_run(
     }
     assert len(prior_mention_ids) == 2
 
-    def _always_fail(session: Session, *, run_id: int, chunk_id: str) -> None:
+    def _always_fail(session: Session, *, run_id: int, chunk_id: UUID) -> None:
         raise RuntimeError("forced failure mid-persist")
 
     monkeypatch.setattr("aizk.graph.mention_store._link_chunk_cooccurrences", _always_fail)

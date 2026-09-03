@@ -25,7 +25,9 @@ from aizk.graph.enqueue import (
     enqueue_backfill_outputs,
     enqueue_output,
     latest_output_ids_per_source,
+    pending_contextualization_count,
     pending_contextualization_outputs,
+    pending_contextualization_sources,
 )
 from aizk.graph.events import QueuedPayload
 from aizk.graph.markdown_source import ConversionOutputFreshness
@@ -409,6 +411,31 @@ def test_the_contextualization_pending_query_rejects_a_limit_that_does_not_bound
     engine = _make_engine(tmp_path)
     with Session(engine) as session, pytest.raises(ValueError, match="limit must be a positive integer"):
         pending_contextualization_outputs(session, limit=limit)
+
+
+def test_the_contextualization_pending_count_equals_the_unbounded_listing(tmp_path: Path) -> None:
+    """The count and the unbounded listing read the same anti-join, so they cannot disagree."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        _add_output(session, output_id=1, source_id=_UUID_A, created_at=_EPOCH)
+        _add_output(session, output_id=2, source_id=_UUID_B, created_at=_EPOCH + dt.timedelta(days=1))
+        _add_output(session, output_id=3, source_id=_UUID_C, created_at=_EPOCH + dt.timedelta(days=2))
+        session.commit()
+
+        assert pending_contextualization_count(session) == len(pending_contextualization_sources(session))
+
+
+def test_the_contextualization_pending_count_stays_exact_when_the_listing_is_bounded(tmp_path: Path) -> None:
+    """A bounded listing under-reports the backlog; the count does not, however small the bound."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        _add_output(session, output_id=1, source_id=_UUID_A, created_at=_EPOCH)
+        _add_output(session, output_id=2, source_id=_UUID_B, created_at=_EPOCH + dt.timedelta(days=1))
+        _add_output(session, output_id=3, source_id=_UUID_C, created_at=_EPOCH + dt.timedelta(days=2))
+        session.commit()
+
+        assert len(pending_contextualization_outputs(session, limit=1)) == 1
+        assert pending_contextualization_count(session) == 3
 
 
 def test_latest_output_ids_per_source_selects_one_output_per_source(tmp_path: Path) -> None:

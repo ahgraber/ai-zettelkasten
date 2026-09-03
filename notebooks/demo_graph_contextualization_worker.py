@@ -480,7 +480,7 @@ print(f"inspecting {primary.label!r} (source_id={primary.source_id})")
 
 # %%
 with Session(get_engine(DatabaseConfig().database_url)) as session:
-    run = active_chunking_run(session, str(primary.source_id))
+    run = active_chunking_run(session, primary.source_id)
     consumed = run_input(session, run.id)
     manifest = manifest_of_run(session, run.id)
     reconstructed = chunks_of_run(session, run.id)
@@ -494,7 +494,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     for entry, chunk in paired:
         preview = chunk.text.strip().replace("\n", " ")[:70]
         print(
-            f"  chunk {entry.chunk_id[:12]} span=({entry.span_start},{entry.span_end}) "
+            f"  chunk {str(entry.chunk_id)[:12]} span=({entry.span_start},{entry.span_end}) "
             f"heading={chunk.heading_path} ord={chunk.ordinal}: {preview!r}"
         )
 
@@ -511,7 +511,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     summary_run = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == SUMMARY_STAGE,
-            PipelineRun.scope_id == str(primary.source_id),
+            PipelineRun.scope_id == primary.source_id,
             PipelineRun.status == RunStatus.ACTIVE,
         )
     ).one()
@@ -536,7 +536,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     variant_run = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == VARIANT_STAGE,
-            PipelineRun.scope_id == str(primary.source_id),
+            PipelineRun.scope_id == primary.source_id,
             PipelineRun.status == RunStatus.ACTIVE,
         )
     ).one()
@@ -547,7 +547,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
         resolved = resolve_chunk_text(
             chunk.text, contextualized_text=variant.contextualized_text, contextualization_enabled=True
         )
-        print(f"--- chunk {variant.chunk_id[:12]} ---")
+        print(f"--- chunk {str(variant.chunk_id)[:12]} ---")
         print(f"  raw     : {chunk.text.strip().replace(chr(10), ' ')}")
         print(f"  revised : {variant.contextualized_text.strip() or '<empty: already self-contained>'}")
         print(f"  resolve_chunk_text source={resolved.source.value}\n")
@@ -564,7 +564,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     variant_run = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == VARIANT_STAGE,
-            PipelineRun.scope_id == str(primary.source_id),
+            PipelineRun.scope_id == primary.source_id,
             PipelineRun.status == RunStatus.ACTIVE,
         )
     ).one()
@@ -591,7 +591,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     variant_run = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == VARIANT_STAGE,
-            PipelineRun.scope_id == str(primary.source_id),
+            PipelineRun.scope_id == primary.source_id,
             PipelineRun.status == RunStatus.ACTIVE,
         )
     ).one()
@@ -621,12 +621,12 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     variant_run = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == VARIANT_STAGE,
-            PipelineRun.scope_id == str(primary.source_id),
+            PipelineRun.scope_id == primary.source_id,
             PipelineRun.status == RunStatus.ACTIVE,
         )
     ).one()
     variant = session.exec(select(ContextualizedChunk).where(ContextualizedChunk.run_id == variant_run.id)).first()
-    print(f"tracing variant id={variant.id} (chunk {variant.chunk_id[:12]}) backward:")
+    print(f"tracing variant id={variant.id} (chunk {str(variant.chunk_id)[:12]}) backward:")
 
     chunking = session.get(PipelineRun, variant.chunking_run_id)
     print(f"  1. chunking_run_id={chunking.id} (stage={chunking.stage}, scope={chunking.scope_id})")
@@ -646,7 +646,7 @@ with Session(get_engine(DatabaseConfig().database_url)) as session:
     print(f"  4. summary_run_id={summary_run.id} stage={summary_run.stage}")
     assert summary_run.stage == SUMMARY_STAGE
 
-    chain_agrees = chunking.scope_id == str(primary.source_id) == summary_run.scope_id == str(chunk.source_id)
+    chain_agrees = chunking.scope_id == primary.source_id == summary_run.scope_id == chunk.source_id
     print(
         f"  5. source_id={primary.source_id}; chunk.source_id + chunking + summary scopes all agree -> {chain_agrees}"
     )
@@ -723,7 +723,7 @@ def chunking_runs(source_id: UUID) -> list[RunState]:
     with Session(engine) as session:
         runs = session.exec(
             select(PipelineRun)
-            .where(PipelineRun.stage == "chunking", PipelineRun.scope_id == str(source_id))
+            .where(PipelineRun.stage == "chunking", PipelineRun.scope_id == source_id)
             .order_by(PipelineRun.id)
         ).all()
         return [

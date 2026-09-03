@@ -393,11 +393,11 @@ for event in events:
 
 # %%
 with Session(engine) as session:
-    run = active_chunking_run(session, str(focal_uuid))
+    run = active_chunking_run(session, focal_uuid)
     variant_run = session.exec(
         select(PipelineRun).where(
             PipelineRun.stage == VARIANT_STAGE,
-            PipelineRun.scope_id == str(focal_uuid),
+            PipelineRun.scope_id == focal_uuid,
             PipelineRun.status == RunStatus.ACTIVE,
         )
     ).one()
@@ -444,7 +444,7 @@ def show_results(query: str, kind: SearchKind) -> None:
             sides.append("raw")
         if r.matched_in_contextualized:
             sides.append("contextualized")
-        print(f"  chunk={r.chunk_id[:12]} span={r.span_start} bm25={r.score:.3f} matched={'+'.join(sides)}")
+        print(f"  chunk={str(r.chunk_id)[:12]} span={r.span_start} bm25={r.score:.3f} matched={'+'.join(sides)}")
 
 
 show_results("attention", SearchKind.EITHER)
@@ -583,7 +583,7 @@ def seed_chunked_not_contextualized() -> UUID:
     with begin_immediate(engine) as session:
         persist_chunks(
             session,
-            source_id=str(source_id),
+            source_id=source_id,
             conversion_output_id=str(output_id),
             markdown_hash_xx64=markdown_hash,
             splitter_version=SPLITTER_VERSION,

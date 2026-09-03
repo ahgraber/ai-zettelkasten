@@ -37,6 +37,7 @@ from dataclasses import dataclass
 import json
 import logging
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from sqlmodel import Session, select
 
@@ -83,7 +84,7 @@ class DocumentExtractionResult:
     """
 
     run_id: int
-    source_id: str
+    source_id: UUID
     chunk_count: int
     mention_count: int
 
@@ -98,7 +99,7 @@ class _ChunkWorkItem:
     :func:`~aizk.graph.extraction.extract_chunk_mentions` consumes.
     """
 
-    chunk_id: str
+    chunk_id: UUID
     raw_text: str
     extraction_input: ExtractionInput
 
@@ -106,7 +107,7 @@ class _ChunkWorkItem:
 def _resolve_upstream_derivation_key(
     session: "Session",
     *,
-    source_id: str,
+    source_id: UUID,
     input_policy: InputPolicy,
     chunking_run: PipelineRun,
 ) -> str:
@@ -185,7 +186,7 @@ def _run_is_stale(session: "Session", run: PipelineRun) -> bool:
     return current_key != recorded_key
 
 
-def is_extraction_stale(session: "Session", scope_id: str) -> bool:
+def is_extraction_stale(session: "Session", scope_id: UUID) -> bool:
     """Return whether one source's extraction consumed since-superseded upstream state.
 
     Reads only that source's runs. A per-unit caller — the re-extract action's
@@ -195,13 +196,13 @@ def is_extraction_stale(session: "Session", scope_id: str) -> bool:
 
     Args:
         session: Active, read-only session.
-        scope_id: The source's ``str(source_id)``.
+        scope_id: The source's identity.
     """
     run = active_extraction_run(session, scope_id)
     return run is not None and _run_is_stale(session, run)
 
 
-def stale_extraction_sources(session: "Session") -> set[str]:
+def stale_extraction_sources(session: "Session") -> set[UUID]:
     """Return the scope ids whose active extraction run consumed since-superseded upstream state.
 
     A source is stale when the upstream derivation key its active extraction run
@@ -228,7 +229,7 @@ def stale_extraction_sources(session: "Session") -> set[str]:
         session: Active, read-only session.
 
     Returns:
-        The stale sources' ``scope_id`` values (``str(source_id)``).
+        The stale sources' ``scope_id`` values.
     """
     active_runs = session.exec(
         select(PipelineRun).where(
@@ -257,7 +258,7 @@ def _resolve_extraction_input(session: "Session", chunk: "Chunk", *, input_polic
 def extract_document(
     engine: "Engine",
     *,
-    source_id: str,
+    source_id: UUID,
     extractor: EntityExtractor,
     input_policy: InputPolicy,
 ) -> DocumentExtractionResult:
@@ -375,7 +376,7 @@ def extract_document(
 def extract_source(
     engine: "Engine",
     *,
-    source_id: str,
+    source_id: UUID,
     extractor: EntityExtractor,
     input_policy: InputPolicy,
 ) -> DocumentExtractionResult:
@@ -392,7 +393,7 @@ def extract_source(
 def extract_corpus(
     engine: "Engine",
     *,
-    source_ids: "Sequence[str]",
+    source_ids: "Sequence[UUID]",
     extractor: EntityExtractor,
     input_policy: InputPolicy,
 ) -> list[DocumentExtractionResult]:

@@ -79,20 +79,20 @@ class _SilentExtractor:
         return []
 
 
-def _seed_chunking_run(engine: Engine, *, source_id: str, derivation_key: str) -> None:
+def _seed_chunking_run(engine: Engine, *, source_id: UUID, derivation_key: str) -> None:
     """Activate a chunking run for a source and put one chunk under it, committing on ``engine``."""
     with Session(engine) as session:
         run = record_run(session, stage=CHUNKING_STAGE, scope_id=source_id, derivation_key=derivation_key)
         session.flush()
         content_hash = xxhash.xxh64(_CHUNK_TEXT.encode("utf-8")).hexdigest()
         chunk = session.exec(
-            select(Chunk).where(Chunk.source_id == UUID(source_id), Chunk.content_hash == content_hash)
+            select(Chunk).where(Chunk.source_id == source_id, Chunk.content_hash == content_hash)
         ).one_or_none()
         if chunk is None:
             chunk = Chunk(
-                chunk_id=str(uuid4()),
+                chunk_id=uuid4(),
                 content_hash=content_hash,
-                source_id=UUID(source_id),
+                source_id=source_id,
                 heading_path_json="[]",
                 ordinal=0,
                 text=_CHUNK_TEXT,
@@ -103,7 +103,7 @@ def _seed_chunking_run(engine: Engine, *, source_id: str, derivation_key: str) -
         session.commit()
 
 
-def _extract(engine: Engine, source_id: str) -> None:
+def _extract(engine: Engine, source_id: UUID) -> None:
     """Run the extraction write path for one source against the deterministic stub extractor."""
     extract_document(engine, source_id=source_id, extractor=_SilentExtractor(), input_policy="contextualized")
 
@@ -180,7 +180,7 @@ def test_extraction_readmission_succeeds_at_capacity_for_a_stale_source(
             seed_extraction_job(setup, source_id=source.source_id, status=WorkUnitStatus.QUEUED)
         stale_source = seed_source(setup, karakeep_id="cap-readmit-stale")
 
-    stale_source_id = str(stale_source.source_id)
+    stale_source_id = stale_source.source_id
     _seed_chunking_run(engine, source_id=stale_source_id, derivation_key="chunking-v1")
     _extract(engine, stale_source_id)
 

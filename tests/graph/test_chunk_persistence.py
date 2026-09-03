@@ -17,6 +17,8 @@ run idempotency, and the persistence-boundary guards.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
 from sqlmodel import Session, select
 import xxhash
@@ -33,7 +35,7 @@ from aizk.graph.persistence import (
 )
 from aizk.pipeline.run import PipelineRun, RunStatus
 
-_AIZK_UUID = "11111111-1111-1111-1111-111111111111"
+_AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")
 _OUTPUT = "output-1"
 _OUTPUT_B = "output-2"
 _MARKDOWN_HASH = "0011223344556677"
@@ -55,7 +57,7 @@ Content for the second section, distinct from the first.
 
 def _make_chunk(
     *,
-    source_id: str = _AIZK_UUID,
+    source_id: UUID = _AIZK_UUID,
     conversion_output_id: str = _OUTPUT,
     markdown_hash: str = _MARKDOWN_HASH,
     heading_path: tuple[str, ...] = (),
@@ -71,7 +73,7 @@ def _make_chunk(
     content_hash = xxhash.xxh64(text.encode("utf-8")).hexdigest()
     return SplitterChunk(
         content_hash=content_hash,
-        source_id=source_id,
+        source_id=str(source_id),
         heading_path=heading_path,
         ordinal=ordinal,
         text=text,
@@ -87,7 +89,7 @@ def test_round_trip_fidelity(session: Session) -> None:
     """Each chunk reconstructed from identity ⋈ manifest ⋈ input ⋈ run equals the persisted chunk."""
     emitted = split(
         _SAMPLE_MARKDOWN,
-        source_id=_AIZK_UUID,
+        source_id=str(_AIZK_UUID),
         converted_artifact_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
     )
@@ -122,7 +124,7 @@ def test_full_set_in_generation(session: Session) -> None:
     """All N emitted chunks are in the generation's manifest, none dropped or added."""
     emitted = split(
         _SAMPLE_MARKDOWN,
-        source_id=_AIZK_UUID,
+        source_id=str(_AIZK_UUID),
         converted_artifact_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
     )
@@ -137,7 +139,7 @@ def test_full_set_in_generation(session: Session) -> None:
     session.commit()
 
     assert run.id is not None
-    surrogate_ids = sorted(c.chunk_id for c in persisted)
+    surrogate_ids = sorted(UUID(c.chunk_id) for c in persisted)
     assert members_of_run(session, run.id) == surrogate_ids
     assert current_chunk_ids(session, _AIZK_UUID) == set(surrogate_ids)
 
@@ -213,11 +215,11 @@ def test_shared_chunk_current_via_new_generation(session: Session) -> None:
 
     active = active_chunking_run(session, _AIZK_UUID)
     assert active is not None and active.id is not None
-    assert shared.chunk_id in current_chunk_ids(session, _AIZK_UUID)
+    assert UUID(shared.chunk_id) in current_chunk_ids(session, _AIZK_UUID)
 
     # The identity row carries only stable facts and is unchanged; the generation
     # facts (span, markdown hash, splitter version) are supplied by gen B's run.
-    row = session.get(Chunk, shared.chunk_id)
+    row = session.get(Chunk, UUID(shared.chunk_id))
     assert row is not None
     assert (row.text, row.content_hash, str(row.source_id)) == (shared.text, shared.content_hash, shared.source_id)
     reconstructed = {c.chunk_id: c for c in chunks_of_run(session, active.id)}
@@ -230,8 +232,8 @@ def test_prior_only_chunk_not_current(session: Session) -> None:
     """A chunk only in the prior generation is no longer current but its identity remains intact."""
     _shared, prior_only, _new_only = _persist_two_generations(session)
 
-    assert prior_only.chunk_id not in current_chunk_ids(session, _AIZK_UUID)
-    row = session.get(Chunk, prior_only.chunk_id)
+    assert UUID(prior_only.chunk_id) not in current_chunk_ids(session, _AIZK_UUID)
+    row = session.get(Chunk, UUID(prior_only.chunk_id))
     assert row is not None, "the superseded chunk's identity is retained"
     # Recoverable, unmodified, from the generation that emitted it.
     superseded = _superseded_run(session)
@@ -244,12 +246,12 @@ def test_new_only_chunk_current(session: Session) -> None:
     """A chunk only in the new generation is current; no prior identity or manifest is removed."""
     shared, prior_only, new_only = _persist_two_generations(session)
 
-    assert new_only.chunk_id in current_chunk_ids(session, _AIZK_UUID)
+    assert UUID(new_only.chunk_id) in current_chunk_ids(session, _AIZK_UUID)
 
     # The prior generation's manifest is intact and untouched.
     superseded = _superseded_run(session)
     assert superseded.id is not None
-    assert sorted(members_of_run(session, superseded.id)) == sorted([shared.chunk_id, prior_only.chunk_id])
+    assert sorted(members_of_run(session, superseded.id)) == sorted([UUID(shared.chunk_id), UUID(prior_only.chunk_id)])
     # Every manifest entry ever written still exists (append-only).
     all_entries = session.exec(select(ChunkRunManifest)).all()
     assert len(all_entries) == 4  # gen A: {shared, prior_only}; gen B: {shared, new_only}
@@ -269,7 +271,7 @@ def test_superseded_generation_consumed_input_and_manifest_recoverable(session: 
     assert consumed.markdown_hash_xx64 == _MARKDOWN_HASH
 
     # What gen A produced is recoverable without re-running the splitter.
-    assert sorted(members_of_run(session, superseded.id)) == sorted([shared.chunk_id, prior_only.chunk_id])
+    assert sorted(members_of_run(session, superseded.id)) == sorted([UUID(shared.chunk_id), UUID(prior_only.chunk_id)])
     reconstructed = {c.chunk_id: c for c in chunks_of_run(session, superseded.id)}
     assert reconstructed[shared.chunk_id] == shared
     assert reconstructed[prior_only.chunk_id] == prior_only
@@ -411,7 +413,7 @@ def test_persist_rejects_sameness_key_collision_with_conflicting_facts(session: 
     # markdown hash) forces the write path, not the reuse fast path.
     colliding = SplitterChunk(
         content_hash=original.content_hash,
-        source_id=_AIZK_UUID,
+        source_id=str(_AIZK_UUID),
         heading_path=(),
         ordinal=0,
         text="different content",
@@ -443,7 +445,7 @@ def test_persist_rejects_sameness_key_collision_with_conflicting_facts(session: 
         pytest.param(_make_chunk(markdown_hash="ffffffffffffffff", text="x"), id="markdown_hash"),
         pytest.param(_make_chunk(text="x", splitter_version=SPLITTER_VERSION + 1), id="splitter_version"),
         pytest.param(_make_chunk(conversion_output_id="other-output", text="x"), id="conversion_output_id"),
-        pytest.param(_make_chunk(source_id="22222222-2222-2222-2222-222222222222", text="x"), id="source_id"),
+        pytest.param(_make_chunk(source_id=UUID("22222222-2222-2222-2222-222222222222"), text="x"), id="source_id"),
     ],
 )
 def test_persist_rejects_chunk_provenance_mismatch(session: Session, bad_chunk: SplitterChunk) -> None:

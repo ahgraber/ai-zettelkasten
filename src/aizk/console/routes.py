@@ -124,6 +124,7 @@ def monitor(
         return TEMPLATES.TemplateResponse(request, "tasks_panel.html", context)
     if descriptor.pending_list is not None:
         context["pending_sources"] = descriptor.pending_list(session, _principal)
+        context["pending_count"] = descriptor.pending_count(session, _principal)
     return TEMPLATES.TemplateResponse(request, "tasks.html", context)
 
 

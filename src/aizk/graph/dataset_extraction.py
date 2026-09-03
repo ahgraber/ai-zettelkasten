@@ -23,6 +23,7 @@ enqueues one named source without confirmation.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from sqlmodel import Session, select
 
@@ -44,9 +45,9 @@ if TYPE_CHECKING:
 def resolve_target_source_ids(
     session: "Session",
     *,
-    source_ids: "Sequence[str] | None" = None,
+    source_ids: "Sequence[UUID] | None" = None,
     limit: int | None = None,
-) -> list[str]:
+) -> list[UUID]:
     """Resolve a dataset run's target sources.
 
     An explicit ``source_ids`` sequence is used verbatim (order-preserved,
@@ -69,8 +70,8 @@ def resolve_target_source_ids(
         The resolved target ``source_id`` list.
     """
     if source_ids is not None:
-        seen: set[str] = set()
-        deduped: list[str] = []
+        seen: set[UUID] = set()
+        deduped: list[UUID] = []
         for source_id in source_ids:
             if source_id not in seen:
                 seen.add(source_id)
@@ -92,7 +93,7 @@ def resolve_target_source_ids(
 def run_dataset_extraction(
     engine: "Engine",
     *,
-    source_ids: "Sequence[str] | None",
+    source_ids: "Sequence[UUID] | None",
     limit: int | None,
     confirmed: bool,
     extractor: "EntityExtractor",
