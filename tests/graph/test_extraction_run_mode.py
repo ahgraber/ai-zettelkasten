@@ -28,21 +28,40 @@ from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
-from aizk.graph.contextualization import VARIANT_STAGE
-from aizk.graph.datamodel import Chunk, ChunkRunManifest, ContextualizedChunk, Mention, MentionCooccurrence
+from aizk.graph.contextualization import VARIANT_STAGE, StalePlanError
+from aizk.graph.datamodel import (
+    INPUT_KIND_CONTEXTUALIZED,
+    INPUT_KIND_RAW,
+    Chunk,
+    ChunkRunInput,
+    ChunkRunManifest,
+    ContextualizationRunInput,
+    ContextualizedChunk,
+    ExtractionRunApplicability,
+    ExtractionRunInput,
+    Mention,
+    MentionCooccurrence,
+)
 from aizk.graph.extraction import Detection
+import aizk.graph.extraction_run as extraction_run_module
 from aizk.graph.extraction_run import extract_corpus, extract_document, extract_source
+from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
 from aizk.graph.mention_store import active_extraction_run
 from aizk.graph.persistence import CHUNKING_STAGE
+from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
 _SCHEMA_TABLES = [
     Chunk.__table__,
+    ChunkRunInput.__table__,
     ChunkRunManifest.__table__,
+    ContextualizationRunInput.__table__,
     ContextualizedChunk.__table__,
+    ExtractionRunApplicability.__table__,
+    ExtractionRunInput.__table__,
     Mention.__table__,
     MentionCooccurrence.__table__,
     PipelineRun.__table__,
@@ -90,34 +109,60 @@ def _seed_chunking_run(
     texts: "Sequence[str]",
     derivation_key: str = "chunking-key-1",
 ) -> tuple[PipelineRun, list[Chunk]]:
-    """Seed a chunking run and its Chunk rows (minted surrogate ids), in document order.
+    """Seed a chunking run, its Chunk rows, and its ``ChunkRunInput``, in document order.
 
-    Bypasses ``persist_chunks`` (which also records ``ChunkRunInput`` and indexes
-    raw content, neither of which ``extract_document`` reads), building only what
-    :func:`~aizk.graph.persistence.document_order_chunks` needs. ``chunk_id`` is
-    minted per call, like ``persist_chunks`` mints a fresh surrogate per database
-    for a novel sameness-key — so two separate calls for the same logical content
-    (as in the bulk-vs-incremental comparison below) yield different chunk_ids.
+    Bypasses ``persist_chunks`` (whose Markdown/content-index machinery this
+    module does not exercise), building only what
+    :func:`~aizk.graph.persistence.document_order_chunks` and
+    ``extract_document``'s upstream-output revalidation need. Mirrors
+    ``persist_chunks``'s surrogate-reuse rule: a chunk whose sameness-key
+    ``(source_id, heading_path, ordinal, content_hash)`` is already present in
+    this database reuses that row's ``chunk_id`` rather than minting a new one
+    (so a re-chunk over unchanged content, on the same engine, is a legal
+    call — two independent engines each still mint their own surrogate for the
+    same logical content, as in the bulk-vs-incremental comparison below).
+    ``chunk_set_fingerprint`` is computed the same way
+    :func:`~aizk.graph.persistence.persist_chunks` would.
     """
     run = record_run(session, stage=CHUNKING_STAGE, scope_id=source_id, derivation_key=derivation_key)
     chunks: list[Chunk] = []
     cursor = 0
     for ordinal, text in enumerate(texts):
-        chunk = Chunk(
-            chunk_id=uuid4(),
-            content_hash=xxhash.xxh64(text.encode("utf-8")).hexdigest(),
-            source_id=source_id,
-            heading_path_json="[]",
-            ordinal=ordinal,
-            text=text,
-            char_count=len(text),
-        )
-        session.add(chunk)
+        content_hash = xxhash.xxh64(text.encode("utf-8")).hexdigest()
+        chunk = session.exec(
+            select(Chunk).where(
+                Chunk.source_id == source_id,
+                Chunk.heading_path_json == "[]",
+                Chunk.ordinal == ordinal,
+                Chunk.content_hash == content_hash,
+            )
+        ).one_or_none()
+        if chunk is None:
+            chunk = Chunk(
+                chunk_id=uuid4(),
+                content_hash=content_hash,
+                source_id=source_id,
+                heading_path_json="[]",
+                ordinal=ordinal,
+                text=text,
+                char_count=len(text),
+            )
+            session.add(chunk)
         session.add(
             ChunkRunManifest(run_id=run.id, chunk_id=chunk.chunk_id, span_start=cursor, span_end=cursor + len(text))
         )
         chunks.append(chunk)
         cursor += len(text) + 1
+    session.add(
+        ChunkRunInput(
+            run_id=run.id,
+            conversion_output_id=f"co-{run.id}",
+            markdown_hash_xx64="deadbeefdeadbeef",
+            chunk_set_fingerprint=payload_fingerprint(
+                [PayloadItem(chunk_key(c), INPUT_KIND_RAW, content_fingerprint(c.text)) for c in chunks]
+            ),
+        )
+    )
     session.commit()
     session.refresh(run)
     for chunk in chunks:
@@ -125,36 +170,59 @@ def _seed_chunking_run(
     return run, chunks
 
 
-def _seed_variant_run(session: Session, *, source_id: UUID, derivation_key: str) -> PipelineRun:
-    """Insert and commit an active :data:`VARIANT_STAGE` run for ``source_id``."""
+def _seed_variant_run(
+    session: Session,
+    *,
+    source_id: UUID,
+    derivation_key: str,
+    chunking_run_id: int,
+    chunks: "Sequence[Chunk]",
+    revisions: "Mapping[UUID, str] | None" = None,
+) -> PipelineRun:
+    """Insert and commit an active :data:`VARIANT_STAGE` run with one variant row per chunk, and its run input.
+
+    ``chunks`` is the chunking run's full ordered chunk set; ``revisions`` maps a
+    chunk's ``chunk_id`` to its non-empty revision text — a chunk absent from
+    ``revisions`` gets an empty-revision row (the self-contained case), matching
+    how :func:`~aizk.graph.contextualization.contextualize_chunks` writes one
+    variant per chunk in the chunking run's manifest. ``ContextualizationRunInput.output_fingerprint``
+    is computed the same way, over exactly what
+    :func:`~aizk.graph.extraction.select_extraction_input` would then read.
+    """
+    revisions = revisions or {}
     run = record_run(session, stage=VARIANT_STAGE, scope_id=source_id, derivation_key=derivation_key)
+    session.flush()
+    assert run.id is not None  # noqa: S101 -- flushed above
+    items: list[PayloadItem] = []
+    for chunk in chunks:
+        revision = revisions.get(chunk.chunk_id, "")
+        session.add(
+            ContextualizedChunk(
+                run_id=run.id,
+                summary_run_id=1,
+                chunking_run_id=chunking_run_id,
+                chunk_id=chunk.chunk_id,
+                context_version=1,
+                contextualized_text=revision,
+                derivation_key="test-derivation-key",
+            )
+        )
+        consumed_text = revision if revision != "" else chunk.text
+        input_kind = INPUT_KIND_CONTEXTUALIZED if revision != "" else INPUT_KIND_RAW
+        items.append(PayloadItem(chunk_key(chunk), input_kind, content_fingerprint(consumed_text)))
+    session.add(
+        ContextualizationRunInput(
+            run_id=run.id,
+            summary_run_id=1,
+            chunking_run_id=chunking_run_id,
+            input_fingerprint="test-input-fingerprint",
+            config_fingerprint="test-config-fingerprint",
+            output_fingerprint=payload_fingerprint(items),
+        )
+    )
     session.commit()
     session.refresh(run)
     return run
-
-
-def _seed_contextualized_chunk(
-    session: Session,
-    *,
-    run_id: int,
-    chunk_id: str,
-    contextualized_text: str,
-    context_version: int = 1,
-) -> ContextualizedChunk:
-    """Insert and commit a :class:`ContextualizedChunk` row under an already-seeded variant run."""
-    row = ContextualizedChunk(
-        run_id=run_id,
-        summary_run_id=1,
-        chunking_run_id=1,
-        chunk_id=chunk_id,
-        context_version=context_version,
-        contextualized_text=contextualized_text,
-        derivation_key="test-derivation-key",
-    )
-    session.add(row)
-    session.commit()
-    session.refresh(row)
-    return row
 
 
 def _mention_signature(mention: Mention, ordinal_by_chunk_id: dict[str, int], source_id: UUID) -> tuple[object, ...]:
@@ -216,7 +284,7 @@ def _build_corpus(engine: Engine) -> None:
     the no-contextualization-run upstream fallback.
     """
     with Session(engine) as session:
-        _, chunks_a = _seed_chunking_run(
+        chunking_run_a, chunks_a = _seed_chunking_run(
             session,
             source_id=_SOURCE_A,
             texts=[
@@ -225,13 +293,14 @@ def _build_corpus(engine: Engine) -> None:
             ],
             derivation_key="chunking-key-a",
         )
-        variant_run_a = _seed_variant_run(session, source_id=_SOURCE_A, derivation_key="variant-key-a")
-        assert variant_run_a.id is not None
-        _seed_contextualized_chunk(
+        assert chunking_run_a.id is not None
+        _seed_variant_run(
             session,
-            run_id=variant_run_a.id,
-            chunk_id=chunks_a[1].chunk_id,
-            contextualized_text="Acme Corp announced strong results.",
+            source_id=_SOURCE_A,
+            derivation_key="variant-key-a",
+            chunking_run_id=chunking_run_a.id,
+            chunks=chunks_a,
+            revisions={chunks_a[1].chunk_id: "Acme Corp announced strong results."},
         )
 
         _seed_chunking_run(
@@ -325,15 +394,18 @@ def test_raw_policy_records_raw_input_even_with_variant(tmp_path: Path) -> None:
     """Under input_policy=raw, extraction reads raw text unconditionally, even when a variant exists."""
     engine = _make_engine(tmp_path, "raw_policy.db")
     with Session(engine) as session:
-        _, [chunk] = _seed_chunking_run(session, source_id=_SOURCE_A, texts=["Acme Corp announced results."])
+        chunking_run, [chunk] = _seed_chunking_run(
+            session, source_id=_SOURCE_A, texts=["Acme Corp announced results."]
+        )
         chunk_id = chunk.chunk_id
-        variant_run = _seed_variant_run(session, source_id=_SOURCE_A, derivation_key="variant-key-1")
-        assert variant_run.id is not None
-        _seed_contextualized_chunk(
+        assert chunking_run.id is not None
+        _seed_variant_run(
             session,
-            run_id=variant_run.id,
-            chunk_id=chunk_id,
-            contextualized_text="Globex Inc, Acme Corp announced results.",
+            source_id=_SOURCE_A,
+            derivation_key="variant-key-1",
+            chunking_run_id=chunking_run.id,
+            chunks=[chunk],
+            revisions={chunk_id: "Globex Inc, Acme Corp announced results."},
         )
     stub = _StubExtractor(
         {"Acme Corp announced results.": [Detection(surface_form="Acme Corp", span_start=0, span_end=9)]}
@@ -377,3 +449,209 @@ def test_retry_reuses_run_without_duplicating(tmp_path: Path) -> None:
         assert (
             len(session.exec(select(MentionCooccurrence).where(MentionCooccurrence.run_id == first.run_id)).all()) == 1
         )
+
+
+def test_extraction_run_input_resolves_the_chunking_run_under_raw_policy(tmp_path: Path) -> None:
+    """Under ``raw`` policy, ``ExtractionRunInput`` names the chunking run and the raw-text payload fingerprint."""
+    engine = _make_engine(tmp_path, "raw_run_input.db")
+    chunk_text = "Acme Corp announced results."
+    with Session(engine) as session:
+        chunking_run, [chunk] = _seed_chunking_run(session, source_id=_SOURCE_A, texts=[chunk_text])
+        # Capture primitives before any further commit on this session expires them.
+        chunking_run_id = chunking_run.id
+        expected_key = chunk_key(chunk)
+        # An active variant exists, but input_policy="raw" must ignore it and read
+        # the raw chunk, so the recorded upstream is the chunking run, not this one.
+        assert chunking_run_id is not None
+        _seed_variant_run(
+            session,
+            source_id=_SOURCE_A,
+            derivation_key="variant-key-1",
+            chunking_run_id=chunking_run_id,
+            chunks=[chunk],
+            revisions={chunk.chunk_id: "Globex Inc, Acme Corp."},
+        )
+    stub = _StubExtractor({chunk_text: [Detection(surface_form="Acme Corp", span_start=0, span_end=9)]})
+
+    result = extract_document(engine, source_id=_SOURCE_A, extractor=stub, input_policy="raw")
+
+    with Session(engine) as session:
+        run_input_row = session.get(ExtractionRunInput, result.run_id)
+        assert run_input_row is not None
+        assert run_input_row.input_policy == "raw"
+        upstream = session.get(PipelineRun, run_input_row.upstream_run_id)
+        assert upstream is not None
+        assert upstream.stage == CHUNKING_STAGE
+        assert run_input_row.upstream_run_id == chunking_run_id
+        expected = payload_fingerprint([PayloadItem(expected_key, INPUT_KIND_RAW, content_fingerprint(chunk_text))])
+        assert run_input_row.input_fingerprint == expected
+
+
+def test_extraction_run_input_resolves_the_variant_run_under_contextualized_policy(tmp_path: Path) -> None:
+    """Under ``contextualized`` policy with an active variant, ``ExtractionRunInput`` names the variant run."""
+    engine = _make_engine(tmp_path, "contextualized_run_input.db")
+    contextualized_text = "Globex Inc met with Acme Corp and announced results."
+    span_start = contextualized_text.index("Acme Corp")
+    span_end = span_start + len("Acme Corp")
+    with Session(engine) as session:
+        chunking_run, [chunk] = _seed_chunking_run(
+            session, source_id=_SOURCE_A, texts=["Acme Corp announced results."]
+        )
+        expected_key = chunk_key(chunk)
+        assert chunking_run.id is not None
+        variant_run = _seed_variant_run(
+            session,
+            source_id=_SOURCE_A,
+            derivation_key="variant-key-1",
+            chunking_run_id=chunking_run.id,
+            chunks=[chunk],
+            revisions={chunk.chunk_id: contextualized_text},
+        )
+        variant_run_id = variant_run.id
+    stub = _StubExtractor(
+        {contextualized_text: [Detection(surface_form="Acme Corp", span_start=span_start, span_end=span_end)]}
+    )
+
+    result = extract_document(engine, source_id=_SOURCE_A, extractor=stub, input_policy="contextualized")
+
+    with Session(engine) as session:
+        run_input_row = session.get(ExtractionRunInput, result.run_id)
+        assert run_input_row is not None
+        assert run_input_row.input_policy == "contextualized"
+        assert run_input_row.upstream_run_id == variant_run_id
+        upstream = session.get(PipelineRun, run_input_row.upstream_run_id)
+        assert upstream is not None
+        assert upstream.stage == VARIANT_STAGE
+        expected = payload_fingerprint(
+            [PayloadItem(expected_key, INPUT_KIND_CONTEXTUALIZED, content_fingerprint(contextualized_text))]
+        )
+        assert run_input_row.input_fingerprint == expected
+
+
+# --------------------------------------------------------------------------- #
+# Reconciliation and stale-plan revalidation
+# --------------------------------------------------------------------------- #
+
+
+def test_reconciliation_records_applicability_with_zero_extractor_calls_and_unchanged_run_input(
+    tmp_path: Path,
+) -> None:
+    """A superseded-but-equivalent upstream reconciles: applicability is recorded, ExtractionRunInput untouched."""
+    engine = _make_engine(tmp_path, "reconcile.db")
+    chunk_text = "Acme Corp announced results."
+    with Session(engine) as session:
+        _seed_chunking_run(session, source_id=_SOURCE_A, texts=[chunk_text], derivation_key="chunking-v1")
+    stub = _StubExtractor({chunk_text: [Detection(surface_form="Acme Corp", span_start=0, span_end=9)]})
+
+    first = extract_document(engine, source_id=_SOURCE_A, extractor=stub, input_policy="raw")
+    with Session(engine) as session:
+        original_run_input = session.get(ExtractionRunInput, first.run_id)
+        assert original_run_input is not None
+        original_upstream_run_id = original_run_input.upstream_run_id
+
+    # Re-chunk over unchanged content: a new chunking run whose output
+    # fingerprint equals the now-superseded one's, activated in its place.
+    with Session(engine) as session:
+        _seed_chunking_run(session, source_id=_SOURCE_A, texts=[chunk_text], derivation_key="chunking-v2")
+
+    stub.calls.clear()
+    second = extract_document(engine, source_id=_SOURCE_A, extractor=stub, input_policy="raw")
+
+    assert stub.calls == [], "an equivalent upstream reconciles without invoking the extractor"
+    assert second.run_id == first.run_id, "the extraction run itself is reused, not superseded"
+    with Session(engine) as session:
+        current_run_input = session.get(ExtractionRunInput, second.run_id)
+        assert current_run_input is not None
+        assert current_run_input.upstream_run_id == original_upstream_run_id, "the run-input row is never rewritten"
+        new_chunking_run = session.exec(
+            select(PipelineRun).where(
+                PipelineRun.stage == CHUNKING_STAGE,
+                PipelineRun.scope_id == _SOURCE_A,
+                PipelineRun.status == RunStatus.ACTIVE,
+            )
+        ).one()
+        assert new_chunking_run.id != original_upstream_run_id
+        applicability = session.get(ExtractionRunApplicability, (second.run_id, new_chunking_run.id))
+        assert applicability is not None
+
+
+def test_a_changed_upstream_output_between_read_and_write_raises_stale_plan_error(tmp_path: Path) -> None:
+    """The upstream's output changing after the read phase raises a retryable StalePlanError; nothing is written."""
+    engine = _make_engine(tmp_path, "stale_plan_output.db")
+    chunk_text = "Acme Corp announced results."
+    with Session(engine) as session:
+        _seed_chunking_run(session, source_id=_SOURCE_A, texts=[chunk_text], derivation_key="chunking-v1")
+    stub = _StubExtractor({chunk_text: [Detection(surface_form="Acme Corp", span_start=0, span_end=9)]})
+
+    real_replan = extraction_run_module._replan_upstream
+
+    def _mutate_then_replan(session: Session, **kwargs: object) -> PipelineRun:
+        # Simulate a re-chunk landing between the read and write phases: mutate
+        # the active chunking run's persisted output fingerprint directly.
+        chunking_run = session.exec(
+            select(PipelineRun).where(
+                PipelineRun.stage == CHUNKING_STAGE,
+                PipelineRun.scope_id == _SOURCE_A,
+                PipelineRun.status == RunStatus.ACTIVE,
+            )
+        ).one()
+        chunk_input = session.get(ChunkRunInput, chunking_run.id)
+        assert chunk_input is not None
+        chunk_input.chunk_set_fingerprint = "mutated-fingerprint"
+        session.add(chunk_input)
+        return real_replan(session, **kwargs)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(extraction_run_module, "_replan_upstream", _mutate_then_replan)
+        with pytest.raises(StalePlanError):
+            extract_document(engine, source_id=_SOURCE_A, extractor=stub, input_policy="raw")
+
+    with Session(engine) as session:
+        assert active_extraction_run(session, _SOURCE_A) is None, "no run was opened"
+        assert session.exec(select(Mention)).all() == [], "no mentions were persisted"
+        assert session.exec(select(ExtractionRunApplicability)).all() == [], "no applicability was recorded"
+
+
+def test_the_active_run_superseded_between_read_and_write_raises_stale_plan_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reuse plan's active run no longer matching at persist raises StalePlanError; nothing is written.
+
+    The candidate key is planned against the run the read phase observed;
+    ``active_extraction_run`` is faked to report that same run for the read
+    phase's own lookup (so the reuse branch is chosen, exactly as it would be
+    without the fake) but to report no active run for the write phase's
+    re-validation inside ``_reconcile_active_run`` — simulating a concurrent
+    supersession landing in the window between the two, which the single-writer
+    invariant does not expect but this revalidation guards against regardless.
+    """
+    engine = _make_engine(tmp_path, "stale_plan_superseded.db")
+    chunk_text = "Acme Corp announced results."
+    with Session(engine) as session:
+        _seed_chunking_run(session, source_id=_SOURCE_A, texts=[chunk_text], derivation_key="chunking-v1")
+    stub = _StubExtractor({chunk_text: [Detection(surface_form="Acme Corp", span_start=0, span_end=9)]})
+    first = extract_document(engine, source_id=_SOURCE_A, extractor=stub, input_policy="raw")
+
+    real_active_extraction_run = extraction_run_module.active_extraction_run
+    calls = {"n": 0}
+
+    def _fake_active_extraction_run(session: Session, source_id: UUID) -> PipelineRun | None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real_active_extraction_run(session, source_id)
+        return None
+
+    monkeypatch.setattr(extraction_run_module, "active_extraction_run", _fake_active_extraction_run)
+
+    with pytest.raises(StalePlanError):
+        extract_document(engine, source_id=_SOURCE_A, extractor=stub, input_policy="raw")
+
+    monkeypatch.undo()
+    with Session(engine) as session:
+        active = active_extraction_run(session, _SOURCE_A)
+        assert active is not None
+        assert active.id == first.run_id, "nothing new was opened; the original run remains active"
+        assert len(session.exec(select(Mention).where(Mention.run_id == first.run_id)).all()) == 1, (
+            "the original run's mentions are untouched"
+        )
+        assert session.exec(select(ExtractionRunApplicability)).all() == [], "no applicability was recorded"

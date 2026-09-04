@@ -25,7 +25,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from aizk.graph.datamodel import Chunk, ContextualizedChunk, Mention, MentionCooccurrence
 from aizk.graph.dataset_stats import compute_dataset_statistics
-from aizk.graph.mention_store import MentionDraft, open_extraction_run, persist_mentions
+from aizk.graph.mention_store import MentionDraft, ResolvedExtractionConfig, open_extraction_run, persist_mentions
 from aizk.pipeline.run import PipelineRun
 
 _SCHEMA_TABLES = [
@@ -95,15 +95,13 @@ def _seed_contextualized_chunk(
     session.commit()
 
 
-def _open_run(session: Session, *, source_id: UUID, upstream_derivation_key: str) -> PipelineRun:
+_RESOLVED_CONFIG = ResolvedExtractionConfig(extractor_version="stub/v1", materializer_version="1", input_policy="raw")
+
+
+def _open_run(session: Session, *, source_id: UUID, input_fingerprint: str) -> PipelineRun:
     """Open (or reuse) an extraction run for ``source_id`` and commit it."""
     run = open_extraction_run(
-        session,
-        source_id=source_id,
-        extractor_version="stub/v1",
-        materializer_version="1",
-        input_policy="raw",
-        upstream_derivation_key=upstream_derivation_key,
+        session, source_id=source_id, resolved=_RESOLVED_CONFIG, input_fingerprint=input_fingerprint
     )
     session.commit()
     session.refresh(run)
@@ -175,7 +173,7 @@ def _seed_corpus(session: Session) -> None:
     _seed_chunk(session, chunk_id=_cid("chunk-a3"), text="He founded the firm alone.", source_id=_SOURCE_A)
     _seed_chunk(session, chunk_id=_cid("chunk-b1"), text="Initech Corp is here.", source_id=_SOURCE_B)
 
-    run_a = _open_run(session, source_id=_SOURCE_A, upstream_derivation_key="a-key-1")
+    run_a = _open_run(session, source_id=_SOURCE_A, input_fingerprint="a-key-1")
     assert run_a.id is not None
     _seed_contextualized_chunk(
         session,
@@ -219,7 +217,7 @@ def _seed_corpus(session: Session) -> None:
     persist_mentions(session, run=run_a, mentions=drafts_a)
     session.commit()
 
-    run_b = _open_run(session, source_id=_SOURCE_B, upstream_derivation_key="b-key-1")
+    run_b = _open_run(session, source_id=_SOURCE_B, input_fingerprint="b-key-1")
     drafts_b = [_source_draft(chunk_id=_cid("chunk-b1"), surface_form="Initech Corp", span=(0, 12))]
     persist_mentions(session, run=run_b, mentions=drafts_b)
     session.commit()
@@ -311,7 +309,7 @@ def test_singleton_counts_are_per_partition_and_non_additive(session: Session) -
     singleton counts do not sum to the total's, unlike mention counts.
     """
     _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp announced results.", source_id=_SOURCE_A)
-    run = _open_run(session, source_id=_SOURCE_A, upstream_derivation_key="key-1")
+    run = _open_run(session, source_id=_SOURCE_A, input_fingerprint="key-1")
     assert run.id is not None
     _seed_contextualized_chunk(
         session,
@@ -353,14 +351,14 @@ def test_singleton_counts_are_per_partition_and_non_additive(session: Session) -
 def test_dataset_statistics_excludes_superseded_runs(session: Session) -> None:
     """Only the union of *active* extraction runs is counted; a superseded run's mentions are excluded."""
     _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp announced results.", source_id=_SOURCE_A)
-    run1 = _open_run(session, source_id=_SOURCE_A, upstream_derivation_key="key-1")
+    run1 = _open_run(session, source_id=_SOURCE_A, input_fingerprint="key-1")
     persist_mentions(
         session, run=run1, mentions=[_source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9))]
     )
     session.commit()
 
     # Re-extract the source with a changed derivation key: opens a superseding run.
-    run2 = _open_run(session, source_id=_SOURCE_A, upstream_derivation_key="key-2")
+    run2 = _open_run(session, source_id=_SOURCE_A, input_fingerprint="key-2")
     persist_mentions(
         session, run=run2, mentions=[_source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9))]
     )

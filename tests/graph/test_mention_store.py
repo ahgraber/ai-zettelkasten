@@ -28,17 +28,28 @@ from sqlalchemy import Engine, inspect
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
-from aizk.graph.datamodel import Chunk, ChunkRunManifest, ContextualizedChunk, Mention, MentionCooccurrence
+from aizk.graph.datamodel import (
+    Chunk,
+    ChunkRunInput,
+    ChunkRunManifest,
+    ContextualizedChunk,
+    ExtractionRunInput,
+    Mention,
+    MentionCooccurrence,
+)
 from aizk.graph.extraction import Detection
 from aizk.graph.extraction_run import extract_document
+from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
 from aizk.graph.mention_store import (
     MentionDraft,
+    ResolvedExtractionConfig,
     active_extraction_run,
     extraction_derivation_key,
     open_extraction_run,
     persist_mentions,
 )
 from aizk.graph.persistence import CHUNKING_STAGE
+from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, content_fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 
 if TYPE_CHECKING:
@@ -46,8 +57,10 @@ if TYPE_CHECKING:
 
 _SCHEMA_TABLES = [
     Chunk.__table__,
+    ChunkRunInput.__table__,
     ChunkRunManifest.__table__,
     ContextualizedChunk.__table__,
+    ExtractionRunInput.__table__,
     Mention.__table__,
     MentionCooccurrence.__table__,
     PipelineRun.__table__,
@@ -139,18 +152,14 @@ def _open_run(
     session: Session,
     *,
     source_id: UUID = _SOURCE_A,
-    upstream_derivation_key: str = "key-1",
+    input_fingerprint: str = "key-1",
     extractor_version: str = "stub-v1",
 ) -> PipelineRun:
     """Open an extraction run and commit it (the store functions themselves never commit)."""
-    run = open_extraction_run(
-        session,
-        source_id=source_id,
-        extractor_version=extractor_version,
-        materializer_version="1",
-        input_policy="raw",
-        upstream_derivation_key=upstream_derivation_key,
+    resolved = ResolvedExtractionConfig(
+        extractor_version=extractor_version, materializer_version="1", input_policy="raw"
     )
+    run = open_extraction_run(session, source_id=source_id, resolved=resolved, input_fingerprint=input_fingerprint)
     session.commit()
     session.refresh(run)
     return run
@@ -213,27 +222,24 @@ def _persist(session: Session, *, run: PipelineRun, drafts: "Sequence[MentionDra
 
 def test_open_extraction_run_records_key_and_stamps_from_same_inputs(session: Session) -> None:
     """The opened run's derivation_key and version_stamps are both derived from the semantic inputs supplied."""
-    run = open_extraction_run(
-        session,
-        source_id=_SOURCE_A,
-        extractor_version="spacy-en_core_web_sm-3.7-v1",
-        materializer_version="2",
-        input_policy="contextualized",
-        upstream_derivation_key="upstream-key",
+    resolved = ResolvedExtractionConfig(
+        extractor_version="spacy-en_core_web_sm-3.7-v1", materializer_version="2", input_policy="contextualized"
     )
+    run = open_extraction_run(session, source_id=_SOURCE_A, resolved=resolved, input_fingerprint="payload-fp")
     session.commit()
     session.refresh(run)
 
+    config_fingerprint = resolved.config_fingerprint()
     assert run.derivation_key == extraction_derivation_key(
-        extractor_version="spacy-en_core_web_sm-3.7-v1",
-        materializer_version="2",
-        input_policy="contextualized",
-        upstream_derivation_key="upstream-key",
+        input_fingerprint="payload-fp", config_fingerprint=config_fingerprint
     )
     assert json.loads(run.version_stamps_json) == {
         "extractor_version": "spacy-en_core_web_sm-3.7-v1",
         "materializer_version": "2",
         "input_policy": "contextualized",
+        "input_fingerprint": "payload-fp",
+        "config_fingerprint": config_fingerprint,
+        "derivation_key_format": DERIVATION_KEY_FORMAT,
     }
 
 
@@ -245,14 +251,14 @@ def test_open_extraction_run_records_key_and_stamps_from_same_inputs(session: Se
 def test_mentions_append_only(session: Session) -> None:
     """A persisted mention is never mutated when its source is re-extracted."""
     _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp announced results.")
-    run1 = _open_run(session, upstream_derivation_key="key-1")
+    run1 = _open_run(session, input_fingerprint="key-1")
     draft = _source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9))
     [original] = _persist(session, run=run1, drafts=[draft])
     session.refresh(original)
     original_state = original.model_dump()
 
     # Re-extract the source with a changed derivation key: opens a superseding run.
-    run2 = _open_run(session, upstream_derivation_key="key-2")
+    run2 = _open_run(session, input_fingerprint="key-2")
     assert run2.id != run1.id
     _persist(session, run=run2, drafts=[draft])
 
@@ -266,16 +272,16 @@ def test_re_extraction_supersedes_and_retains(session: Session) -> None:
     _seed_chunk(session, chunk_id=_cid("chunk-a1"), text="Acme Corp is a company.", source_id=_SOURCE_A)
     _seed_chunk(session, chunk_id=_cid("chunk-b1"), text="Globex Inc is a company.", source_id=_SOURCE_B)
 
-    run_a1 = _open_run(session, source_id=_SOURCE_A, upstream_derivation_key="a-key-1")
+    run_a1 = _open_run(session, source_id=_SOURCE_A, input_fingerprint="a-key-1")
     draft_a = _source_draft(chunk_id=_cid("chunk-a1"), surface_form="Acme Corp", span=(0, 9))
     _persist(session, run=run_a1, drafts=[draft_a])
 
-    run_b1 = _open_run(session, source_id=_SOURCE_B, upstream_derivation_key="b-key-1")
+    run_b1 = _open_run(session, source_id=_SOURCE_B, input_fingerprint="b-key-1")
     draft_b = _source_draft(chunk_id=_cid("chunk-b1"), surface_form="Globex Inc", span=(0, 10))
     _persist(session, run=run_b1, drafts=[draft_b])
 
     # Re-extract source A only.
-    run_a2 = _open_run(session, source_id=_SOURCE_A, upstream_derivation_key="a-key-2")
+    run_a2 = _open_run(session, source_id=_SOURCE_A, input_fingerprint="a-key-2")
     _persist(session, run=run_a2, drafts=[draft_a])
 
     session.refresh(run_a1)
@@ -306,10 +312,10 @@ def test_run_scoped_rows_distinct_occurrence_key_stable(session: Session) -> Non
     _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp announced results.")
     draft = _source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9))
 
-    run1 = _open_run(session, upstream_derivation_key="key-1")
+    run1 = _open_run(session, input_fingerprint="key-1")
     [mention1] = _persist(session, run=run1, drafts=[draft])
 
-    run2 = _open_run(session, upstream_derivation_key="key-2")
+    run2 = _open_run(session, input_fingerprint="key-2")
     [mention2] = _persist(session, run=run2, drafts=[draft])
 
     assert mention1.mention_id != mention2.mention_id
@@ -361,9 +367,9 @@ def test_revision_rows_distinct_across_runs_comparable_by_chunk_and_surface(sess
     )
     draft = _revision_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", input_span=(0, 9))
 
-    run1 = _open_run(session, upstream_derivation_key="key-1")
+    run1 = _open_run(session, input_fingerprint="key-1")
     [mention1] = _persist(session, run=run1, drafts=[draft])
-    run2 = _open_run(session, upstream_derivation_key="key-2")
+    run2 = _open_run(session, input_fingerprint="key-2")
     [mention2] = _persist(session, run=run2, drafts=[draft])
 
     assert mention1.mention_id != mention2.mention_id
@@ -641,11 +647,11 @@ def test_persist_mentions_rejects_wrong_stage_run(session: Session) -> None:
 def test_persist_mentions_rejects_superseded_run(session: Session) -> None:
     """A superseded extraction run is refused; the prior run's mentions are unaffected."""
     _seed_chunk(session, chunk_id=_cid("chunk-1"), text="Acme Corp announced results.")
-    run1 = _open_run(session, upstream_derivation_key="key-1")
+    run1 = _open_run(session, input_fingerprint="key-1")
     draft = _source_draft(chunk_id=_cid("chunk-1"), surface_form="Acme Corp", span=(0, 9))
     _persist(session, run=run1, drafts=[draft])
 
-    run2 = _open_run(session, upstream_derivation_key="key-2")
+    run2 = _open_run(session, input_fingerprint="key-2")
     session.refresh(run1)
     assert run1.status == RunStatus.SUPERSEDED
 
@@ -922,32 +928,46 @@ def _seed_chunking_run(
     chunk_texts: "Sequence[tuple[str, str]]",
     derivation_key: str = "chunking-key-1",
 ) -> PipelineRun:
-    """Seed Chunk rows plus a chunking run and manifest, the shape ``extract_document`` reads.
+    """Seed Chunk rows plus a chunking run, manifest, and ``ChunkRunInput``, the shape ``extract_document`` reads.
 
-    Bypasses ``persist_chunks`` (which also records ``ChunkRunInput`` and indexes
-    raw content, neither of which ``extract_document`` reads) so the test only
-    builds what :func:`~aizk.graph.persistence.document_order_chunks` needs: Chunk
-    rows and manifest entries carrying document order via ``span_start``. Each
-    ``chunk_texts`` entry names a readable label, mapped to a deterministic
-    surrogate ``chunk_id`` via :func:`_cid`.
+    Bypasses ``persist_chunks`` (whose Markdown/content-index machinery this
+    module does not exercise), building only what
+    :func:`~aizk.graph.persistence.document_order_chunks` and
+    ``extract_document``'s upstream-output revalidation need: Chunk rows,
+    manifest entries carrying document order via ``span_start``, and a
+    :class:`~aizk.graph.datamodel.ChunkRunInput` whose ``chunk_set_fingerprint``
+    is computed the same way :func:`~aizk.graph.persistence.persist_chunks`
+    would. Each ``chunk_texts`` entry names a readable label, mapped to a
+    deterministic surrogate ``chunk_id`` via :func:`_cid`.
     """
     run = record_run(session, stage=CHUNKING_STAGE, scope_id=source_id, derivation_key=derivation_key)
     cursor = 0
+    chunks: list[Chunk] = []
     for ordinal, (label, text) in enumerate(chunk_texts):
         chunk_id = _cid(label)
-        session.add(
-            Chunk(
-                chunk_id=chunk_id,
-                content_hash=xxhash.xxh64(text.encode("utf-8")).hexdigest(),
-                source_id=source_id,
-                heading_path_json="[]",
-                ordinal=ordinal,
-                text=text,
-                char_count=len(text),
-            )
+        chunk = Chunk(
+            chunk_id=chunk_id,
+            content_hash=xxhash.xxh64(text.encode("utf-8")).hexdigest(),
+            source_id=source_id,
+            heading_path_json="[]",
+            ordinal=ordinal,
+            text=text,
+            char_count=len(text),
         )
+        session.add(chunk)
         session.add(ChunkRunManifest(run_id=run.id, chunk_id=chunk_id, span_start=cursor, span_end=cursor + len(text)))
+        chunks.append(chunk)
         cursor += len(text) + 1
+    session.add(
+        ChunkRunInput(
+            run_id=run.id,
+            conversion_output_id=f"co-{run.id}",
+            markdown_hash_xx64="deadbeefdeadbeef",
+            chunk_set_fingerprint=payload_fingerprint(
+                [PayloadItem(chunk_key(c), "raw", content_fingerprint(c.text)) for c in chunks]
+            ),
+        )
+    )
     session.commit()
     session.refresh(run)
     return run

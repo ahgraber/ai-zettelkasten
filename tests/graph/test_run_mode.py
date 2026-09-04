@@ -26,7 +26,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.datamodel import ContextualizationJob, ContextualizedChunk, DocumentSummary
-from aizk.graph.llm import StubLLMClient
+from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.graph.persistence import manifest_of_run, run_input
 from aizk.graph.workunit import (
     LoadedMarkdown,
@@ -94,6 +94,7 @@ def _run(engine, *, conversion_output_id: int = _OUTPUT_ID, source_id: UUID = _A
         conversion_output_id=conversion_output_id,
         markdown_source=_StubMarkdownSource(_MARKDOWN),
         freshness=_AlwaysCurrent(),
+        model_config=STUB_MODEL_CONFIG,
     )
     assert isinstance(result, ProcessResult)
     return result
@@ -254,6 +255,7 @@ def test_process_document_rejects_markdown_hash_mismatch(tmp_path: Path) -> None
             conversion_output_id=_OUTPUT_ID,
             markdown_source=_DriftingSource(),
             freshness=_AlwaysCurrent(),
+            model_config=STUB_MODEL_CONFIG,
         )
     with Session(engine) as session:
         assert session.exec(select(PipelineRun)).all() == []
@@ -277,6 +279,7 @@ def test_process_document_reuses_summary_text_on_rerun(tmp_path: Path) -> None:
         conversion_output_id=_OUTPUT_ID,
         markdown_source=source,
         freshness=_AlwaysCurrent(),
+        model_config=STUB_MODEL_CONFIG,
     )
     summary_calls_after_first = sum("summary_prompt" in p for p in client.prompts)
 
@@ -287,6 +290,7 @@ def test_process_document_reuses_summary_text_on_rerun(tmp_path: Path) -> None:
         conversion_output_id=_OUTPUT_ID,
         markdown_source=source,
         freshness=_AlwaysCurrent(),
+        model_config=STUB_MODEL_CONFIG,
     )
     summary_calls_after_second = sum("summary_prompt" in p for p in client.prompts)
 
@@ -334,6 +338,7 @@ def test_variants_regenerate_under_reused_summary_use_persisted_summary(
         conversion_output_id=_OUTPUT_ID,
         markdown_source=_StubMarkdownSource(_MARKDOWN),
         freshness=_AlwaysCurrent(),
+        model_config=STUB_MODEL_CONFIG,
     )
 
     # The summary was reused — the rerun made no summary call.
@@ -368,6 +373,7 @@ def test_process_document_skips_writes_when_cancelled(tmp_path: Path) -> None:
         conversion_output_id=_OUTPUT_ID,
         markdown_source=_StubMarkdownSource(_MARKDOWN),
         freshness=_AlwaysCurrent(),
+        model_config=STUB_MODEL_CONFIG,
         is_cancelled=lambda: True,
     )
     assert isinstance(result, Cancelled)

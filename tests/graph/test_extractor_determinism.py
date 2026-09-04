@@ -89,3 +89,21 @@ def test_gliner2_extractor_is_deterministic() -> None:
 
     assert first == second
     assert len(first) > 0, "the fixture text must exercise at least one detection"
+
+
+@pytest.mark.skipif(not _spacy_available(), reason="spaCy / en_core_web_sm not installed (uv sync --group ner)")
+def test_resolve_extraction_config_agrees_with_a_constructed_spacy_extractor() -> None:
+    """The cheap, no-model-load resolution reports the same version a constructed extractor does.
+
+    A currentness check must never disagree with what the worker would actually
+    extract under, so :func:`~aizk.graph.extraction.resolve_extraction_config`'s
+    ``extractor_version`` (derived from installed-package metadata alone) must
+    equal :class:`~aizk.graph.extraction.SpacyExtractor`'s (derived from loading
+    the pipeline).
+    """
+    from aizk.graph.config import ExtractionConfig
+    from aizk.graph.extraction import SpacyExtractor, resolve_extraction_config
+
+    resolved = resolve_extraction_config(ExtractionConfig(_env_file=None, extractor="spacy"))
+
+    assert resolved.extractor_version == SpacyExtractor().extractor_version

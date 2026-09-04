@@ -198,8 +198,9 @@ def _load_detail(
     :func:`resolve_chunk_text` over the active variant run's committed variant
     (revision, or the raw chunk text marked self-contained when the revision is
     empty), distinct from the raw chunk. Surfaces provenance — the producing variant
-    run with its ``context_version`` and ``model_profile``, plus lineage to the
-    document summary, the chunking generation, and the source markdown — and
+    run with its ``context_version`` and resolved model identity
+    (``model_provider`` / ``model_model``), plus lineage to the document summary,
+    the chunking generation, and the source markdown — and
     reconstructs the source markdown **on demand** through the injected blob reader;
     a missing conversion output degrades the markdown section rather than failing the
     page. ``search_terms`` are marked on the rendered raw / contextualized text.
@@ -233,7 +234,8 @@ def _load_detail(
                 "variant_run_id": variant_run.id,
                 "variant_run_status": variant_run.status.value,
                 "context_version": variant.context_version,
-                "model_profile": stamps.get("model_profile", ""),
+                "model_provider": stamps.get("model_provider", ""),
+                "model_model": stamps.get("model_model", ""),
                 "summary_run_id": variant.summary_run_id,
                 "summary_run_status": summary_run.status.value if summary_run is not None else "",
                 "summary_id": summary.id if summary is not None else None,

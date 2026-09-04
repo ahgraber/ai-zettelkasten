@@ -69,7 +69,7 @@ def build_graph_descriptor(
     extra_actions: list[StageAction] | None = None,
     pending_count: "Callable[[Session], int] | None" = None,
     pending_sources: "Callable[[Session, int], list[UUID]] | None" = None,
-    stale_sources: "Callable[[Session], set[UUID]] | None" = None,
+    currentness: "Callable[[Session], dict[UUID, str]] | None" = None,
 ) -> StageDescriptor:
     """Build a :class:`StageDescriptor` for one graph pipeline stage.
 
@@ -86,9 +86,14 @@ def build_graph_descriptor(
     lists it, bounded to the console's page-size ceiling so the listing does bounded
     work whatever the backlog's size. Declare both or neither — a descriptor
     declaring only one is rejected by :class:`~aizk.console.descriptors.StageDescriptor`.
-    ``stale_sources`` gives the stage a stale count and marks its stale monitor rows,
-    so an operator can select them together. Omitting it leaves that console surface
-    absent.
+    ``currentness`` maps a stage's classified source ids to their currentness value
+    (a stage-defined string; extraction's is one of ``"current"``,
+    ``"needs_reconciliation"``, ``"stale"`` — see
+    :class:`~aizk.graph.extraction_run.Currentness`); a source absent from the
+    mapping is unclassified. It gives the stage a stale count (sources whose value
+    is ``"stale"``) and marks each monitor row's currentness, so an operator can
+    distinguish and select stale and needs-reconciliation rows together. Omitting
+    it leaves that console surface absent.
     """
     sortable_columns: dict[str, Any] = {
         "job_id": model.id,
@@ -144,14 +149,15 @@ def build_graph_descriptor(
             session, base_query, filtered_query, _sort_clause(sort, direction), limit, offset
         )
 
-        # Resolved once per page: a stale verdict reads the source's runs, so a
-        # per-row lookup would cost a query per listed unit.
-        stale = stale_sources(session) if stale_sources is not None else None
+        # Resolved once per page: a currentness verdict reads the source's runs,
+        # so a per-row lookup would cost a query per listed unit.
+        currentness_by_source = currentness(session) if currentness is not None else None
 
         jobs: list[dict[str, Any]] = []
         for job, source in rows:
             if job.id is None:
                 continue
+            job_currentness = None if currentness_by_source is None else currentness_by_source.get(job.source_id)
             jobs.append(
                 {
                     "id": job.id,
@@ -163,7 +169,8 @@ def build_graph_descriptor(
                     "started_at": format_dt(job.started_at),
                     "finished_at": format_dt(job.finished_at),
                     "error_code": job.error_code or "",
-                    "stale": None if stale is None else job.source_id in stale,
+                    "currentness": job_currentness,
+                    "stale": None if currentness_by_source is None else job_currentness == "stale",
                 }
             )
 
@@ -247,8 +254,8 @@ def build_graph_descriptor(
         ]
 
     def stale_count(session: "Session", _principal: "Principal") -> int:
-        """Count the sources whose completed work consumed since-superseded upstream state."""
-        return len(stale_sources(session))  # type: ignore[misc] -- only wired when declared
+        """Count the sources whose currentness value is ``"stale"`` — not the wider re-admittable set."""
+        return sum(1 for value in currentness(session).values() if value == "stale")  # type: ignore[misc]
 
     return StageDescriptor(
         key=key,
@@ -274,5 +281,5 @@ def build_graph_descriptor(
         failed_split=failed_split,
         pending_count=_pending_count if pending_count is not None else None,
         pending_list=_pending_list if pending_sources is not None else None,
-        stale_count=stale_count if stale_sources is not None else None,
+        stale_count=stale_count if currentness is not None else None,
     )

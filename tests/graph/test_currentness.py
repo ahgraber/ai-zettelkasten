@@ -22,7 +22,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.graph.content_index import CONTENT_FTS_DDL
-from aizk.graph.llm import StubLLMClient
+from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.graph.markdown_source import ConversionOutputFreshness, S3MarkdownSource
 from aizk.graph.persistence import run_input
 from aizk.graph.workunit import LoadedMarkdown, ProcessResult, SkippedSuperseded, process_document
@@ -107,6 +107,7 @@ def test_stale_output_cannot_supersede_newer(tmp_path: Path) -> None:
         conversion_output_id=2,
         markdown_source=markdown_source,
         freshness=freshness,
+        model_config=STUB_MODEL_CONFIG,
     )
     assert isinstance(newer, ProcessResult)
     assert _active_chunking_input(engine, _AIZK_UUID) == "2"
@@ -119,6 +120,7 @@ def test_stale_output_cannot_supersede_newer(tmp_path: Path) -> None:
         conversion_output_id=1,
         markdown_source=markdown_source,
         freshness=freshness,
+        model_config=STUB_MODEL_CONFIG,
     )
     assert isinstance(older, SkippedSuperseded)
     assert older.conversion_output_id == 1
@@ -179,6 +181,7 @@ def test_superseded_output_is_skipped_before_fetch_and_generation(tmp_path: Path
         conversion_output_id=1,  # already superseded by output 2
         markdown_source=source,
         freshness=ConversionOutputFreshness(),
+        model_config=STUB_MODEL_CONFIG,
     )
 
     assert isinstance(result, SkippedSuperseded)
@@ -224,6 +227,7 @@ def test_generation_runs_before_the_write_transaction(tmp_path: Path) -> None:
         conversion_output_id=1,
         markdown_source=_InMemorySource(_MARKDOWN_NEW),
         freshness=freshness,
+        model_config=STUB_MODEL_CONFIG,
     )
 
     assert isinstance(result, ProcessResult)
@@ -260,6 +264,7 @@ def test_output_from_another_source_is_not_persisted_under_the_wrong_source(tmp_
         conversion_output_id=2,
         markdown_source=markdown_source,
         freshness=ConversionOutputFreshness(),
+        model_config=STUB_MODEL_CONFIG,
     )
 
     assert isinstance(result, SkippedSuperseded)

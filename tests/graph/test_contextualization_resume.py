@@ -41,14 +41,17 @@ from aizk.graph.datamodel import (
     MEMO_KIND_REVISION,
     MEMO_KIND_SUMMARY,
     ContextualizationOutputMemo,
+    ContextualizationRunApplicability,
     ContextualizedChunk,
     DocumentSummary,
+    SummaryRunApplicability,
 )
 from aizk.graph.handler import ContextualizationStageHandler
-from aizk.graph.llm import StubLLMClient
+from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 import aizk.graph.persistence as persistence_mod
 from aizk.graph.persistence import memo_get, persist_chunks
 from aizk.graph.workunit import LoadedMarkdown, ProcessResult, process_document
+from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.lifecycle import RetryClass
 from aizk.pipeline.run import PipelineRun, RunStatus
 from aizk.utilities.hashing import compute_markdown_hash
@@ -212,6 +215,7 @@ def _process(
         conversion_output_id=conversion_output_id,
         markdown_source=_StubMarkdownSource(markdown),
         freshness=_AlwaysCurrent(),
+        model_config=STUB_MODEL_CONFIG,
     )
     assert isinstance(result, ProcessResult)
     return result
@@ -252,7 +256,7 @@ def test_first_contextualization_summary_is_memoized_and_reused_with_zero_summar
     """A first-contextualization summary is retained and reused on retry with no summary model call."""
     first = StubLLMClient(responder=_responder(summary="summary-one"))
     summary_text = resolve_summary_text(
-        engine, first, source_id=_SCOPE, markdown_hash_xx64=_HASH, document_text=_DOC_TEXT
+        engine, first, source_id=_SCOPE, document_text=_DOC_TEXT, model_config=STUB_MODEL_CONFIG
     )
     assert summary_text == "summary-one"
     assert len(_summary_calls(first)) == 1
@@ -260,7 +264,9 @@ def test_first_contextualization_summary_is_memoized_and_reused_with_zero_summar
 
     # A retry under unchanged inputs: a client that *would* differ must not be consulted.
     retry = StubLLMClient(responder=_responder(summary="summary-two"))
-    reused = resolve_summary_text(engine, retry, source_id=_SCOPE, markdown_hash_xx64=_HASH, document_text=_DOC_TEXT)
+    reused = resolve_summary_text(
+        engine, retry, source_id=_SCOPE, document_text=_DOC_TEXT, model_config=STUB_MODEL_CONFIG
+    )
     assert reused == "summary-one", "the retry reuses the retained summary, not a fresh one"
     assert retry.prompts == [], "no model call when the summary is memo-reused"
 
@@ -274,9 +280,9 @@ def test_per_chunk_revision_is_reused_from_the_memo_on_retry(engine: Engine) -> 
         first,
         source_id=_SCOPE,
         summary_text="the summary",
-        markdown_hash_xx64=_HASH,
         ordered_chunks=chunks,
         splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
     )
     assert len(_context_calls(first)) == 2
 
@@ -287,9 +293,9 @@ def test_per_chunk_revision_is_reused_from_the_memo_on_retry(engine: Engine) -> 
         retry,
         source_id=_SCOPE,
         summary_text="the summary",
-        markdown_hash_xx64=_HASH,
         ordered_chunks=chunks,
         splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
     )
     assert reused == first_revisions, "retry yields the retained revisions verbatim"
     assert retry.prompts == [], "no model call when every revision is memo-reused"
@@ -316,9 +322,9 @@ def test_active_variant_run_precheck_skips_all_generation(engine: Engine) -> Non
         probe,
         source_id=_SCOPE,
         summary_text=str(summary_text),
-        markdown_hash_xx64=compute_markdown_hash(_MARKDOWN),
         ordered_chunks=ordered,
         splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
     )
     assert revisions is None, "a complete active variant run is signalled for reuse without generation"
     assert probe.prompts == [], "zero revision model calls when the active run matches"
@@ -339,9 +345,9 @@ def test_invalid_revision_is_not_retained_and_is_re_invoked_on_retry(engine: Eng
             row_key_probe,
             source_id=_SCOPE,
             summary_text="summary",
-            markdown_hash_xx64=_HASH,
             ordered_chunks=[working],
             splitter_version=SPLITTER_VERSION,
+            model_config=STUB_MODEL_CONFIG,
         )
     assert _memo_rows(engine, _SCOPE, MEMO_KIND_REVISION) == [], "the invalid revision was not retained"
 
@@ -352,9 +358,9 @@ def test_invalid_revision_is_not_retained_and_is_re_invoked_on_retry(engine: Eng
         good,
         source_id=_SCOPE,
         summary_text="summary",
-        markdown_hash_xx64=_HASH,
         ordered_chunks=[working],
         splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
     )
     assert len(_context_calls(good)) == 1, "the previously-invalid chunk is re-invoked"
     assert revisions[0].startswith("rev::")
@@ -364,11 +370,15 @@ def test_invalid_summary_is_not_retained_and_is_re_invoked_on_retry(engine: Engi
     """An overlong summary is not memoized, so a retry re-invokes the summary pass."""
     overlong = StubLLMClient(responder=lambda _prompt: "x" * (MAX_SUMMARY_CHARS + 1))
     with pytest.raises(ValueError, match="summary is too long"):
-        resolve_summary_text(engine, overlong, source_id=_SCOPE, markdown_hash_xx64=_HASH, document_text=_DOC_TEXT)
+        resolve_summary_text(
+            engine, overlong, source_id=_SCOPE, document_text=_DOC_TEXT, model_config=STUB_MODEL_CONFIG
+        )
     assert _memo_rows(engine, _SCOPE, MEMO_KIND_SUMMARY) == [], "the invalid summary was not retained"
 
     good = StubLLMClient(responder=_responder(summary="valid summary"))
-    resolved = resolve_summary_text(engine, good, source_id=_SCOPE, markdown_hash_xx64=_HASH, document_text=_DOC_TEXT)
+    resolved = resolve_summary_text(
+        engine, good, source_id=_SCOPE, document_text=_DOC_TEXT, model_config=STUB_MODEL_CONFIG
+    )
     assert resolved == "valid summary"
     assert len(_summary_calls(good)) == 1, "the summary is re-invoked after the invalid attempt"
 
@@ -382,9 +392,9 @@ def test_empty_self_contained_revision_is_retained_and_reused(engine: Engine) ->
         first,
         source_id=_SCOPE,
         summary_text="summary",
-        markdown_hash_xx64=_HASH,
         ordered_chunks=chunks,
         splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
     )
     assert revisions == [""], "an empty (self-contained) revision is a valid output"
     # Present-empty is a hit, not absence: the memo holds a row whose value is ''.
@@ -396,9 +406,9 @@ def test_empty_self_contained_revision_is_retained_and_reused(engine: Engine) ->
         retry,
         source_id=_SCOPE,
         summary_text="summary",
-        markdown_hash_xx64=_HASH,
         ordered_chunks=chunks,
         splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
     )
     assert reused == [""]
     assert retry.prompts == [], "an already-self-contained chunk is not re-invoked"
@@ -438,16 +448,16 @@ def test_no_memo_write_transaction_spans_a_model_call(engine: Engine, monkeypatc
     client = StubLLMClient(responder=asserting)
     chunks = [_chunk("alpha chunk", 0), _chunk("beta chunk", 1)]
     summary_text = resolve_summary_text(
-        engine, client, source_id=_SCOPE, markdown_hash_xx64=_HASH, document_text=_DOC_TEXT
+        engine, client, source_id=_SCOPE, document_text=_DOC_TEXT, model_config=STUB_MODEL_CONFIG
     )
     resolve_revisions(
         engine,
         client,
         source_id=_SCOPE,
         summary_text=summary_text,
-        markdown_hash_xx64=_HASH,
         ordered_chunks=chunks,
         splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
     )
     assert len(_context_calls(client)) == 2, "both chunks were generated (none held a write lock)"
 
@@ -510,6 +520,7 @@ def test_retry_resumes_and_matches_an_uninterrupted_run(tmp_path: Path) -> None:
             conversion_output_id=_OUTPUT_ID,
             markdown_source=_StubMarkdownSource(_MARKDOWN),
             freshness=_AlwaysCurrent(),
+            model_config=STUB_MODEL_CONFIG,
         )
     # Nothing persisted on the failed attempt.
     assert _active_runs(resume_engine, _SCOPE) == {}
@@ -557,6 +568,7 @@ def test_retained_work_for_one_source_is_not_reused_for_another(engine: Engine) 
             conversion_output_id=_OUTPUT_ID,
             markdown_source=_StubMarkdownSource(_MARKDOWN),
             freshness=_AlwaysCurrent(),
+            model_config=STUB_MODEL_CONFIG,
         )
     assert _memo_rows(engine, _SCOPE, MEMO_KIND_SUMMARY), "source A retained its summary"
 
@@ -577,6 +589,7 @@ def test_partial_failure_leaves_no_readable_generation(engine: Engine) -> None:
             conversion_output_id=_OUTPUT_ID,
             markdown_source=_StubMarkdownSource(_MARKDOWN),
             freshness=_AlwaysCurrent(),
+            model_config=STUB_MODEL_CONFIG,
         )
 
     assert _active_runs(engine, _SCOPE) == {}, "no run is active for the source"
@@ -601,6 +614,7 @@ def test_partial_failure_under_changed_inputs_leaves_prior_generation_unchanged(
             conversion_output_id=43,
             markdown_source=_StubMarkdownSource(changed_markdown),
             freshness=_AlwaysCurrent(),
+            model_config=STUB_MODEL_CONFIG,
         )
 
     assert _variant_snapshot(engine, _SCOPE) == before, "the prior completed generation is undisturbed"
@@ -612,7 +626,7 @@ def test_incremental_durability_checkpoints_each_output(engine: Engine) -> None:
     # Fail on the 3rd chunk → summary + first 2 revisions are checkpointed, the rest are not.
     failing = StubLLMClient(responder=_fail_after_k_context(2))
     summary_text = resolve_summary_text(
-        engine, failing, source_id=_SCOPE, markdown_hash_xx64=_HASH, document_text=_DOC_TEXT
+        engine, failing, source_id=_SCOPE, document_text=_DOC_TEXT, model_config=STUB_MODEL_CONFIG
     )
     with pytest.raises(RuntimeError, match="model failed on context call"):
         resolve_revisions(
@@ -620,9 +634,9 @@ def test_incremental_durability_checkpoints_each_output(engine: Engine) -> None:
             failing,
             source_id=_SCOPE,
             summary_text=summary_text,
-            markdown_hash_xx64=_HASH,
             ordered_chunks=chunks,
             splitter_version=SPLITTER_VERSION,
+            model_config=STUB_MODEL_CONFIG,
         )
 
     assert len(_memo_rows(engine, _SCOPE, MEMO_KIND_SUMMARY)) == 1, "the summary is checkpointed"
@@ -650,6 +664,7 @@ def test_summarize_document_reuse_with_mismatched_planned_summary_is_retryable(e
             conversion_output_id="out",
             markdown_hash_xx64=_HASH,
             document_text=_DOC_TEXT,
+            model_config=STUB_MODEL_CONFIG,
         )
         session.commit()
 
@@ -662,8 +677,15 @@ def test_summarize_document_reuse_with_mismatched_planned_summary_is_retryable(e
             conversion_output_id="out",
             markdown_hash_xx64=_HASH,
             document_text=_DOC_TEXT,
+            model_config=STUB_MODEL_CONFIG,
             precomputed_summary_text="summary-Y",
         )
+
+    # Nothing from the failed attempt was committed: still exactly the one summary,
+    # and no applicability row (the mismatch is caught before any write).
+    with Session(engine) as check:
+        assert len(check.exec(select(DocumentSummary)).all()) == 1, "no new summary was committed"
+        assert check.exec(select(SummaryRunApplicability)).all() == [], "no applicability row was committed"
 
 
 def test_contextualize_chunks_reuse_only_without_active_run_is_retryable(engine: Engine) -> None:
@@ -681,6 +703,7 @@ def test_contextualize_chunks_reuse_only_without_active_run_is_retryable(engine:
             source_id=_SCOPE,
             conversion_output_id="out",
             markdown_hash_xx64=_HASH,
+            markdown_fingerprint=content_fingerprint(_HASH),
             splitter_version=SPLITTER_VERSION,
             chunks=chunks,
         )
@@ -691,6 +714,7 @@ def test_contextualize_chunks_reuse_only_without_active_run_is_retryable(engine:
             conversion_output_id="out",
             markdown_hash_xx64=_HASH,
             document_text=_DOC_TEXT,
+            model_config=STUB_MODEL_CONFIG,
         )
         # No active variant run exists, so reuse_only cannot be satisfied.
         with pytest.raises(StalePlanError, match="planned for reuse is no longer active"):
@@ -702,9 +726,13 @@ def test_contextualize_chunks_reuse_only_without_active_run_is_retryable(engine:
                 chunks=persisted,
                 chunking_run_id=run.id,
                 splitter_version=SPLITTER_VERSION,
+                model_config=STUB_MODEL_CONFIG,
                 precomputed_revisions=None,
                 reuse_only=True,
             )
+        # No variant run and no applicability row were created by the failed plan.
+        assert session.exec(select(PipelineRun).where(PipelineRun.stage == "chunk_contextualization")).all() == []
+        assert session.exec(select(ContextualizationRunApplicability)).all() == []
 
 
 def test_stale_plan_error_is_classified_retryable_not_permanent() -> None:
@@ -713,7 +741,7 @@ def test_stale_plan_error_is_classified_retryable_not_permanent() -> None:
     A ValueError maps to a permanent failure; StalePlanError must not, so a stale
     plan re-resolves on the next attempt instead of permanently failing the unit.
     """
-    handler = ContextualizationStageHandler(None, None, None, None)  # type: ignore[arg-type]
+    handler = ContextualizationStageHandler(None, None, None, None, model_config=STUB_MODEL_CONFIG)  # type: ignore[arg-type]
     outcome = handler.map_result(StalePlanError("stale"))
     assert outcome.retry_class is RetryClass.RETRYABLE
     assert not isinstance(StalePlanError("stale"), ValueError), "must not be a ValueError (permanent)"
@@ -732,19 +760,11 @@ def memo_get_via(engine: Engine, kind: str, scope: UUID, derivation_key: str) ->
 
 def _revision_key(chunk: SplitterChunk) -> str:
     """Compute the per-row revision derivation key for a single-chunk document."""
-    from aizk.graph._version import SUMMARY_VERSION
-    from aizk.graph.contextualization import (
-        _summary_derivation_key,
-        _summary_identity_from_text,
-        _variant_row_derivation_key,
-    )
-
-    summary_derivation_key = _summary_derivation_key(_HASH, SUMMARY_VERSION, "default")
-    summary_identity = _summary_identity_from_text("summary", SUMMARY_VERSION, summary_derivation_key)
     from aizk.graph._version import CONTEXT_VERSION
+    from aizk.graph.contextualization import contextualization_row_derivation_key
 
-    return _variant_row_derivation_key(
-        summary_identity, chunk, None, None, None, SPLITTER_VERSION, CONTEXT_VERSION, "default"
+    return contextualization_row_derivation_key(
+        "summary", chunk, None, None, None, SPLITTER_VERSION, CONTEXT_VERSION, STUB_MODEL_CONFIG
     )
 
 
@@ -754,10 +774,10 @@ def _all_runs(engine: Engine, scope: UUID) -> Iterator[PipelineRun]:
         yield from session.exec(select(PipelineRun).where(PipelineRun.scope_id == scope)).all()
 
 
-# Helpers used above for memo reads on the summary key need the summary derivation key.
+# Helper used above for memo reads on the summary key needs the summary derivation key.
 def _summary_key() -> str:
     """Compute the summary derivation key used by the resolve-level tests."""
     from aizk.graph._version import SUMMARY_VERSION
-    from aizk.graph.contextualization import _summary_derivation_key
+    from aizk.graph.contextualization import summary_derivation_key
 
-    return _summary_derivation_key(_HASH, SUMMARY_VERSION, "default")
+    return summary_derivation_key(_DOC_TEXT, SUMMARY_VERSION, STUB_MODEL_CONFIG)

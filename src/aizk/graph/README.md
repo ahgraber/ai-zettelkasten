@@ -33,12 +33,13 @@ A stage's work-units are created by **admission**: each stage declares, over cur
 Admission is a query, not an event — nothing pushes work into the graph — so a unit that failed to be created is simply created on the next pass, and adding a stage later pulls the existing corpus through by declaring what it consumes rather than by a one-off script.
 It is distinct from the runtime's _discovery_, which selects already-queued units to claim.
 
-| Stage             | pending exactly when                                               | stale                                                              |
-| ----------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------ |
-| contextualization | the source's newest `ConversionOutput` has no work-unit            | n/a — a re-converted source becomes pending again                  |
-| extraction        | the source has an active chunking run and no work-unit, any status | its active extraction run consumed upstream state since superseded |
+| Stage             | pending exactly when                                               | stale                                                                                         |
+| ----------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| contextualization | the source's newest `ConversionOutput` has no work-unit            | n/a — a re-converted source becomes pending again                                             |
+| extraction        | the source has an active chunking run and no work-unit, any status | its active run's recorded input or config fingerprint differs from the currently-resolved one |
 
-Extraction's work-unit is keyed by the source alone, so a completed source that falls behind is **stale, not pending**: nothing re-admits it automatically, and an operator re-extracts it through the console's `Re-extract` action (see below).
+A byte-equivalent regeneration of the same upstream content is _needs reconciliation_, not stale.
+Extraction's work-unit is keyed by the source alone, so a completed source that falls behind is **stale or needs-reconciliation, not pending**: nothing re-admits it automatically, and an operator resolves it through the console's `Re-extract` action (see below), which reconciles or re-extracts depending on the candidate key.
 
 Three surfaces create work, all through the same two enqueue primitives:
 
@@ -105,17 +106,28 @@ contextualized_chunk / mention
 
 ### The runs, concretely
 
-Each stage records its own run kind, superseding independently:
+Each stage records its own run kind, superseding independently.
+A run's derivation key is `sha256(input fingerprint, config fingerprint)` (`aizk.pipeline.identity.derivation_key`), composed from the input and config columns below.
+The output column names the fingerprint the stage persists so a downstream stage can compare against it without re-reading content (for extraction, the fingerprint of what it consumed):
 
-| Stage                     | derivation key (reuse / supersede signal)                                                                             | Output                              |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| `chunking`                | markdown hash + `splitter_version`                                                                                    | chunk identities + manifest + input |
-| `document_summary`        | markdown hash + `summary_version` + prompt hash + model profile                                                       | one document summary                |
-| `chunk_contextualization` | summary identity + chunk content keys + `splitter_version` + window + prompt hash + model profile + `context_version` | one variant per chunk               |
-| `mention_extraction`      | `extractor_version` + `materializer_version` + `input_policy` + upstream run's key                                    | mentions + co-occurrences           |
+| Stage                     | Input                                                                         | Config                                                                                         | Output                                                                                                               |
+| ------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `chunking`                | the source markdown's content fingerprint                                     | `splitter_version`                                                                             | chunk identities + manifest + input (`ChunkRunInput.chunk_set_fingerprint`)                                          |
+| `document_summary`        | the source markdown's content fingerprint                                     | resolved model identity + prompt hash + `summary_version`                                      | one document summary (`DocumentSummary.summary_text_fingerprint`)                                                    |
+| `chunk_contextualization` | the summary text's content fingerprint + ordered chunk content keys           | `splitter_version` + window policy + prompt hash + `context_version` + resolved model identity | one variant per chunk (`ContextualizationRunInput.output_fingerprint`)                                               |
+| `mention_extraction`      | the ordered `(chunk key, input kind, text)` payload extraction actually reads | `extractor_version` + `materializer_version` + `input_policy`                                  | mentions + co-occurrences (the consumed payload's fingerprint is recorded on `ExtractionRunInput.input_fingerprint`) |
 
-A version stamp (`splitter_version`, `summary_version`, `context_version`, `extractor_version`) bumps whenever a pass's output changes for unchanged inputs; because it's part of the derivation key, a bump supersedes even when the source content is identical.
-Mention extraction's _upstream run's key_ is the contextualization run's when `input_policy = contextualized`, else the chunking run's — so a change anywhere upstream flows through.
+A version stamp (`splitter_version`, `summary_version`, `context_version`, `extractor_version`) bumps whenever a pass's output changes for unchanged inputs; because it participates in the config fingerprint, a bump supersedes even when the source content is identical.
+Mention extraction's key carries no upstream run's key: an upstream change is observed through its effect on the payload extraction reads, not by naming the upstream run (see Provenance and applicability, below).
+
+### Provenance and applicability
+
+Two distinct records sit alongside each run.
+A `*_run_inputs` row (`ChunkRunInput`, `DocumentSummary`, `ContextualizationRunInput`, `ExtractionRunInput`) is written once, in the run's own transaction, and never updated — the exact inputs the producer consumed, plus the input/config fingerprints and `derivation_key_format` that produced the run's derivation key.
+A `*_run_applicability` row (`ChunkRunApplicability`, `SummaryRunApplicability`, `ContextualizationRunApplicability`, `ExtractionRunApplicability`) is append-only: when an upstream generation changes but the recomputed candidate key still equals the active run's derivation key — a byte-equivalent regeneration — the stage records that the active run also covers the new inputs, without opening a new run and without invoking the producer.
+
+Reconciliation is that write: no model or extractor calls, one validated insert.
+The `*_run_inputs` row still names what the producer consumed, while applicability accumulates the later input generations the active run covers.
 
 ## The artifact stores
 
@@ -197,7 +209,7 @@ Orchestration:
 - `process_document(session, client, job, markdown_source) -> ProcessResult` — the single write path.
 - `enqueue_document` / `enqueue_backfill` (domain) and `enqueue_output` / `enqueue_backfill_outputs` (resolve `conversion_output_id → ConversionOutput.source_id`).
   Both modes dedupe on `idempotency_key`, honor the stage's declared capacity, and feed the one write path, so the produced records are run-mode-independent.
-- Derivations: `pending_contextualization` (with its `_outputs` / `_sources` projections), `pending_extraction_sources`, `stale_extraction_sources`.
+- Derivations: `pending_contextualization` (with its `_outputs` / `_sources` projections), `pending_extraction_sources`, `classify_extraction_sources` / `classify_extraction_source` (the per-source and per-corpus tri-state currentness classification) and `stale_extraction_sources` (the STALE subset).
   Each is read-only, so the same query feeds both admission and the operator's coverage view and the two cannot disagree.
 - Admission: `AdmissionAdapter`, `admission_adapter_for`, `run_admission_pass`, `AdmissionLoop`; `StageAtCapacityError` and the `capacity` helpers.
 - `ContextualizationStageHandler` — the runtime `StageHandler` (claim / execute-in-own-transaction / finalize / recover / cancel; `ValueError` → permanent, other exceptions → retryable, success → succeeded; in-process, single-writer).
@@ -208,7 +220,8 @@ Operator surface (`aizk.graph.api`): the JSON API — `POST /v1/contextualizatio
 A stage that declares a pending-work derivation also gets a **pending** count on the dashboard and a listing of the sources behind it on its monitor page — work that by definition has no work-unit, so it cannot appear in the unit table.
 One that declares a staleness derivation gets a **stale** count and stale-marked monitor rows, selectable for its declared actions.
 Both are feature-detected, so a stage without the concept shows no figure.
-Extraction declares `Re-extract`: a requeue of a finished unit whose source is stale, which the worker then re-runs against the source's current active inputs, superseding the prior run.
+Extraction's monitor additionally marks a needs-reconciliation row distinctly from a stale one; the dashboard's stale count is the STALE class only, so a byte-equivalent regeneration awaiting reconciliation is not counted as stale.
+Extraction declares `Re-extract`: a requeue of a finished unit whose source is not current (stale or needs-reconciliation), which the worker then re-runs against the source's current active inputs — reconciling with zero extractor calls when the candidate key already matches the active run, otherwise extracting and superseding the prior run.
 It is the only path to re-extraction and is always operator-initiated.
 
 ### CLI

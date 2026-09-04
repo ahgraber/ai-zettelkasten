@@ -29,8 +29,9 @@ from aizk.db.migrations.versions.d3e4f5a6b7c8_add_graph_content_fts import (
 )
 from aizk.graph.content_index import index_chunk_content, index_contextualized_content, rebuild_content_index
 from aizk.graph.contextualization import contextualize_chunks, summarize_document
-from aizk.graph.llm import StubLLMClient
+from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.graph.persistence import persist_chunks
+from aizk.pipeline.identity import content_fingerprint
 
 _AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")
 _AIZK_UUID_B = UUID("22222222-2222-2222-2222-222222222222")
@@ -111,6 +112,7 @@ def _seed_chunk_and_variant(
         source_id=source_id,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=markdown_hash,
+        markdown_fingerprint=content_fingerprint(markdown_hash),
         splitter_version=SPLITTER_VERSION,
         chunks=[chunk],
     )
@@ -122,6 +124,7 @@ def _seed_chunk_and_variant(
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=markdown_hash,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
     assert chunking_run.id is not None
     contextualize_chunks(
@@ -132,6 +135,7 @@ def _seed_chunk_and_variant(
         chunks=[chunk_p],
         chunking_run_id=chunking_run.id,
         splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
         precomputed_revisions=[revision],
     )
     session.commit()
@@ -233,6 +237,7 @@ def test_backfill_indexes_superseded_then_reactivated_chunk(tmp_path: Path) -> N
             source_id=_AIZK_UUID,
             conversion_output_id=_OUTPUT,
             markdown_hash_xx64=_HASH_A,
+            markdown_fingerprint=content_fingerprint(_HASH_A),
             splitter_version=SPLITTER_VERSION,
             chunks=[target],
         )
@@ -248,6 +253,7 @@ def test_backfill_indexes_superseded_then_reactivated_chunk(tmp_path: Path) -> N
             source_id=_AIZK_UUID,
             conversion_output_id=_OUTPUT,
             markdown_hash_xx64=_HASH_B,
+            markdown_fingerprint=content_fingerprint(_HASH_B),
             splitter_version=SPLITTER_VERSION,
             chunks=[target_in_gen2, other],
         )
@@ -447,6 +453,7 @@ def test_live_insert_accepts_the_canonical_scope_key(session: Session, indexer: 
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
+        markdown_fingerprint=content_fingerprint(_HASH_A),
         splitter_version=SPLITTER_VERSION,
         chunks=[_make_chunk("distinct join probe text", ordinal=0)],
     )
@@ -475,6 +482,7 @@ def test_persisted_chunk_is_searchable(session: Session) -> None:
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
+        markdown_fingerprint=content_fingerprint(_HASH_A),
         splitter_version=SPLITTER_VERSION,
         chunks=[chunk],
     )
@@ -495,6 +503,7 @@ def test_reused_chunk_id_is_not_indexed_twice(session: Session) -> None:
         "source_id": _AIZK_UUID,
         "conversion_output_id": _OUTPUT,
         "markdown_hash_xx64": _HASH_A,
+        "markdown_fingerprint": content_fingerprint(_HASH_A),
         "splitter_version": SPLITTER_VERSION,
         "chunks": [chunk],
     }
@@ -549,6 +558,7 @@ def test_reused_variant_run_does_not_reindex(session: Session) -> None:
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
+        markdown_fingerprint=content_fingerprint(_HASH_A),
         splitter_version=SPLITTER_VERSION,
         chunks=[chunk],
     )
@@ -562,6 +572,7 @@ def test_reused_variant_run_does_not_reindex(session: Session) -> None:
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
 
     def _contextualize() -> None:
@@ -573,6 +584,7 @@ def test_reused_variant_run_does_not_reindex(session: Session) -> None:
             chunks=[chunk_p],
             chunking_run_id=chunking_run.id,
             splitter_version=SPLITTER_VERSION,
+            model_config=STUB_MODEL_CONFIG,
             precomputed_revisions=[""],
         )
         session.commit()
@@ -592,6 +604,7 @@ def test_index_excludes_other_source(session: Session) -> None:
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
+        markdown_fingerprint=content_fingerprint(_HASH_A),
         splitter_version=SPLITTER_VERSION,
         chunks=[chunk_a],
     )
@@ -602,6 +615,7 @@ def test_index_excludes_other_source(session: Session) -> None:
         source_id=_AIZK_UUID_B,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
+        markdown_fingerprint=content_fingerprint(_HASH_A),
         splitter_version=SPLITTER_VERSION,
         chunks=[chunk_b],
     )

@@ -25,12 +25,14 @@ Re-extraction after an upstream-generation change is a requeue of the existing
 unit rather than a second row: the identity key stays ``source:{source_id}``,
 and :func:`aizk.graph.job_actions.apply_extraction_readmission` transitions a
 finished unit back to ``QUEUED`` when
-:func:`aizk.graph.extraction_run.stale_extraction_sources` says the source's
-upstream has moved on. The worker then re-reads the source's current active
-inputs and its run supersedes the prior one. That action is operator-initiated —
-no staleness condition re-admits work on its own. Re-extraction after an
-extractor, materializer, or input-policy change remains a matter for the direct
-entry points (:func:`~aizk.graph.extraction_run.extract_source` /
+:func:`aizk.graph.extraction_run.classify_extraction_source` reads the source's
+currentness as ``STALE`` or ``NEEDS_RECONCILIATION``. The worker then re-reads
+the source's current active inputs; its run supersedes the prior one, or, for
+the reconciliation case, records that the superseded upstream's output still
+matches without extracting again. That action is operator-initiated — no
+currentness class re-admits work on its own. Re-extraction after an extractor,
+materializer, or input-policy change remains a matter for the direct entry
+points (:func:`~aizk.graph.extraction_run.extract_source` /
 :func:`~aizk.graph.extraction_run.extract_corpus`), where the run's derivation
 key decides reuse versus supersession.
 """

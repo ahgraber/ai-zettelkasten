@@ -8,11 +8,14 @@ component that durably stores its output and assigns each chunk its identity.
 ``chunk_id`` for a chunk whose sameness-key ``(source_id, heading_path, ordinal,
 content_hash)`` is already present and mints a new surrogate otherwise — each row
 carrying **stable identity facts only** — records what the run consumed (the
-``conversion_output_id`` locator and ``markdown_hash_xx64``) in an append-only
-:class:`~aizk.graph.datamodel.ChunkRunInput`, and records what it produced (each
-chunk's ``span``) in an append-only :class:`~aizk.graph.datamodel.ChunkRunManifest`.
-It returns the persisted chunks carrying their assigned surrogate so the caller
-can contextualize them without re-reading the manifest.
+``conversion_output_id`` locator, ``markdown_hash_xx64``, and the emitted chunk
+set's output fingerprint) in an append-only :class:`~aizk.graph.datamodel.ChunkRunInput`,
+and records what it produced (each chunk's ``span``) in an append-only
+:class:`~aizk.graph.datamodel.ChunkRunManifest`. When the unchanged-rerun fast
+path reuses the active run for a different ``conversion_output_id``, it also
+records a :class:`~aizk.graph.datamodel.ChunkRunApplicability` row. It returns
+the persisted chunks carrying their assigned surrogate so the caller can
+contextualize them without re-reading the manifest.
 
 Facts are split by what they are about. A chunk row is identified by a stable
 surrogate and shared across every generation that re-emits it, so it carries only
@@ -41,9 +44,19 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlmodel import select
 
 from aizk.chunking import Chunk as SplitterChunk
+from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.graph.content_index import index_chunk_content
-from aizk.graph.datamodel import Chunk, ChunkRunInput, ChunkRunManifest, ContextualizationOutputMemo
+from aizk.graph.datamodel import (
+    INPUT_KIND_RAW,
+    Chunk,
+    ChunkRunApplicability,
+    ChunkRunInput,
+    ChunkRunManifest,
+    ContextualizationOutputMemo,
+)
 from aizk.graph.db import begin_immediate
+from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
+from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, content_fingerprint, derivation_key, fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 
 if TYPE_CHECKING:
@@ -60,20 +73,38 @@ logger = logging.getLogger(__name__)
 CHUNKING_STAGE = "chunking"
 
 
-def _chunking_derivation_key(markdown_hash_xx64: str, splitter_version: int) -> str:
-    """Canonical derivation key for a chunking run.
+def chunking_input_fingerprint(markdown_fingerprint: str) -> str:
+    """Return a chunking run's input fingerprint: the source markdown's content fingerprint, wrapped.
 
-    Encodes the two inputs that determine the emitted chunk set — the source
-    markdown hash and the splitter behavior version — so a content change or a
-    ``splitter_version`` bump yields a new key (and a superseding run), while an
-    unchanged re-chunk reuses the active run. ``splitter_version`` belongs in the
-    derivation key, not only the version stamps, because the same markdown under a
-    new splitter version is a different derived dataset.
+    ``markdown_fingerprint`` is the caller-supplied
+    :func:`~aizk.pipeline.identity.content_fingerprint` of the source markdown;
+    the named-field wrapper matches the shape the other stages use for the same
+    markdown.
     """
-    return json.dumps(
-        {"markdown_hash": markdown_hash_xx64, "splitter_version": splitter_version},
-        sort_keys=True,
-        separators=(",", ":"),
+    return fingerprint({"markdown_fingerprint": markdown_fingerprint})
+
+
+def chunking_config_fingerprint(splitter_version: int) -> str:
+    """Return a chunking run's config fingerprint: the splitter behavior version."""
+    return fingerprint({"splitter_version": splitter_version})
+
+
+def chunking_derivation_key(markdown_fingerprint: str, splitter_version: int) -> str:
+    """Canonical output-sensitive derivation key for a chunking run.
+
+    Composed from the two inputs that determine the emitted chunk set — the
+    source markdown's content fingerprint and the splitter behavior version — so a
+    content change or a ``splitter_version`` bump yields a new key (and a
+    superseding run), while an unchanged re-chunk reuses the active run.
+    ``splitter_version`` belongs in the derivation key, not only the version
+    stamps, because the same markdown under a new splitter version is a different
+    derived dataset.
+    """
+    return derivation_key(
+        inputs={
+            "input": chunking_input_fingerprint(markdown_fingerprint),
+            "config": chunking_config_fingerprint(splitter_version),
+        }
     )
 
 
@@ -191,31 +222,28 @@ def persist_chunks(
     source_id: UUID,
     conversion_output_id: str,
     markdown_hash_xx64: str,
+    markdown_fingerprint: str,
     splitter_version: int,
     chunks: "Sequence[SplitterChunk]",
 ) -> tuple[PipelineRun, list[SplitterChunk]]:
     """Persist a source's emitted chunks under its active chunking run.
 
-    The run is scoped by the durable source identity ``source_id`` (not the
-    per-conversion artifact id) and keyed by a derivation key over
-    ``markdown_hash_xx64`` and ``splitter_version``. If the source's active
-    chunking run already carries that derivation key **and** the same manifest set,
-    this is a no-op that returns the active run — an accidental rerun with
-    unchanged inputs neither opens a new run nor churns rows. Otherwise a new run
-    is opened (demoting the prior active run to ``superseded`` in the same
-    transaction); the run's consumed Markdown is recorded once in
-    :class:`~aizk.graph.datamodel.ChunkRunInput`, and each chunk is persisted under
-    its stable surrogate ``chunk_id`` — reused when the chunk's sameness-key
-    ``(source_id, heading_path, ordinal, content_hash)`` is already present, newly
-    minted (a UUID) and inserted exactly once otherwise — with its ``span``
-    recorded in :class:`~aizk.graph.datamodel.ChunkRunManifest`. Prior runs, chunk
-    rows, inputs, and manifests are never mutated or deleted, so a chunk shared
-    across re-chunks stays a single immutable row, keeping its surrogate identity,
-    made current by its manifest entry in the active run.
+    The run is scoped by the durable source identity ``source_id``, never the
+    per-conversion artifact id, and keyed by :func:`chunking_derivation_key` over
+    ``markdown_fingerprint`` and ``splitter_version``. An active chunking run
+    under an unchanged key holding the same manifest set is reused: an accidental
+    rerun neither opens a new run nor churns rows, though reuse for a
+    ``conversion_output_id`` other than the one the run recorded stages a
+    :class:`~aizk.graph.datamodel.ChunkRunApplicability` row. Otherwise a new run
+    supersedes the prior active one, staging its
+    :class:`~aizk.graph.datamodel.ChunkRunInput` and, per chunk, a
+    :class:`~aizk.graph.datamodel.ChunkRunManifest` entry.
 
-    Returns the run together with the persisted chunks, each carrying its assigned
-    surrogate ``chunk_id``, in the order supplied (document order) — the
-    contextualization stage consumes these directly.
+    Each chunk keeps a stable surrogate ``chunk_id``: reused when its sameness-key
+    ``(source_id, heading_path, ordinal, content_hash)`` is already present, newly
+    minted otherwise. Prior runs, chunk rows, inputs, and manifests are never
+    mutated or deleted, so a chunk shared across re-chunks stays one immutable row
+    made current by its manifest entry in the active run.
 
     Does **not** commit; the caller owns the surrounding transaction.
 
@@ -225,9 +253,13 @@ def persist_chunks(
             ``scope_id`` and as each chunk row's ``source_id``.
         conversion_output_id: Locator for the source Markdown this run consumed;
             recorded as run input provenance (not a derivation input).
-        markdown_hash_xx64: Content hash of the source markdown; part of the
-            run's derivation key, the re-chunk change signal, and the run input's
-            verification fingerprint.
+        markdown_hash_xx64: Content hash of the source markdown; the re-chunk
+            change signal and the run input's verification fingerprint (not a
+            derivation-key input).
+        markdown_fingerprint: ``content_fingerprint`` of the source markdown;
+            feeds the run's derivation key (:func:`chunking_input_fingerprint`)
+            and any recorded
+            :class:`~aizk.graph.datamodel.ChunkRunApplicability` row.
         splitter_version: Behavior version of the splitter that produced the
             chunks; part of the run's derivation key and recorded as a version
             stamp.
@@ -278,7 +310,7 @@ def persist_chunks(
             "stable identity facts (a content_hash collision)"
         )
 
-    derivation_key = _chunking_derivation_key(markdown_hash_xx64, splitter_version)
+    run_derivation_key = chunking_derivation_key(markdown_fingerprint, splitter_version)
     active = active_chunking_run(session, source_id)
     # Unchanged-rerun fast path: reuse the active run only when every chunk already
     # exists (so it carries a surrogate) and the active manifest is exactly this
@@ -287,7 +319,7 @@ def persist_chunks(
     if (
         active is not None
         and active.id is not None
-        and active.derivation_key == derivation_key
+        and active.derivation_key == run_derivation_key
         and all(row is not None for row in existing_rows)
     ):
         incoming_manifest = {
@@ -299,6 +331,17 @@ def persist_chunks(
                 active.id,
                 source_id,
             )
+            active_input = run_input(session, active.id)
+            if active_input is not None and active_input.conversion_output_id != conversion_output_id:
+                # The active run is also current for a later artifact locator whose
+                # content is unchanged. The writer is idempotent on the primary key.
+                record_chunk_run_applicability(
+                    session,
+                    run_id=active.id,
+                    conversion_output_id=conversion_output_id,
+                    input_fingerprint=chunking_input_fingerprint(markdown_fingerprint),
+                    splitter_version=splitter_version,
+                )
             return active, [
                 c.model_copy(update={"chunk_id": str(row.chunk_id)})
                 for row, c in zip(existing_rows, chunks, strict=True)
@@ -308,14 +351,23 @@ def persist_chunks(
         session,
         stage=CHUNKING_STAGE,
         scope_id=source_id,
-        derivation_key=derivation_key,
-        version_stamps={"splitter_version": str(splitter_version)},
+        derivation_key=run_derivation_key,
+        version_stamps={
+            "splitter_version": str(splitter_version),
+            "input_fingerprint": chunking_input_fingerprint(markdown_fingerprint),
+            "config_fingerprint": chunking_config_fingerprint(splitter_version),
+            "derivation_key_format": DERIVATION_KEY_FORMAT,
+        },
+    )
+    chunk_set_fingerprint = payload_fingerprint(
+        [PayloadItem(chunk_key(c), INPUT_KIND_RAW, content_fingerprint(c.text)) for c in chunks]
     )
     session.add(
         ChunkRunInput(
             run_id=run.id,
             conversion_output_id=conversion_output_id,
             markdown_hash_xx64=markdown_hash_xx64,
+            chunk_set_fingerprint=chunk_set_fingerprint,
         )
     )
 
@@ -369,6 +421,80 @@ def active_chunking_run(session: "Session", source_id: UUID) -> PipelineRun | No
 def run_input(session: "Session", run_id: int) -> ChunkRunInput | None:
     """Return the recorded input (consumed Markdown locator + hash) for a chunking run."""
     return session.get(ChunkRunInput, run_id)
+
+
+def _conversion_output(session: "Session", conversion_output_id: str) -> ConversionOutput | None:
+    """Resolve a stringified conversion-output locator to its row, or ``None`` if absent or unparsable."""
+    try:
+        native_id = int(conversion_output_id)
+    except ValueError:
+        return None
+    return session.get(ConversionOutput, native_id)
+
+
+def record_chunk_run_applicability(
+    session: "Session",
+    *,
+    run_id: int,
+    conversion_output_id: str,
+    input_fingerprint: str,
+    splitter_version: int,
+) -> ChunkRunApplicability:
+    """Validate and stage a chunk-run applicability relation; the caller commits.
+
+    Records that chunking run ``run_id``'s output is also current for
+    ``conversion_output_id``, whose markdown fingerprints to ``input_fingerprint``
+    under the currently-resolved ``splitter_version``. Idempotent on the primary
+    key ``(run_id, conversion_output_id)``: an identical relation returns the
+    existing row. The relation is append-only, with no update path.
+
+    Raises:
+        ValueError: If the run is missing, not active, or not a chunking run; if
+            no :class:`~aizk.conversion.datamodel.output.ConversionOutput` row for
+            ``conversion_output_id`` belongs to the run's ``scope_id``; if the
+            candidate key recomputed from ``input_fingerprint`` and
+            ``splitter_version`` does not equal the run's ``derivation_key``; if
+            the run has no recorded input, or an empty manifest that disagrees
+            with a non-empty recorded chunk set (a torn run); or if an existing
+            relation for the same primary key carries a different
+            ``input_fingerprint``.
+    """
+    run = session.get(PipelineRun, run_id)
+    if run is None or run.status != RunStatus.ACTIVE or run.stage != CHUNKING_STAGE:
+        raise ValueError(f"chunking run {run_id!r} is missing, not active, or not a chunking run")
+
+    output = _conversion_output(session, conversion_output_id)
+    if output is None or output.source_id != run.scope_id:
+        raise ValueError(
+            f"conversion output {conversion_output_id!r} does not exist or does not belong to source {run.scope_id!r}"
+        )
+
+    candidate_key = derivation_key(
+        inputs={"input": input_fingerprint, "config": chunking_config_fingerprint(splitter_version)}
+    )
+    if candidate_key != run.derivation_key:
+        raise ValueError(f"chunking run {run_id!r}'s derivation key does not match the recomputed candidate key")
+
+    stored_input = run_input(session, run_id)
+    if stored_input is None:
+        raise ValueError(f"chunking run {run_id!r} has no recorded input (a torn run)")
+    if len(manifest_of_run(session, run_id)) == 0 and stored_input.chunk_set_fingerprint != payload_fingerprint([]):
+        raise ValueError(f"chunking run {run_id!r} has an empty manifest but a non-empty recorded chunk set")
+
+    existing = session.get(ChunkRunApplicability, (run_id, conversion_output_id))
+    if existing is not None:
+        if existing.input_fingerprint != input_fingerprint:
+            raise ValueError(
+                f"chunking run {run_id!r} already has an applicability row for conversion output "
+                f"{conversion_output_id!r} with a different input_fingerprint"
+            )
+        return existing
+
+    row = ChunkRunApplicability(
+        run_id=run_id, conversion_output_id=conversion_output_id, input_fingerprint=input_fingerprint
+    )
+    session.add(row)
+    return row
 
 
 def manifest_of_run(session: "Session", run_id: int) -> list[ChunkRunManifest]:
@@ -545,11 +671,11 @@ def memo_delete_keys(session: "Session", scope_id: UUID, keys: "Sequence[tuple[M
     same-source attempt working under different keys) intact. Runs in the caller's
     transaction so the prune commits atomically with the generation's persistence.
     """
-    for kind, derivation_key in keys:
+    for kind, key in keys:
         session.execute(
             delete(ContextualizationOutputMemo).where(
                 ContextualizationOutputMemo.scope_id == scope_id,
                 ContextualizationOutputMemo.kind == kind,
-                ContextualizationOutputMemo.derivation_key == derivation_key,
+                ContextualizationOutputMemo.derivation_key == key,
             )
         )

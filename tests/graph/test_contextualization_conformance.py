@@ -26,9 +26,10 @@ from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
 from aizk.graph._version import CONTEXT_VERSION
 from aizk.graph.contextualization import VARIANT_STAGE, contextualize_chunks, summarize_document
 from aizk.graph.datamodel import ContextualizedChunk
-from aizk.graph.llm import StubLLMClient
+from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.graph.persistence import persist_chunks
 from aizk.graph.workunit import enqueue_backfill
+from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.invalidation import ReprocessingConfirmationError, generation_is_stale
 from aizk.pipeline.run import PipelineRun, RunStatus
 
@@ -73,6 +74,7 @@ def _contextualize_source(
         source_id=source_id,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=markdown_hash,
+        markdown_fingerprint=content_fingerprint(markdown_hash),
         splitter_version=SPLITTER_VERSION,
         chunks=chunks,
     )
@@ -83,6 +85,7 @@ def _contextualize_source(
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=markdown_hash,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
     variants = contextualize_chunks(
         session,
@@ -93,6 +96,7 @@ def _contextualize_source(
         chunking_run_id=run.id,
         splitter_version=SPLITTER_VERSION,
         context_version=context_version,
+        model_config=STUB_MODEL_CONFIG,
     )
     session.commit()
     return variants

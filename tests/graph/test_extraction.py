@@ -36,7 +36,7 @@ from aizk.graph.extraction import (
     extract_chunk_mentions,
     select_extraction_input,
 )
-from aizk.graph.mention_store import open_extraction_run, persist_mentions
+from aizk.graph.mention_store import ResolvedExtractionConfig, open_extraction_run, persist_mentions
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 
 if TYPE_CHECKING:
@@ -195,7 +195,7 @@ def _extract_chunk(
     *,
     chunk: Chunk,
     extractor: EntityExtractor,
-    upstream_derivation_key: str = "chunking-key-1",
+    input_fingerprint: str = "chunking-key-1",
 ) -> tuple[PipelineRun, list[Mention]]:
     """Extract and persist one chunk's mentions, mirroring the stage's write path end-to-end.
 
@@ -210,13 +210,16 @@ def _extract_chunk(
         extraction_input=extraction_input,
         extractor=extractor,
     )
-    run = open_extraction_run(
-        session,
-        source_id=chunk.source_id,
+    resolved = ResolvedExtractionConfig(
         extractor_version=extractor.extractor_version,
         materializer_version=MATERIALIZER_VERSION,
         input_policy="contextualized",
-        upstream_derivation_key=upstream_derivation_key,
+    )
+    run = open_extraction_run(
+        session,
+        source_id=chunk.source_id,
+        resolved=resolved,
+        input_fingerprint=input_fingerprint,
     )
     mentions = persist_mentions(session, run=run, mentions=drafts)
     session.commit()
@@ -534,8 +537,8 @@ def test_substitute_extractor_drives_run_unchanged(session: Session) -> None:
 
     chunk_a = _seed_chunk(session, chunk_id=_cid("c1"), text=chunk_text, source_id=_SOURCE_A)
     chunk_b = _seed_chunk(session, chunk_id=_cid("c2"), text=chunk_text, source_id=_SOURCE_B)
-    _, mentions_a = _extract_chunk(session, chunk=chunk_a, extractor=stub_a, upstream_derivation_key="key")
-    _, mentions_b = _extract_chunk(session, chunk=chunk_b, extractor=stub_b, upstream_derivation_key="key")
+    _, mentions_a = _extract_chunk(session, chunk=chunk_a, extractor=stub_a, input_fingerprint="key")
+    _, mentions_b = _extract_chunk(session, chunk=chunk_b, extractor=stub_b, input_fingerprint="key")
 
     def _shape(mentions: list[Mention]) -> list[tuple[str, str, str, int | None, int | None]]:
         return sorted(

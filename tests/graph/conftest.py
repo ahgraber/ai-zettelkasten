@@ -34,13 +34,19 @@ from aizk.conversion.datamodel.source import Source
 from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.datamodel import (
     Chunk,
+    ChunkRunApplicability,
     ChunkRunInput,
     ChunkRunManifest,
     ContextualizationJob,
     ContextualizationOutputMemo,
+    ContextualizationRunApplicability,
+    ContextualizationRunInput,
     ContextualizedChunk,
     DocumentSummary,
     ExtractionJob,
+    ExtractionRunApplicability,
+    ExtractionRunInput,
+    SummaryRunApplicability,
 )
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
@@ -55,6 +61,12 @@ _GRAPH_SCHEMA_TABLES = [
     ContextualizationOutputMemo.__table__,
     ContextualizationJob.__table__,
     ExtractionJob.__table__,
+    ChunkRunApplicability.__table__,
+    SummaryRunApplicability.__table__,
+    ContextualizationRunInput.__table__,
+    ContextualizationRunApplicability.__table__,
+    ExtractionRunInput.__table__,
+    ExtractionRunApplicability.__table__,
     PipelineRun.__table__,
     PipelineEvent.__table__,
     # Conversion tables the operator UI reads alongside the graph tables. Ordered

@@ -67,6 +67,7 @@ from aizk.graph.db import begin_immediate
 from aizk.graph.events import CONTEXTUALIZATION_STAGE, GraphEventKind, QueuedPayload
 from aizk.graph.persistence import memo_delete_keys, persist_chunks
 from aizk.pipeline.events import record_transition
+from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.invalidation import require_reprocessing_confirmation
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.utilities.hashing import compute_markdown_hash
@@ -77,7 +78,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy import Engine
 
-    from aizk.graph.llm import LLMClient
+    from aizk.graph.llm import LLMClient, ModelConfig
     from aizk.pipeline.events import CreationOrigin
 
 logger = logging.getLogger(__name__)
@@ -178,6 +179,7 @@ def process_document(
     conversion_output_id: int,
     markdown_source: MarkdownSource,
     freshness: OutputFreshness,
+    model_config: "ModelConfig",
     is_cancelled: "Callable[[], bool] | None" = None,
 ) -> ProcessResult | SkippedSuperseded | Cancelled:
     """Run the full graph write path for one converted document.
@@ -210,6 +212,8 @@ def process_document(
         conversion_output_id: The conversion artifact locator to process.
         markdown_source: The injected seam that fetches the document's Markdown.
         freshness: The injected seam deciding whether this output is still current.
+        model_config: The resolved model identity for the summary and variant
+            passes; folded into their derivation keys.
         is_cancelled: Optional cooperative-cancellation probe; when it returns
             ``True`` the unit stops without writing and returns :class:`Cancelled`.
 
@@ -270,8 +274,8 @@ def process_document(
         engine,
         client,
         source_id=source_id,
-        markdown_hash_xx64=loaded.markdown_hash_xx64,
         document_text=loaded.text,
+        model_config=model_config,
     )
     # ``None`` signals the generation phase resolved to reuse a complete active
     # variant run (no revisions to carry); ``reuse_only`` then makes the persist
@@ -282,9 +286,9 @@ def process_document(
         client,
         source_id=source_id,
         summary_text=summary_text,
-        markdown_hash_xx64=loaded.markdown_hash_xx64,
         ordered_chunks=chunks,
         splitter_version=SPLITTER_VERSION,
+        model_config=model_config,
     )
 
     # --- Apply phase: one short write transaction. ---
@@ -306,6 +310,7 @@ def process_document(
             source_id=source_id,
             conversion_output_id=locator,
             markdown_hash_xx64=loaded.markdown_hash_xx64,
+            markdown_fingerprint=content_fingerprint(loaded.text),
             splitter_version=SPLITTER_VERSION,
             chunks=chunks,
         )
@@ -316,6 +321,7 @@ def process_document(
             conversion_output_id=locator,
             markdown_hash_xx64=loaded.markdown_hash_xx64,
             document_text=loaded.text,
+            model_config=model_config,
             precomputed_summary_text=summary_text,
         )
         variants = contextualize_chunks(
@@ -326,6 +332,7 @@ def process_document(
             chunks=persisted_chunks,
             chunking_run_id=chunking_run.id,
             splitter_version=SPLITTER_VERSION,
+            model_config=model_config,
             precomputed_revisions=revisions,
             reuse_only=revisions is None,
         )
@@ -337,10 +344,11 @@ def process_document(
             session,
             source_id,
             consumed_output_memo_keys(
+                loaded.text,
                 summary_text,
-                markdown_hash_xx64=loaded.markdown_hash_xx64,
                 ordered_chunks=chunks,
                 splitter_version=SPLITTER_VERSION,
+                model_config=model_config,
             ),
         )
         # Capture primitives while the rows are still attached (commit expires them).

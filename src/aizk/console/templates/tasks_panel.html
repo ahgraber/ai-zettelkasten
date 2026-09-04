@@ -105,11 +105,11 @@
       </thead>
       <tbody>
         {% if page.jobs %} {% for job in page.jobs %}
-        <tr {% if job.stale %}class="stale-row" data-stale="true"{% endif %}>
+        <tr {% if job.currentness == "stale" %}class="stale-row" data-currentness="stale"{% elif job.currentness == "needs_reconciliation" %}class="reconciliation-row" data-currentness="needs_reconciliation"{% endif %}>
           <td>
             <input
               type="checkbox"
-              class="row-select{% if job.stale %} stale-select{% endif %}"
+              class="row-select{% if job.currentness in ("stale", "needs_reconciliation") %} stale-select{% endif %}"
               name="job_ids"
               value="{{ job.id }}"
               form="tasks-form"
@@ -118,7 +118,7 @@
           <td class="mono">{{ job.id }}</td>
           <td class="mono uuid">{{ job.source_id }}</td>
           {{ cols.extra_cells(job) }}
-          <td class="title-cell">{{ job.title }}{% if job.stale %}<span class="stale-badge" title="Upstream has moved on since this source was extracted">stale</span>{% endif %}</td>
+          <td class="title-cell">{{ job.title }}{% if job.currentness == "stale" %}<span class="stale-badge" title="Upstream has moved on since this source was extracted">stale</span>{% elif job.currentness == "needs_reconciliation" %}<span class="reconciliation-badge" title="An equivalent upstream generation superseded the one this source was extracted from">needs reconciliation</span>{% endif %}</td>
           <td><span class="status {{ job.status }}">{{ job.status }}</span></td>
           <td class="mono">{{ job.attempts }}</td>
           <td class="mono">{{ job.queued_at }}</td>

@@ -66,7 +66,7 @@ from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
 if TYPE_CHECKING:
     from sqlalchemy import Engine
 
-    from aizk.graph.llm import LLMClient
+    from aizk.graph.llm import LLMClient, ModelConfig
     from aizk.graph.workunit import MarkdownSource, OutputFreshness
 
 logger = logging.getLogger(__name__)
@@ -126,6 +126,7 @@ class ContextualizationStageHandler:
         markdown_source: "MarkdownSource",
         freshness: "OutputFreshness",
         *,
+        model_config: "ModelConfig",
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         concurrency: int = DEFAULT_CONCURRENCY,
         stale_after_minutes: float = DEFAULT_STALE_AFTER_MINUTES,
@@ -144,6 +145,8 @@ class ContextualizationStageHandler:
                 ``conversion_output_id``.
             freshness: The seam deciding whether a conversion output is still the
                 source's latest (the monotonic-currentness gate).
+            model_config: The resolved model identity passed to
+                :func:`~aizk.graph.workunit.process_document` for every unit.
             timeout_seconds: Wall-clock timeout per unit (the runner enforces it).
             concurrency: Maximum units the runner may execute simultaneously.
             stale_after_minutes: Minutes in ``RUNNING`` before recovery reclaims a
@@ -157,6 +160,7 @@ class ContextualizationStageHandler:
         self._llm_client = llm_client
         self._markdown_source = markdown_source
         self._freshness = freshness
+        self._model_config = model_config
         self._timeout_seconds = timeout_seconds
         self._concurrency = concurrency
         self._stale_after_minutes = stale_after_minutes
@@ -353,6 +357,7 @@ class ContextualizationStageHandler:
                 conversion_output_id=conversion_output_id,
                 markdown_source=self._markdown_source,
                 freshness=self._freshness,
+                model_config=self._model_config,
                 is_cancelled=lambda: self._is_cancelled(handle),
             )
         except Exception as exc:

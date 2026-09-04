@@ -31,7 +31,7 @@ from aizk.graph.admission import AdmissionLoop, admission_adapter_for
 from aizk.graph.config import AdmissionConfig
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
 from aizk.graph.handler import ContextualizationStageHandler
-from aizk.graph.llm import PydanticAILLMClient
+from aizk.graph.llm import ModelConfig, PydanticAILLMClient
 from aizk.graph.markdown_source import ConversionOutputFreshness, S3MarkdownSource
 from aizk.pipeline.runner import StageRunner
 
@@ -83,12 +83,14 @@ def run_graph_worker(
     engine = get_engine(DatabaseConfig().database_url)
     llm_client = build_llm_client(contextualization_config)
     markdown_source = S3MarkdownSource(engine, S3Client(conversion_config))
+    model_config = ModelConfig.from_contextualization_config(contextualization_config)
 
     handler = ContextualizationStageHandler(
         engine,
         llm_client,
         markdown_source,
         ConversionOutputFreshness(),
+        model_config=model_config,
         timeout_seconds=contextualization_config.worker_timeout_seconds,
         concurrency=contextualization_config.worker_concurrency,
         stale_after_minutes=contextualization_config.worker_stale_minutes,

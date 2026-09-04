@@ -6,16 +6,21 @@ the durable source identity (``source_id``); the summary run records its
 derivation key, version, and consumed ``conversion_output_id`` and supersedes on
 input change; the variant run records per-chunk ``summary_run_id`` /
 ``chunking_run_id`` provenance and folds ``splitter_version`` into its derivation
-key, superseding on neighbor/summary/splitter/version change; the source chunk is
-never modified; and every model call passes through the one injected access
-point. The variant stores the model's self-contained revision of the chunk (empty
-when already self-contained). Output *text* is non-deterministic in production, so
-these assert structure and provenance, never exact model output.
+key, superseding on neighbor/summary/splitter/version/model change; the source
+chunk is never modified; and every model call passes through the one injected
+access point. The variant stores the model's self-contained revision of the chunk
+(empty when already self-contained). Output *text* is non-deterministic in
+production, so these assert structure and provenance, never exact model output.
 
-Variant derivation keys embed each chunk's portable content key
-(``derive_chunk_content_key``), not its database-local surrogate ``chunk_id``, so
-the keys recompute identically on any backend; the surrogate is recorded only as
-provenance (the variant's ``chunk_id`` and the manifest edge).
+Derivation keys are opaque SHA-256 digests (``aizk.pipeline.identity.derivation_key``);
+no test decodes one. A key is asserted by equality against the pure functions
+that compute it (:func:`~aizk.graph.contextualization.summary_derivation_key`,
+:func:`~aizk.graph.contextualization.contextualization_run_derivation_key`,
+:func:`~aizk.graph.contextualization.contextualization_row_derivation_key`), which
+embed each chunk's portable content key (``aizk.graph.fingerprints.chunk_key``),
+not its database-local surrogate ``chunk_id``, so the keys recompute identically
+on any backend; the surrogate is recorded only as provenance (the variant's
+``chunk_id`` and the manifest edge).
 """
 
 from __future__ import annotations
@@ -30,7 +35,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
-from aizk.chunking.datamodel import derive_chunk_content_key
+from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.graph._version import CONTEXT_VERSION, SUMMARY_VERSION
 from aizk.graph.content_index import CONTENT_FTS_DDL
 import aizk.graph.contextualization as ctx_mod
@@ -38,13 +43,26 @@ from aizk.graph.contextualization import (
     SUMMARY_STAGE,
     VARIANT_STAGE,
     ContextSource,
+    assert_variant_matches_run_input,
+    contextualization_row_derivation_key,
+    contextualization_run_derivation_key,
     contextualize_chunks,
     resolve_chunk_text,
     summarize_document,
+    summary_derivation_key,
 )
-from aizk.graph.datamodel import Chunk, ContextualizedChunk, DocumentSummary
-from aizk.graph.llm import StubLLMClient
+from aizk.graph.datamodel import (
+    Chunk,
+    ContextualizationRunApplicability,
+    ContextualizationRunInput,
+    ContextualizedChunk,
+    DocumentSummary,
+    SummaryRunApplicability,
+)
+from aizk.graph.fingerprints import payload_fingerprint
+from aizk.graph.llm import STUB_MODEL_CONFIG, ModelConfig, StubLLMClient
 from aizk.graph.persistence import manifest_of_run, persist_chunks, run_input
+from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus
 
 _AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")
@@ -80,11 +98,6 @@ def _make_chunk(
     )
 
 
-def _content_key(chunk: SplitterChunk) -> str:
-    """The chunk's portable content key — what variant derivation keys embed (not the surrogate)."""
-    return derive_chunk_content_key(chunk.source_id, chunk.heading_path, chunk.ordinal, chunk.content_hash)
-
-
 def _persist(
     session: Session,
     chunks: list[SplitterChunk],
@@ -99,11 +112,33 @@ def _persist(
         source_id=_AIZK_UUID,
         conversion_output_id=conversion_output_id,
         markdown_hash_xx64=markdown_hash,
+        markdown_fingerprint=content_fingerprint(markdown_hash),
         splitter_version=splitter_version,
         chunks=chunks,
     )
     session.commit()
     return run, persisted
+
+
+def _seed_conversion_output(session: Session, *, output_id: int, source_id: UUID, markdown_hash: str) -> None:
+    """Insert a minimal :class:`ConversionOutput` row for an applicability writer's clause-2 lookup."""
+    session.add(
+        ConversionOutput(
+            id=output_id,
+            job_id=output_id,
+            source_id=source_id,
+            owner_id="test",
+            title="doc",
+            payload_version=1,
+            s3_prefix="graph/test",
+            markdown_key="markdown.md",
+            manifest_key="manifest.json",
+            markdown_hash_xx64=markdown_hash,
+            docling_version="0",
+            pipeline_name="test",
+        )
+    )
+    session.commit()
 
 
 def _runs(session: Session, stage: str) -> list[PipelineRun]:
@@ -119,6 +154,7 @@ def _summarize_and_contextualize(
     chunking_run_id: int,
     conversion_output_id: str = _OUTPUT,
     splitter_version: int = SPLITTER_VERSION,
+    model_config: ModelConfig = STUB_MODEL_CONFIG,
 ) -> list[ContextualizedChunk]:
     summary = summarize_document(
         session,
@@ -127,6 +163,7 @@ def _summarize_and_contextualize(
         conversion_output_id=conversion_output_id,
         markdown_hash_xx64=markdown_hash,
         document_text=_DOC_TEXT,
+        model_config=model_config,
     )
     variants = contextualize_chunks(
         session,
@@ -136,6 +173,7 @@ def _summarize_and_contextualize(
         chunks=chunks,
         chunking_run_id=chunking_run_id,
         splitter_version=splitter_version,
+        model_config=model_config,
     )
     session.commit()
     return variants
@@ -158,6 +196,7 @@ def test_summary_with_derivation_key_and_version(session: Session) -> None:
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
     session.commit()
 
@@ -171,10 +210,64 @@ def test_summary_with_derivation_key_and_version(session: Session) -> None:
     ).one()
     assert summary.run_id == active.id
     assert active.scope_id == _AIZK_UUID, "the summary run is scoped to the durable source identity"
-    derivation_key = json.loads(active.derivation_key)
+    assert active.derivation_key == summary_derivation_key(_DOC_TEXT, SUMMARY_VERSION, STUB_MODEL_CONFIG)
     version_stamps = json.loads(active.version_stamps_json)
-    assert derivation_key["summary_prompt_hash"] == getattr(ctx_mod, "SUMMARY_PROMPT_HASH", None)
     assert version_stamps["summary_prompt_hash"] == getattr(ctx_mod, "SUMMARY_PROMPT_HASH", None)
+    assert version_stamps["model_provider"] == STUB_MODEL_CONFIG.provider
+    assert version_stamps["model_model"] == STUB_MODEL_CONFIG.model
+
+
+def test_summary_text_fingerprint_equals_content_fingerprint(session: Session) -> None:
+    """The persisted summary's ``summary_text_fingerprint`` equals ``content_fingerprint(summary_text)``."""
+    _persist(session, [_make_chunk("body", ordinal=0)], markdown_hash=_HASH_A)
+    summary = summarize_document(
+        session,
+        StubLLMClient(),
+        source_id=_AIZK_UUID,
+        conversion_output_id=_OUTPUT,
+        markdown_hash_xx64=_HASH_A,
+        document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
+    )
+    session.commit()
+
+    assert summary.summary_text_fingerprint == content_fingerprint(summary.summary_text)
+
+
+def test_unchanged_summary_rerun_under_new_conversion_output_records_applicability(session: Session) -> None:
+    """Reusing the active summary run for a different ``conversion_output_id`` records one applicability row."""
+    _persist(session, [_make_chunk("body", ordinal=0)], markdown_hash=_HASH_A)
+    client = StubLLMClient()
+    first = summarize_document(
+        session,
+        client,
+        source_id=_AIZK_UUID,
+        conversion_output_id=_OUTPUT,
+        markdown_hash_xx64=_HASH_A,
+        document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
+    )
+    session.commit()
+
+    # Same markdown, re-read from a different (later) conversion output locator.
+    new_output_id = "9101"
+    _seed_conversion_output(session, output_id=int(new_output_id), source_id=_AIZK_UUID, markdown_hash=_HASH_A)
+    for _ in range(2):
+        second = summarize_document(
+            session,
+            client,
+            source_id=_AIZK_UUID,
+            conversion_output_id=new_output_id,
+            markdown_hash_xx64=_HASH_A,
+            document_text=_DOC_TEXT,
+            model_config=STUB_MODEL_CONFIG,
+        )
+        session.commit()
+
+    assert second.id == first.id, "the active summary run is reused, not superseded"
+    rows = session.exec(select(SummaryRunApplicability).where(SummaryRunApplicability.run_id == first.run_id)).all()
+    assert len(rows) == 1, "a second identical call must not duplicate the applicability row"
+    assert rows[0].conversion_output_id == new_output_id
 
 
 def test_unchanged_inputs_no_new_run(session: Session) -> None:
@@ -189,6 +282,7 @@ def test_unchanged_inputs_no_new_run(session: Session) -> None:
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
     session.commit()
     second = summarize_document(
@@ -198,6 +292,7 @@ def test_unchanged_inputs_no_new_run(session: Session) -> None:
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
     session.commit()
 
@@ -218,6 +313,7 @@ def test_changed_markdown_supersedes(session: Session) -> None:
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
     session.commit()
     first_text = first.summary_text
@@ -229,6 +325,7 @@ def test_changed_markdown_supersedes(session: Session) -> None:
         conversion_output_id=_OUTPUT_B,
         markdown_hash_xx64=_HASH_B,
         document_text="# New\n\nchanged",
+        model_config=STUB_MODEL_CONFIG,
     )
     session.commit()
 
@@ -277,51 +374,39 @@ def test_variant_with_provenance_and_derivation_key(session: Session) -> None:
         assert variant.context_version == CONTEXT_VERSION
         assert variant.chunking_run_id == chunking_run.id, "variant points at the chunking generation it read"
         assert variant.summary_run_id == summary.run_id
-        row_key = json.loads(variant.derivation_key)
-        summary_identity = json.loads(row_key["summary_identity"])
-        assert summary_identity["summary_derivation_key"] == summary_run.derivation_key
-        assert row_key["splitter_version"] == SPLITTER_VERSION
-        assert "summary_id" not in row_key
-        # The surrogate chunk_id is never a derivation-key input.
-        assert all(field not in row_key for field in ("working_chunk_id", "prior_chunk_1_id", "next_chunk_1_id"))
-        assert row_key["model_profile"] == getattr(ctx_mod, "DEFAULT_MODEL_PROFILE", None)
 
     active = session.exec(
         select(PipelineRun).where(PipelineRun.stage == VARIANT_STAGE, PipelineRun.status == RunStatus.ACTIVE)
     ).one()
     assert active.scope_id == _AIZK_UUID, "the variant run is scoped to the durable source identity"
-    run_key = json.loads(active.derivation_key)
+    assert active.derivation_key == contextualization_run_derivation_key(
+        summary.summary_text, chunks, SPLITTER_VERSION, CONTEXT_VERSION, STUB_MODEL_CONFIG
+    )
     version_stamps = json.loads(active.version_stamps_json)
-    assert run_key["context_prompt_hash"] == getattr(ctx_mod, "CONTEXT_PROMPT_HASH", None)
-    assert run_key["context_window_policy"] == getattr(ctx_mod, "CONTEXT_WINDOW_POLICY", None)
-    assert run_key["splitter_version"] == SPLITTER_VERSION
-    # The run-level chunk set is identified by content keys, not surrogate chunk_ids.
-    assert run_key["chunk_keys"] == [_content_key(c) for c in chunks]
-    assert "chunk_ids" not in run_key
-    assert "summary_id" not in run_key
-    assert "chunking_run_id" not in run_key, "the chunking-run locator stays out of the derivation key"
-    assert "summary_run_id" not in version_stamps
-    assert version_stamps["summary_derivation_key"] == summary_run.derivation_key
-    assert version_stamps["splitter_version"] == str(SPLITTER_VERSION)
     assert version_stamps["context_prompt_hash"] == getattr(ctx_mod, "CONTEXT_PROMPT_HASH", None)
     assert version_stamps["context_window_policy"] == getattr(ctx_mod, "CONTEXT_WINDOW_POLICY", None)
+    assert version_stamps["splitter_version"] == str(SPLITTER_VERSION)
+    assert version_stamps["summary_derivation_key"] == summary_run.derivation_key
+    assert version_stamps["model_provider"] == STUB_MODEL_CONFIG.provider
+    assert version_stamps["model_model"] == STUB_MODEL_CONFIG.model
 
     middle = by_chunk[UUID(chunks[2].chunk_id)]
-    middle_key = json.loads(middle.derivation_key)
-    assert middle_key["model_profile"] == getattr(ctx_mod, "DEFAULT_MODEL_PROFILE", None)
-    # The 2p/1n window is recorded by content key.
-    assert middle_key["working_chunk_key"] == _content_key(chunks[2])
-    assert middle_key["prior_chunk_2_key"] == _content_key(chunks[0])
-    assert middle_key["prior_chunk_1_key"] == _content_key(chunks[1])
-    assert middle_key["next_chunk_1_key"] == _content_key(chunks[3])
+    assert middle.derivation_key == contextualization_row_derivation_key(
+        summary.summary_text,
+        chunks[2],
+        chunks[0],
+        chunks[1],
+        chunks[3],
+        SPLITTER_VERSION,
+        CONTEXT_VERSION,
+        STUB_MODEL_CONFIG,
+    )
 
 
 def test_variant_derivation_key_ignores_local_summary_ids(tmp_path: Path) -> None:
     """Variant derivation is stable across databases with different summary row ids."""
 
-    def process_document(
-        db_name: str, *, dummy_summary_count: int
-    ) -> tuple[dict[str, object], list[dict[str, object]]]:
+    def process_document(db_name: str, *, dummy_summary_count: int) -> tuple[str, list[str]]:
         engine = create_engine(f"sqlite:///{tmp_path / db_name}")
         SQLModel.metadata.create_all(engine)
         with engine.begin() as conn:
@@ -339,6 +424,7 @@ def test_variant_derivation_key_ignores_local_summary_ids(tmp_path: Path) -> Non
                         summary_text="dummy",
                         markdown_hash_xx64="deadbeefdeadbeef",
                         summary_version=SUMMARY_VERSION,
+                        summary_text_fingerprint=content_fingerprint("dummy"),
                     )
                 )
             local_session.commit()
@@ -358,22 +444,20 @@ def test_variant_derivation_key_ignores_local_summary_ids(tmp_path: Path) -> Non
             # which is a random UUID minted per database — sorting by it would make
             # the cross-database comparison below order-dependent (flaky).
             variant_keys = [
-                json.loads(variant.derivation_key)
+                variant.derivation_key
                 for variant in local_session.exec(
                     select(ContextualizedChunk)
                     .where(ContextualizedChunk.run_id == active_run.id)
                     .order_by(ContextualizedChunk.derivation_key)
                 ).all()
             ]
-            return json.loads(active_run.derivation_key), variant_keys
+            return active_run.derivation_key, variant_keys
 
     run_key_a, row_keys_a = process_document("a.db", dummy_summary_count=0)
     run_key_b, row_keys_b = process_document("b.db", dummy_summary_count=3)
 
     assert run_key_a == run_key_b
-    assert "summary_id" not in run_key_a
     assert row_keys_a == row_keys_b
-    assert all("summary_id" not in key for key in row_keys_a)
 
 
 def test_variant_derivation_key_no_db_local_input(tmp_path: Path) -> None:
@@ -386,7 +470,7 @@ def test_variant_derivation_key_no_db_local_input(tmp_path: Path) -> None:
     content key, never its database-local surrogate.
     """
 
-    def process_document(db_name: str) -> tuple[list[str], dict[str, object], list[dict[str, object]]]:
+    def process_document(db_name: str) -> tuple[list[str], str, list[str]]:
         engine = create_engine(f"sqlite:///{tmp_path / db_name}")
         SQLModel.metadata.create_all(engine)
         with engine.begin() as conn:
@@ -412,11 +496,7 @@ def test_variant_derivation_key_no_db_local_input(tmp_path: Path) -> None:
                 .order_by(ContextualizedChunk.derivation_key)
             ).all()
             surrogate_ids = sorted(c.chunk_id for c in chunks)
-            return (
-                surrogate_ids,
-                json.loads(active_run.derivation_key),
-                [json.loads(v.derivation_key) for v in variants],
-            )
+            return surrogate_ids, active_run.derivation_key, [v.derivation_key for v in variants]
 
     ids_a, run_key_a, row_keys_a = process_document("a.db")
     ids_b, run_key_b, row_keys_b = process_document("b.db")
@@ -427,9 +507,6 @@ def test_variant_derivation_key_no_db_local_input(tmp_path: Path) -> None:
     # …yet the derivation keys — keyed on content, not surrogate — are identical.
     assert run_key_a == run_key_b
     assert row_keys_a == row_keys_b
-    # And no surrogate chunk_id leaks into any key.
-    assert not any(sid in json.dumps(run_key_a) for sid in ids_a + ids_b)
-    assert not any(sid in json.dumps(row_keys_a) for sid in ids_a + ids_b)
 
 
 def test_zero_chunk_document_does_not_resupersede_on_reprocess(session: Session) -> None:
@@ -448,6 +525,7 @@ def test_zero_chunk_document_does_not_resupersede_on_reprocess(session: Session)
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
     contextualize_chunks(
         session,
@@ -457,6 +535,7 @@ def test_zero_chunk_document_does_not_resupersede_on_reprocess(session: Session)
         chunks=[],
         chunking_run_id=chunking_run.id,
         splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
     )
     session.commit()
     calls_after_first = len(client.prompts)
@@ -469,6 +548,7 @@ def test_zero_chunk_document_does_not_resupersede_on_reprocess(session: Session)
         chunks=[],
         chunking_run_id=chunking_run.id,
         splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
     )
     session.commit()
 
@@ -480,7 +560,7 @@ def test_zero_chunk_document_does_not_resupersede_on_reprocess(session: Session)
 
 
 def test_changed_neighbor_supersedes_variant(session: Session) -> None:
-    """A changed neighbor opens a new variant run; the prior variant is retained."""
+    """A changed neighbor (changed chunk content) opens a new variant run; the prior variant is retained."""
     run_a, (a, b) = _persist(
         session, [_make_chunk("alpha", ordinal=0), _make_chunk("beta", ordinal=1)], markdown_hash=_HASH_A
     )
@@ -504,13 +584,19 @@ def test_changed_neighbor_supersedes_variant(session: Session) -> None:
         conversion_output_id=_OUTPUT_B,
     )
     assert a_rechunked.chunk_id == a.chunk_id, "the unchanged section reuses its surrogate identity"
+    # The document text the summary pass reads is unchanged (only the chunk-level
+    # markdown hash differs, a chunking-side signal), so the summary run reuses
+    # its active run under a new conversion output — the applicability writer's
+    # clause 2 requires a real ConversionOutput row for that locator.
+    summary_output_id = "9201"
+    _seed_conversion_output(session, output_id=int(summary_output_id), source_id=_AIZK_UUID, markdown_hash=_HASH_B)
     _summarize_and_contextualize(
         session,
         client,
         [a_rechunked, c],
         markdown_hash=_HASH_B,
         chunking_run_id=run_b.id,
-        conversion_output_id=_OUTPUT_B,
+        conversion_output_id=summary_output_id,
     )
 
     variant_runs = {r.id: r.status for r in _runs(session, VARIANT_STAGE)}
@@ -523,6 +609,93 @@ def test_changed_neighbor_supersedes_variant(session: Session) -> None:
         )
     ).one()
     assert prior_a.contextualized_text == a_prior_text
+
+
+def test_changed_summary_text_supersedes_variant(session: Session) -> None:
+    """A summary whose text changes opens a new variant run under otherwise unchanged inputs."""
+    chunking_run, chunks = _persist(session, [_make_chunk("body", ordinal=0)], markdown_hash=_HASH_A)
+    # The default responder hashes the full prompt, so a changed document_text
+    # (embedded in the summary prompt) yields genuinely different summary text.
+    client = StubLLMClient()
+    first_summary = summarize_document(
+        session,
+        client,
+        source_id=_AIZK_UUID,
+        conversion_output_id=_OUTPUT,
+        markdown_hash_xx64=_HASH_A,
+        document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
+    )
+    first_variants = contextualize_chunks(
+        session,
+        client,
+        source_id=_AIZK_UUID,
+        summary=first_summary,
+        chunks=chunks,
+        chunking_run_id=chunking_run.id,
+        splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
+    )
+    session.commit()
+    first_run_id = first_variants[0].run_id
+
+    # A changed document opens a new summary run whose input fingerprint (and
+    # hence generated text) genuinely differs.
+    second_summary = summarize_document(
+        session,
+        client,
+        source_id=_AIZK_UUID,
+        conversion_output_id=_OUTPUT_B,
+        markdown_hash_xx64=_HASH_A,
+        document_text=_DOC_TEXT + " changed",
+        model_config=STUB_MODEL_CONFIG,
+    )
+    assert second_summary.summary_text != first_summary.summary_text
+    second_variants = contextualize_chunks(
+        session,
+        client,
+        source_id=_AIZK_UUID,
+        summary=second_summary,
+        chunks=chunks,
+        chunking_run_id=chunking_run.id,
+        splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
+    )
+    session.commit()
+
+    assert second_variants[0].run_id != first_run_id
+    variant_runs = {r.id: r.status for r in _runs(session, VARIANT_STAGE)}
+    assert variant_runs[first_run_id] == RunStatus.SUPERSEDED
+    assert variant_runs[second_variants[0].run_id] == RunStatus.ACTIVE
+
+
+def test_changed_model_config_supersedes_variant(session: Session) -> None:
+    """A different resolved model identity opens a new variant run under otherwise unchanged inputs."""
+    chunking_run, chunks = _persist(session, [_make_chunk("body", ordinal=0)], markdown_hash=_HASH_A)
+    client = StubLLMClient()
+    first_variants = _summarize_and_contextualize(
+        session, client, chunks, markdown_hash=_HASH_A, chunking_run_id=chunking_run.id
+    )
+    first_run_id = first_variants[0].run_id
+
+    other_model_config = ModelConfig(provider=STUB_MODEL_CONFIG.provider, model="other-model")
+    summary = session.exec(select(DocumentSummary)).one()
+    second_variants = contextualize_chunks(
+        session,
+        client,
+        source_id=_AIZK_UUID,
+        summary=summary,
+        chunks=chunks,
+        chunking_run_id=chunking_run.id,
+        splitter_version=SPLITTER_VERSION,
+        model_config=other_model_config,
+    )
+    session.commit()
+
+    assert second_variants[0].run_id != first_run_id
+    variant_runs = {r.id: r.status for r in _runs(session, VARIANT_STAGE)}
+    assert variant_runs[first_run_id] == RunStatus.SUPERSEDED
+    assert variant_runs[second_variants[0].run_id] == RunStatus.ACTIVE
 
 
 def test_changed_splitter_version_supersedes_variant(session: Session) -> None:
@@ -559,7 +732,10 @@ def test_changed_splitter_version_supersedes_variant(session: Session) -> None:
     active = session.exec(
         select(PipelineRun).where(PipelineRun.stage == VARIANT_STAGE, PipelineRun.status == RunStatus.ACTIVE)
     ).one()
-    assert json.loads(active.derivation_key)["splitter_version"] == SPLITTER_VERSION + 1
+    summary = session.exec(select(DocumentSummary)).one()
+    assert active.derivation_key == contextualization_run_derivation_key(
+        summary.summary_text, [chunk_v2], SPLITTER_VERSION + 1, CONTEXT_VERSION, STUB_MODEL_CONFIG
+    )
     # The prior variant remains present and unmodified.
     prior = session.exec(select(ContextualizedChunk).where(ContextualizedChunk.run_id == first_run_id)).one()
     assert prior.contextualized_text == prior_text
@@ -578,6 +754,7 @@ def test_unchanged_inputs_no_duplicate_variant(session: Session) -> None:
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
     contextualize_chunks(
         session,
@@ -587,6 +764,7 @@ def test_unchanged_inputs_no_duplicate_variant(session: Session) -> None:
         chunks=chunks,
         chunking_run_id=chunking_run.id,
         splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
     )
     session.commit()
     calls_after_first = len(client.prompts)
@@ -599,12 +777,118 @@ def test_unchanged_inputs_no_duplicate_variant(session: Session) -> None:
         chunks=chunks,
         chunking_run_id=chunking_run.id,
         splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
     )
     session.commit()
 
     assert len(session.exec(select(ContextualizedChunk)).all()) == len(chunks)
     assert len(_runs(session, VARIANT_STAGE)) == 1
     assert len(client.prompts) == calls_after_first, "the unchanged re-run makes no model call"
+
+
+# --------------------------------------------------------------------------- #
+# Reconciliation: a regenerated upstream (summary) with identical content reuses
+# the variant run and records applicability for the new (summary, chunking) pair
+# --------------------------------------------------------------------------- #
+
+
+def test_regenerated_upstream_with_identical_content_reuses_run_and_records_applicability(
+    session: Session,
+) -> None:
+    """A regenerated summary run with byte-identical text reuses the variant run.
+
+    Bumping ``summary_version`` under an unchanged document and a deterministic
+    responder opens a new summary run (a different derivation key) whose text is
+    byte-identical to the prior summary's. Re-contextualizing against that new
+    summary computes the same variant-run derivation key as the active run (input
+    is content, not the summary run id), so the active run is reused — zero
+    per-chunk calls, ``ContextualizationRunInput`` unchanged — and the new
+    ``(summary_run_id, chunking_run_id)`` pair is recorded as one
+    ``ContextualizationRunApplicability`` row.
+    """
+    # Distinct, increasing spans (unlike this module's default span=(0, len(text)))
+    # so the applicability writer's document_order_chunks (span_start order) agrees
+    # with the ordinal order these chunks were contextualized in.
+    unordered_chunks = [_make_chunk("alpha", ordinal=0), _make_chunk("beta", ordinal=1)]
+    chunking_run, chunks = _persist(
+        session,
+        [c.model_copy(update={"span": (i * 1000, i * 1000 + len(c.text))}) for i, c in enumerate(unordered_chunks)],
+        markdown_hash=_HASH_A,
+    )
+    client = StubLLMClient(responder=lambda prompt: "fixed summary" if "summary_prompt" in prompt else "fixed rev")
+    first_summary = summarize_document(
+        session,
+        client,
+        source_id=_AIZK_UUID,
+        conversion_output_id=_OUTPUT,
+        markdown_hash_xx64=_HASH_A,
+        document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
+    )
+    first_variants = contextualize_chunks(
+        session,
+        client,
+        source_id=_AIZK_UUID,
+        summary=first_summary,
+        chunks=chunks,
+        chunking_run_id=chunking_run.id,
+        splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
+    )
+    session.commit()
+    active_before = session.exec(
+        select(PipelineRun).where(PipelineRun.stage == VARIANT_STAGE, PipelineRun.status == RunStatus.ACTIVE)
+    ).one()
+    run_input_before = session.get(ContextualizationRunInput, active_before.id)
+    assert run_input_before is not None
+    first_keys_by_chunk = {v.chunk_id: v.derivation_key for v in first_variants}
+    first_ids_by_chunk = {v.chunk_id: v.id for v in first_variants}
+
+    # Regenerate the summary under a version bump: a new run, byte-identical text.
+    second_summary = summarize_document(
+        session,
+        client,
+        source_id=_AIZK_UUID,
+        conversion_output_id=_OUTPUT,
+        markdown_hash_xx64=_HASH_A,
+        document_text=_DOC_TEXT,
+        summary_version=SUMMARY_VERSION + 1,
+        model_config=STUB_MODEL_CONFIG,
+    )
+    session.commit()
+    assert second_summary.id != first_summary.id
+    assert second_summary.summary_text == first_summary.summary_text
+
+    probe = StubLLMClient(responder=lambda _prompt: (_ for _ in ()).throw(AssertionError("must not be called")))
+    reused_variants = contextualize_chunks(
+        session,
+        probe,
+        source_id=_AIZK_UUID,
+        summary=second_summary,
+        chunks=chunks,
+        chunking_run_id=chunking_run.id,
+        splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
+    )
+    session.commit()
+
+    assert probe.prompts == [], "zero per-chunk calls: the byte-identical content reuses the active run"
+    assert {v.chunk_id: v.id for v in reused_variants} == first_ids_by_chunk, "the existing variants are returned"
+    assert {v.chunk_id: v.derivation_key for v in reused_variants} == first_keys_by_chunk, (
+        "each variant's row key is unchanged by the reuse"
+    )
+    active_after = session.exec(
+        select(PipelineRun).where(PipelineRun.stage == VARIANT_STAGE, PipelineRun.status == RunStatus.ACTIVE)
+    ).one()
+    assert active_after.id == active_before.id, "the variant run is retained, not superseded"
+    run_input_after = session.get(ContextualizationRunInput, active_after.id)
+    assert run_input_after == run_input_before, "ContextualizationRunInput is unchanged by the reuse"
+
+    rows = session.exec(
+        select(ContextualizationRunApplicability).where(ContextualizationRunApplicability.run_id == active_after.id)
+    ).all()
+    assert len(rows) == 1, "exactly one applicability row binds the new (summary, chunking) pair"
+    assert (rows[0].summary_run_id, rows[0].chunking_run_id) == (second_summary.run_id, chunking_run.id)
 
 
 # --------------------------------------------------------------------------- #
@@ -711,8 +995,10 @@ def test_variant_supplies_cross_chunk_referent_revision(session: Session) -> Non
 
     variant = next(v for v in variants if v.chunk_id == UUID(working.chunk_id))
     assert variant.contextualized_text == revision
-    row_key = json.loads(variant.derivation_key)
-    assert row_key["prior_chunk_1_key"] == _content_key(prior)
+    summary = session.exec(select(DocumentSummary)).one()
+    assert variant.derivation_key == contextualization_row_derivation_key(
+        summary.summary_text, working, None, prior, None, SPLITTER_VERSION, CONTEXT_VERSION, STUB_MODEL_CONFIG
+    )
 
 
 def test_context_prompt_uses_two_prior_one_next_and_escapes_chunk_text(session: Session) -> None:
@@ -760,6 +1046,7 @@ def test_substitute_model_drives_run_unchanged(session: Session) -> None:
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
     variants = contextualize_chunks(
         session,
@@ -769,6 +1056,7 @@ def test_substitute_model_drives_run_unchanged(session: Session) -> None:
         chunks=chunks,
         chunking_run_id=chunking_run.id,
         splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
     )
     session.commit()
 
@@ -794,6 +1082,7 @@ def test_all_model_calls_through_single_access_point(session: Session) -> None:
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
     contextualize_chunks(
         session,
@@ -803,6 +1092,7 @@ def test_all_model_calls_through_single_access_point(session: Session) -> None:
         chunks=chunks,
         chunking_run_id=chunking_run.id,
         splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
     )
     session.commit()
 
@@ -846,6 +1136,7 @@ def test_overlong_revision_is_rejected(session: Session) -> None:
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
 
     with pytest.raises(ValueError, match="contextualized text is too long"):
@@ -857,6 +1148,7 @@ def test_overlong_revision_is_rejected(session: Session) -> None:
             chunks=[chunk],
             chunking_run_id=chunking_run.id,
             splitter_version=SPLITTER_VERSION,
+            model_config=STUB_MODEL_CONFIG,
         )
     assert _runs(session, VARIANT_STAGE) == []
 
@@ -874,6 +1166,7 @@ def test_revision_runaway_expansion_past_chunk_ratio_is_rejected(session: Sessio
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
 
     with pytest.raises(ValueError, match="contextualized text is too long"):
@@ -885,6 +1178,7 @@ def test_revision_runaway_expansion_past_chunk_ratio_is_rejected(session: Sessio
             chunks=[chunk],
             chunking_run_id=chunking_run.id,
             splitter_version=SPLITTER_VERSION,
+            model_config=STUB_MODEL_CONFIG,
         )
     assert _runs(session, VARIANT_STAGE) == []
 
@@ -902,6 +1196,7 @@ def test_overlong_summary_is_rejected(session: Session) -> None:
             conversion_output_id=_OUTPUT,
             markdown_hash_xx64=_HASH_A,
             document_text=_DOC_TEXT,
+            model_config=STUB_MODEL_CONFIG,
         )
     assert _runs(session, SUMMARY_STAGE) == []
 
@@ -944,6 +1239,7 @@ def test_contextualize_rejects_summary_from_another_source(session: Session) -> 
         conversion_output_id="other-output",
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
     session.commit()
 
@@ -956,6 +1252,7 @@ def test_contextualize_rejects_summary_from_another_source(session: Session) -> 
             chunks=chunks,
             chunking_run_id=chunking_run.id,
             splitter_version=SPLITTER_VERSION,
+            model_config=STUB_MODEL_CONFIG,
         )
     assert _runs(session, VARIANT_STAGE) == []
 
@@ -971,6 +1268,7 @@ def test_contextualize_rejects_chunk_from_another_source(session: Session) -> No
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
     foreign_chunk = _make_chunk("foreign body", ordinal=1, source_id=UUID("22222222-2222-2222-2222-222222222222"))
 
@@ -983,6 +1281,7 @@ def test_contextualize_rejects_chunk_from_another_source(session: Session) -> No
             chunks=[local, foreign_chunk],
             chunking_run_id=chunking_run.id,
             splitter_version=SPLITTER_VERSION,
+            model_config=STUB_MODEL_CONFIG,
         )
     assert _runs(session, VARIANT_STAGE) == []
 
@@ -1003,6 +1302,7 @@ def test_contextualize_rejects_chunking_run_that_is_not_a_chunking_run(session: 
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
 
     # The summary run is not a chunking run.
@@ -1015,6 +1315,7 @@ def test_contextualize_rejects_chunking_run_that_is_not_a_chunking_run(session: 
             chunks=[chunk],
             chunking_run_id=summary.run_id,
             splitter_version=SPLITTER_VERSION,
+            model_config=STUB_MODEL_CONFIG,
         )
     assert _runs(session, VARIANT_STAGE) == []
 
@@ -1030,6 +1331,7 @@ def test_contextualize_rejects_splitter_version_mismatch_with_chunking_run(sessi
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
 
     with pytest.raises(ValueError, match="does not match chunking run"):
@@ -1041,6 +1343,7 @@ def test_contextualize_rejects_splitter_version_mismatch_with_chunking_run(sessi
             chunks=[chunk],
             chunking_run_id=chunking_run.id,
             splitter_version=SPLITTER_VERSION + 1,
+            model_config=STUB_MODEL_CONFIG,
         )
     assert _runs(session, VARIANT_STAGE) == []
 
@@ -1056,6 +1359,7 @@ def test_contextualize_rejects_chunk_absent_from_referenced_run_manifest(session
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
 
     # A chunk for this source but never persisted under (hence absent from) the run.
@@ -1070,6 +1374,7 @@ def test_contextualize_rejects_chunk_absent_from_referenced_run_manifest(session
             chunks=[stray],
             chunking_run_id=chunking_run.id,
             splitter_version=SPLITTER_VERSION,
+            model_config=STUB_MODEL_CONFIG,
         )
     assert _runs(session, VARIANT_STAGE) == []
 
@@ -1080,7 +1385,15 @@ def test_contextualize_rejects_chunk_absent_from_referenced_run_manifest(session
 
 
 def test_variant_records_summary_run_id_outside_the_derivation_key(session: Session) -> None:
-    """Each variant points at its summary run for lookup while excluding that id from derivation keys."""
+    """Each variant points at its summary run for lookup while the id plays no role in reuse/supersession.
+
+    The derivation key is opaque (a SHA-256 digest); this asserts the *behavior*
+    the exclusion buys — the key does not change when only the local summary row
+    id would differ — via the cross-database portability tests
+    (``test_variant_derivation_key_ignores_local_summary_ids``,
+    ``test_variant_derivation_key_no_db_local_input``). Here it asserts the
+    provenance pointer itself is recorded for lookup.
+    """
     chunking_run, chunks = _persist(
         session, [_make_chunk("first", ordinal=0), _make_chunk("second", ordinal=1)], markdown_hash=_HASH_A
     )
@@ -1092,6 +1405,7 @@ def test_variant_records_summary_run_id_outside_the_derivation_key(session: Sess
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_HASH_A,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
     variants = contextualize_chunks(
         session,
@@ -1101,13 +1415,96 @@ def test_variant_records_summary_run_id_outside_the_derivation_key(session: Sess
         chunks=chunks,
         chunking_run_id=chunking_run.id,
         splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
     )
     session.commit()
 
     assert all(v.summary_run_id == summary.run_id for v in variants), "variant points at its summary's run"
-    # The locator stays out of every derivation key, run-level and per-variant.
-    assert all("summary_run_id" not in v.derivation_key for v in variants)
+
+
+# --------------------------------------------------------------------------- #
+# ContextualizationRunInput: per-run provenance and output fingerprint
+# --------------------------------------------------------------------------- #
+
+
+def test_zero_chunk_run_writes_its_contextualization_run_input(session: Session) -> None:
+    """A zero-chunk variant run still writes its ``ContextualizationRunInput``.
+
+    The row carries the summary and chunking run ids the run consumed, and its
+    ``output_fingerprint`` is ``payload_fingerprint([])`` — the empty-payload case,
+    since a zero-chunk document produces no variants.
+    """
+    chunking_run, _ = _persist(session, [], markdown_hash=_HASH_A)
+    client = StubLLMClient()
+    summary = summarize_document(
+        session,
+        client,
+        source_id=_AIZK_UUID,
+        conversion_output_id=_OUTPUT,
+        markdown_hash_xx64=_HASH_A,
+        document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
+    )
+    contextualize_chunks(
+        session,
+        client,
+        source_id=_AIZK_UUID,
+        summary=summary,
+        chunks=[],
+        chunking_run_id=chunking_run.id,
+        splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
+    )
+    session.commit()
+
     active = session.exec(
         select(PipelineRun).where(PipelineRun.stage == VARIANT_STAGE, PipelineRun.status == RunStatus.ACTIVE)
     ).one()
-    assert "summary_run_id" not in active.derivation_key
+    run_input_row = session.get(ContextualizationRunInput, active.id)
+    assert run_input_row is not None
+    assert run_input_row.summary_run_id == summary.run_id
+    assert run_input_row.chunking_run_id == chunking_run.id
+    assert run_input_row.output_fingerprint == payload_fingerprint([])
+
+
+def test_assert_variant_matches_run_input_rejects_a_different_summary_or_chunking_run(session: Session) -> None:
+    """``assert_variant_matches_run_input`` raises when a variant names a different summary or chunking run."""
+    chunking_run, chunks = _persist(session, [_make_chunk("first", ordinal=0)], markdown_hash=_HASH_A)
+    client = StubLLMClient()
+    summary = summarize_document(
+        session,
+        client,
+        source_id=_AIZK_UUID,
+        conversion_output_id=_OUTPUT,
+        markdown_hash_xx64=_HASH_A,
+        document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
+    )
+    variants = contextualize_chunks(
+        session,
+        client,
+        source_id=_AIZK_UUID,
+        summary=summary,
+        chunks=chunks,
+        chunking_run_id=chunking_run.id,
+        splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
+    )
+    session.commit()
+
+    active = session.exec(
+        select(PipelineRun).where(PipelineRun.stage == VARIANT_STAGE, PipelineRun.status == RunStatus.ACTIVE)
+    ).one()
+    run_input_row = session.get(ContextualizationRunInput, active.id)
+    assert run_input_row is not None
+
+    variant = variants[0]
+    assert_variant_matches_run_input(run_input_row, variant)  # the real pairing does not raise
+
+    wrong_summary = variant.model_copy(update={"summary_run_id": summary.run_id + 1})
+    with pytest.raises(ValueError, match="does not match run"):
+        assert_variant_matches_run_input(run_input_row, wrong_summary)
+
+    wrong_chunking = variant.model_copy(update={"chunking_run_id": chunking_run.id + 1})
+    with pytest.raises(ValueError, match="does not match run"):
+        assert_variant_matches_run_input(run_input_row, wrong_chunking)

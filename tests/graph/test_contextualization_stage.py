@@ -36,7 +36,7 @@ from aizk.graph.datamodel import (
     DocumentSummary,
 )
 from aizk.graph.handler import DEFAULT_RETRY_MAX_ATTEMPTS, ContextualizationStageHandler
-from aizk.graph.llm import StubLLMClient
+from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.graph.workunit import Cancelled, LoadedMarkdown, enqueue_document
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
@@ -93,7 +93,9 @@ def _make_engine(tmp_path: Path):
 
 def _make_runner(engine, client: StubLLMClient) -> StageRunner:
     """Build a StageRunner over the contextualization handler with test-fast timing."""
-    handler = ContextualizationStageHandler(engine, client, _StubMarkdownSource(_MARKDOWN), _AlwaysCurrent())
+    handler = ContextualizationStageHandler(
+        engine, client, _StubMarkdownSource(_MARKDOWN), _AlwaysCurrent(), model_config=STUB_MODEL_CONFIG
+    )
     return StageRunner(
         handler,
         engine,
@@ -106,7 +108,9 @@ def _make_runner(engine, client: StubLLMClient) -> StageRunner:
 
 def _make_handler(engine) -> ContextualizationStageHandler:
     """Build a handler over the test engine with deterministic dependencies."""
-    return ContextualizationStageHandler(engine, StubLLMClient(), _StubMarkdownSource(_MARKDOWN), _AlwaysCurrent())
+    return ContextualizationStageHandler(
+        engine, StubLLMClient(), _StubMarkdownSource(_MARKDOWN), _AlwaysCurrent(), model_config=STUB_MODEL_CONFIG
+    )
 
 
 def _seed_job(engine, *, status: WorkUnitStatus, attempts: int = 1) -> int:
@@ -332,7 +336,7 @@ def test_execute_honors_a_durable_cancel_committed_mid_run(tmp_path: Path) -> No
             return super().generate(prompt)
 
     handler = ContextualizationStageHandler(
-        engine, _CancellingClient(), _StubMarkdownSource(_MARKDOWN), _AlwaysCurrent()
+        engine, _CancellingClient(), _StubMarkdownSource(_MARKDOWN), _AlwaysCurrent(), model_config=STUB_MODEL_CONFIG
     )
     result = handler.execute(job_id)
 
@@ -392,7 +396,9 @@ def test_failed_unit_persists_a_scrubbed_error_message(tmp_path: Path) -> None:
         def load(self, conversion_output_id: int) -> LoadedMarkdown:
             raise RuntimeError(f"connection to {leaked_detail} failed: token=abcd1234")
 
-    handler = ContextualizationStageHandler(engine, StubLLMClient(), _LeakySource(), _AlwaysCurrent())
+    handler = ContextualizationStageHandler(
+        engine, StubLLMClient(), _LeakySource(), _AlwaysCurrent(), model_config=STUB_MODEL_CONFIG
+    )
 
     with pytest.raises(RuntimeError):
         handler.execute(job_id)

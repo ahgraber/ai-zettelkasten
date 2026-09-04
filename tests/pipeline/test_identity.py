@@ -8,12 +8,13 @@ whose derivation key is unchanged reuses the active run rather than superseding 
 
 from __future__ import annotations
 
+import hashlib
 from uuid import UUID
 
 from sqlalchemy import Engine
 from sqlmodel import Session, func, select
 
-from aizk.pipeline.identity import derivation_key
+from aizk.pipeline.identity import content_fingerprint, derivation_key, fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run, reuse_or_record_run
 
 _STAGE = "chunking"
@@ -55,6 +56,33 @@ def test_derivation_key_propagates_upstream_change() -> None:
 
     assert unchanged == base, "an unchanged upstream key reuses the same downstream key"
     assert changed != base, "an upstream change must propagate to the downstream key"
+
+
+def test_fingerprint_is_canonical_and_full_width() -> None:
+    """Key order is irrelevant and a nested mapping is canonicalized, over the full 64 hex chars.
+
+    ``fingerprint`` is a plain hash over canonical JSON (unlike ``derivation_key``,
+    which wraps its input in an ``{"inputs": ..., "upstream": ...}`` envelope), so
+    two mappings that differ only in key insertion order — including inside a
+    nested mapping — must hash identically, and the digest is the full-width
+    SHA-256 hex string, never a truncated form.
+    """
+    top_level_reordered_a = fingerprint({"a": 1, "b": {"x": 1, "y": 2}})
+    top_level_reordered_b = fingerprint({"b": {"y": 2, "x": 1}, "a": 1})
+    assert top_level_reordered_a == top_level_reordered_b, "key order (including nested) must not affect the digest"
+    assert len(top_level_reordered_a) == 64, "the digest is the full-width SHA-256 hex string"
+    assert all(c in "0123456789abcdef" for c in top_level_reordered_a), "the digest is lowercase hex"
+
+    different = fingerprint({"a": 1, "b": {"x": 1, "y": 3}})
+    assert different != top_level_reordered_a, "a changed value must change the digest (not a constant function)"
+
+
+def test_content_fingerprint_matches_sha256_of_utf8_bytes() -> None:
+    """``content_fingerprint`` is exactly ``hashlib.sha256(text.encode()).hexdigest()``, full width."""
+    text = "café — the full-width digest, never a truncation"
+    digest = content_fingerprint(text)
+    assert digest == hashlib.sha256(text.encode("utf-8")).hexdigest()
+    assert len(digest) == 64, "the digest is the full-width SHA-256 hex string, never a truncated form"
 
 
 def test_run_level_idempotency_reuse(engine: Engine) -> None:

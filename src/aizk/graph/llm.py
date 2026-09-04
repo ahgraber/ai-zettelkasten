@@ -16,12 +16,17 @@ evaluation, not asserted here (see design.md § Verification Waivers).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Protocol, runtime_checkable
 
 import xxhash
 
+from aizk.pipeline.identity import fingerprint
+
 if TYPE_CHECKING:
     from pydantic_ai import Agent
+
+    from aizk.graph.config import ContextualizationConfig
 
 
 @runtime_checkable
@@ -80,3 +85,33 @@ class StubLLMClient:
         """Record ``prompt`` and return the configured deterministic completion."""
         self.prompts.append(prompt)
         return self._responder(prompt)
+
+
+@dataclass(frozen=True)
+class ModelConfig:
+    """The resolved model identity a derivation key fingerprints — not the alias that named it.
+
+    ``provider`` is the OpenAI-compatible base URL, ``model`` the model name, and
+    ``settings`` sorted ``(name, value)`` generation-setting pairs (empty today).
+    An alias swap that resolves to the same triple keeps the same fingerprint; a
+    changed resolution under an unchanged alias changes it.
+    """
+
+    provider: str
+    model: str
+    settings: tuple[tuple[str, str], ...] = ()
+
+    @classmethod
+    def from_contextualization_config(cls, config: "ContextualizationConfig") -> "ModelConfig":
+        """Resolve a :class:`ModelConfig` from the contextualization worker's model endpoint fields."""
+        return cls(provider=config.llm_base_url, model=config.llm_model)
+
+
+def model_config_fingerprint(config: ModelConfig) -> str:
+    """Return the fingerprint of a resolved model identity: provider, model, and settings."""
+    return fingerprint({"provider": config.provider, "model": config.model, "settings": list(config.settings)})
+
+
+#: A stub model identity for tests, where a derivation key needs a
+#: :class:`ModelConfig` but no model endpoint is configured.
+STUB_MODEL_CONFIG = ModelConfig(provider="stub", model="stub")

@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 
 from aizk.graph.datamodel import ExtractionJob
 from aizk.graph.extraction_events import EXTRACTION_STAGE
+from aizk.graph.extraction_run import Currentness
 from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
@@ -183,27 +184,35 @@ def _row_for_job(body: str, job_id: int) -> str:
     return match.group(0)
 
 
-def test_bulk_re_extract_applies_to_stale_units_and_skips_the_rest(
+def test_bulk_re_extract_applies_to_stale_and_reconciling_units_and_skips_the_current_one(
     client: TestClient, db_session, seed_source, seed_extraction_job, seed_extraction_state
 ) -> None:
-    """A mixed selection re-extracts the stale sources and reports the current ones skipped."""
+    """A mixed selection re-extracts stale and needs-reconciliation sources and reports the current one skipped."""
     stale_source = seed_source(db_session, karakeep_id="bm_stale", title="Stale Doc")
+    reconcile_source = seed_source(db_session, karakeep_id="bm_reconcile", title="Reconcile Doc")
     current_source = seed_source(db_session, karakeep_id="bm_current", title="Current Doc")
-    seed_extraction_state(db_session, source_id=stale_source.source_id, current=False)
-    seed_extraction_state(db_session, source_id=current_source.source_id, current=True)
+    seed_extraction_state(db_session, source_id=stale_source.source_id, currentness=Currentness.STALE)
+    seed_extraction_state(
+        db_session, source_id=reconcile_source.source_id, currentness=Currentness.NEEDS_RECONCILIATION
+    )
+    seed_extraction_state(db_session, source_id=current_source.source_id, currentness=Currentness.CURRENT)
     stale_job = seed_extraction_job(db_session, source_id=stale_source.source_id, status=WorkUnitStatus.SUCCEEDED)
+    reconcile_job = seed_extraction_job(
+        db_session, source_id=reconcile_source.source_id, status=WorkUnitStatus.SUCCEEDED
+    )
     current_job = seed_extraction_job(db_session, source_id=current_source.source_id, status=WorkUnitStatus.SUCCEEDED)
 
     response = client.post(
         "/ui/tasks/extraction/actions",
-        data={"action": "re-extract", "job_ids": [stale_job.id, current_job.id]},
+        data={"action": "re-extract", "job_ids": [stale_job.id, reconcile_job.id, current_job.id]},
     )
 
     assert response.status_code == 200
-    assert "1 job re-extracted" in response.text
+    assert "2 jobs re-extracted" in response.text
     assert "1 skipped as ineligible" in response.text
     db_session.expire_all()
     assert db_session.get(ExtractionJob, stale_job.id).status is WorkUnitStatus.QUEUED
+    assert db_session.get(ExtractionJob, reconcile_job.id).status is WorkUnitStatus.QUEUED
     assert db_session.get(ExtractionJob, current_job.id).status is WorkUnitStatus.SUCCEEDED
 
 
@@ -218,7 +227,7 @@ def test_bulk_re_extract_applies_to_every_stale_unit_in_the_selection(
     jobs = []
     for index in range(2):
         source = seed_source(db_session, karakeep_id=f"bm_stale_bulk_{index}", title=f"Stale Doc {index}")
-        seed_extraction_state(db_session, source_id=source.source_id, current=False)
+        seed_extraction_state(db_session, source_id=source.source_id, currentness=Currentness.STALE)
         jobs.append(seed_extraction_job(db_session, source_id=source.source_id, status=WorkUnitStatus.SUCCEEDED))
 
     response = client.post(
@@ -345,25 +354,36 @@ def test_a_stage_without_a_derivation_offers_no_pending_listing(client: TestClie
     assert 'id="pending-sources"' not in response.text
 
 
-def test_stale_units_are_marked_and_selectable_in_the_monitor(
+def test_stale_and_reconciliation_units_are_marked_distinctly_and_both_selectable(
     client: TestClient, db_session, seed_source, seed_extraction_job, seed_extraction_state
 ) -> None:
-    """Stale units are identifiable in the listing and carry the selection input a declared action reads."""
+    """Stale and needs-reconciliation units read distinctly, and both carry the re-extract selection input."""
     stale_source = seed_source(db_session, karakeep_id="bm_stale_row", title="Stale Doc")
+    reconcile_source = seed_source(db_session, karakeep_id="bm_reconcile_row", title="Reconcile Doc")
     current_source = seed_source(db_session, karakeep_id="bm_current_row", title="Current Doc")
-    seed_extraction_state(db_session, source_id=stale_source.source_id, current=False)
-    seed_extraction_state(db_session, source_id=current_source.source_id, current=True)
+    seed_extraction_state(db_session, source_id=stale_source.source_id, currentness=Currentness.STALE)
+    seed_extraction_state(
+        db_session, source_id=reconcile_source.source_id, currentness=Currentness.NEEDS_RECONCILIATION
+    )
+    seed_extraction_state(db_session, source_id=current_source.source_id, currentness=Currentness.CURRENT)
     stale_job = seed_extraction_job(db_session, source_id=stale_source.source_id, status=WorkUnitStatus.SUCCEEDED)
+    reconcile_job = seed_extraction_job(
+        db_session, source_id=reconcile_source.source_id, status=WorkUnitStatus.SUCCEEDED
+    )
     current_job = seed_extraction_job(db_session, source_id=current_source.source_id, status=WorkUnitStatus.SUCCEEDED)
 
     body = client.get("/ui/tasks", params={"stage": "extraction"}).text
 
     stale_row = _row_for_job(body, stale_job.id)
+    reconcile_row = _row_for_job(body, reconcile_job.id)
     current_row = _row_for_job(body, current_job.id)
-    assert 'data-stale="true"' in stale_row
+    assert 'data-currentness="stale"' in stale_row
     assert 'class="row-select stale-select"' in stale_row
-    assert "data-stale=" not in current_row
-    assert body.count('data-stale="true"') == 1
+    assert 'data-currentness="needs_reconciliation"' in reconcile_row
+    assert 'class="row-select stale-select"' in reconcile_row
+    assert "data-currentness=" not in current_row
+    assert body.count('data-currentness="stale"') == 1
+    assert body.count('data-currentness="needs_reconciliation"') == 1
 
 
 def test_a_stage_without_a_staleness_derivation_marks_nothing(
@@ -375,7 +395,7 @@ def test_a_stage_without_a_staleness_derivation_marks_nothing(
 
     body = client.get("/ui/tasks", params={"stage": "contextualization"}).text
 
-    assert "data-stale=" not in body
+    assert "data-currentness=" not in body
 
 
 # --- drill-down ---------------------------------------------------------------

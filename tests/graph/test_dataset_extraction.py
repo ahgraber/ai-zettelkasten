@@ -20,11 +20,22 @@ from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
-from aizk.graph.datamodel import Chunk, ChunkRunManifest, ContextualizedChunk, Mention, MentionCooccurrence
+from aizk.graph.datamodel import (
+    INPUT_KIND_RAW,
+    Chunk,
+    ChunkRunInput,
+    ChunkRunManifest,
+    ContextualizedChunk,
+    ExtractionRunInput,
+    Mention,
+    MentionCooccurrence,
+)
 from aizk.graph.dataset_extraction import resolve_target_source_ids, run_dataset_extraction
 from aizk.graph.extraction import Detection
+from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
 from aizk.graph.mention_store import active_extraction_run
 from aizk.graph.persistence import CHUNKING_STAGE
+from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.invalidation import ReprocessingConfirmationError
 from aizk.pipeline.run import PipelineRun, record_run
 
@@ -33,8 +44,10 @@ if TYPE_CHECKING:
 
 _SCHEMA_TABLES = [
     Chunk.__table__,
+    ChunkRunInput.__table__,
     ChunkRunManifest.__table__,
     ContextualizedChunk.__table__,
+    ExtractionRunInput.__table__,
     Mention.__table__,
     MentionCooccurrence.__table__,
     PipelineRun.__table__,
@@ -65,21 +78,30 @@ def _make_engine(tmp_path: Path, name: str) -> Engine:
 
 
 def _seed_chunking_run(session: Session, *, source_id: UUID, text: str, derivation_key: str) -> None:
-    """Seed one chunk under a source's chunking run, the shape ``extract_document`` reads."""
+    """Seed one chunk and its ``ChunkRunInput`` under a source's chunking run, the shape ``extract_document`` reads."""
     run = record_run(session, stage=CHUNKING_STAGE, scope_id=source_id, derivation_key=derivation_key)
     chunk_id = uuid4()
+    chunk = Chunk(
+        chunk_id=chunk_id,
+        content_hash=xxhash.xxh64(text.encode("utf-8")).hexdigest(),
+        source_id=source_id,
+        heading_path_json="[]",
+        ordinal=0,
+        text=text,
+        char_count=len(text),
+    )
+    session.add(chunk)
+    session.add(ChunkRunManifest(run_id=run.id, chunk_id=chunk_id, span_start=0, span_end=len(text)))
     session.add(
-        Chunk(
-            chunk_id=chunk_id,
-            content_hash=xxhash.xxh64(text.encode("utf-8")).hexdigest(),
-            source_id=source_id,
-            heading_path_json="[]",
-            ordinal=0,
-            text=text,
-            char_count=len(text),
+        ChunkRunInput(
+            run_id=run.id,
+            conversion_output_id=f"co-{run.id}",
+            markdown_hash_xx64="deadbeefdeadbeef",
+            chunk_set_fingerprint=payload_fingerprint(
+                [PayloadItem(chunk_key(chunk), INPUT_KIND_RAW, content_fingerprint(chunk.text))]
+            ),
         )
     )
-    session.add(ChunkRunManifest(run_id=run.id, chunk_id=chunk_id, span_start=0, span_end=len(text)))
     session.commit()
 
 

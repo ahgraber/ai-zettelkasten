@@ -30,12 +30,24 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
-from aizk.graph.datamodel import Chunk, ChunkRunManifest, ExtractionJob, Mention, MentionCooccurrence
+from aizk.graph.contextualization import StalePlanError
+from aizk.graph.datamodel import (
+    INPUT_KIND_RAW,
+    Chunk,
+    ChunkRunInput,
+    ChunkRunManifest,
+    ExtractionJob,
+    ExtractionRunInput,
+    Mention,
+    MentionCooccurrence,
+)
 from aizk.graph.extraction import Detection
 from aizk.graph.extraction_handler import DEFAULT_RETRY_MAX_ATTEMPTS, ExtractionStageHandler
 from aizk.graph.extraction_workunit import enqueue_extraction
+from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
 from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.events import PipelineEvent
+from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 from aizk.pipeline.runner import StageRunner
@@ -49,10 +61,12 @@ _SOURCE_A = UUID("11111111-1111-1111-1111-111111111111")
 
 _SCHEMA_TABLES = [
     Chunk.__table__,
+    ChunkRunInput.__table__,
     ChunkRunManifest.__table__,
     Mention.__table__,
     MentionCooccurrence.__table__,
     ExtractionJob.__table__,
+    ExtractionRunInput.__table__,
     PipelineRun.__table__,
     PipelineEvent.__table__,
 ]
@@ -111,13 +125,15 @@ def _make_engine(tmp_path: Path, name: str = "stage.db") -> "Engine":
 
 
 def _seed_chunking_run(session: Session, *, source_id: UUID, texts: "Sequence[str]") -> None:
-    """Seed an active chunking run and its Chunk rows, bypassing ``persist_chunks``.
+    """Seed an active chunking run, its Chunk rows, and its ``ChunkRunInput``, bypassing ``persist_chunks``.
 
     Builds only what ``extract_document`` reads (a source's active chunking run
-    and its chunks in document order), mirroring
+    and its chunks in document order) and what its upstream-output
+    revalidation needs, mirroring
     ``tests/graph/test_extraction_run_mode.py``'s ``_seed_chunking_run``.
     """
     run = record_run(session, stage=CHUNKING_STAGE, scope_id=source_id, derivation_key="chunking-key-1")
+    chunks: list[Chunk] = []
     cursor = 0
     for ordinal, text in enumerate(texts):
         chunk = Chunk(
@@ -133,7 +149,18 @@ def _seed_chunking_run(session: Session, *, source_id: UUID, texts: "Sequence[st
         session.add(
             ChunkRunManifest(run_id=run.id, chunk_id=chunk.chunk_id, span_start=cursor, span_end=cursor + len(text))
         )
+        chunks.append(chunk)
         cursor += len(text) + 1
+    session.add(
+        ChunkRunInput(
+            run_id=run.id,
+            conversion_output_id=f"co-{run.id}",
+            markdown_hash_xx64="deadbeefdeadbeef",
+            chunk_set_fingerprint=payload_fingerprint(
+                [PayloadItem(chunk_key(c), INPUT_KIND_RAW, content_fingerprint(c.text)) for c in chunks]
+            ),
+        )
+    )
     session.commit()
 
 
@@ -293,6 +320,16 @@ def test_map_result_classifies_outcomes(tmp_path: Path) -> None:
     retryable = handler.map_result(RuntimeError("transient model error"))
     assert retryable.status is WorkUnitStatus.FAILED
     assert retryable.retry_class is RetryClass.RETRYABLE
+
+
+def test_stale_plan_error_is_a_retryable_failure(tmp_path: Path) -> None:
+    """StalePlanError is a RuntimeError, so a plan invalidated between read and write retries rather than fails permanently."""
+    handler = _make_handler(_make_engine(tmp_path))
+
+    outcome = handler.map_result(StalePlanError("planned upstream changed before persist"))
+
+    assert outcome.status is WorkUnitStatus.FAILED
+    assert outcome.retry_class is RetryClass.RETRYABLE
 
 
 def test_unchunked_source_is_a_permanent_failure(tmp_path: Path) -> None:

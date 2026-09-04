@@ -14,6 +14,14 @@ This module owns the extraction domain logic that sits between a persisted
 - :data:`MATERIALIZER_VERSION` — the version of the deterministic post-NER logic this
   module implements (occurrence classification, span mapping), independent of
   which extractor produced the detections.
+- :func:`spacy_extractor_version` / :func:`gliner2_extractor_version` — derive
+  each pinned extractor's ``extractor_version`` from installed-package metadata
+  and configuration alone, without loading a model. :class:`SpacyExtractor` and
+  :class:`Gliner2Extractor` call them to set their own ``extractor_version``, so
+  a currentness check and the constructed extractor never disagree.
+- :func:`resolve_extraction_config` — resolves the configured extractor and
+  input policy into a :class:`~aizk.graph.mention_store.ResolvedExtractionConfig`
+  without constructing an extractor.
 - :func:`select_extraction_input` — resolves the text a chunk is read from: its
   document's active contextualized variant when one is present and non-empty,
   else the chunk's own raw text.
@@ -51,13 +59,15 @@ from aizk.graph.datamodel import (
     ContextualizedChunk,
     InputKind,
 )
-from aizk.graph.mention_store import MentionDraft
+from aizk.graph.mention_store import MentionDraft, ResolvedExtractionConfig
 from aizk.pipeline.run import PipelineRun, RunStatus
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from sqlmodel import Session
+
+    from aizk.graph.config import ExtractionConfig
 
 #: Version of the deterministic post-NER materialization logic: occurrence
 #: classification (searching the raw chunk text for a detected surface form's
@@ -88,6 +98,54 @@ DEFAULT_GLINER2_LABELS: "tuple[str, ...]" = (
     "event",
     "concept",
 )
+
+
+def spacy_extractor_version(model_name: str) -> str:
+    """Return the ``extractor_version`` string for a spaCy pipeline, without loading it.
+
+    A function of the pipeline package's installed version, so it tracks what is
+    installed rather than a pinned constant. :class:`SpacyExtractor` sets its own
+    ``extractor_version`` from here, so the two cannot disagree.
+
+    Raises:
+        importlib.metadata.PackageNotFoundError: If ``model_name`` is not
+            installed.
+    """
+    return f"spacy/{model_name}@{importlib.metadata.version(model_name)}"
+
+
+def gliner2_extractor_version(settings: "NerConfig", entity_labels: "Sequence[str]" = DEFAULT_GLINER2_LABELS) -> str:
+    """Return the ``extractor_version`` string for GLiNER2, without loading the model.
+
+    A function of the installed ``gliner2`` package version, the pinned model
+    repository, the configured revision, and the entity-label schema; label order
+    does not affect it. Touches no network and no model weights.
+    :class:`Gliner2Extractor` sets its own ``extractor_version`` from here, so the
+    two cannot disagree.
+    """
+    try:
+        package_version = importlib.metadata.version("gliner2")
+    except importlib.metadata.PackageNotFoundError:  # pragma: no cover - defensive
+        package_version = "unknown"
+    labels_fingerprint = ",".join(sorted(entity_labels))
+    return f"gliner2=={package_version}/{GLINER2_REPO_ID}@{settings.gliner2_revision}#labels={labels_fingerprint}"
+
+
+def resolve_extraction_config(config: "ExtractionConfig") -> ResolvedExtractionConfig:
+    """Resolve the configured extractor and input policy into a :class:`~aizk.graph.mention_store.ResolvedExtractionConfig`.
+
+    Names the configuration a worker would currently extract under. Constructs no
+    extractor and loads no model, so it is cheap enough to call per request.
+    """
+    if config.extractor == "spacy":
+        extractor_version = spacy_extractor_version("en_core_web_sm")
+    else:
+        extractor_version = gliner2_extractor_version(NerConfig())
+    return ResolvedExtractionConfig(
+        extractor_version=extractor_version,
+        materializer_version=MATERIALIZER_VERSION,
+        input_policy=config.input_policy,
+    )
 
 
 class Detection(BaseModel):
@@ -137,8 +195,8 @@ class SpacyExtractor:
 
     Lazily imports spaCy and loads the named pipeline on construction, so
     importing :mod:`aizk.graph.extraction` never requires the ``ner`` dependency
-    group. ``extractor_version`` is derived from the loaded pipeline's own
-    metadata (never hard-coded), so it stays honest to whatever pipeline is
+    group. ``extractor_version`` is set via :func:`spacy_extractor_version`
+    (never hard-coded), so it stays honest to whatever pipeline package is
     actually installed.
     """
 
@@ -166,8 +224,7 @@ class SpacyExtractor:
                 f"spaCy pipeline {model_name!r} is not installed; install the 'ner' dependency "
                 "group with 'uv sync --group ner'"
             ) from exc
-        pipeline_version = self._nlp.meta.get("version", "unknown")
-        self.extractor_version = f"spacy/{model_name}@{pipeline_version}"
+        self.extractor_version = spacy_extractor_version(model_name)
 
     def extract(self, text: str) -> "Sequence[Detection]":
         """Return spaCy's named-entity detections for ``text``, in document order."""
@@ -221,14 +278,7 @@ class Gliner2Extractor:
             )
         self._model = GLiNER2.from_pretrained(str(model_dir))
         self._entity_labels: tuple[str, ...] = tuple(entity_labels)
-        try:
-            package_version = importlib.metadata.version("gliner2")
-        except importlib.metadata.PackageNotFoundError:  # pragma: no cover - defensive
-            package_version = "unknown"
-        labels_fingerprint = ",".join(sorted(self._entity_labels))
-        self.extractor_version = (
-            f"gliner2=={package_version}/{GLINER2_REPO_ID}@{settings.gliner2_revision}#labels={labels_fingerprint}"
-        )
+        self.extractor_version = gliner2_extractor_version(settings, self._entity_labels)
 
     def extract(self, text: str) -> "Sequence[Detection]":
         """Return GLiNER2's zero-shot entity detections for ``text``, sorted by position.

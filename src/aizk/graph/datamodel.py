@@ -37,8 +37,9 @@ Facts that vary by generation live on the run instead:
   storing the model's self-contained **revision** of the chunk (or an empty
   string when the chunk was already self-contained), carrying the source
   ``chunk_id``, ``context_version``, the ``summary_run_id`` and ``chunking_run_id``
-  provenance pointers, and a derivation key for the summary, 2p/1n neighbor
-  identities, ``splitter_version``, prompt identity, and model profile used.
+  provenance pointers, and a derivation key for the summary text's content
+  fingerprint, 2p/1n neighbor content keys, ``splitter_version``, prompt
+  identity, and resolved model identity used.
 - :class:`ContextualizationOutputMemo` — internal scratch state caching validated
   summary and per-chunk revision model outputs keyed by ``(kind, scope_id,
   derivation_key)`` so a retry of a partially-completed contextualization attempt
@@ -55,6 +56,16 @@ Facts that vary by generation live on the run instead:
   unordered intra-chunk mention pair within a run, with both endpoints foreign
   keying into :class:`Mention` and a canonical ``mention_id_lo < mention_id_hi``
   ordering.
+- :class:`ChunkRunApplicability`, :class:`SummaryRunApplicability`,
+  :class:`ContextualizationRunApplicability` — append-only records that a run's
+  output was also current for another conversion output (chunking, summary) or
+  another ``(summary_run_id, chunking_run_id)`` pair (contextualization), so a
+  currentness check need not recompute a run's derivation key against every input
+  it has ever matched.
+- :class:`ContextualizationRunInput`, :class:`ExtractionRunInput` — one row per
+  run recording the input/config fingerprints that produced it and (for
+  contextualization) its output fingerprint, as :class:`ChunkRunInput` does for
+  chunking.
 
 ``run_id`` columns are logical references to ``pipeline_runs.id`` with no
 database foreign key, matching the runtime's convention so superseded-run
@@ -193,6 +204,30 @@ class ChunkRunInput(SQLModel, table=True):
     run_id: int = Field(primary_key=True, nullable=False)
     conversion_output_id: str = Field(nullable=False)
     markdown_hash_xx64: str = Field(nullable=False)
+    #: The run's output fingerprint: ``payload_fingerprint`` over the emitted
+    #: chunk set, in document order (see ``aizk.graph.fingerprints``). A
+    #: downstream currentness check reads this column instead of recomputing it.
+    chunk_set_fingerprint: str = Field(nullable=False)
+
+
+class ChunkRunApplicability(SQLModel, table=True):
+    """A chunking run's output was also the current chunk set for another conversion output.
+
+    Recorded when :func:`~aizk.graph.persistence.persist_chunks` reuses the active
+    run (unchanged derivation key and manifest) for a ``conversion_output_id``
+    that differs from the run's :class:`ChunkRunInput`. Append-only and idempotent
+    on the primary key ``(run_id, conversion_output_id)``. A currentness check
+    that resolves a ``conversion_output_id`` to a chunking run consults both this
+    table and :class:`ChunkRunInput`. ``run_id`` is a logical reference to
+    ``pipeline_runs.id`` (no foreign key).
+    """
+
+    __tablename__ = "graph_chunk_run_applicability"
+    __table_args__ = (Index("ix_graph_chunk_run_applicability_conversion_output_id", "conversion_output_id"),)
+
+    run_id: int = Field(primary_key=True, nullable=False)
+    conversion_output_id: str = Field(primary_key=True, nullable=False)
+    input_fingerprint: str = Field(nullable=False)
 
 
 class ChunkRunManifest(SQLModel, table=True):
@@ -228,8 +263,9 @@ class DocumentSummary(SQLModel, table=True):
     Carries the source markdown hash, the consumed ``conversion_output_id`` as
     provenance (so the summary's input is retrievable as well as verifiable), and
     the ``summary_version``; the owning run carries the derivation key that
-    produced it (source markdown hash, prompt identity, model profile, and
-    version) and is scoped to the durable source identity.
+    produced it (the source markdown's content fingerprint, prompt identity,
+    resolved model identity, and version) and is scoped to the durable source
+    identity.
     Re-summarizing a document whose derivation-key inputs are unchanged reuses the
     active summary run; a change to any opens a new run that supersedes the prior,
     leaving this row present and unmodified.
@@ -248,10 +284,31 @@ class DocumentSummary(SQLModel, table=True):
     summary_text: str = Field(sa_column=Column(Text, nullable=False))
     markdown_hash_xx64: str = Field(nullable=False)
     summary_version: int = Field(nullable=False)
+    #: The run's output fingerprint: ``content_fingerprint(summary_text)``. A
+    #: downstream currentness check reads this column instead of recomputing it.
+    summary_text_fingerprint: str = Field(nullable=False)
     created_at: datetime.datetime = Field(
         default_factory=_utcnow,
         sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
     )
+
+
+class SummaryRunApplicability(SQLModel, table=True):
+    """A summary run's output was also the current summary for another conversion output.
+
+    Recorded when :func:`~aizk.graph.contextualization.summarize_document` reuses
+    the active run for a ``conversion_output_id`` that differs from the run's
+    :class:`DocumentSummary`. Append-only and idempotent on the primary key
+    ``(run_id, conversion_output_id)``, mirroring :class:`ChunkRunApplicability`.
+    ``run_id`` is a logical reference to ``pipeline_runs.id`` (no foreign key).
+    """
+
+    __tablename__ = "graph_summary_run_applicability"
+    __table_args__ = (Index("ix_graph_summary_run_applicability_conversion_output_id", "conversion_output_id"),)
+
+    run_id: int = Field(primary_key=True, nullable=False)
+    conversion_output_id: str = Field(primary_key=True, nullable=False)
+    input_fingerprint: str = Field(nullable=False)
 
 
 class ContextualizedChunk(SQLModel, table=True):
@@ -266,11 +323,12 @@ class ContextualizedChunk(SQLModel, table=True):
     source-faithful unit.
 
     ``derivation_key`` records the contextualization inputs — the summary
-    identity, the working chunk's content key, the 2p/1n neighboring chunks'
-    content keys (the portable sameness-key fingerprints, not the surrogate
-    ``chunk_id``s), the ``splitter_version`` of the chunking generation read, the
-    context-window policy, prompt identity, and model profile used to build the
-    variant — alongside ``context_version``. A change to any derivation-key input or to
+    text's content fingerprint, the working chunk's content key, the 2p/1n
+    neighboring chunks' content keys (the portable sameness-key fingerprints,
+    not the surrogate ``chunk_id``s), the ``splitter_version`` of the chunking
+    generation read, the context-window policy, prompt identity, and resolved
+    model identity used to build the variant — alongside ``context_version``.
+    A change to any derivation-key input or to
     ``context_version`` opens a new run whose variant supersedes the prior;
     unchanged inputs and version reuse the active run.
 
@@ -303,6 +361,56 @@ class ContextualizedChunk(SQLModel, table=True):
         default_factory=_utcnow,
         sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
     )
+
+
+class ContextualizationRunInput(SQLModel, table=True):
+    """The provenance and fingerprints a variant run recorded, one row per run.
+
+    Written by :func:`~aizk.graph.contextualization.contextualize_chunks` in the
+    run's own transaction (also for a zero-chunk run), immutable thereafter.
+    ``summary_run_id`` and ``chunking_run_id`` are the provenance pointers every
+    :class:`ContextualizedChunk` row in the run also carries, recorded once at the
+    run level (enforced by ``assert_variant_matches_run_input``).
+    ``input_fingerprint`` covers the summary text and the ordered chunk-set keys
+    consumed; ``config_fingerprint`` the prompt, version, window policy, and model
+    identity; ``output_fingerprint`` is ``payload_fingerprint`` over the emitted
+    variants (or the raw chunk when a revision is empty), in document order.
+    ``run_id`` is a logical reference to ``pipeline_runs.id`` (no foreign key).
+    """
+
+    __tablename__ = "graph_contextualization_run_inputs"
+
+    run_id: int = Field(primary_key=True, nullable=False)
+    summary_run_id: int = Field(nullable=False)
+    chunking_run_id: int = Field(nullable=False)
+    input_fingerprint: str = Field(nullable=False)
+    config_fingerprint: str = Field(nullable=False)
+    output_fingerprint: str = Field(nullable=False)
+
+
+class ContextualizationRunApplicability(SQLModel, table=True):
+    """A variant run's output was also the current variants for another (summary, chunking) pair.
+
+    Recorded when :func:`~aizk.graph.contextualization.contextualize_chunks`
+    reuses the active run for a ``(summary_run_id, chunking_run_id)`` pair that
+    differs from the run's own :class:`ContextualizationRunInput`. Append-only and
+    idempotent on the primary key ``(run_id, summary_run_id, chunking_run_id)``.
+    ``run_id`` is a logical reference to ``pipeline_runs.id`` (no foreign key).
+    """
+
+    __tablename__ = "graph_contextualization_run_applicability"
+    __table_args__ = (
+        Index(
+            "ix_graph_contextualization_run_applicability_summary_chunking",
+            "summary_run_id",
+            "chunking_run_id",
+        ),
+    )
+
+    run_id: int = Field(primary_key=True, nullable=False)
+    summary_run_id: int = Field(primary_key=True, nullable=False)
+    chunking_run_id: int = Field(primary_key=True, nullable=False)
+    input_fingerprint: str = Field(nullable=False)
 
 
 class ContextualizationOutputMemo(SQLModel, table=True):
@@ -514,6 +622,48 @@ class ExtractionJob(SQLModel, table=True):
         default_factory=_utcnow,
         sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
     )
+
+
+class ExtractionRunInput(SQLModel, table=True):
+    """The provenance and fingerprints an extraction run recorded, one row per run.
+
+    Written by :func:`~aizk.graph.extraction_run.extract_document` in the run's
+    write transaction, immutable thereafter. ``upstream_run_id`` is the run whose
+    output the extraction consumed — the active contextualization (variant) run
+    under ``input_policy="contextualized"`` when one exists, else the active
+    chunking run. ``input_fingerprint`` is ``payload_fingerprint`` over the chunk
+    texts read under ``input_policy``, in document order; it equals that upstream
+    run's persisted output fingerprint by construction. ``config_fingerprint``
+    covers the extractor, materializer, and input-policy versions. ``run_id`` is a
+    logical reference to ``pipeline_runs.id`` (no foreign key).
+    """
+
+    __tablename__ = "graph_extraction_run_inputs"
+
+    run_id: int = Field(primary_key=True, nullable=False)
+    upstream_run_id: int = Field(nullable=False)
+    input_policy: str = Field(nullable=False)
+    input_fingerprint: str = Field(nullable=False)
+    config_fingerprint: str = Field(nullable=False)
+
+
+class ExtractionRunApplicability(SQLModel, table=True):
+    """An extraction run's output was also current against another upstream run.
+
+    Recorded when a reconciliation pass finds the extraction run's candidate key
+    unchanged against an ``upstream_run_id`` other than the run's own
+    :class:`ExtractionRunInput`. Append-only and idempotent on the primary key
+    ``(run_id, upstream_run_id)``. ``run_id`` is a logical reference to
+    ``pipeline_runs.id`` (no foreign key).
+    """
+
+    __tablename__ = "graph_extraction_run_applicability"
+    __table_args__ = (Index("ix_graph_extraction_run_applicability_upstream_run_id", "upstream_run_id"),)
+
+    run_id: int = Field(primary_key=True, nullable=False)
+    upstream_run_id: int = Field(primary_key=True, nullable=False)
+    input_policy: str = Field(nullable=False)
+    input_fingerprint: str = Field(nullable=False)
 
 
 class Mention(SQLModel, table=True):

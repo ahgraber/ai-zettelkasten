@@ -1,44 +1,59 @@
-"""Tests for the extraction stage's staleness derivation (``stale_extraction_sources``).
+"""Tests for the extraction stage's currentness classification and re-admission.
 
-A source is stale when its active extraction run consumed upstream state that has
-since been superseded — a re-chunk, or a contextualization run appearing for a
-source whose extraction fell back to raw chunk text. Staleness marks work an
-operator may re-admit; it never makes a source pending.
+A source's active extraction run is classified from persisted columns alone
+(``aizk.graph.extraction_run.classify_extraction_sources`` /
+``classify_extraction_source``): ``STALE`` when the payload or configuration a
+re-extraction would consume differs from what the run recorded; ``NEEDS_RECONCILIATION``
+when the payload is unchanged but the run recorded a different, now-superseded
+upstream run than the one currently resolved; ``CURRENT`` otherwise. Staleness
+(the ``STALE`` subset, ``stale_extraction_sources``) marks work an operator may
+re-admit; it never makes a source pending.
 
 Every case drives the real :func:`~aizk.graph.extraction_run.extract_document` over
 a deterministic stub extractor, so the run records under test are the ones the write
-path produces, not hand-built rows. The conformance case then pins the derivation to
-that write path: a stale verdict must predict that re-extracting supersedes, a
-current verdict that it reuses.
+path produces, not hand-built rows.
 """
 
 from __future__ import annotations
 
-import datetime as dt
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-import pytest
-from sqlalchemy import Engine
+from sqlalchemy import Engine, event
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
 from aizk.graph.contextualization import VARIANT_STAGE
 from aizk.graph.datamodel import (
+    INPUT_KIND_CONTEXTUALIZED,
+    INPUT_KIND_RAW,
     Chunk,
+    ChunkRunInput,
     ChunkRunManifest,
+    ContextualizationRunInput,
     ContextualizedChunk,
     ExtractionJob,
+    ExtractionRunApplicability,
+    ExtractionRunInput,
     Mention,
     MentionCooccurrence,
 )
-from aizk.graph.extraction_run import extract_document, is_extraction_stale, stale_extraction_sources
+from aizk.graph.extraction_run import (
+    Currentness,
+    classify_extraction_source,
+    classify_extraction_sources,
+    extract_document,
+    record_extraction_run_applicability,
+    stale_extraction_sources,
+)
 from aizk.graph.extraction_workunit import pending_extraction_sources
+from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
 from aizk.graph.job_actions import apply_extraction_readmission
-from aizk.graph.mention_store import active_extraction_run
+from aizk.graph.mention_store import ResolvedExtractionConfig
 from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.events import PipelineEvent
+from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 
@@ -49,34 +64,48 @@ if TYPE_CHECKING:
 
 _SCHEMA_TABLES = [
     Chunk.__table__,
+    ChunkRunInput.__table__,
     ChunkRunManifest.__table__,
+    ContextualizationRunInput.__table__,
     ContextualizedChunk.__table__,
     ExtractionJob.__table__,
+    ExtractionRunApplicability.__table__,
+    ExtractionRunInput.__table__,
     Mention.__table__,
     MentionCooccurrence.__table__,
     PipelineEvent.__table__,
     PipelineRun.__table__,
 ]
 
-_NOW = dt.datetime(2026, 3, 1, tzinfo=dt.timezone.utc)
-
 _SOURCE_A = UUID("11111111-1111-1111-1111-111111111111")
 _SOURCE_B = UUID("22222222-2222-2222-2222-222222222222")
 
 _CHUNK_TEXT = "Ada Lovelace wrote the first algorithm."
 
+#: The extraction configuration every test resolves against unless it says otherwise.
+_RESOLVED_RAW = ResolvedExtractionConfig(extractor_version="stub/v1", materializer_version="1", input_policy="raw")
+_RESOLVED_CONTEXTUALIZED = ResolvedExtractionConfig(
+    extractor_version="stub/v1", materializer_version="1", input_policy="contextualized"
+)
+
 
 class _SilentExtractor:
-    """An :class:`~aizk.graph.extraction.EntityExtractor` that detects nothing.
+    """An :class:`~aizk.graph.extraction.EntityExtractor` that detects nothing and records its calls.
 
-    Staleness is decided by a run's recorded derivation keys, not by the mentions it
-    emits, so these tests need a deterministic extractor, not a productive one.
+    Currentness is decided by persisted columns, not by the mentions a run
+    emits, so these tests need a deterministic extractor whose invocation count
+    is directly observable — never a productive one.
     """
 
     extractor_version = "stub/v1"
 
+    def __init__(self) -> None:
+        """Initialize the empty call log."""
+        self.calls: list[str] = []
+
     def extract(self, text: str) -> "Sequence[Detection]":
-        """Return no detections for any input text."""
+        """Record ``text`` and return no detections."""
+        self.calls.append(text)
         return []
 
 
@@ -87,16 +116,19 @@ def _make_engine(tmp_path: Path, name: str = "staleness.db") -> Engine:
     return engine
 
 
-def _seed_chunking_run(engine: Engine, *, source_id: UUID, derivation_key: str) -> None:
-    """Activate a chunking run for a source and put one chunk under it.
+def _seed_chunking_run(
+    engine: Engine, *, source_id: UUID, derivation_key: str, text: str = _CHUNK_TEXT
+) -> tuple[int, Chunk]:
+    """Activate a chunking run for a source with one chunk and its ``ChunkRunInput``; return (run_id, chunk).
 
     Mirrors ``persist_chunks``: the chunk is content-keyed, so a re-chunk over
-    unchanged content reuses the existing row and only the manifest generation changes.
+    unchanged content reuses the existing row and only the manifest generation
+    changes.
     """
     with Session(engine) as session:
         run = record_run(session, stage=CHUNKING_STAGE, scope_id=source_id, derivation_key=derivation_key)
         session.flush()
-        content_hash = xxhash.xxh64(_CHUNK_TEXT.encode("utf-8")).hexdigest()
+        content_hash = xxhash.xxh64(text.encode("utf-8")).hexdigest()
         chunk = session.exec(
             select(Chunk).where(Chunk.source_id == source_id, Chunk.content_hash == content_hash)
         ).one_or_none()
@@ -107,61 +139,225 @@ def _seed_chunking_run(engine: Engine, *, source_id: UUID, derivation_key: str) 
                 source_id=source_id,
                 heading_path_json="[]",
                 ordinal=0,
-                text=_CHUNK_TEXT,
-                char_count=len(_CHUNK_TEXT),
+                text=text,
+                char_count=len(text),
             )
             session.add(chunk)
-        session.add(ChunkRunManifest(run_id=run.id, chunk_id=chunk.chunk_id, span_start=0, span_end=len(_CHUNK_TEXT)))
+        session.add(ChunkRunManifest(run_id=run.id, chunk_id=chunk.chunk_id, span_start=0, span_end=len(text)))
+        session.add(
+            ChunkRunInput(
+                run_id=run.id,
+                conversion_output_id=f"co-{run.id}",
+                markdown_hash_xx64="deadbeefdeadbeef",
+                chunk_set_fingerprint=payload_fingerprint(
+                    [PayloadItem(chunk_key(chunk), INPUT_KIND_RAW, content_fingerprint(chunk.text))]
+                ),
+            )
+        )
         session.commit()
+        session.refresh(chunk)
+        return run.id, chunk
 
 
-def _seed_variant_run(engine: Engine, *, source_id: UUID, derivation_key: str) -> None:
-    """Activate a contextualization run for a source."""
+def _seed_variant_run(
+    engine: Engine, *, source_id: UUID, derivation_key: str, chunking_run_id: int, chunk: Chunk, revision: str
+) -> int:
+    """Activate a contextualization run for a source with one complete variant; return its run id."""
     with Session(engine) as session:
-        record_run(session, stage=VARIANT_STAGE, scope_id=source_id, derivation_key=derivation_key)
+        run = record_run(session, stage=VARIANT_STAGE, scope_id=source_id, derivation_key=derivation_key)
+        session.flush()
+        session.add(
+            ContextualizedChunk(
+                run_id=run.id,
+                summary_run_id=1,
+                chunking_run_id=chunking_run_id,
+                chunk_id=chunk.chunk_id,
+                context_version=1,
+                contextualized_text=revision,
+                derivation_key="test-derivation-key",
+            )
+        )
+        consumed_kind = INPUT_KIND_CONTEXTUALIZED if revision != "" else INPUT_KIND_RAW
+        consumed_text = revision if revision != "" else chunk.text
+        session.add(
+            ContextualizationRunInput(
+                run_id=run.id,
+                summary_run_id=1,
+                chunking_run_id=chunking_run_id,
+                input_fingerprint="test-input-fingerprint",
+                config_fingerprint="test-config-fingerprint",
+                output_fingerprint=payload_fingerprint(
+                    [PayloadItem(chunk_key(chunk), consumed_kind, content_fingerprint(consumed_text))]
+                ),
+            )
+        )
         session.commit()
+        return run.id
 
 
-def _extract(engine: Engine, source_id: UUID, *, input_policy: str = "contextualized") -> int:
+def _extract(engine: Engine, source_id: UUID, *, input_policy: str = "raw") -> int:
     """Run the write path for one source and return its active extraction run id."""
     return extract_document(
         engine, source_id=source_id, extractor=_SilentExtractor(), input_policy=input_policy
     ).run_id
 
 
-def test_a_re_chunked_source_is_stale(tmp_path: Path) -> None:
-    """A chunking generation superseded after extraction leaves the extracted run behind."""
+# --------------------------------------------------------------------------- #
+# Classification
+# --------------------------------------------------------------------------- #
+
+
+def test_a_re_chunked_source_with_changed_content_is_stale(tmp_path: Path) -> None:
+    """A chunking generation with different content leaves the extracted run's recorded payload behind."""
     engine = _make_engine(tmp_path)
     _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
     _extract(engine, _SOURCE_A)
+
+    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v2", text="Different content entirely.")
+
+    with Session(engine) as session:
+        assert classify_extraction_sources(session, resolved=_RESOLVED_RAW) == {_SOURCE_A: Currentness.STALE}
+        assert stale_extraction_sources(session, resolved=_RESOLVED_RAW) == {_SOURCE_A}
+
+
+def test_a_newly_contextualized_source_is_stale(tmp_path: Path) -> None:
+    """A complete variant appearing where extraction previously fell back to raw leaves it behind."""
+    engine = _make_engine(tmp_path)
+    chunking_run_id, chunk = _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
+    _extract(engine, _SOURCE_A, input_policy="contextualized")
+
+    _seed_variant_run(
+        engine,
+        source_id=_SOURCE_A,
+        derivation_key="variant-v1",
+        chunking_run_id=chunking_run_id,
+        chunk=chunk,
+        revision="Ada Lovelace, an English mathematician, wrote the first algorithm.",
+    )
+
+    with Session(engine) as session:
+        assert classify_extraction_sources(session, resolved=_RESOLVED_CONTEXTUALIZED) == {
+            _SOURCE_A: Currentness.STALE
+        }
+
+
+def test_a_current_source_is_current(tmp_path: Path) -> None:
+    """A source whose extraction consumed its current active upstream state is current."""
+    engine = _make_engine(tmp_path)
+    chunking_run_id, chunk = _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
+    _seed_variant_run(
+        engine,
+        source_id=_SOURCE_A,
+        derivation_key="variant-v1",
+        chunking_run_id=chunking_run_id,
+        chunk=chunk,
+        revision="Ada Lovelace, an English mathematician, wrote the first algorithm.",
+    )
+    _extract(engine, _SOURCE_A, input_policy="contextualized")
+
+    with Session(engine) as session:
+        assert classify_extraction_sources(session, resolved=_RESOLVED_CONTEXTUALIZED) == {
+            _SOURCE_A: Currentness.CURRENT
+        }
+        assert stale_extraction_sources(session, resolved=_RESOLVED_CONTEXTUALIZED) == set()
+
+
+def test_an_equivalent_superseded_upstream_needs_reconciliation_and_reconciles_on_extraction(
+    tmp_path: Path,
+) -> None:
+    """A re-chunk over unchanged content needs reconciliation; re-extracting then reconciles with zero calls."""
+    engine = _make_engine(tmp_path)
+    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
+    _extract(engine, _SOURCE_A)
+    with Session(engine) as session:
+        original_run_input = session.exec(
+            select(ExtractionRunInput)
+            .join(PipelineRun, PipelineRun.id == ExtractionRunInput.run_id)
+            .where(PipelineRun.scope_id == _SOURCE_A, PipelineRun.status == RunStatus.ACTIVE)
+        ).one()
+        original_upstream_run_id = original_run_input.upstream_run_id
+        original_run_id = original_run_input.run_id
 
     _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v2")
 
     with Session(engine) as session:
-        assert stale_extraction_sources(session) == {_SOURCE_A}
+        assert classify_extraction_sources(session, resolved=_RESOLVED_RAW) == {
+            _SOURCE_A: Currentness.NEEDS_RECONCILIATION
+        }
+        assert stale_extraction_sources(session, resolved=_RESOLVED_RAW) == set()
+
+    stub = _SilentExtractor()
+    reconciled_run_id = extract_document(engine, source_id=_SOURCE_A, extractor=stub, input_policy="raw").run_id
+
+    assert stub.calls == [], "reconciliation never invokes the extractor"
+    assert reconciled_run_id == original_run_id, "the extraction run itself is reused"
+    with Session(engine) as session:
+        current_run_input = session.get(ExtractionRunInput, reconciled_run_id)
+        assert current_run_input.upstream_run_id == original_upstream_run_id, "the run-input row is never rewritten"
+        new_chunking_run = session.exec(
+            select(PipelineRun).where(
+                PipelineRun.stage == CHUNKING_STAGE,
+                PipelineRun.scope_id == _SOURCE_A,
+                PipelineRun.status == RunStatus.ACTIVE,
+            )
+        ).one()
+        assert session.get(ExtractionRunApplicability, (reconciled_run_id, new_chunking_run.id)) is not None
+        assert classify_extraction_source(session, _SOURCE_A, resolved=_RESOLVED_RAW) is Currentness.CURRENT
 
 
-def test_a_newly_contextualized_source_is_stale(tmp_path: Path) -> None:
-    """An extraction that fell back to raw text is behind once variants exist for the source."""
+def test_unchanged_payload_with_a_changed_resolved_extractor_version_is_stale(tmp_path: Path) -> None:
+    """A configuration change alone (unchanged payload) is stale under the newly-resolved configuration."""
     engine = _make_engine(tmp_path)
     _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
     _extract(engine, _SOURCE_A)
 
-    _seed_variant_run(engine, source_id=_SOURCE_A, derivation_key="variants-v1")
+    changed = ResolvedExtractionConfig(extractor_version="stub/v2", materializer_version="1", input_policy="raw")
 
     with Session(engine) as session:
-        assert stale_extraction_sources(session) == {_SOURCE_A}
+        assert classify_extraction_sources(session, resolved=changed) == {_SOURCE_A: Currentness.STALE}
+        # The unchanged configuration still reads current — the verdict is about
+        # the resolved configuration supplied, not an absolute property.
+        assert classify_extraction_sources(session, resolved=_RESOLVED_RAW) == {_SOURCE_A: Currentness.CURRENT}
 
 
-def test_a_current_source_is_not_stale(tmp_path: Path) -> None:
-    """A source whose extraction consumed its current active upstream state is current."""
+def test_an_equivalent_reconciled_upstream_is_current_not_stale(tmp_path: Path) -> None:
+    """Once applicability is recorded for a superseded-but-equivalent upstream, the source reads current."""
     engine = _make_engine(tmp_path)
     _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
-    _seed_variant_run(engine, source_id=_SOURCE_A, derivation_key="variants-v1")
-    _extract(engine, _SOURCE_A)
+    run_id = _extract(engine, _SOURCE_A)
+    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v2")
 
     with Session(engine) as session:
-        assert stale_extraction_sources(session) == set()
+        new_chunking_run = session.exec(
+            select(PipelineRun).where(
+                PipelineRun.stage == CHUNKING_STAGE,
+                PipelineRun.scope_id == _SOURCE_A,
+                PipelineRun.status == RunStatus.ACTIVE,
+            )
+        ).one()
+        record_extraction_run_applicability(
+            session,
+            run_id=run_id,
+            upstream_run_id=new_chunking_run.id,
+            input_policy="raw",
+            resolved=_RESOLVED_RAW,
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        assert classify_extraction_source(session, _SOURCE_A, resolved=_RESOLVED_RAW) is Currentness.CURRENT
+        assert stale_extraction_sources(session, resolved=_RESOLVED_RAW) == set()
+
+
+def test_a_source_with_no_extraction_run_is_not_classified(tmp_path: Path) -> None:
+    """Currentness describes work already done; an unextracted source is absent from the classification."""
+    engine = _make_engine(tmp_path)
+    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
+
+    with Session(engine) as session:
+        assert classify_extraction_sources(session, resolved=_RESOLVED_RAW) == {}
+        assert classify_extraction_source(session, _SOURCE_A, resolved=_RESOLVED_RAW) is None
+        assert stale_extraction_sources(session, resolved=_RESOLVED_RAW) == set()
 
 
 def test_staleness_is_per_source(tmp_path: Path) -> None:
@@ -171,83 +367,67 @@ def test_staleness_is_per_source(tmp_path: Path) -> None:
         _seed_chunking_run(engine, source_id=source_id, derivation_key="chunking-v1")
         _extract(engine, source_id)
 
-    _seed_chunking_run(engine, source_id=_SOURCE_B, derivation_key="chunking-v2")
+    _seed_chunking_run(engine, source_id=_SOURCE_B, derivation_key="chunking-v2", text="Something else entirely.")
 
     with Session(engine) as session:
-        assert stale_extraction_sources(session) == {_SOURCE_B}
+        assert stale_extraction_sources(session, resolved=_RESOLVED_RAW) == {_SOURCE_B}
 
 
-def test_a_source_with_no_extraction_run_is_not_stale(tmp_path: Path) -> None:
-    """Staleness describes work already done; an unextracted source has nothing to be behind."""
-    engine = _make_engine(tmp_path)
-    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
-
-    with Session(engine) as session:
-        assert stale_extraction_sources(session) == set()
-
-
-@pytest.mark.parametrize(
-    ("supersede", "expected_stale"),
-    [
-        (True, True),
-        (False, False),
-    ],
-    ids=["re-chunked", "unchanged"],
-)
-def test_the_staleness_verdict_agrees_with_what_re_extraction_reads(
-    tmp_path: Path, supersede: bool, expected_stale: bool
-) -> None:
-    """A stale verdict predicts that re-extracting supersedes; a current verdict predicts reuse.
-
-    The derivation resolves the current upstream key through the same resolver the
-    write path uses, so the two cannot disagree about the same state.
-    """
-    engine = _make_engine(tmp_path)
-    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
-    first_run_id = _extract(engine, _SOURCE_A)
-
-    if supersede:
-        _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v2")
-
-    with Session(engine) as session:
-        assert (_SOURCE_A in stale_extraction_sources(session)) is expected_stale
-
-    second_run_id = _extract(engine, _SOURCE_A)
-
-    assert (second_run_id != first_run_id) is expected_stale, (
-        "re-extraction supersedes exactly when the derivation called the source stale"
-    )
-    with Session(engine) as session:
-        active = active_extraction_run(session, _SOURCE_A)
-        assert active is not None
-        assert active.id == second_run_id
-
-
-@pytest.mark.parametrize("supersede", [True, False], ids=["stale", "current"])
-def test_the_single_source_check_agrees_with_the_corpus_derivation(tmp_path: Path, supersede: bool) -> None:
-    """The per-unit check and the corpus scan return the same verdict for a source.
-
-    The re-extract action asks about one source and the dashboard counts them all.
-    If those diverged, a unit could be marked stale and then refused as ineligible.
-    """
+def test_the_single_source_check_agrees_with_the_corpus_classification(tmp_path: Path) -> None:
+    """The per-unit check and the corpus scan classify a source identically — both share one code path."""
     engine = _make_engine(tmp_path)
     _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
     _extract(engine, _SOURCE_A)
-    if supersede:
-        _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v2")
+    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v2", text="Something else entirely.")
 
     with Session(engine) as session:
-        assert is_extraction_stale(session, _SOURCE_A) is (_SOURCE_A in stale_extraction_sources(session))
-        assert is_extraction_stale(session, _SOURCE_A) is supersede
+        corpus = classify_extraction_sources(session, resolved=_RESOLVED_RAW)
+        assert classify_extraction_source(session, _SOURCE_A, resolved=_RESOLVED_RAW) == corpus.get(_SOURCE_A)
+        assert corpus[_SOURCE_A] is Currentness.STALE
 
 
-def test_the_single_source_check_is_false_for_an_unextracted_source(tmp_path: Path) -> None:
-    """A source with no active extraction run has nothing to be behind."""
-    engine = _make_engine(tmp_path)
-    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
+def test_corpus_classification_statement_count_does_not_grow_with_corpus_size_and_loads_no_chunk_text(
+    tmp_path: Path,
+) -> None:
+    """The corpus classification issues a fixed number of statements and never selects chunk/variant text."""
+    small_engine = _make_engine(tmp_path, "small.db")
+    _seed_chunking_run(small_engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
+    _extract(small_engine, _SOURCE_A)
 
-    with Session(engine) as session:
-        assert is_extraction_stale(session, _SOURCE_A) is False
+    large_engine = _make_engine(tmp_path, "large.db")
+    for index in range(5):
+        source_id = UUID(f"{index + 1:08d}-0000-0000-0000-000000000000")
+        _seed_chunking_run(large_engine, source_id=source_id, derivation_key="chunking-v1")
+        _extract(large_engine, source_id)
+
+    def _measure(engine: Engine) -> tuple[dict, list[str]]:
+        statements: list[str] = []
+
+        def _record(conn, cursor, statement, parameters, context, executemany) -> None:  # noqa: ANN001
+            statements.append(statement)
+
+        event.listen(engine, "after_cursor_execute", _record)
+        try:
+            with Session(engine) as session:
+                result = classify_extraction_sources(session, resolved=_RESOLVED_RAW)
+        finally:
+            event.remove(engine, "after_cursor_execute", _record)
+        return result, statements
+
+    small_result, small_statements = _measure(small_engine)
+    large_result, large_statements = _measure(large_engine)
+
+    assert len(small_result) == 1
+    assert len(large_result) == 5
+    assert len(small_statements) == len(large_statements)
+    for statement in small_statements + large_statements:
+        assert "graph_chunks.text" not in statement
+        assert "contextualized_text" not in statement
+
+
+# --------------------------------------------------------------------------- #
+# Re-admission
+# --------------------------------------------------------------------------- #
 
 
 def _seed_unit(engine: Engine, source_id: UUID, status: WorkUnitStatus) -> int:
@@ -259,73 +439,38 @@ def _seed_unit(engine: Engine, source_id: UUID, status: WorkUnitStatus) -> int:
         return job.id
 
 
-def test_re_admission_requeues_a_stale_finished_unit(tmp_path: Path) -> None:
-    """Re-extracting a stale source queues its existing unit again, clearing the prior attempt."""
+def test_re_admission_requeues_a_stale_finished_unit_and_fresh_extraction_supersedes(tmp_path: Path) -> None:
+    """Re-extracting a stale source queues its existing unit; the next execution supersedes the prior run."""
     engine = _make_engine(tmp_path)
     _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
-    _extract(engine, _SOURCE_A)
+    first_run_id = _extract(engine, _SOURCE_A)
     job_id = _seed_unit(engine, _SOURCE_A, WorkUnitStatus.SUCCEEDED)
-    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v2")
+    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v2", text="Something else entirely.")
 
     with Session(engine) as session:
         job = session.get(ExtractionJob, job_id)
         job.attempts = 3
-        job.error_code = "boom"
-        job.finished_at = _NOW
-        apply_extraction_readmission(session, job)
+        apply_extraction_readmission(session, job, resolved=_RESOLVED_RAW)
         session.commit()
 
     with Session(engine) as session:
         job = session.get(ExtractionJob, job_id)
         assert job.status is WorkUnitStatus.QUEUED
         assert job.attempts == 0
-        assert job.error_code is None
-        assert job.finished_at is None
-        assert job.queued_at is not None
         events = session.exec(select(PipelineEvent).where(PipelineEvent.work_unit_ref == str(job_id))).all()
-        assert [event.kind for event in events] == ["requeued"], "the transition is durably recorded"
-        assert [event.to_status for event in events] == ["queued"]
+        assert [event.kind for event in events] == ["requeued"]
 
+    second_run_id = _extract(engine, _SOURCE_A)
 
-@pytest.mark.parametrize("status", [WorkUnitStatus.SUCCEEDED, WorkUnitStatus.FAILED])
-def test_re_admission_skips_a_unit_whose_source_is_current(tmp_path: Path, status: WorkUnitStatus) -> None:
-    """A finished unit on a current source is ineligible and left exactly as it was."""
-    engine = _make_engine(tmp_path)
-    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
-    _extract(engine, _SOURCE_A)
-    job_id = _seed_unit(engine, _SOURCE_A, status)
-
+    assert second_run_id != first_run_id, "the fresh extraction supersedes the prior run"
     with Session(engine) as session:
-        job = session.get(ExtractionJob, job_id)
-        with pytest.raises(ValueError, match="not stale"):
-            apply_extraction_readmission(session, job)
-        session.rollback()
-
-    with Session(engine) as session:
-        assert session.get(ExtractionJob, job_id).status is status
+        assert stale_extraction_sources(session, resolved=_RESOLVED_RAW) == set()
 
 
-@pytest.mark.parametrize("status", [WorkUnitStatus.QUEUED, WorkUnitStatus.RUNNING])
-def test_re_admission_skips_an_unfinished_unit(tmp_path: Path, status: WorkUnitStatus) -> None:
-    """A unit that has not finished is already going to run, so re-extraction is ineligible."""
-    engine = _make_engine(tmp_path)
-    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
-    _extract(engine, _SOURCE_A)
-    job_id = _seed_unit(engine, _SOURCE_A, status)
-    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v2")
-
-    with Session(engine) as session:
-        job = session.get(ExtractionJob, job_id)
-        with pytest.raises(ValueError, match="cannot re-extract a work-unit in status"):
-            apply_extraction_readmission(session, job)
-        session.rollback()
-
-    with Session(engine) as session:
-        assert session.get(ExtractionJob, job_id).status is status
-
-
-def test_a_re_admitted_source_re_extracts_against_current_inputs(tmp_path: Path) -> None:
-    """After re-admission the worker's next execution reads current state and supersedes the prior run."""
+def test_re_admission_requeues_a_needs_reconciliation_unit_and_processing_records_applicability(
+    tmp_path: Path,
+) -> None:
+    """Re-extracting a needs-reconciliation source queues its unit; the next execution reconciles, not re-extracts."""
     engine = _make_engine(tmp_path)
     _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
     first_run_id = _extract(engine, _SOURCE_A)
@@ -333,20 +478,63 @@ def test_a_re_admitted_source_re_extracts_against_current_inputs(tmp_path: Path)
     _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v2")
 
     with Session(engine) as session:
-        apply_extraction_readmission(session, session.get(ExtractionJob, job_id))
+        job = session.get(ExtractionJob, job_id)
+        apply_extraction_readmission(session, job, resolved=_RESOLVED_RAW)
         session.commit()
 
-    # Executing the requeued unit is the stage's normal write path, whatever queued it.
-    second_run_id = _extract(engine, _SOURCE_A)
-
-    assert second_run_id != first_run_id
     with Session(engine) as session:
-        active = active_extraction_run(session, _SOURCE_A)
-        assert active is not None
-        assert active.id == second_run_id
-        superseded = session.get(PipelineRun, first_run_id)
-        assert superseded.status is RunStatus.SUPERSEDED
-        assert stale_extraction_sources(session) == set(), "the source is current again"
+        assert session.get(ExtractionJob, job_id).status is WorkUnitStatus.QUEUED
+
+    stub = _SilentExtractor()
+    second_run_id = extract_document(engine, source_id=_SOURCE_A, extractor=stub, input_policy="raw").run_id
+
+    assert stub.calls == [], "reconciliation never invokes the extractor"
+    assert second_run_id == first_run_id, "the run is retained, not superseded"
+    with Session(engine) as session:
+        assert classify_extraction_source(session, _SOURCE_A, resolved=_RESOLVED_RAW) is Currentness.CURRENT
+
+
+def test_re_admission_skips_a_unit_whose_source_is_current(tmp_path: Path) -> None:
+    """A finished unit on a current source is ineligible and left exactly as it was."""
+    engine = _make_engine(tmp_path)
+    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
+    _extract(engine, _SOURCE_A)
+    job_id = _seed_unit(engine, _SOURCE_A, WorkUnitStatus.SUCCEEDED)
+
+    with Session(engine) as session:
+        job = session.get(ExtractionJob, job_id)
+        try:
+            apply_extraction_readmission(session, job, resolved=_RESOLVED_RAW)
+        except ValueError as exc:
+            assert "current" in str(exc)
+        else:
+            raise AssertionError("expected a ValueError for a current source")
+        session.rollback()
+
+    with Session(engine) as session:
+        assert session.get(ExtractionJob, job_id).status is WorkUnitStatus.SUCCEEDED
+
+
+def test_re_admission_skips_an_unfinished_unit(tmp_path: Path) -> None:
+    """A unit that has not finished is already going to run, so re-extraction is ineligible."""
+    engine = _make_engine(tmp_path)
+    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
+    _extract(engine, _SOURCE_A)
+    job_id = _seed_unit(engine, _SOURCE_A, WorkUnitStatus.QUEUED)
+    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v2", text="Something else entirely.")
+
+    with Session(engine) as session:
+        job = session.get(ExtractionJob, job_id)
+        try:
+            apply_extraction_readmission(session, job, resolved=_RESOLVED_RAW)
+        except ValueError as exc:
+            assert "status" in str(exc)
+        else:
+            raise AssertionError("expected a ValueError for an unfinished unit")
+        session.rollback()
+
+    with Session(engine) as session:
+        assert session.get(ExtractionJob, job_id).status is WorkUnitStatus.QUEUED
 
 
 def test_a_stale_source_is_not_pending(tmp_path: Path) -> None:
@@ -364,8 +552,8 @@ def test_a_stale_source_is_not_pending(tmp_path: Path) -> None:
         )
         session.commit()
 
-    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v2")
+    _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v2", text="Something else entirely.")
 
     with Session(engine) as session:
-        assert stale_extraction_sources(session) == {_SOURCE_A}
+        assert stale_extraction_sources(session, resolved=_RESOLVED_RAW) == {_SOURCE_A}
         assert pending_extraction_sources(session) == []

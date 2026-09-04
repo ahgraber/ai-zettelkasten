@@ -29,6 +29,7 @@ from aizk.console.stages._graph import build_graph_descriptor
 from aizk.conversion.datamodel.job import ConversionJobStatus
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
+from aizk.graph.extraction_run import Currentness
 from aizk.graph.job_actions import apply_contextualization_cancel, apply_contextualization_retry
 from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.lifecycle import WorkUnitStatus
@@ -203,8 +204,8 @@ def test_the_stale_count_appears_for_the_declaring_stage(
     """Extraction reports how many extracted sources have fallen behind their upstream."""
     stale = seed_source(db_session, karakeep_id="bm_stale_dash", title="Stale")
     current = seed_source(db_session, karakeep_id="bm_current_dash", title="Current")
-    seed_extraction_state(db_session, source_id=stale.source_id, current=False)
-    seed_extraction_state(db_session, source_id=current.source_id, current=True)
+    seed_extraction_state(db_session, source_id=stale.source_id, currentness=Currentness.STALE)
+    seed_extraction_state(db_session, source_id=current.source_id, currentness=Currentness.CURRENT)
 
     response = client.get("/ui")
 
@@ -213,6 +214,19 @@ def test_the_stale_count_appears_for_the_declaring_stage(
     assert "data-stale=" not in _dashboard_row(response.text, "contextualization"), (
         "contextualization has no staleness concept"
     )
+
+
+def test_the_stale_count_excludes_needs_reconciliation_sources(
+    client: TestClient, db_session: Session, seed_source, seed_extraction_state
+) -> None:
+    """A needs-reconciliation source is re-admittable but is not counted as stale."""
+    reconciling = seed_source(db_session, karakeep_id="bm_reconcile_dash", title="Reconcile")
+    seed_extraction_state(db_session, source_id=reconciling.source_id, currentness=Currentness.NEEDS_RECONCILIATION)
+
+    response = client.get("/ui")
+
+    extraction_row = _dashboard_row(response.text, "extraction")
+    assert 'data-stale="0"' in extraction_row
 
 
 # --- registration seam --------------------------------------------------------

@@ -2,9 +2,15 @@
 
 This module owns the mention store's write path:
 
+- :class:`ResolvedExtractionConfig` — the extraction configuration currently in
+  force (extractor, materializer, and input-policy versions), the "config" half
+  of every extraction derivation key.
 - :func:`extraction_derivation_key` / :func:`derive_source_occurrence_key` — the
-  deterministic key derivations (mirroring
-  :func:`aizk.graph.persistence._chunking_derivation_key`).
+  deterministic key derivations. ``extraction_derivation_key`` composes
+  :func:`aizk.pipeline.identity.derivation_key` from a payload fingerprint and
+  :meth:`ResolvedExtractionConfig.config_fingerprint`;
+  ``derive_source_occurrence_key`` mirrors
+  :func:`aizk.chunking.datamodel.derive_chunk_content_key`.
 - :class:`MentionDraft` — the in-memory contract extraction emits, mirroring how
   :class:`aizk.chunking.Chunk` is the splitter's in-memory contract.
 - :func:`active_extraction_run` / :func:`open_extraction_run` — thin wrappers
@@ -22,6 +28,7 @@ This module owns the mention store's write path:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 from typing import TYPE_CHECKING, Literal
 from uuid import UUID, uuid4
@@ -42,6 +49,7 @@ from aizk.graph.datamodel import (
     Mention,
     MentionCooccurrence,
 )
+from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, derivation_key, fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus, reuse_or_record_run
 
 if TYPE_CHECKING:
@@ -66,39 +74,62 @@ INPUT_POLICY_RAW: InputPolicy = "raw"
 _VALID_INPUT_POLICIES: frozenset[str] = frozenset({INPUT_POLICY_CONTEXTUALIZED, INPUT_POLICY_RAW})
 
 
-def extraction_derivation_key(
-    *,
-    extractor_version: str,
-    materializer_version: str,
-    input_policy: InputPolicy,
-    upstream_derivation_key: str,
-) -> str:
+@dataclass(frozen=True)
+class ResolvedExtractionConfig:
+    """The extraction configuration currently in force: everything besides the payload that fixes the key.
+
+    Bundles the extractor version, the post-NER materializer version, and the
+    raw-vs-contextualized ``input_policy`` toggle. Immutable, and valid only for
+    a legal ``input_policy``. Build one with
+    :func:`~aizk.graph.extraction.resolve_extraction_config`, which needs no
+    extractor instance and no loaded model.
+    """
+
+    extractor_version: str
+    materializer_version: str
+    input_policy: InputPolicy
+
+    def __post_init__(self) -> None:
+        """Reject an ``input_policy`` outside :data:`InputPolicy`'s two legal values.
+
+        Validated at construction so a typo'd policy cannot mint a novel,
+        unreachable derivation key at any call site.
+
+        Raises:
+            ValueError: If ``input_policy`` is not one of :data:`InputPolicy`'s
+                legal values.
+        """
+        if self.input_policy not in _VALID_INPUT_POLICIES:
+            raise ValueError(
+                f"input_policy {self.input_policy!r} is not one of {sorted(_VALID_INPUT_POLICIES)}; "
+                "a typo'd policy must not silently mint a novel derivation key"
+            )
+
+    def config_fingerprint(self) -> str:
+        """Return the fingerprint of this configuration: the ``config`` half of the extraction derivation key."""
+        return fingerprint(
+            {
+                "extractor_version": self.extractor_version,
+                "materializer_version": self.materializer_version,
+                "input_policy": self.input_policy,
+            }
+        )
+
+
+def extraction_derivation_key(*, input_fingerprint: str, config_fingerprint: str) -> str:
     """Canonical derivation key for an extraction run.
 
-    Encodes exactly the four semantic inputs that determine the emitted mention
-    set: the NER extractor's version, the deterministic post-NER materialization
-    logic's version, the raw-vs-contextualized ``input_policy`` toggle, and the
-    consumed upstream run's derivation key — the source's active contextualization
-    run's key when ``input_policy`` is contextualized, else its active chunking
-    run's key, so upstream invalidation (a re-chunk or a re-contextualization)
-    propagates into a superseding extraction run. No local surrogate id (a
-    ``run_id`` or row id) enters the key, so it recomputes identically on any
-    backend and across a logical migration.
+    A function of exactly two semantic inputs: ``input_fingerprint``, a
+    :func:`~aizk.graph.fingerprints.payload_fingerprint` over the chunk texts
+    extraction read in document order, and ``config_fingerprint`` from
+    :meth:`ResolvedExtractionConfig.config_fingerprint`. No surrogate id and no
+    upstream run's key participates — an upstream change is observed through its
+    effect on the payload — so the key recomputes identically on any backend.
 
-    Changing any one of the four inputs yields a different key, so the source's
-    next extraction opens a run that supersedes the prior one; an unchanged key
-    reuses the active run.
+    Changing either input yields a different key, so the source's next extraction
+    opens a superseding run; an unchanged key reuses the active run.
     """
-    return json.dumps(
-        {
-            "extractor_version": extractor_version,
-            "materializer_version": materializer_version,
-            "input_policy": input_policy,
-            "upstream_derivation_key": upstream_derivation_key,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    return derivation_key(inputs={"input": input_fingerprint, "config": config_fingerprint})
 
 
 def derive_source_occurrence_key(
@@ -268,72 +299,52 @@ def open_extraction_run(
     session: "Session",
     *,
     source_id: UUID,
-    extractor_version: str,
-    materializer_version: str,
-    input_policy: InputPolicy,
-    upstream_derivation_key: str,
+    resolved: "ResolvedExtractionConfig",
+    input_fingerprint: str,
 ) -> PipelineRun:
     """Open (or reuse) a source's extraction run under the shared run primitive.
 
-    Scoped per source (``scope_id = source_id``), exactly like the chunking
-    and contextualization runs upstream. The derivation key and the recorded
-    ``version_stamps`` are both derived internally from the same semantic inputs
-    (mirroring how :func:`aizk.graph.persistence.persist_chunks` derives its run's
-    key and stamps together), so the two can never be missing or mutually
-    inconsistent. An unchanged derivation key reuses the source's active
-    extraction run (a retry or unchanged re-entry); a changed key opens a new
-    active run that supersedes the prior one — a pure status transition, so the
+    Scoped per source (``scope_id = source_id``), like the chunking and
+    contextualization runs upstream. An unchanged derivation key reuses the
+    source's active extraction run; a changed key opens a new active run that
+    supersedes the prior one. Supersession is a status transition only, so the
     prior run's mentions remain present and unmodified.
 
-    ``input_policy`` is validated against :data:`InputPolicy`'s two legal values
-    before it can influence the derivation key, so a typo'd policy fails loudly
-    here rather than silently minting a novel, unreachable key.
+    The run's ``version_stamps`` are derived from the same arguments as its
+    derivation key, so a caller cannot record stamps that disagree with the key.
 
     Does **not** commit; the caller owns the surrounding transaction.
 
     Args:
         session: Active session; the caller owns commit/rollback.
         source_id: The durable source identity; the run's scope.
-        extractor_version: The NER extractor's version; part of the derivation
-            key and recorded as a version stamp.
-        materializer_version: The deterministic post-NER materialization logic's version;
-            part of the derivation key and recorded as a version stamp.
-        input_policy: The raw-vs-contextualized input toggle; part of the
-            derivation key and recorded as a version stamp.
-        upstream_derivation_key: The consumed upstream run's derivation key (the
-            source's active contextualization run's key when ``input_policy`` is
-            contextualized, else its active chunking run's key); part of the
-            derivation key.
+        resolved: The extraction configuration currently in force; its
+            :meth:`~ResolvedExtractionConfig.config_fingerprint` is the ``config``
+            half of the derivation key, and its fields are recorded as version
+            stamps.
+        input_fingerprint: The payload fingerprint over the chunk texts
+            extraction read; the ``input`` half of the derivation key, also
+            recorded as a version stamp.
 
     Returns:
         The reused active :class:`~aizk.pipeline.run.PipelineRun`, or the
         newly-activated one.
-
-    Raises:
-        ValueError: If ``input_policy`` is not one of :data:`InputPolicy`'s legal
-            values.
     """
-    if input_policy not in _VALID_INPUT_POLICIES:
-        raise ValueError(
-            f"input_policy {input_policy!r} is not one of {sorted(_VALID_INPUT_POLICIES)}; "
-            "a typo'd policy must not silently mint a novel derivation key"
-        )
-    derivation_key = extraction_derivation_key(
-        extractor_version=extractor_version,
-        materializer_version=materializer_version,
-        input_policy=input_policy,
-        upstream_derivation_key=upstream_derivation_key,
-    )
+    config_fingerprint = resolved.config_fingerprint()
+    key = extraction_derivation_key(input_fingerprint=input_fingerprint, config_fingerprint=config_fingerprint)
     version_stamps = {
-        "extractor_version": extractor_version,
-        "materializer_version": materializer_version,
-        "input_policy": input_policy,
+        "extractor_version": resolved.extractor_version,
+        "materializer_version": resolved.materializer_version,
+        "input_policy": resolved.input_policy,
+        "input_fingerprint": input_fingerprint,
+        "config_fingerprint": config_fingerprint,
+        "derivation_key_format": DERIVATION_KEY_FORMAT,
     }
     return reuse_or_record_run(
         session,
         stage=MENTION_EXTRACTION_STAGE,
         scope_id=source_id,
-        derivation_key=derivation_key,
+        derivation_key=key,
         version_stamps=version_stamps,
     )
 

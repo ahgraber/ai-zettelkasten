@@ -30,8 +30,9 @@ from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
 from aizk.conversion.datamodel.job import ConversionJob
 from aizk.graph.contextualization import contextualize_chunks, summarize_document
 from aizk.graph.datamodel import MEMO_KIND_REVISION
-from aizk.graph.llm import StubLLMClient
+from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.graph.persistence import memo_get, memo_upsert_and_read, persist_chunks
+from aizk.pipeline.identity import content_fingerprint
 
 _HASH = "0011223344556677"
 _DOC_TEXT = "# Title\n\nThe document body the summary pass reads."
@@ -81,6 +82,7 @@ def _seed_chunks(
         source_id=source_id,
         conversion_output_id=str(conversion_output_id),
         markdown_hash_xx64=markdown_hash,
+        markdown_fingerprint=content_fingerprint(markdown_hash),
         splitter_version=SPLITTER_VERSION,
         chunks=chunks,
     )
@@ -107,6 +109,7 @@ def _seed_contextualization(
         conversion_output_id=str(conversion_output_id),
         markdown_hash_xx64=markdown_hash,
         document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
     )
     contextualize_chunks(
         db_session,
@@ -116,6 +119,7 @@ def _seed_contextualization(
         chunks=chunks,
         chunking_run_id=chunking_run_id,
         splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
         precomputed_revisions=list(revisions),
     )
     db_session.commit()
@@ -231,10 +235,11 @@ def test_explorer_detail_shows_revision_distinct_from_raw_with_provenance(
     assert revision in body
     assert "it improves throughput" in body
     assert 'data-self-contained="false"' in body
-    # Provenance: variant run with version + model_profile, plus summary + chunking lineage.
+    # Provenance: variant run with version + resolved model identity, plus summary + chunking lineage.
     assert "variant run #" in body
     assert "context_version" in body
-    assert "model_profile" in body
+    assert "model_provider" in body
+    assert "model_model" in body
     assert "summary run #" in body
     assert "chunking run #" in body
     # On-demand source markdown reconstructed via the fake blob reader.

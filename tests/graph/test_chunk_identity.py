@@ -20,6 +20,7 @@ import xxhash
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
 from aizk.graph.datamodel import Chunk
 from aizk.graph.persistence import persist_chunks
+from aizk.pipeline.identity import content_fingerprint
 
 _SOURCE_ID = UUID("11111111-1111-1111-1111-111111111111")
 _OUTPUT_A = "output-a"
@@ -66,6 +67,7 @@ def _persist(
         source_id=_SOURCE_ID,
         conversion_output_id=conversion_output_id,
         markdown_hash_xx64=markdown_hash,
+        markdown_fingerprint=content_fingerprint(markdown_hash),
         splitter_version=SPLITTER_VERSION,
         chunks=chunks,
     )

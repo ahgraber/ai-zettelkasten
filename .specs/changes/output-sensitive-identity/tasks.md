@@ -49,33 +49,33 @@ Production never runs the new binary against the old database; the pave is part 
 
 ### Fingerprints and keys
 
-- [ ] Implement per-stage pure functions: `input_fingerprint`, `config_fingerprint` (full-width SHA-256), composed through `aizk.pipeline.identity.derivation_key`; unit tests assert every shipped key constructor returns the shared helper's digest for the same semantic inputs.
-- [ ] Portability test: identical semantic inputs across two databases with different local ids yield equal keys.
-- [ ] Resolved-model-config fingerprint: hash provider, model, and generation settings; test that a profile alias change with an unchanged resolution keeps the key, and a changed resolution under the same alias changes it.
-- [ ] Stamp `derivation_key_format = "sha256-output-v1"` in new runs' version stamps.
-- [ ] Remove `_recorded_upstream` and every structural read of a stored key; add a guard test asserting `rg 'json\.loads\([^\n]*derivation_key'` matches nothing under `src/aizk`.
+- [x] Implement per-stage pure functions: `input_fingerprint`, `config_fingerprint` (full-width SHA-256), composed through `aizk.pipeline.identity.derivation_key`; unit tests assert every shipped key constructor returns the shared helper's digest for the same semantic inputs.
+- [x] Portability test: identical semantic inputs across two databases with different local ids yield equal keys.
+- [x] Resolved-model-config fingerprint: hash provider, model, and generation settings; test that a profile alias change with an unchanged resolution keeps the key, and a changed resolution under the same alias changes it.
+- [x] Stamp `derivation_key_format = "sha256-output-v1"` in new runs' version stamps.
+- [x] Remove `_recorded_upstream` and every structural read of a stored key; add a guard test asserting `rg 'json\.loads\([^\n]*derivation_key'` matches nothing under `src/aizk`.
 
 ### Provenance, applicability, output fingerprints (schema)
 
-- [ ] ORM + Alembic revision: `ContextualizationRunInput`, `ExtractionRunInput`, `ContextualizationRunApplicability`, `ExtractionRunApplicability`, chunking/summary conversion-output applicability, and the materialized output-fingerprint columns (summary text hash, chunk-set fingerprint, extraction input fingerprint); equivalence fixtures updated; round-trip test.
-- [ ] Persist output fingerprints at production time in each producer; test that downstream classification reads persisted columns only (statement assertions — no chunk/variant content loads).
-- [ ] Write run-input records in the runs' transactions.
+- [x] ORM + Alembic revision: `ContextualizationRunInput`, `ExtractionRunInput`, `ContextualizationRunApplicability`, `ExtractionRunApplicability`, chunking/summary conversion-output applicability, and the materialized output-fingerprint columns (summary text hash, chunk-set fingerprint, extraction input fingerprint); equivalence fixtures updated; round-trip test.
+- [x] Persist output fingerprints at production time in each producer; test that downstream classification reads persisted columns only (statement assertions — no chunk/variant content loads).
+- [x] Write run-input records in the runs' transactions.
   Tests: a zero-chunk contextualization run records its inputs; a variant naming a different pair is rejected; the record is unchanged after reuse via applicability; the extraction input record resolves run, policy, and payload fingerprint.
-- [ ] Applicability write validation, one test per clause: missing/dangling input, wrong role, cross-source scope, candidate-key mismatch, incomplete outputs on the run, split summary/chunking pair, pair not resolving to one conversion output, idempotent identical re-write, append-only (no update path).
+- [x] Applicability write validation, one test per clause: missing/dangling input, wrong role, cross-source scope, candidate-key mismatch, incomplete outputs on the run, split summary/chunking pair, pair not resolving to one conversion output, idempotent identical re-write, append-only (no update path).
 
 ### Reconciliation and stage rewiring
 
-- [ ] Implement reconciliation: candidate key from current inputs + currently-resolved config; write-phase revalidation in the short writer transaction; retryable stale-plan outcome.
+- [x] Implement reconciliation: candidate key from current inputs + currently-resolved config; write-phase revalidation in the short writer transaction; retryable stale-plan outcome.
   Tests: input change between read and write; active run superseded between read and write — both commit nothing.
-- [ ] Contextualization: run/row keys from consumed content; reuse check before per-chunk calls.
+- [x] Contextualization: run/row keys from consumed content; reuse check before per-chunk calls.
   Tests (stub client, invocation counting): byte-equivalent regenerated summary+chunking → run retained, one bound applicability row, zero per-chunk calls; changed summary text → new run; changed chunk content → new run; changed owned config → new run; regenerated upstream with identical content keeps the row key.
-- [ ] Extraction: payload-based key and tri-state currentness from persisted state.
+- [x] Extraction: payload-based key and tri-state currentness from persisted state.
   Tests: equivalent superseded upstream → reuse with zero extractor calls; changed input text, changed input policy, changed extractor/materializer version → key changes; duplicate chunk text at distinct positions is distinct payload; input-kind flip with identical text changes the key; corpus staleness classification cost is independent of per-run upstream resolution (statement assertion).
-- [ ] Staleness includes configuration: unchanged payload + changed resolved config classifies stale; equivalent reconciled upstream classifies not stale.
-- [ ] Widen re-admission eligibility to "not current"; worker branch on candidate key.
+- [x] Staleness includes configuration: unchanged payload + changed resolved config classifies stale; equivalent reconciled upstream classifies not stale.
+- [x] Widen re-admission eligibility to "not current"; worker branch on candidate key.
   Tests: needs-reconciliation source → applicability recorded, zero extractor calls, run retained; stale source → fresh extraction supersedes; current source skipped as ineligible.
-- [ ] Rebuild the console staleness derivation on applicability anti-joins; test dashboard stale count and monitor marking distinguish stale from needs-reconciliation.
-- [ ] Rebuild-correlation test: ingest the same fixture into two fresh databases; internal identities differ; each logical source matches across them by source metadata and content fingerprint.
+- [x] Rebuild the console staleness derivation on applicability anti-joins; test dashboard stale count and monitor marking distinguish stale from needs-reconciliation.
+- [x] Rebuild-correlation test: ingest the same fixture into two fresh databases; internal identities differ; each logical source matches across them by source metadata and the source-independent content fingerprints (the markdown hash and the summary text fingerprint; chunk keys embed `source_id`, so the chunk-set fingerprint re-derives after a rebuild).
 
 ## Parallel track — environment and conversion (MUST complete before Phase 4)
 

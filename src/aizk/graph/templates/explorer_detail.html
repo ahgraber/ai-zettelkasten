@@ -28,7 +28,8 @@
       {% if detail.has_variant %}
       variant run #{{ detail.provenance.variant_run_id }} ({{ detail.provenance.variant_run_status }}) ·
       context_version {{ detail.provenance.context_version }} ·
-      model_profile <code>{{ detail.provenance.model_profile }}</code><br />
+      model_provider <code>{{ detail.provenance.model_provider }}</code> ·
+      model_model <code>{{ detail.provenance.model_model }}</code><br />
       summary run #{{ detail.provenance.summary_run_id }} ({{ detail.provenance.summary_run_status }}) ·
       chunking run #{{ detail.provenance.chunking_run_id }}
       {% else %}

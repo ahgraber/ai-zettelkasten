@@ -25,24 +25,37 @@ import xxhash
 from aizk.conversion.datamodel.source import Source
 from aizk.graph.capacity import StageAtCapacityError, check_capacity
 from aizk.graph.datamodel import (
+    INPUT_KIND_RAW,
     Chunk,
+    ChunkRunInput,
     ChunkRunManifest,
     ContextualizationJob,
+    ContextualizationRunInput,
     ContextualizedChunk,
     ExtractionJob,
+    ExtractionRunApplicability,
+    ExtractionRunInput,
 )
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
 from aizk.graph.extraction_events import EXTRACTION_STAGE
 from aizk.graph.extraction_run import extract_document
+from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
 from aizk.graph.job_actions import (
     apply_contextualization_retry,
     apply_extraction_readmission,
     apply_extraction_retry,
 )
+from aizk.graph.mention_store import ResolvedExtractionConfig
 from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.events import PipelineEvent
+from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, record_run
+
+#: The extraction configuration the re-admission test resolves against.
+_RESOLVED_CONFIG = ResolvedExtractionConfig(
+    extractor_version="stub/v1", materializer_version="1", input_policy="contextualized"
+)
 
 _CHUNK_TEXT = "Ada Lovelace wrote the first algorithm."
 
@@ -53,9 +66,13 @@ _CHUNK_TEXT = "Ada Lovelace wrote the first algorithm."
 #: layering the two would double-issue it.
 _READMISSION_SCHEMA_TABLES = [
     Chunk.__table__,
+    ChunkRunInput.__table__,
     ChunkRunManifest.__table__,
+    ContextualizationRunInput.__table__,
     ContextualizedChunk.__table__,
     ExtractionJob.__table__,
+    ExtractionRunApplicability.__table__,
+    ExtractionRunInput.__table__,
     PipelineRun.__table__,
     PipelineEvent.__table__,
     Source.__table__,
@@ -80,7 +97,7 @@ class _SilentExtractor:
 
 
 def _seed_chunking_run(engine: Engine, *, source_id: UUID, derivation_key: str) -> None:
-    """Activate a chunking run for a source and put one chunk under it, committing on ``engine``."""
+    """Activate a chunking run for a source and put one chunk (plus its ``ChunkRunInput``) under it."""
     with Session(engine) as session:
         run = record_run(session, stage=CHUNKING_STAGE, scope_id=source_id, derivation_key=derivation_key)
         session.flush()
@@ -100,6 +117,16 @@ def _seed_chunking_run(engine: Engine, *, source_id: UUID, derivation_key: str) 
             )
             session.add(chunk)
         session.add(ChunkRunManifest(run_id=run.id, chunk_id=chunk.chunk_id, span_start=0, span_end=len(_CHUNK_TEXT)))
+        session.add(
+            ChunkRunInput(
+                run_id=run.id,
+                conversion_output_id=f"co-{run.id}",
+                markdown_hash_xx64="deadbeefdeadbeef",
+                chunk_set_fingerprint=payload_fingerprint(
+                    [PayloadItem(chunk_key(chunk), INPUT_KIND_RAW, content_fingerprint(chunk.text))]
+                ),
+            )
+        )
         session.commit()
 
 
@@ -196,7 +223,7 @@ def test_extraction_readmission_succeeds_at_capacity_for_a_stale_source(
             check_capacity(session, ExtractionJob, stage=EXTRACTION_STAGE, limit=limit)
 
         job = session.get(ExtractionJob, job_id)
-        apply_extraction_readmission(session, job)
+        apply_extraction_readmission(session, job, resolved=_RESOLVED_CONFIG)
         session.commit()
 
         session.refresh(job)

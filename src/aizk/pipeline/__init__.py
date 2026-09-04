@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from aizk.pipeline.events import PipelineEvent, record_transition
 from aizk.pipeline.handler import Isolation, StageHandler, StageResult, WorkUnitHandle
-from aizk.pipeline.identity import derivation_key
+from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, content_fingerprint, derivation_key, fingerprint
 from aizk.pipeline.invalidation import (
     ReprocessingConfirmationError,
     generation_is_stale,
@@ -45,6 +45,7 @@ from aizk.pipeline.run import PipelineRun, RunStatus, record_run, reuse_or_recor
 from aizk.pipeline.runner import InMemoryMetrics, StageMetrics, StageRunner
 
 __all__ = [
+    "DERIVATION_KEY_FORMAT",
     "TERMINAL_STATUSES",
     "InMemoryMetrics",
     "Isolation",
@@ -60,7 +61,9 @@ __all__ = [
     "TerminalOutcome",
     "WorkUnitHandle",
     "WorkUnitStatus",
+    "content_fingerprint",
     "derivation_key",
+    "fingerprint",
     "generation_is_stale",
     "is_terminal",
     "record_run",

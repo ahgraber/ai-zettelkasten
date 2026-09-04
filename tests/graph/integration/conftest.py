@@ -28,10 +28,35 @@ from aizk.db.engine import _ENGINE_CACHE, get_engine
 from aizk.db.migrations import run_migrations
 from aizk.graph.api.dependencies import get_blob_reader
 from aizk.graph.api.main import create_app
+from aizk.graph.datamodel import ChunkRunInput, ExtractionRunInput
 from aizk.graph.extraction_events import EXTRACTION_STAGE
-from aizk.graph.mention_store import extraction_derivation_key
+from aizk.graph.extraction_run import Currentness
+from aizk.graph.mention_store import ResolvedExtractionConfig, extraction_derivation_key
 from aizk.graph.persistence import CHUNKING_STAGE
+from aizk.pipeline.identity import fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus
+
+#: The extraction configuration :func:`_fixed_extraction_config` pins the console
+#: to, and :func:`seed_extraction_state` computes its fingerprints from — so a
+#: classification driven through the console agrees with what a test seeds,
+#: without constructing a real extractor or reading the environment.
+FIXTURE_RESOLVED_CONFIG = ResolvedExtractionConfig(
+    extractor_version="stub/v1", materializer_version="v1", input_policy="raw"
+)
+
+
+@pytest.fixture(autouse=True)
+def _fixed_extraction_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the console's resolved extraction configuration so no test reads the environment.
+
+    ``aizk.console.stages.extraction._resolved_config`` is ``functools.cache``d
+    and otherwise resolves ``ExtractionConfig()`` (and, for the default ``spacy``
+    extractor, installed-package metadata) on first use — every registered
+    stage's ``stale_count``/``currentness`` is read on every dashboard render, so
+    this must be hermetic for the whole directory, not only extraction-specific
+    tests.
+    """
+    monkeypatch.setattr("aizk.console.stages.extraction._resolved_config", lambda: FIXTURE_RESOLVED_CONFIG)
 
 
 @pytest.fixture
@@ -165,35 +190,80 @@ def seed_conversion_job() -> "Callable[..., ConversionJob]":
 
 @pytest.fixture
 def seed_extraction_state() -> "Callable[..., None]":
-    """Return a factory that puts a source in a current or stale extraction state.
+    """Return a factory that puts a source's extraction into one of the three currentness classes.
 
-    Both runs are activated for the source: a chunking run, and an extraction run
-    recording the upstream key it consumed. With ``current=False`` that recorded key
-    no longer matches the chunking run, which is what makes the source stale.
+    Always activates a chunking run carrying a recorded :class:`ChunkRunInput`.
+    The extraction run's :class:`ExtractionRunInput` and derivation key are built
+    from :data:`FIXTURE_RESOLVED_CONFIG` — the same configuration
+    :func:`_fixed_extraction_config` pins the console to — so a classification
+    driven through the console agrees with what this seeds. Seeds persisted
+    state only; it never calls :func:`~aizk.graph.extraction_run.extract_document`.
+
+    ``currentness=Currentness.STALE``: the extraction run's recorded input
+    fingerprint differs from the active chunking run's persisted output.
+    ``currentness=Currentness.NEEDS_RECONCILIATION``: the recorded fingerprint
+    matches, but the run's ``upstream_run_id`` names a different, superseded
+    chunking run rather than the active one, and no applicability row bridges
+    them. ``currentness=Currentness.CURRENT``: the run's provenance names the
+    active chunking run directly.
     """
 
-    def _make(session: Session, *, source_id: UUID, current: bool) -> None:
-        consumed = "chunking-current" if current else "chunking-superseded"
+    def _make(session: Session, *, source_id: UUID, currentness: Currentness) -> None:
+        config_fingerprint = FIXTURE_RESOLVED_CONFIG.config_fingerprint()
+        current_output_fingerprint = fingerprint({"markdown_fingerprint": f"markdown-{source_id}"})
+
+        current_chunking_run = PipelineRun(
+            stage=CHUNKING_STAGE,
+            scope_id=source_id,
+            status=RunStatus.ACTIVE,
+            derivation_key=f"chunking-{source_id}",
+        )
+        session.add(current_chunking_run)
+        session.flush()
         session.add(
-            PipelineRun(
-                stage=CHUNKING_STAGE,
-                scope_id=source_id,
-                status=RunStatus.ACTIVE,
-                derivation_key="chunking-current",
+            ChunkRunInput(
+                run_id=current_chunking_run.id,
+                conversion_output_id=f"co-{source_id}",
+                markdown_hash_xx64="deadbeefdeadbeef",
+                chunk_set_fingerprint=current_output_fingerprint,
             )
         )
-        session.add(
-            PipelineRun(
-                stage=EXTRACTION_STAGE,
+
+        if currentness is Currentness.STALE:
+            recorded_fingerprint = fingerprint({"markdown_fingerprint": f"stale-markdown-{source_id}"})
+            upstream_run_id = current_chunking_run.id
+        elif currentness is Currentness.NEEDS_RECONCILIATION:
+            recorded_fingerprint = current_output_fingerprint
+            superseded_chunking_run = PipelineRun(
+                stage=CHUNKING_STAGE,
                 scope_id=source_id,
-                status=RunStatus.ACTIVE,
-                derivation_key=extraction_derivation_key(
-                    extractor_version="stub/v1",
-                    materializer_version="v1",
-                    input_policy="raw",
-                    upstream_derivation_key=consumed,
-                ),
-                version_stamps_json='{"input_policy":"raw"}',
+                status=RunStatus.SUPERSEDED,
+                derivation_key=f"chunking-superseded-{source_id}",
+            )
+            session.add(superseded_chunking_run)
+            session.flush()
+            upstream_run_id = superseded_chunking_run.id
+        else:
+            recorded_fingerprint = current_output_fingerprint
+            upstream_run_id = current_chunking_run.id
+
+        extraction_run = PipelineRun(
+            stage=EXTRACTION_STAGE,
+            scope_id=source_id,
+            status=RunStatus.ACTIVE,
+            derivation_key=extraction_derivation_key(
+                input_fingerprint=recorded_fingerprint, config_fingerprint=config_fingerprint
+            ),
+        )
+        session.add(extraction_run)
+        session.flush()
+        session.add(
+            ExtractionRunInput(
+                run_id=extraction_run.id,
+                upstream_run_id=upstream_run_id,
+                input_policy=FIXTURE_RESOLVED_CONFIG.input_policy,
+                input_fingerprint=recorded_fingerprint,
+                config_fingerprint=config_fingerprint,
             )
         )
         session.commit()

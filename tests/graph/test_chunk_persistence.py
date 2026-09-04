@@ -24,15 +24,20 @@ from sqlmodel import Session, select
 import xxhash
 
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk, split
-from aizk.graph.datamodel import Chunk, ChunkRunManifest
+from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.graph.datamodel import INPUT_KIND_RAW, Chunk, ChunkRunApplicability, ChunkRunManifest
+from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
 from aizk.graph.persistence import (
     active_chunking_run,
+    chunking_input_fingerprint,
     chunks_of_run,
     current_chunk_ids,
     members_of_run,
     persist_chunks,
+    record_chunk_run_applicability,
     run_input,
 )
+from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus
 
 _AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")
@@ -102,6 +107,7 @@ def test_round_trip_fidelity(session: Session) -> None:
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
+        markdown_fingerprint=content_fingerprint(_MARKDOWN_HASH),
         splitter_version=SPLITTER_VERSION,
         chunks=emitted,
     )
@@ -133,6 +139,7 @@ def test_full_set_in_generation(session: Session) -> None:
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
+        markdown_fingerprint=content_fingerprint(_MARKDOWN_HASH),
         splitter_version=SPLITTER_VERSION,
         chunks=emitted,
     )
@@ -178,6 +185,7 @@ def _persist_two_generations(session: Session) -> tuple[SplitterChunk, SplitterC
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
+        markdown_fingerprint=content_fingerprint(_MARKDOWN_HASH),
         splitter_version=SPLITTER_VERSION,
         chunks=[shared, prior_only],
     )
@@ -189,6 +197,7 @@ def _persist_two_generations(session: Session) -> tuple[SplitterChunk, SplitterC
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT_B,
         markdown_hash_xx64=_MARKDOWN_HASH_B,
+        markdown_fingerprint=content_fingerprint(_MARKDOWN_HASH_B),
         splitter_version=SPLITTER_VERSION,
         chunks=[shared_rechunked, new_only],
     )
@@ -278,6 +287,125 @@ def test_superseded_generation_consumed_input_and_manifest_recoverable(session: 
 
 
 # --------------------------------------------------------------------------- #
+# Output fingerprint and cross-output applicability
+# --------------------------------------------------------------------------- #
+
+
+def test_chunk_set_fingerprint_equals_payload_fingerprint(session: Session) -> None:
+    """A new run's ``chunk_set_fingerprint`` equals ``payload_fingerprint`` over the persisted chunks."""
+    chunk_a = _make_chunk(heading_path=("A",), ordinal=0, text="first chunk text")
+    chunk_b = _make_chunk(heading_path=("B",), ordinal=0, text="second chunk text")
+    run, persisted = persist_chunks(
+        session,
+        source_id=_AIZK_UUID,
+        conversion_output_id=_OUTPUT,
+        markdown_hash_xx64=_MARKDOWN_HASH,
+        markdown_fingerprint=content_fingerprint(_MARKDOWN_HASH),
+        splitter_version=SPLITTER_VERSION,
+        chunks=[chunk_a, chunk_b],
+    )
+    session.commit()
+
+    assert run.id is not None
+    stored = run_input(session, run.id)
+    assert stored is not None
+    expected = payload_fingerprint(
+        [PayloadItem(chunk_key(c), INPUT_KIND_RAW, content_fingerprint(c.text)) for c in persisted]
+    )
+    assert stored.chunk_set_fingerprint == expected
+
+
+def _seed_conversion_output(session: Session, *, output_id: int, source_id: UUID, markdown_hash: str) -> None:
+    """Insert a minimal :class:`ConversionOutput` row for the applicability writer's clause-2 lookup."""
+    session.add(
+        ConversionOutput(
+            id=output_id,
+            job_id=output_id,
+            source_id=source_id,
+            owner_id="test",
+            title="doc",
+            payload_version=1,
+            s3_prefix="graph/test",
+            markdown_key="markdown.md",
+            manifest_key="manifest.json",
+            markdown_hash_xx64=markdown_hash,
+            docling_version="0",
+            pipeline_name="test",
+        )
+    )
+    session.commit()
+
+
+def test_unchanged_rerun_under_new_conversion_output_records_applicability(session: Session) -> None:
+    """Reusing the active run for a different ``conversion_output_id`` records one, idempotent, applicability row."""
+    chunk = _make_chunk(text="stable content")
+    first, _ = persist_chunks(
+        session,
+        source_id=_AIZK_UUID,
+        conversion_output_id=_OUTPUT,
+        markdown_hash_xx64=_MARKDOWN_HASH,
+        markdown_fingerprint=content_fingerprint(_MARKDOWN_HASH),
+        splitter_version=SPLITTER_VERSION,
+        chunks=[chunk],
+    )
+    session.commit()
+
+    # Byte-identical content re-persisted under a later artifact locator — an
+    # accidental rerun against a new conversion output whose markdown is unchanged.
+    # The writer's clause-2 check resolves the locator to a real ConversionOutput
+    # row, so the new output is seeded here.
+    new_output_id = "9002"
+    _seed_conversion_output(session, output_id=int(new_output_id), source_id=_AIZK_UUID, markdown_hash=_MARKDOWN_HASH)
+    chunk_new_output = _make_chunk(text="stable content", conversion_output_id=new_output_id)
+    for _ in range(2):
+        second, _ = persist_chunks(
+            session,
+            source_id=_AIZK_UUID,
+            conversion_output_id=new_output_id,
+            markdown_hash_xx64=_MARKDOWN_HASH,
+            markdown_fingerprint=content_fingerprint(_MARKDOWN_HASH),
+            splitter_version=SPLITTER_VERSION,
+            chunks=[chunk_new_output],
+        )
+        session.commit()
+
+    assert second.id == first.id, "the active run is reused, not superseded"
+    rows = session.exec(select(ChunkRunApplicability).where(ChunkRunApplicability.run_id == first.id)).all()
+    assert len(rows) == 1, "a second identical call must not duplicate the applicability row"
+    assert rows[0].conversion_output_id == new_output_id
+
+
+def test_mismatched_splitter_version_at_write_time_is_rejected(session: Session) -> None:
+    """The applicability writer recomputes the candidate key from the resolved config, rejecting a mismatch."""
+    chunk = _make_chunk(text="stable content")
+    run, _ = persist_chunks(
+        session,
+        source_id=_AIZK_UUID,
+        conversion_output_id=_OUTPUT,
+        markdown_hash_xx64=_MARKDOWN_HASH,
+        markdown_fingerprint=content_fingerprint(_MARKDOWN_HASH),
+        splitter_version=SPLITTER_VERSION,
+        chunks=[chunk],
+    )
+    session.commit()
+    assert run.id is not None
+
+    other_output_id = "9003"
+    _seed_conversion_output(
+        session, output_id=int(other_output_id), source_id=_AIZK_UUID, markdown_hash=_MARKDOWN_HASH
+    )
+
+    with pytest.raises(ValueError, match="derivation key does not match"):
+        record_chunk_run_applicability(
+            session,
+            run_id=run.id,
+            conversion_output_id=other_output_id,
+            input_fingerprint=chunking_input_fingerprint(content_fingerprint(_MARKDOWN_HASH)),
+            splitter_version=SPLITTER_VERSION + 1,
+        )
+
+
+# --------------------------------------------------------------------------- #
 # Run-idempotency: unchanged rerun reuses the run; version bump supersedes
 # --------------------------------------------------------------------------- #
 
@@ -290,6 +418,7 @@ def test_unchanged_rerun_reuses_run_without_manifest_churn(session: Session) -> 
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
+        markdown_fingerprint=content_fingerprint(_MARKDOWN_HASH),
         splitter_version=SPLITTER_VERSION,
         chunks=[chunk],
     )
@@ -301,6 +430,7 @@ def test_unchanged_rerun_reuses_run_without_manifest_churn(session: Session) -> 
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
+        markdown_fingerprint=content_fingerprint(_MARKDOWN_HASH),
         splitter_version=SPLITTER_VERSION,
         chunks=[chunk],
     )
@@ -321,6 +451,7 @@ def test_splitter_version_bump_supersedes_even_when_content_unchanged(session: S
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
+        markdown_fingerprint=content_fingerprint(_MARKDOWN_HASH),
         splitter_version=SPLITTER_VERSION,
         chunks=[chunk_v1],
     )
@@ -332,6 +463,7 @@ def test_splitter_version_bump_supersedes_even_when_content_unchanged(session: S
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
+        markdown_fingerprint=content_fingerprint(_MARKDOWN_HASH),
         splitter_version=SPLITTER_VERSION + 1,
         chunks=[chunk_v2],
     )
@@ -364,6 +496,7 @@ def test_reuse_requires_matching_spans_not_just_ids(session: Session) -> None:
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
+        markdown_fingerprint=content_fingerprint(_MARKDOWN_HASH),
         splitter_version=SPLITTER_VERSION,
         chunks=[chunk],
     )
@@ -376,6 +509,7 @@ def test_reuse_requires_matching_spans_not_just_ids(session: Session) -> None:
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
+        markdown_fingerprint=content_fingerprint(_MARKDOWN_HASH),
         splitter_version=SPLITTER_VERSION,
         chunks=[shifted],
     )
@@ -403,6 +537,7 @@ def test_persist_rejects_sameness_key_collision_with_conflicting_facts(session: 
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT,
         markdown_hash_xx64=_MARKDOWN_HASH,
+        markdown_fingerprint=content_fingerprint(_MARKDOWN_HASH),
         splitter_version=SPLITTER_VERSION,
         chunks=[original],
     )
@@ -430,6 +565,7 @@ def test_persist_rejects_sameness_key_collision_with_conflicting_facts(session: 
             source_id=_AIZK_UUID,
             conversion_output_id=_OUTPUT_B,
             markdown_hash_xx64=_MARKDOWN_HASH_B,
+            markdown_fingerprint=content_fingerprint(_MARKDOWN_HASH_B),
             splitter_version=SPLITTER_VERSION,
             chunks=[colliding],
         )
@@ -456,6 +592,7 @@ def test_persist_rejects_chunk_provenance_mismatch(session: Session, bad_chunk: 
             source_id=_AIZK_UUID,
             conversion_output_id=_OUTPUT,
             markdown_hash_xx64=_MARKDOWN_HASH,
+            markdown_fingerprint=content_fingerprint(_MARKDOWN_HASH),
             splitter_version=SPLITTER_VERSION,
             chunks=[bad_chunk],
         )

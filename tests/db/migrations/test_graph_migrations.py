@@ -23,13 +23,19 @@ from sqlmodel import SQLModel
 
 from aizk.graph.datamodel import (
     Chunk,
+    ChunkRunApplicability,
     ChunkRunInput,
     ChunkRunManifest,
     ContextualizationJob,
     ContextualizationOutputMemo,
+    ContextualizationRunApplicability,
+    ContextualizationRunInput,
     ContextualizedChunk,
     DocumentSummary,
     ExtractionJob,
+    ExtractionRunApplicability,
+    ExtractionRunInput,
+    SummaryRunApplicability,
 )
 from tests.db.migrations._schema_equivalence import assert_table_schema_equivalent
 
@@ -51,6 +57,12 @@ _GRAPH_TABLES = (
     "graph_contextualization_jobs",
     "graph_contextualization_output_memo",
     "graph_extraction_jobs",
+    "graph_chunk_run_applicability",
+    "graph_summary_run_applicability",
+    "graph_contextualization_run_inputs",
+    "graph_contextualization_run_applicability",
+    "graph_extraction_run_inputs",
+    "graph_extraction_run_applicability",
 )
 _GRAPH_ORM_TABLES = [
     Chunk.__table__,
@@ -61,6 +73,12 @@ _GRAPH_ORM_TABLES = [
     ContextualizationJob.__table__,
     ContextualizationOutputMemo.__table__,
     ExtractionJob.__table__,
+    ChunkRunApplicability.__table__,
+    SummaryRunApplicability.__table__,
+    ContextualizationRunInput.__table__,
+    ContextualizationRunApplicability.__table__,
+    ExtractionRunInput.__table__,
+    ExtractionRunApplicability.__table__,
 ]
 
 
@@ -253,6 +271,49 @@ def test_output_memo_kind_check_rejects_unknown_kind(tmp_path: Path) -> None:
     for kind in ("summary", "revision"):
         with engine.begin() as conn:
             conn.execute(insert, {**params, "kind": kind})
+
+
+_PROVENANCE_REVISION = "c5d6e7f8a9b0"
+_PROVENANCE_PREV_REVISION = "e3f4a5b6c7d8"
+_PROVENANCE_TABLES = (
+    "graph_chunk_run_applicability",
+    "graph_summary_run_applicability",
+    "graph_contextualization_run_inputs",
+    "graph_contextualization_run_applicability",
+    "graph_extraction_run_inputs",
+    "graph_extraction_run_applicability",
+)
+
+
+def test_provenance_and_applicability_migration_round_trips(tmp_path: Path) -> None:
+    """The provenance/applicability revision creates its six tables and two columns, and drops them cleanly.
+
+    Also asserts the two output-fingerprint columns land ``NOT NULL`` on the
+    pre-existing run-input tables, and that downgrading removes exactly this
+    revision's additions, leaving the earlier graph tables untouched.
+    """
+    url = f"sqlite:///{tmp_path / 'provenance_round_trip.db'}"
+    cfg = _alembic_cfg(url)
+
+    command.upgrade(cfg, _PROVENANCE_REVISION)
+    migrated = inspect(create_engine(url))
+    tables_at_revision = set(migrated.get_table_names())
+    assert set(_PROVENANCE_TABLES) <= tables_at_revision
+
+    chunk_run_input_columns = {c["name"]: c for c in migrated.get_columns("graph_chunk_run_inputs")}
+    assert chunk_run_input_columns["chunk_set_fingerprint"]["nullable"] is False
+    summary_columns = {c["name"]: c for c in migrated.get_columns("graph_document_summaries")}
+    assert summary_columns["summary_text_fingerprint"]["nullable"] is False
+
+    command.downgrade(cfg, _PROVENANCE_PREV_REVISION)
+    tables_after = set(inspect(create_engine(url)).get_table_names())
+    assert not (set(_PROVENANCE_TABLES) & tables_after), "provenance/applicability tables should be dropped"
+    assert "graph_chunk_run_inputs" in tables_after, "the pre-existing run-input table remains"
+    assert "graph_document_summaries" in tables_after, "the pre-existing summary table remains"
+    downgraded_chunk_run_input_columns = {
+        c["name"] for c in inspect(create_engine(url)).get_columns("graph_chunk_run_inputs")
+    }
+    assert "chunk_set_fingerprint" not in downgraded_chunk_run_input_columns
 
 
 def test_graph_revision_downgrade_drops_only_graph_tables(tmp_path: Path) -> None:

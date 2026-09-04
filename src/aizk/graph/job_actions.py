@@ -16,8 +16,8 @@ co-commits the matching lifecycle event via
 
 :func:`apply_extraction_readmission` is extraction's third transition: the one way
 to re-extract a source whose upstream has moved on beneath it. It requeues like
-retry but gates on staleness rather than failure, so it covers only work the
-corpus has invalidated.
+retry but gates on currentness rather than failure, so it covers only work the
+corpus has invalidated or that needs reconciling.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from aizk.graph.extraction_events import (
     ExtractionEventKind,
     RequeuedPayload as ExtractionRequeuedPayload,
 )
-from aizk.graph.extraction_run import is_extraction_stale
+from aizk.graph.extraction_run import Currentness, classify_extraction_source
 from aizk.pipeline.events import record_transition
 from aizk.pipeline.lifecycle import WorkUnitStatus, is_terminal
 
@@ -45,6 +45,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from sqlmodel import Session
+
+    from aizk.graph.mention_store import ResolvedExtractionConfig
 
 #: Terminal statuses an operator may re-queue a work-unit from.
 RETRYABLE_FROM = frozenset({WorkUnitStatus.FAILED, WorkUnitStatus.CANCELLED, WorkUnitStatus.TIMED_OUT})
@@ -146,33 +148,43 @@ apply_extraction_retry, apply_extraction_cancel = _build_transitions(
 )
 
 
-def apply_extraction_readmission(session: "Session", job: Any) -> None:
+def apply_extraction_readmission(session: "Session", job: Any, *, resolved: "ResolvedExtractionConfig") -> None:
     """Re-queue a finished extraction whose source has moved on beneath it.
 
     Extraction's work-unit is keyed by the source alone, so a finished unit is never
     re-enqueued: a source whose chunking or contextualization has been superseded
-    stays stale rather than becoming pending. This action is the one way to
+    stays behind rather than becoming pending. This action is the one way to
     re-extract it. It re-queues the existing unit; the worker then reads the
-    source's current active inputs and opens a run that supersedes the prior one.
+    source's current active inputs and opens a run that supersedes the prior one
+    (or, for a source needing only reconciliation, records applicability with no
+    new run).
 
-    Eligible only when the unit is finished **and** its source is stale, so the
-    action can never turn into an unbounded corpus re-run: a current source has
-    nothing to re-read, and an unfinished unit is already going to run.
+    Eligible only when the unit is finished **and** its source's
+    :class:`~aizk.graph.extraction_run.Currentness` is ``STALE`` or
+    ``NEEDS_RECONCILIATION``, so the action can never turn into an unbounded
+    corpus re-run. An unclassified source (no active chunking run, or no active
+    extraction run) is refused too: it has nothing to re-extract from.
 
     The caller owns the surrounding transaction; this does not commit.
 
     Args:
         session: Active session; the caller owns commit/rollback.
         job: The extraction work-unit to re-admit.
+        resolved: The currently-resolved extraction configuration (see
+            :func:`~aizk.graph.extraction.resolve_extraction_config`); the
+            source's currentness is judged against it.
 
     Raises:
-        ValueError: When the unit is not in a finished status, or when its source
-            is not stale (the message is the operator-facing reason).
+        ValueError: When the unit is not in a finished status, or when its
+            source's currentness class is not ``STALE`` or
+            ``NEEDS_RECONCILIATION`` (the message names the class refused).
     """
     if not is_terminal(job.status):
         raise ValueError(f"cannot re-extract a work-unit in status {job.status.value!r}")
-    if not is_extraction_stale(session, job.source_id):
-        raise ValueError("cannot re-extract a source that is not stale")
+    classification = classify_extraction_source(session, job.source_id, resolved=resolved)
+    if classification not in (Currentness.STALE, Currentness.NEEDS_RECONCILIATION):
+        refused = classification.value if classification is not None else "not classified"
+        raise ValueError(f"cannot re-extract a source that is {refused}")
     now = _utcnow()
     job.attempts = 0
     job.error_code = None
