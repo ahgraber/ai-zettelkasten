@@ -192,6 +192,21 @@ There is no pave resume procedure because there is no pave state machine — pen
 The `0.2.0` binary is never run against the old database: deploying it and creating the fresh database are one act.
 The pave never invokes the splitter, an LLM, or NER from a migration — all producer work runs through the normal work-unit path.
 
+### Decision: Conversion tier stays on docling through the pave
+
+**Chosen:** The pave runs on docling at its current release; no converter swap precedes it.
+A swap, if one is made, is its own change after the pave, decided on a corpus sample rather than on benchmark tables.
+
+**Rationale:** On OmniDocBench v1.6 docling's classic pipeline — the mode this pipeline runs; its full-page VLM mode is unused — scores 78.44 overall against 95–96 for the open leaders (PaddleOCR-VL, MinerU2.5-Pro, GLM-OCR), so a swap is worth evaluating.
+The benchmark measures general parsing accuracy, not this pipeline's figure classification and captioning, which is built on docling's picture objects and would be rebuilt against any other tool's output.
+Swapping before the pave commits to a tool from benchmark tables alone; swapping after it costs a second full re-spend.
+The owner accepted the second cost as the price of validating on real documents first.
+
+**Alternatives considered:**
+
+- Swap to MinerU or PaddleOCR-VL before the pave: a new adapter behind the converter protocol, a new config block and output-config hash, rebuilt figure enrichment, and chunking recalibration; MinerU fits the CPU-first rule, PaddleOCR-VL's reference pipeline requires a GPU.
+- Tiered path (a cheap local parser such as LiteParse, escalating to a VLM pipeline for hard documents): the cheap tier has no benchmark against VLM tools and does no formula conversion or captioning, and the escalation policy is new orchestration without a measured need.
+
 ## Architecture
 
 ```text

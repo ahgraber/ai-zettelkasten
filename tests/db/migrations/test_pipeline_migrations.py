@@ -1,11 +1,10 @@
-"""Schema-fidelity tests for the pipeline_runs / pipeline_events migration.
+"""Behavioral tests for the pipeline_runs / pipeline_events tables in the migrated schema.
 
-Asserts the migrated schema for the two pipeline tables is structurally
-equivalent to the ORM baseline (``create_all``), and that the revision
-downgrades cleanly without disturbing the conversion tables. Scoped to the
-pipeline tables so it is independent of any models other test modules register
-on ``SQLModel.metadata``; the full cross-table parity check lives in the
-conversion migration suite.
+Structural equivalence to the ORM baseline (columns, nullability, indexes,
+foreign keys, unique constraints) is covered once, across every table, by
+``tests/db/migrations/test_baseline.py``. This module exercises pipeline-table
+behavior that only a live insert or ORM round-trip can prove: the partial
+unique index's predicate, and event round-trip queryability.
 """
 
 from __future__ import annotations
@@ -19,17 +18,13 @@ from alembic.config import Config
 import pytest
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, SQLModel, select
+from sqlmodel import Session, select
 
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.run import PipelineRun
 
 _MIGRATIONS_DIR = Path(importlib.util.find_spec("aizk.db.migrations").origin).resolve().parent
-_PIPELINE_MIGRATION = _MIGRATIONS_DIR / "versions" / "d0e1f2a3b4c5_add_pipeline_runs_and_events.py"
-
-_PIPELINE_REVISION = "d0e1f2a3b4c5"
-_PREV_REVISION = "a8c9d0e1f2b3"
-_PIPELINE_TABLES = ("pipeline_runs", "pipeline_events")
+_BASELINE_MIGRATION = _MIGRATIONS_DIR / "versions" / "fc430997788f_baseline.py"
 
 
 def _alembic_cfg(database_url: str) -> Config:
@@ -37,55 +32,6 @@ def _alembic_cfg(database_url: str) -> Config:
     cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
     cfg.set_main_option("sqlalchemy.url", database_url)
     return cfg
-
-
-def _normalize_index(idx: dict) -> tuple:
-    return (idx["name"], tuple(sorted(idx["column_names"])), bool(idx.get("unique", False)))
-
-
-def _normalize_fk(fk: dict) -> tuple:
-    return (
-        tuple(sorted(fk["constrained_columns"])),
-        fk["referred_table"],
-        tuple(sorted(fk["referred_columns"])),
-    )
-
-
-def test_pipeline_tables_match_create_all(tmp_path: Path) -> None:
-    """Running migrations produces the same pipeline-table schema as create_all."""
-    migrated_url = f"sqlite:///{tmp_path / 'migrated.db'}"
-    baseline_url = f"sqlite:///{tmp_path / 'baseline.db'}"
-
-    command.upgrade(_alembic_cfg(migrated_url), "head")
-
-    baseline_engine = create_engine(baseline_url)
-    SQLModel.metadata.create_all(
-        baseline_engine,
-        tables=[PipelineRun.__table__, PipelineEvent.__table__],
-    )
-
-    migrated = inspect(create_engine(migrated_url))
-    baseline = inspect(baseline_engine)
-
-    migrated_tables = set(migrated.get_table_names())
-    assert set(_PIPELINE_TABLES) <= migrated_tables, f"missing pipeline tables: {migrated_tables}"
-
-    for table in _PIPELINE_TABLES:
-        baseline_cols = {c["name"]: c["nullable"] for c in baseline.get_columns(table)}
-        migrated_cols = {c["name"]: c["nullable"] for c in migrated.get_columns(table)}
-        assert migrated_cols == baseline_cols, f"{table} column/nullable mismatch"
-
-        assert {_normalize_index(i) for i in migrated.get_indexes(table)} == {
-            _normalize_index(i) for i in baseline.get_indexes(table)
-        }, f"{table} index mismatch"
-
-        assert {_normalize_fk(fk) for fk in migrated.get_foreign_keys(table)} == {
-            _normalize_fk(fk) for fk in baseline.get_foreign_keys(table)
-        }, f"{table} foreign key mismatch"
-
-        baseline_uniques = {tuple(sorted(uc["column_names"])) for uc in baseline.get_unique_constraints(table)}
-        migrated_uniques = {tuple(sorted(uc["column_names"])) for uc in migrated.get_unique_constraints(table)}
-        assert migrated_uniques == baseline_uniques, f"{table} unique constraint mismatch"
 
 
 def test_pipeline_active_run_partial_unique_index_present(tmp_path: Path) -> None:
@@ -106,7 +52,7 @@ def test_pipeline_active_run_index_keeps_postgres_predicate() -> None:
     assert str(active_idx.dialect_options["sqlite"]["where"]) == "status = 'active'"
     assert str(active_idx.dialect_options["postgresql"]["where"]) == "status = 'active'"
 
-    migration_text = _PIPELINE_MIGRATION.read_text()
+    migration_text = _BASELINE_MIGRATION.read_text()
     assert "sqlite_where=sa.text(\"status = 'active'\")" in migration_text
     assert "postgresql_where=sa.text(\"status = 'active'\")" in migration_text
 
@@ -126,7 +72,7 @@ def _insert_run(conn, *, status: str, derivation_key: str) -> None:
 def test_migrated_index_is_partial_not_full(tmp_path: Path) -> None:
     """The migrated index admits many superseded runs but only one active run per scope.
 
-    A full unique index on (stage, scope_key) would pass the structural check
+    A full unique index on (stage, scope_id) would pass the structural check
     above yet reject a second superseded run — breaking the supersession model.
     Exercising the predicate is the only way to tell a partial index from a full
     one through the inspector, which reports both as ``unique``.
@@ -173,59 +119,3 @@ def test_migrated_schema_supports_event_orm_round_trip(tmp_path: Path) -> None:
         rows = list(session.exec(select(PipelineEvent).where(PipelineEvent.source_id == source)))
         assert len(rows) == 1, "event is queryable by its source identity"
         assert rows[0].source_id == source
-
-
-def test_pipeline_revision_downgrade_drops_only_pipeline_tables(tmp_path: Path) -> None:
-    """Downgrading one revision drops the pipeline tables and leaves conversion tables."""
-    url = f"sqlite:///{tmp_path / 'down.db'}"
-    cfg = _alembic_cfg(url)
-
-    command.upgrade(cfg, "head")
-    tables_at_head = set(inspect(create_engine(url)).get_table_names())
-    assert set(_PIPELINE_TABLES) <= tables_at_head
-
-    command.downgrade(cfg, _PREV_REVISION)
-    tables_after = set(inspect(create_engine(url)).get_table_names())
-
-    assert not (set(_PIPELINE_TABLES) & tables_after), "pipeline tables should be dropped"
-    assert "conversion_jobs" in tables_after, "conversion tables remain after downgrade"
-    assert "conversion_job_events" in tables_after
-
-
-def test_input_fingerprint_renamed_to_derivation_key_preserving_data(tmp_path: Path) -> None:
-    """A DB already at d0e1f2a3b4c5 (input_fingerprint) migrates forward to derivation_key, keeping rows.
-
-    Guards the forward rename (b0d1e2f3a4c5): the earlier migration is not edited
-    in place, so a database that applied ``input_fingerprint`` is renamed rather
-    than left diverging from the ``PipelineRun`` ORM.
-    """
-    url = f"sqlite:///{tmp_path / 'rename.db'}"
-    cfg = _alembic_cfg(url)
-
-    # The old applied state: pipeline_runs carries ``input_fingerprint``.
-    command.upgrade(cfg, _PIPELINE_REVISION)
-    cols_before = {c["name"] for c in inspect(create_engine(url)).get_columns("pipeline_runs")}
-    assert "input_fingerprint" in cols_before
-    assert "derivation_key" not in cols_before
-    scope = "11111111-1111-1111-1111-111111111111"
-    with create_engine(url).connect() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO pipeline_runs (stage, scope_key, status, input_fingerprint,"
-                " version_stamps_json, created_at)"
-                " VALUES ('s', :scope, 'active', 'fp-1', '{}', '2026-01-01T00:00:00')"
-            ),
-            {"scope": scope},
-        )
-        conn.commit()
-
-    # Migrate forward to head: the column is renamed and the row is preserved.
-    command.upgrade(cfg, "head")
-    cols_after = {c["name"] for c in inspect(create_engine(url)).get_columns("pipeline_runs")}
-    assert "derivation_key" in cols_after
-    assert "input_fingerprint" not in cols_after
-    with create_engine(url).connect() as conn:
-        value = conn.execute(
-            text("SELECT derivation_key FROM pipeline_runs WHERE scope_id=:scope"), {"scope": scope.replace("-", "")}
-        ).scalar_one()
-    assert value == "fp-1"

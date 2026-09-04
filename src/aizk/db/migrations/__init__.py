@@ -7,56 +7,33 @@ schema across stages so autogenerate and the equivalence check see all tables.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from alembic.config import Config
 
 
-class UnversionedSchemaError(RuntimeError):
-    """Raised when the DB has existing tables but no ``alembic_version`` entry.
+class LegacyDatabaseError(RuntimeError):
+    """Raised when a database predates the migration tree's baseline revision.
 
-    This means Alembic would try to run the baseline migration against a
-    pre-existing schema, crash mid-migration, and leave the DB in a broken
-    state.  Stamp the database at the correct revision to fix it::
-
-        uv run python - <<'EOF'
-        from alembic import command
-        from alembic.config import Config
-        from pathlib import Path
-
-        cfg = Config()
-        cfg.set_main_option(
-            "script_location",
-            str(Path("src/aizk/db/migrations").resolve()),
-        )
-        command.stamp(cfg, "<REVISION>")
-        EOF
-
-    To find ``<REVISION>``, inspect the schema::
-
-        DB=data/conversion_service.db
-        sqlite3 $DB 'PRAGMA table_info(conversion_jobs);' | grep error_detail
-        sqlite3 $DB "SELECT name FROM sqlite_master
-                     WHERE type='index'
-                     AND name='ix_conversion_jobs_status_next_attempt_queued';"
-
-    Revision map (pick the *highest* that matches):
-
-    * ``57317cf19d3b`` — baseline (no ``error_detail``)
-    * ``a1b2c3d4e5f6`` — ``error_detail`` exists, no composite status index
-    * ``b7f8e9a0c1d2`` — composite status index exists, ``bookmarks`` still present
-    * ``c1d2e3f4a5b6`` — ``bookmarks`` renamed to ``sources``
-    * ``d5e6f7a8b9c0`` — ``source_ref`` NOT NULL enforced
-    * ``e6f7a8b9c0d1`` — ``owner_id`` columns added
-    * ``f7a8b9c0d1e2`` — owner-scoped idempotency key (HEAD)
+    The tree holds one baseline revision, not the historical chain that
+    produced an older schema, so a database from before the rebuild cannot be
+    migrated — whether it carries an ``alembic_version`` stamp this tree does
+    not recognize, or has tables with no stamp at all. Rebuild the database
+    instead; see README.md, "Rebuilding the database".
     """
 
 
-def _assert_versioned(database_url: str) -> None:
-    """Raise :exc:`UnversionedSchemaError` if schema exists but has no version record.
+def _refuse_legacy_database(database_url: str, cfg: Config) -> None:
+    """Raise :exc:`LegacyDatabaseError` if the database predates the baseline revision.
 
-    A missing or empty ``alembic_version`` table against a non-empty schema
-    means Alembic will attempt to re-run the baseline migration and crash.
-    Detecting this before ``command.upgrade()`` produces a clear, actionable
-    error instead of a mid-migration ``OperationalError``.
+    A fresh database (no tables) and a database already stamped at a revision
+    this tree knows both proceed untouched; either legacy shape — tables with
+    no stamp, or a stamp naming an unknown revision — refuses before
+    ``command.upgrade()`` writes anything.
     """
+    from alembic.script import ScriptDirectory
+    from alembic.util.exc import CommandError
     import sqlalchemy as sa
     from sqlalchemy import pool
 
@@ -68,18 +45,31 @@ def _assert_versioned(database_url: str) -> None:
         if not tables:
             return  # completely fresh DB — Alembic will create everything
 
+        version_num = None
         if inspector.has_table("alembic_version"):
             with engine.connect() as conn:
                 row = conn.execute(sa.text("SELECT version_num FROM alembic_version LIMIT 1")).fetchone()
                 if row:
-                    return  # versioned and tracked — normal path
+                    version_num = row[0]
 
         schema_tables = tables - {"alembic_version"}
-        if schema_tables:
-            raise UnversionedSchemaError(
-                f"Database has existing tables {sorted(schema_tables)!r} but no alembic_version entry. "
-                "Stamp the database at the correct revision before starting the service. "
-                "See UnversionedSchemaError docstring for the stamping procedure."
+        if version_num is None:
+            if schema_tables:
+                raise LegacyDatabaseError(
+                    f"database at {database_url} has tables but no migration stamp; this version "
+                    'does not migrate it; rebuild it (README.md, "Rebuilding the database")'
+                )
+            return
+
+        script = ScriptDirectory.from_config(cfg)
+        try:
+            known_revision = script.get_revision(version_num) is not None
+        except CommandError:
+            known_revision = False
+        if not known_revision:
+            raise LegacyDatabaseError(
+                f"database at {database_url} is stamped with revision {version_num}, which this "
+                'version does not migrate; rebuild it (README.md, "Rebuilding the database")'
             )
     finally:
         engine.dispose()
@@ -96,9 +86,8 @@ def run_migrations(database_url: str | None = None) -> None:
             :class:`~aizk.db.config.DatabaseConfig`.
 
     Raises:
-        UnversionedSchemaError: If the database has an existing schema with no
-            ``alembic_version`` entry.  Stamp the database first; see the
-            exception docstring for instructions.
+        LegacyDatabaseError: If the database predates the tree's baseline
+            revision.  Rebuild the database; see the exception docstring.
     """
     from alembic import command
     from alembic.config import Config
@@ -107,9 +96,10 @@ def run_migrations(database_url: str | None = None) -> None:
 
     effective_url = database_url or DatabaseConfig().database_url
 
-    _assert_versioned(effective_url)
-
     cfg = Config()
     cfg.set_main_option("script_location", str(Path(__file__).resolve().parent))
     cfg.set_main_option("sqlalchemy.url", effective_url)
+
+    _refuse_legacy_database(effective_url, cfg)
+
     command.upgrade(cfg, "head")

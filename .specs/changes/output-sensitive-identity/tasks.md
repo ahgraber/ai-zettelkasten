@@ -79,22 +79,32 @@ Production never runs the new binary against the old database; the pave is part 
 
 ## Parallel track — environment and conversion (MUST complete before Phase 4)
 
-- [ ] Update the uv environment (locked dependency upgrade); fix fallout; suite green.
-- [ ] Switch the default model profile resolution to `gpt-5.6-luna`; confirm the config fingerprint captures the change; update env/config docs.
-- [ ] Update docling to latest; review release notes for required code changes and usable features; suite green.
-- [ ] Research spike: evaluate open document-intelligence pipelines (current docling incl.
-  VLM options, llamaindex/liteparse as the common path with escalation, and the current field); write a preliminary-research entry in `docs/decision-record/`.
+- [x] Update the uv environment (locked dependency upgrade); fix fallout; suite green.
+- [x] Switch the default model profile resolution to `gpt-5.6-luna`; confirm the config fingerprint captures the change; update env/config docs.
+- [x] Update docling to latest; review release notes for required code changes and usable features; suite green.
+- [x] Research spike: evaluate open document-intelligence pipelines (current docling incl.
+  VLM options, llamaindex/liteparse as the common path with escalation, and the current field); keep the research note in `._scratch/` and record the decision in `design.md`.
   The decision gates the pave: converter swap → its own change lands first; update-and-keep → done here.
+  Decided: update-and-keep.
 
 ## Phase 4 — Re-baseline & pave
 
-- [ ] Squash Alembic history to one baseline revision matching the final ORM schema; equivalence fixtures point at it; empty-database round-trip test passes.
-- [ ] Runner refuses a database stamped with a pre-baseline revision, with an error naming the rebuild path; test against a fixture DB carrying a legacy stamp.
+- [x] Squash Alembic history to one baseline revision matching the final ORM schema; equivalence fixtures point at it; empty-database round-trip test passes.
+- [x] Runner refuses a database stamped with a pre-baseline revision, with an error naming the rebuild path; test against a fixture DB carrying a legacy stamp.
+- [x] Schema check: regenerate both OpenAPI snapshots and diff against `schemas/before/` — expected empty per `schemas/expected.md`.
+- [x] Final gate: full suite (`-n auto -m "not integration_lifecycle"` plus the lifecycle marker run), all hooks over everything changed since `HEAD`, key-parsing `rg` guard clean.
+
+## Follow-up — `aizk.graph` package review
+
+- [ ] Run the `simplify` skill over `src/aizk/graph`: remove duplication, dead code, needless indirection, and comment noise the phases left behind; suite and hooks green.
+- [ ] Run the `refactor` skill over `src/aizk/graph`: plan any structural change the simplify pass surfaced (oversized functions, module boundaries), get approval, land it behavior-preserving; suite and hooks green.
+- [ ] Code-review `src/aizk/graph` with Codex through the agent-fleet skill (not yet installed; the owner supplies the link), as the skill's trial run; triage its findings.
+
+## Phase 4 — Release & pave (after the follow-up)
+
 - [ ] Bump version to `0.2.0`; update the changelog via the release tooling.
-- [ ] Schema check: regenerate both OpenAPI snapshots and diff against `schemas/before/` — expected empty per `schemas/expected.md`.
 - [ ] Execute the runbook: stop services; archive old DB + WAL + config + binary version; verify the archive restores; create the fresh database; start `0.2.0`.
 - [ ] Smoke-validate on the console: ingest a few arbitrary inputs; confirm propagation conversion→extraction, creation events with origins in the drill-down trail, exact pending/stale counts, FTS search hits.
-- [ ] Final gate: full suite (`-n auto -m "not integration_lifecycle"` plus the lifecycle marker run), all hooks over everything changed since `HEAD`, key-parsing `rg` guard clean.
 
 ## Closeout
 
@@ -102,9 +112,3 @@ Production never runs the new binary against the old database; the pave is part 
 - [ ] Rebase the open `keyterm-extraction-foundation` change against the synced identity and key contracts.
 - [ ] Clean `._scratch/`: remove the 2026-08-28 review record, L4 analysis/plan, retype plan, and `review-20260827/` diff packets; update the memory entries that point at them.
 - [ ] Archive the change (`sdd-archive`).
-
-## Follow-up — `aizk.graph` package review
-
-- [ ] Run the `simplify` skill over `src/aizk/graph`: remove duplication, dead code, needless indirection, and comment noise the phases left behind; suite and hooks green.
-- [ ] Run the `refactor` skill over `src/aizk/graph`: plan any structural change the simplify pass surfaced (oversized functions, module boundaries), get approval, land it behavior-preserving; suite and hooks green.
-- [ ] Code-review `src/aizk/graph` with Codex through the agent-fleet skill (not yet installed; the owner supplies the link), as the skill's trial run; triage its findings.

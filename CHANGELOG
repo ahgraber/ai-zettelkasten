@@ -2,14 +2,30 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- A pre-0.2.0 database is not upgradeable: the migration tree is re-baselined to a single revision, and `alembic upgrade head` refuses a legacy-stamped database rather than migrating it — rebuild the database per the README
+- Retype `pipeline_runs.scope_id`, `graph_chunks.source_id`, `chunk_id`, and `mention_id` (with `mention_id_lo`/`mention_id_hi`) from string to `Uuid`
+- `derivation_key` values are now opaque digests carrying a `derivation_key_format` version stamp, not human-readable composites
+- Contextualization's stage functions take a resolved model configuration (provider and model) in place of a profile alias; every caller changes
+- Default the picture-description model to `openai/gpt-5.6-luna`; the model name is part of the conversion output config hash, so conversions under the default re-key
+- Raise dependency majors: `pydantic-ai` to 2.x, the OpenAI SDK to 3.x, `mcp` to 2.x, `starlette` to 1.x, `docling` to 2.124, and `torch` to 2.14 (cu130 index on Linux)
+
 ### Added
 
 - Chunking splitter foundation (`aizk.chunking`): document-structure splitter, chunk data model, deterministic identity
-- Checkpoint validated contextualization model output (the document summary and each per-chunk revision) in a new `graph_contextualization_output_memo` table, so a retry of a partially-completed contextualization re-invokes the model only for outputs not already retained; consumed entries are pruned atomically with a successful persist — run `alembic upgrade head` (revision `c2d3e4f5a6b7`) before starting the service
+- Checkpoint validated contextualization model output (the document summary and each per-chunk revision) in a new `graph_contextualization_output_memo` table, so a retry of a partially-completed contextualization re-invokes the model only for outputs not already retained; consumed entries are pruned atomically with a successful persist
+- Record a creation event with origin and principal on every graph work-unit creation (intake, the admission loop, backfill); the enqueue primitives return `(job, created)` so reuse of an existing unit writes no event
+- Cap admission at a fixed batch per pass regardless of a stage's declared capacity, draining the remainder on later passes
+- Reset the attempt counter on operator retry and re-admission
+- Record each stage's consumed content and produced-output fingerprint in run-input and applicability tables, so a downstream stage reconciles a byte-identical upstream regeneration against its active run without a model or extractor call
+- Surface tri-state extraction currentness (current, needs reconciliation, stale) on the console, with re-extract eligible for the latter two states
 
 ### Changed
 
 - Migrate the Docling figure converter off the deprecated `PictureItem.annotations` field to the `PictureItem.meta` API (`meta.classification`, `meta.description`)
+- Derive derivation keys from the content a stage consumed and the configuration it ran under, rather than from upstream run keys, so an upstream regeneration that yields byte-identical input leaves the downstream key unchanged
+- Derive the extraction pending backlog as a SQL anti-join over `pipeline_runs`, bounding the query at the requested limit instead of scanning the corpus in Python
 
 ### Fixed
 

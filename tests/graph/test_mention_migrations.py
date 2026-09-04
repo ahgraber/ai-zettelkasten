@@ -26,9 +26,6 @@ from tests.db.migrations._schema_equivalence import assert_table_schema_equivale
 
 _MIGRATIONS_DIR = Path(importlib.util.find_spec("aizk.db.migrations").origin).resolve().parent
 
-# The mention tables are added in one revision on top of the current head at the
-# time of writing (the surrogate-chunk_id / source_id rename).
-_PREV_REVISION = "f1a2b3c4d5e6"
 _MENTION_TABLES = ("graph_mentions", "graph_mention_cooccurrences")
 _MENTION_ORM_TABLES = [Mention.__table__, MentionCooccurrence.__table__]
 
@@ -355,20 +352,3 @@ def test_cooccurrence_ordered_check_rejects_unordered_pair(tmp_path: Path) -> No
         engine.begin() as conn,
     ):
         conn.execute(insert, {"lo": "m2", "hi": "m1"})
-
-
-def test_mention_revision_downgrade_drops_only_mention_tables(tmp_path: Path) -> None:
-    """Downgrading one revision drops the mention tables and leaves the rest intact."""
-    url = f"sqlite:///{tmp_path / 'down.db'}"
-    cfg = _alembic_cfg(url)
-
-    command.upgrade(cfg, "head")
-    tables_at_head = set(inspect(create_engine(url)).get_table_names())
-    assert set(_MENTION_TABLES) <= tables_at_head
-
-    command.downgrade(cfg, _PREV_REVISION)
-    tables_after = set(inspect(create_engine(url)).get_table_names())
-
-    assert not (set(_MENTION_TABLES) & tables_after), "mention tables should be dropped"
-    assert "graph_chunks" in tables_after, "chunk table remains after downgrade"
-    assert "pipeline_runs" in tables_after, "pipeline tables remain after downgrade"

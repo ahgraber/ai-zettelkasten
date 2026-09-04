@@ -24,9 +24,7 @@ from sqlmodel import Session
 import xxhash
 
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
-from aizk.db.migrations.versions.d3e4f5a6b7c8_add_graph_content_fts import (
-    _assert_fts5_available,
-)
+from aizk.db.migrations.versions.fc430997788f_baseline import _assert_fts5_available
 from aizk.graph.content_index import index_chunk_content, index_contextualized_content, rebuild_content_index
 from aizk.graph.contextualization import contextualize_chunks, summarize_document
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
@@ -41,8 +39,6 @@ _HASH_B = "aabbccddeeff0011"
 _DOC_TEXT = "# Title\n\nThe document body the summary pass reads."
 
 _MIGRATIONS_DIR = Path(importlib.util.find_spec("aizk.db.migrations").origin).resolve().parent
-_FTS_REVISION = "d3e4f5a6b7c8"
-_FTS_PREV_REVISION = "c2d3e4f5a6b7"
 
 
 # --------------------------------------------------------------------------- #
@@ -148,15 +144,15 @@ def _seed_chunk_and_variant(
 
 
 def test_migration_upgrade_downgrade_round_trips_cleanly(tmp_path: Path) -> None:
-    """The FTS revision creates ``graph_content_fts`` and drops it (with shadows) on downgrade."""
+    """Upgrading to head creates ``graph_content_fts``; downgrading to base drops it (with shadows)."""
     url = f"sqlite:///{tmp_path / 'fts_round_trip.db'}"
     cfg = _alembic_cfg(url)
 
-    command.upgrade(cfg, _FTS_REVISION)
+    command.upgrade(cfg, "head")
     tables_at_head = set(inspect(create_engine(url)).get_table_names())
     assert "graph_content_fts" in tables_at_head
 
-    command.downgrade(cfg, _FTS_PREV_REVISION)
+    command.downgrade(cfg, "base")
     tables_after = set(inspect(create_engine(url)).get_table_names())
     # DROP TABLE on the virtual table removes its shadow tables too — none linger.
     assert not any(t.startswith("graph_content_fts") for t in tables_after)
@@ -185,96 +181,57 @@ def test_availability_check_passes_on_real_fts5_build(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Backfill (migration) — pre-existing and superseded-then-reactivated content
+# Rebuild — superseded-then-reactivated content
 # --------------------------------------------------------------------------- #
 
 
-def test_backfill_indexes_content_persisted_before_index_existed(tmp_path: Path) -> None:
-    """Content committed before the index captured it is searchable after the backfill migration.
-
-    Persists content while the index exists, then drops the index (FTS revision
-    downgrade) and re-establishes it (upgrade) so the migration's backfill must
-    reconstruct the index from the source tables alone — modelling content that
-    predates the index. The backfill must make that pre-existing content searchable.
-    """
-    url = f"sqlite:///{tmp_path / 'backfill_pre.db'}"
-    cfg = _alembic_cfg(url)
-    command.upgrade(cfg, "head")
-    engine = create_engine(url, connect_args={"check_same_thread": False})
-    with Session(engine) as session:
-        _seed_chunk_and_variant(
-            session,
-            source_id=_AIZK_UUID,
-            chunk_text="transformers use attention mechanisms",
-            revision="the transformer architecture relies on attention mechanisms",
-        )
-
-    # Tear down and re-establish the index so only the migration backfill (from the
-    # source tables) repopulates it — the live inserts contribute nothing this time.
-    command.downgrade(cfg, _FTS_REVISION)
-    command.upgrade(cfg, "head")
-    with Session(engine) as session:
-        kinds = {kind for kind, _ in _search(session, "attention")}
-    assert kinds == {"chunk", "contextualized"}, "pre-existing raw and contextualized text must be searchable"
-
-
-def test_backfill_indexes_superseded_then_reactivated_chunk(tmp_path: Path) -> None:
+def test_rebuild_indexes_superseded_then_reactivated_chunk(session: Session) -> None:
     """A chunk superseded when the index was built but reused in a later active run is searchable.
 
-    The backfill indexes *all* committed chunks, not just the active generation, so
+    The rebuild indexes *all* committed chunks, not just the active generation, so
     a surrogate ``chunk_id`` that is reused (not re-created) by a later active run is
     in the index after a rebuild regardless of which run is current.
     """
-    url = f"sqlite:///{tmp_path / 'backfill_super.db'}"
-    cfg = _alembic_cfg(url)
-    command.upgrade(cfg, "head")
-    engine = create_engine(url, connect_args={"check_same_thread": False})
-
     target = _make_chunk("quasar luminosity spectra", ordinal=0)
-    with Session(engine) as session:
-        _run1, persisted1 = persist_chunks(
-            session,
-            source_id=_AIZK_UUID,
-            conversion_output_id=_OUTPUT,
-            markdown_hash_xx64=_HASH_A,
-            markdown_fingerprint=content_fingerprint(_HASH_A),
-            splitter_version=SPLITTER_VERSION,
-            chunks=[target],
-        )
-        session.commit()
-        target_id = persisted1[0].chunk_id
-        # Generation 2 under a different markdown supersedes run 1, but the manifest
-        # set differs (an extra chunk), so run 1 is demoted to superseded. The target
-        # chunk_id is reused (not re-created), so its only chunk row is from run 1.
-        other = _make_chunk("unrelated body text", ordinal=1, markdown_hash=_HASH_B)
-        target_in_gen2 = _make_chunk("quasar luminosity spectra", ordinal=0, markdown_hash=_HASH_B)
-        _run2, persisted2 = persist_chunks(
-            session,
-            source_id=_AIZK_UUID,
-            conversion_output_id=_OUTPUT,
-            markdown_hash_xx64=_HASH_B,
-            markdown_fingerprint=content_fingerprint(_HASH_B),
-            splitter_version=SPLITTER_VERSION,
-            chunks=[target_in_gen2, other],
-        )
-        session.commit()
-        # Byte-identical content reuses the surrogate identity across generations: a
-        # single immutable chunk row, not a duplicate per generation.
-        assert persisted2[0].chunk_id == target_id
+    _run1, persisted1 = persist_chunks(
+        session,
+        source_id=_AIZK_UUID,
+        conversion_output_id=_OUTPUT,
+        markdown_hash_xx64=_HASH_A,
+        markdown_fingerprint=content_fingerprint(_HASH_A),
+        splitter_version=SPLITTER_VERSION,
+        chunks=[target],
+    )
+    session.commit()
+    target_id = persisted1[0].chunk_id
+    # Generation 2 under a different markdown supersedes run 1, but the manifest
+    # set differs (an extra chunk), so run 1 is demoted to superseded. The target
+    # chunk_id is reused (not re-created), so its only chunk row is from run 1.
+    other = _make_chunk("unrelated body text", ordinal=1, markdown_hash=_HASH_B)
+    target_in_gen2 = _make_chunk("quasar luminosity spectra", ordinal=0, markdown_hash=_HASH_B)
+    _run2, persisted2 = persist_chunks(
+        session,
+        source_id=_AIZK_UUID,
+        conversion_output_id=_OUTPUT,
+        markdown_hash_xx64=_HASH_B,
+        markdown_fingerprint=content_fingerprint(_HASH_B),
+        splitter_version=SPLITTER_VERSION,
+        chunks=[target_in_gen2, other],
+    )
+    session.commit()
+    # Byte-identical content reuses the surrogate identity across generations: a
+    # single immutable chunk row, not a duplicate per generation.
+    assert persisted2[0].chunk_id == target_id
 
     # Rebuild from source tables (the all-committed-rows backfill) after both
-    # generations exist. A downgrade past the surrogate-minting migration re-mints the
-    # chunk surrogates, so id stability across the round trip is not asserted; the
-    # contract is that the reused chunk's *content* is reproduced in the rebuilt index
-    # regardless of run currency.
-    command.downgrade(cfg, _FTS_REVISION)
-    command.upgrade(cfg, "head")
-    with Session(engine) as session:
-        indexed_chunk_ids = {chunk_id for kind, chunk_id in _search(session, "quasar") if kind == "chunk"}
-        row_id_to_text = {
-            row[0]: row[1]
-            for row in session.connection().execute(text("SELECT chunk_id, text FROM graph_chunks")).all()
-        }
+    # generations exist; the contract is that the reused chunk's *content* is
+    # reproduced in the rebuilt index regardless of run currency.
+    rebuild_content_index(session.connection())
+    session.commit()
+    indexed_chunk_ids = {chunk_id for kind, chunk_id in _search(session, "quasar") if kind == "chunk"}
+    row_id_to_text = {
+        row[0]: row[1] for row in session.connection().execute(text("SELECT chunk_id, text FROM graph_chunks")).all()
+    }
     # Exactly the reused chunk's content is searchable as kind=chunk (one row, not a
     # per-generation duplicate), and the indexed id resolves to that content.
     assert {row_id_to_text[cid] for cid in indexed_chunk_ids} == {"quasar luminosity spectra"}
