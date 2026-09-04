@@ -1,23 +1,8 @@
-"""Operator retry/cancel transitions for graph work-units, as domain helpers.
+"""Apply operator retry, cancel, and extraction-readmission transitions.
 
-These lift the retry and cancel transitions out of the JSON API route modules so
-every operator surface — the graph JSON API and the operator console — calls the
-same domain code rather than importing another module's route internals (mirroring
-:mod:`aizk.conversion.job_actions`). Contextualization and extraction share one
-transition body, parameterized only by their ``pipeline_events`` stage and their
-per-stage event kind/payload types; :func:`_build_transitions` closes over those
-differences and returns the stage's ``(apply_retry, apply_cancel)`` pair.
-
-Each helper performs the status-eligibility check (raising :class:`ValueError` with
-an operator-facing reason when ineligible), applies the field mutations, and
-co-commits the matching lifecycle event via
-:func:`aizk.pipeline.events.record_transition`. The caller owns the surrounding
-``BEGIN IMMEDIATE`` transaction; these helpers do **not** commit.
-
-:func:`apply_extraction_readmission` is extraction's third transition: the one way
-to re-extract a source whose upstream has moved on beneath it. It requeues like
-retry but gates on currentness rather than failure, so it covers only work the
-corpus has invalidated or that needs reconciling.
+The helpers validate status eligibility, mutate the work-unit, and stage the
+matching lifecycle event. The caller owns the surrounding transaction; these
+helpers do not commit.
 """
 
 from __future__ import annotations
@@ -67,21 +52,16 @@ def _build_transitions(
     requeued_payload_cls: Any,
     cancelled_payload_cls: Any,
 ) -> "tuple[Callable[[Session, Any], None], Callable[[Session, Any], None]]":
-    """Return a graph stage's ``(apply_retry, apply_cancel)`` transition helpers.
+    """Return retry and cancel helpers for a graph stage.
 
-    The two closures share the retry/cancel body across stages; only ``stage`` (the
-    shared ``pipeline_events`` stage), the event ``kind`` enums, and the typed event
-    payload classes vary per stage.
+    The helpers record stage-specific transition events.
     """
 
     def apply_retry(session: "Session", job: Any) -> None:
-        """Re-queue a terminal work-unit, clearing error/retry-wait fields and recording the event.
+        """Re-queue a terminal work-unit and record the transition.
 
-        Resets ``attempts`` to zero, so an operator retry grants a fresh retry
-        budget rather than inheriting the exhausted count that failed it.
-
-        Raises :class:`ValueError` when the unit is not in a re-queueable terminal
-        status (the message is the operator-facing reason).
+        Resets ``attempts`` and clears error and retry-wait fields. Raises ``ValueError``
+        for a non-requeueable status.
         """
         if job.status not in RETRYABLE_FROM:
             raise ValueError(f"cannot retry a work-unit in status {job.status.value!r}")
@@ -106,10 +86,9 @@ def _build_transitions(
         )
 
     def apply_cancel(session: "Session", job: Any) -> None:
-        """Cancel a work-unit, writing a terminal ``CANCELLED`` status and recording the event.
+        """Cancel a work-unit and record the terminal transition.
 
-        Raises :class:`ValueError` when the unit is not in a cancellable status (the
-        message is the operator-facing reason).
+        Raises ``ValueError`` for a non-cancellable status.
         """
         if job.status not in CANCELLABLE_FROM:
             raise ValueError(f"cannot cancel a work-unit in status {job.status.value!r}")
@@ -149,35 +128,10 @@ apply_extraction_retry, apply_extraction_cancel = _build_transitions(
 
 
 def apply_extraction_readmission(session: "Session", job: Any, *, resolved: "ResolvedExtractionConfig") -> None:
-    """Re-queue a finished extraction whose source has moved on beneath it.
+    """Re-queue a finished extraction when its source is ``STALE`` or ``NEEDS_RECONCILIATION`` under ``resolved``.
 
-    Extraction's work-unit is keyed by the source alone, so a finished unit is never
-    re-enqueued: a source whose chunking or contextualization has been superseded
-    stays behind rather than becoming pending. This action is the one way to
-    re-extract it. It re-queues the existing unit; the worker then reads the
-    source's current active inputs and opens a run that supersedes the prior one
-    (or, for a source needing only reconciliation, records applicability with no
-    new run).
-
-    Eligible only when the unit is finished **and** its source's
-    :class:`~aizk.graph.extraction_run.Currentness` is ``STALE`` or
-    ``NEEDS_RECONCILIATION``, so the action can never turn into an unbounded
-    corpus re-run. An unclassified source (no active chunking run, or no active
-    extraction run) is refused too: it has nothing to re-extract from.
-
-    The caller owns the surrounding transaction; this does not commit.
-
-    Args:
-        session: Active session; the caller owns commit/rollback.
-        job: The extraction work-unit to re-admit.
-        resolved: The currently-resolved extraction configuration (see
-            :func:`~aizk.graph.extraction.resolve_extraction_config`); the
-            source's currentness is judged against it.
-
-    Raises:
-        ValueError: When the unit is not in a finished status, or when its
-            source's currentness class is not ``STALE`` or
-            ``NEEDS_RECONCILIATION`` (the message names the class refused).
+    The caller owns the transaction. Unclassified sources and other statuses raise
+    ``ValueError``.
     """
     if not is_terminal(job.status):
         raise ValueError(f"cannot re-extract a work-unit in status {job.status.value!r}")

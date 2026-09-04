@@ -1,41 +1,8 @@
-"""Detect entity mentions in chunk text and extract them into mention drafts.
+"""Extract entity mentions from chunk text into run-scoped mention drafts.
 
-This module owns the extraction domain logic that sits between a persisted
-:class:`~aizk.graph.datamodel.Chunk` and the append-only mention store
-(:mod:`aizk.graph.mention_store`):
-
-- :class:`Detection` — the in-memory contract a pluggable NER extractor emits: a
-  surface form and the span it occupies in whatever text the extractor read.
-- :class:`EntityExtractor` — the single substitutable access point through which
-  extraction reaches its NER model, mirroring how :class:`aizk.graph.llm.LLMClient`
-  is contextualization's single access point to its model. :class:`SpacyExtractor`
-  and :class:`Gliner2Extractor` are the two pinned production implementations;
-  tests supply a deterministic stand-in through the same interface.
-- :data:`MATERIALIZER_VERSION` — the version of the deterministic post-NER logic this
-  module implements (occurrence classification, span mapping), independent of
-  which extractor produced the detections.
-- :func:`spacy_extractor_version` / :func:`gliner2_extractor_version` — derive
-  each pinned extractor's ``extractor_version`` from installed-package metadata
-  and configuration alone, without loading a model. :class:`SpacyExtractor` and
-  :class:`Gliner2Extractor` call them to set their own ``extractor_version``, so
-  a currentness check and the constructed extractor never disagree.
-- :func:`resolve_extraction_config` — resolves the configured extractor and
-  input policy into a :class:`~aizk.graph.mention_store.ResolvedExtractionConfig`
-  without constructing an extractor.
-- :func:`select_extraction_input` — resolves the text a chunk is read from: its
-  document's active contextualized variant when one is present and non-empty,
-  else the chunk's own raw text.
-- :func:`extract_chunk_mentions` — the pure, I/O-free extraction step: invokes
-  the extractor once on the selected input text, classifies each detected
-  surface form's occurrences against the raw chunk text, and emits one
-  :class:`~aizk.graph.mention_store.MentionDraft` per occurrence (or one
-  revision-anchored draft when the surface has none), ready for
-  :func:`aizk.graph.mention_store.persist_mentions`.
-
-Both pinned extractors are lazily imported (spaCy inside :class:`SpacyExtractor`,
-GLiNER2 inside :class:`Gliner2Extractor`) so importing this module, and running
-the contract suite against a deterministic stub, never requires the opt-in
-``ner`` dependency group.
+The module defines the extractor interface, input selection, deterministic
+detection materialization, and pinned spaCy and GLiNER2 implementations. It does
+not load optional NER dependencies until a production extractor is constructed.
 """
 
 from __future__ import annotations
@@ -101,27 +68,22 @@ DEFAULT_GLINER2_LABELS: "tuple[str, ...]" = (
 
 
 def spacy_extractor_version(model_name: str) -> str:
-    """Return the ``extractor_version`` string for a spaCy pipeline, without loading it.
+    """Return the extractor version for a spaCy pipeline without loading it.
 
-    A function of the pipeline package's installed version, so it tracks what is
-    installed rather than a pinned constant. :class:`SpacyExtractor` sets its own
-    ``extractor_version`` from here, so the two cannot disagree.
+    The version includes the installed package version.
 
     Raises:
-        importlib.metadata.PackageNotFoundError: If ``model_name`` is not
-            installed.
+        importlib.metadata.PackageNotFoundError: If ``model_name`` is not installed.
     """
     return f"spacy/{model_name}@{importlib.metadata.version(model_name)}"
 
 
 def gliner2_extractor_version(settings: "NerConfig", entity_labels: "Sequence[str]" = DEFAULT_GLINER2_LABELS) -> str:
-    """Return the ``extractor_version`` string for GLiNER2, without loading the model.
+    """Return the GLiNER2 extractor version without loading the model.
 
-    A function of the installed ``gliner2`` package version, the pinned model
-    repository, the configured revision, and the entity-label schema; label order
-    does not affect it. Touches no network and no model weights.
-    :class:`Gliner2Extractor` sets its own ``extractor_version`` from here, so the
-    two cannot disagree.
+    The version includes the installed package version, model revision, and
+    entity-label set. Label order does not affect the result. The function makes
+    no network or model-weight access.
     """
     try:
         package_version = importlib.metadata.version("gliner2")
@@ -132,10 +94,9 @@ def gliner2_extractor_version(settings: "NerConfig", entity_labels: "Sequence[st
 
 
 def resolve_extraction_config(config: "ExtractionConfig") -> ResolvedExtractionConfig:
-    """Resolve the configured extractor and input policy into a :class:`~aizk.graph.mention_store.ResolvedExtractionConfig`.
+    """Resolve extractor and input policy into a :class:`ResolvedExtractionConfig`.
 
-    Names the configuration a worker would currently extract under. Constructs no
-    extractor and loads no model, so it is cheap enough to call per request.
+    The function does not construct an extractor or load model weights.
     """
     if config.extractor == "spacy":
         extractor_version = spacy_extractor_version("en_core_web_sm")
@@ -149,17 +110,10 @@ def resolve_extraction_config(config: "ExtractionConfig") -> ResolvedExtractionC
 
 
 class Detection(BaseModel):
-    """A single entity span an :class:`EntityExtractor` found in its input text.
+    """Entity span returned by an :class:`EntityExtractor`.
 
-    The extractor's output contract: ``surface_form`` is exactly the text at
-    ``[span_start, span_end)`` in whatever text the extractor was invoked on —
-    the boundary :func:`extract_chunk_mentions` relies on when re-deriving
-    occurrences against the raw chunk text.
-
-    Attributes:
-        surface_form: The detected entity's exact surface text.
-        span_start: Start offset of the detection in the extractor's input text.
-        span_end: End offset of the detection in the extractor's input text.
+    ``surface_form`` equals the input text slice from ``span_start`` to
+    ``span_end``.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -171,13 +125,10 @@ class Detection(BaseModel):
 
 @runtime_checkable
 class EntityExtractor(Protocol):
-    """The single substitutable access point through which extraction reaches its NER model.
+    """Protocol for the NER extractor used by the extraction stage.
 
-    Implementations turn input text into a sequence of :class:`Detection`s.
-    Extraction makes no NER call outside :meth:`extract`, so a recording or
-    deterministic implementation observes and drives every invocation — the same
-    seam :class:`aizk.graph.llm.LLMClient` provides for the model contextualization
-    calls.
+    Implementations expose an ``extractor_version`` and return detections from
+    :meth:`extract`.
     """
 
     extractor_version: str
@@ -191,13 +142,10 @@ class EntityExtractor(Protocol):
 
 
 class SpacyExtractor:
-    """Production :class:`EntityExtractor` backed by spaCy's pinned ``en_core_web_sm`` pipeline.
+    """Production :class:`EntityExtractor` backed by a local spaCy pipeline.
 
-    Lazily imports spaCy and loads the named pipeline on construction, so
-    importing :mod:`aizk.graph.extraction` never requires the ``ner`` dependency
-    group. ``extractor_version`` is set via :func:`spacy_extractor_version`
-    (never hard-coded), so it stays honest to whatever pipeline package is
-    actually installed.
+    The module imports spaCy lazily. Construction loads ``model_name`` and sets
+    ``extractor_version`` from the installed package version.
     """
 
     def __init__(self, model_name: str = "en_core_web_sm") -> None:
@@ -233,14 +181,11 @@ class SpacyExtractor:
 
 
 class Gliner2Extractor:
-    """Production :class:`EntityExtractor` backed by a locally pinned GLiNER2 model.
+    """Production :class:`EntityExtractor` backed by a local GLiNER2 model.
 
-    Loads strictly from the local directory :data:`NerConfig.gliner2_model_dir`
-    pre-fetched by the ``aizk-graph fetch-gliner2-weights`` setup step — never
-    from the network at runtime. GLiNER2 is zero-shot: the entity-label schema
-    it is invoked with is configuration, so it is encoded into
-    ``extractor_version`` alongside the package version, the model repository,
-    and the pinned revision the local directory was fetched at.
+    Construction loads weights from ``NerConfig.gliner2_model_dir`` without
+    network access. The configured entity-label schema contributes to
+    ``extractor_version``.
     """
 
     def __init__(
@@ -252,15 +197,12 @@ class Gliner2Extractor:
         """Load the pinned GLiNER2 model from its configured local directory.
 
         Args:
-            settings: NER settings; defaults to :class:`NerConfig` read from the
-                environment.
-            entity_labels: The zero-shot entity-label schema to extract with;
-                defaults to :data:`DEFAULT_GLINER2_LABELS`.
+            settings: NER settings; defaults to :class:`NerConfig` from the environment.
+            entity_labels: Entity labels for zero-shot extraction.
 
         Raises:
-            ImportError: If ``gliner2[local]`` is not installed, or the
-                configured local model directory does not exist — both name the
-                fix (the ``ner`` dependency group, or the pre-fetch command).
+            ImportError: If the GLiNER2 dependency, model directory, or model artifact
+                is unavailable.
         """
         settings = settings or NerConfig()
         try:
@@ -281,12 +223,10 @@ class Gliner2Extractor:
         self.extractor_version = gliner2_extractor_version(settings, self._entity_labels)
 
     def extract(self, text: str) -> "Sequence[Detection]":
-        """Return GLiNER2's zero-shot entity detections for ``text``, sorted by position.
+        """Return GLiNER2 detections sorted by ``(span_start, span_end)``.
 
-        Sorted by ``(span_start, span_end)`` regardless of the model's internal
-        per-label grouping, so detection order — and therefore which detection is
-        "first" for a repeated surface form — is deterministic in the input text
-        alone.
+        Sorting makes detection order deterministic when the model groups entities by
+        label.
         """
         if not text:
             return []
@@ -300,19 +240,11 @@ class Gliner2Extractor:
 
 
 class ExtractionInput(BaseModel):
-    """The resolved text and locator :func:`extract_chunk_mentions` reads for one chunk.
+    """Resolved text and locator used to extract mentions from one chunk.
 
-    Produced by :func:`select_extraction_input`, the only place that decides
-    raw-versus-contextualized input; :func:`extract_chunk_mentions` itself is
-    pure and I/O-free, consuming whichever :class:`ExtractionInput` it is given.
-
-    Attributes:
-        text: The text to invoke the extractor on.
-        input_kind: ``raw`` or ``contextualized`` — which text this is.
-        context_version: The contextualized variant's version; present iff
-            ``input_kind`` is ``contextualized``.
-        contextualization_run_id: The contextualization run the variant was read
-            from; present iff ``input_kind`` is ``contextualized``.
+    ``input_kind`` is ``raw`` or ``contextualized``. Contextualized input includes
+    both ``context_version`` and ``contextualization_run_id``; raw input includes
+    neither.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -324,21 +256,15 @@ class ExtractionInput(BaseModel):
 
 
 def select_extraction_input(session: "Session", chunk: Chunk) -> ExtractionInput:
-    """Resolve the text extraction reads for ``chunk``: its active contextualized variant, or raw fallback.
+    """Resolve the active input text for ``chunk``.
 
-    Reads only from the chunk's document's **active** contextualization run
-    (``pipeline_runs`` filtered to :data:`aizk.graph.contextualization.VARIANT_STAGE`,
-    the chunk's ``source_id``, and ``status = active``) — a superseded run's
-    variant is never read. A present variant with non-empty
-    ``contextualized_text`` resolves to contextualized input, carrying that
-    variant's ``context_version`` and the active run's id as the locator. An
-    absent variant, or one present but empty (the already-self-contained case,
-    whose consumed text equals the raw chunk text per the chunk-contextualization
-    contract), resolves to raw input: the chunk's own text.
+    The function reads the active contextualization variant for the chunk's
+    source. A non-empty variant returns contextualized input with its version and
+    run ID. An absent or empty variant returns the raw chunk text.
 
     Args:
-        session: Active session; read-only.
-        chunk: The persisted chunk to resolve input for.
+        session: Active, read-only session.
+        chunk: The persisted chunk to resolve.
 
     Returns:
         The resolved :class:`ExtractionInput`.
@@ -394,37 +320,21 @@ def extract_chunk_mentions(
     extraction_input: ExtractionInput,
     extractor: "EntityExtractor",
 ) -> list[MentionDraft]:
-    """Materialize one chunk's NER detections into mention drafts (pure, I/O-free).
+    """Materialize extractor detections as mention drafts without I/O.
 
-    Invokes ``extractor.extract`` exactly once, on ``extraction_input.text`` —
-    the single access point through which this stage reaches its NER model.
-    Detections are grouped by exact ``surface_form``, keeping the **first**
-    detection's span as that surface's ``input_span`` (same-surface repeats
-    within one chunk share one disambiguation-context anchor by design — see
-    design decision ``SpanCoordinateSystem``). For each distinct surface form,
-    :func:`_raw_occurrences` searches ``raw_chunk_text``: one or more matches
-    yield one source-anchored draft per occurrence (each with its own
-    ``source_chunk_span`` and ``source_anchor_text``); zero matches yield one
-    revision-anchored draft carrying the shared ``input_span`` and no source
-    span. For raw input this branch is unreachable for a contract-honoring
-    extractor — a detection's own span is then a raw occurrence; a violating
-    detection is rejected downstream by
-    :func:`aizk.graph.mention_store.persist_mentions` — so it only fires for
-    contextualized input whose revision resolved a reference the raw chunk
-    never states.
+    The extractor is called once on ``extraction_input.text``. The function keeps
+    the first span for each exact surface form, then emits one source-anchored
+    draft per raw occurrence or one revision-anchored draft when no raw occurrence
+    exists. It returns drafts in first-detected-surface order.
 
     Args:
-        chunk_id: The raw chunk every emitted draft belongs to.
-        raw_chunk_text: The chunk's raw text; occurrences are classified against
-            this text regardless of what the extractor read.
-        extraction_input: The resolved input (text, kind, and locator) to invoke
-            the extractor on — see :func:`select_extraction_input`.
-        extractor: The single injected NER access point.
+        chunk_id: The chunk identity for every draft.
+        raw_chunk_text: Text used to classify source occurrences.
+        extraction_input: Text and locator passed to the extractor.
+        extractor: The injected NER implementation.
 
     Returns:
-        One :class:`~aizk.graph.mention_store.MentionDraft` per raw occurrence of
-        each detected surface form (or one revision-anchored draft for a surface
-        with none), in first-detected-surface order.
+        The resulting mention drafts in first-detected-surface order.
     """
     detections = extractor.extract(extraction_input.text)
 

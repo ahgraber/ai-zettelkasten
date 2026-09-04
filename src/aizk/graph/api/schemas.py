@@ -1,9 +1,7 @@
-"""Request and response schemas for the graph operator API.
+"""Define request and response schemas for graph operator routes.
 
-Each intake submission carries the upstream reference its stage's enqueue
-resolves: a conversion output for contextualization, a source identity for
-extraction. A refusal at capacity reuses the conversion service's
-:class:`~aizk.conversion.api.schemas.QueueFullResponse`.
+Schemas carry stage-specific intake references and reuse the shared capacity
+refusal response.
 """
 
 from __future__ import annotations

@@ -91,13 +91,7 @@ def _utcnow() -> datetime.datetime:
 
 @dataclass(frozen=True)
 class LoadedMarkdown:
-    """The Markdown a :class:`MarkdownSource` resolved for a conversion output.
-
-    ``markdown_hash_xx64`` is the hash the conversion stage recorded for this
-    artifact; :func:`process_document` verifies the fetched ``text`` hashes to it
-    before splitting, so blob/metadata drift fails closed rather than silently
-    chunking the wrong content.
-    """
+    """Markdown text and its recorded hash for a conversion output."""
 
     text: str
     markdown_hash_xx64: str
@@ -105,13 +99,7 @@ class LoadedMarkdown:
 
 @runtime_checkable
 class MarkdownSource(Protocol):
-    """The injected seam that fetches a converted document's Markdown by locator.
-
-    Keeps the graph stage decoupled from the conversion stage's blob storage: the
-    production implementation reads the ``ConversionOutput`` row and downloads the
-    Markdown blob, while tests supply a deterministic in-memory double. The stage
-    fetches Markdown only through this one method.
-    """
+    """Loads converted Markdown and its recorded hash by locator."""
 
     def load(self, conversion_output_id: int) -> LoadedMarkdown:
         """Return the Markdown (and its recorded hash) for a conversion output locator."""
@@ -120,12 +108,10 @@ class MarkdownSource(Protocol):
 
 @runtime_checkable
 class OutputFreshness(Protocol):
-    """The injected seam deciding whether a conversion output is still the source's latest.
+    """Checks whether a conversion output is the latest output for a source.
 
-    Production resolves this from the conversion outputs (the highest output id for
-    the ``source_id`` wins under the single serialized writer); tests supply a
-    deterministic double. Queried inside the persist transaction so the
-    freshness check and the supersede are atomic.
+    The caller supplies the persistence session so the check can share a
+    transaction with supersession.
     """
 
     def is_current(self, session: "Session", source_id: "UUID", conversion_output_id: int) -> bool:
@@ -135,12 +121,10 @@ class OutputFreshness(Protocol):
 
 @dataclass(frozen=True)
 class ProcessResult:
-    """The run records :func:`process_document` produced (or reused) for a document.
+    """Run identifiers and counts produced or reused by :func:`process_document`.
 
-    Carries the run ids and counts as primitives (not ORM rows, which detach once
-    the persist transaction commits) so the caller can finalize, log, or assert
-    without re-querying. ``chunking_run_id`` is the root of the backward-trace
-    chain; ``summary_run_id`` links the summary; ``variant_count`` is one per
+    The fields are primitives and remain usable after the persistence transaction.
+    ``chunking_run_id`` roots lineage; ``variant_count`` counts one variant per
     persisted chunk.
     """
 
@@ -152,10 +136,9 @@ class ProcessResult:
 
 @dataclass(frozen=True)
 class SkippedSuperseded:
-    """Returned when the unit did nothing because a newer source output already won.
+    """Result when a newer source output superseded this work unit.
 
-    The freshness gate found a newer ``ConversionOutput`` for the source, so the
-    older unit wrote nothing rather than superseding the newer generation's runs.
+    The unit wrote nothing; ``conversion_output_id`` identifies the skipped output.
     """
 
     conversion_output_id: int
@@ -163,12 +146,7 @@ class SkippedSuperseded:
 
 @dataclass(frozen=True)
 class Cancelled:
-    """Returned when cancellation was observed, so the unit wrote nothing.
-
-    The injected ``is_cancelled`` check fired (a runner timeout/cancel), so
-    generation and/or the persist write were skipped. The runner resolves the
-    terminal ``CANCELLED`` / ``TIMED_OUT`` status from its own slot state.
-    """
+    """Result when cancellation caused the unit to write nothing."""
 
 
 def process_document(
@@ -182,56 +160,26 @@ def process_document(
     model_config: "ModelConfig",
     is_cancelled: "Callable[[], bool] | None" = None,
 ) -> ProcessResult | SkippedSuperseded | Cancelled:
-    """Run the full graph write path for one converted document.
+    """Process one converted document through chunking and contextualization.
 
-    A read-only **preflight** runs first: if the output no longer belongs to the
-    source or a newer one has superseded it, return :class:`SkippedSuperseded`
-    before any fetch or model call, so foreign/stale content never reaches the
-    model. Then two phases. **Plan (no write lock):** fetch the Markdown via the
-    ``conversion_output_id`` locator, verify its hash, split it, and run the
-    summary + per-chunk revision LLM passes. **Apply (one short ``BEGIN IMMEDIATE``):**
-    the same freshness gate again — authoritatively and atomically with the
-    supersede (the preflight is best-effort) — then persist the chunking run +
-    chunk rows, the summary, and the variants, scoped to ``source_id`` and keyed
-    by content. The chunks are contextualized in document order (the
-    splitter's order), not the ``chunk_id``-ordered manifest.
+    The function checks output ownership, fetches and verifies Markdown, and runs
+    model generation without a write lock. It rechecks freshness and persists the
+    chunking, summary, and variant runs in one transaction, in document order.
+    Cancellation before generation or persistence returns :class:`Cancelled`; a
+    stale output returns :class:`SkippedSuperseded`.
 
-    Cooperative cancellation: ``is_cancelled`` is checked before the (expensive)
-    LLM generation and again at the start of the persist transaction, so a
-    runner-driven cancel/timeout skips the model calls and/or the domain write
-    rather than committing work for a unit that is being cancelled.
-
-    Idempotent on the runs' derivation keys: re-executing an unchanged document
-    reuses its active runs and produces no duplicate records (including the
-    zero-chunk case). Owns its own write transaction; the caller does not wrap it.
-
-    Args:
-        engine: The shared engine; the apply phase opens its own ``BEGIN IMMEDIATE``.
-        client: The single model access point for the summary and variant passes.
-        source_id: The durable source identity; the runs' scope.
-        conversion_output_id: The conversion artifact locator to process.
-        markdown_source: The injected seam that fetches the document's Markdown.
-        freshness: The injected seam deciding whether this output is still current.
-        model_config: The resolved model identity for the summary and variant
-            passes; folded into their derivation keys.
-        is_cancelled: Optional cooperative-cancellation probe; when it returns
-            ``True`` the unit stops without writing and returns :class:`Cancelled`.
-
-    Returns:
-        A :class:`ProcessResult` with the run ids and counts, :class:`SkippedSuperseded`
-        when a newer output has already won, or :class:`Cancelled` when cancelled.
+    Unchanged derivation keys reuse active runs. The caller must not wrap this
+    function in a write transaction.
 
     Raises:
-        ValueError: If the fetched Markdown does not hash to the recorded
-            ``markdown_hash_xx64`` (blob/metadata drift) — guarding against
-            chunking content that disagrees with the conversion stage's record.
+        ValueError: If fetched Markdown does not match its recorded hash.
     """
     locator = str(conversion_output_id)
 
     def _cancelled() -> bool:
         return is_cancelled is not None and is_cancelled()
 
-    # --- Early ownership/currentness preflight (read-only, best-effort). ---
+    # Preflight ownership/currentness before fetching; repeat the authoritative check in the write transaction.
     # Skip the S3 fetch and the LLM passes entirely for an output that no longer
     # belongs to the source or has already been superseded by a newer conversion, so
     # foreign or stale content never reaches the model and no fetch/generation work
@@ -246,7 +194,7 @@ def process_document(
             )
             return SkippedSuperseded(conversion_output_id=conversion_output_id)
 
-    # --- Plan phase: S3 fetch + LLM, with no write lock held. ---
+    # Fetch Markdown and call the LLM without holding the write lock.
     loaded = markdown_source.load(conversion_output_id)
     actual_hash = compute_markdown_hash(loaded.text)
     if actual_hash != loaded.markdown_hash_xx64:
@@ -277,10 +225,9 @@ def process_document(
         document_text=loaded.text,
         model_config=model_config,
     )
-    # ``None`` signals the generation phase resolved to reuse a complete active
-    # variant run (no revisions to carry); ``reuse_only`` then makes the persist
-    # phase fail retryably if that run vanished between plan and apply rather than
-    # misinterpreting an empty set as a torn run.
+    # ``None`` means a complete active variant run can be reused without revisions.
+    # ``reuse_only`` makes a vanished run fail retryably instead of treating an empty
+    # precomputed set as a torn run.
     revisions = resolve_revisions(
         engine,
         client,
@@ -291,7 +238,7 @@ def process_document(
         model_config=model_config,
     )
 
-    # --- Apply phase: one short write transaction. ---
+    # Persist the result in one short write transaction.
     with begin_immediate(engine) as session:
         # Do not commit domain writes for a unit that is being cancelled.
         if _cancelled():
@@ -369,10 +316,10 @@ def process_document(
 
 
 def enqueued_outputs(session: "Session", conversion_output_ids: "Sequence[int]") -> set[int]:
-    """Return which of ``conversion_output_ids`` already have a contextualization work-unit.
+    """Return conversion output IDs that already have contextualization work units.
 
-    Bulk enqueue paths read this to tell reuse from creation before applying
-    capacity, since only creation consumes headroom.
+    Bulk enqueue uses this set to distinguish reuse from creation before capacity
+    checks.
     """
     if not conversion_output_ids:
         return set()
@@ -386,11 +333,9 @@ def enqueued_outputs(session: "Session", conversion_output_ids: "Sequence[int]")
 
 
 def _idempotency_key(conversion_output_id: int) -> str:
-    """Return the enqueue-dedupe key for a conversion output.
+    """Return the deduplication key for a conversion output.
 
-    Keyed by the artifact locator: re-enqueueing the same conversion output reuses
-    its work-unit, while a re-conversion (a new ``conversion_output_id``) is a
-    distinct unit that splits its own Markdown.
+    A new conversion output receives a distinct work unit.
     """
     return f"conversion_output:{conversion_output_id}"
 
@@ -404,38 +349,17 @@ def enqueue_document(
     origin: "CreationOrigin",
     principal: str,
 ) -> tuple[ContextualizationJob, bool]:
-    """Enqueue one document's work-unit (incremental mode), deduped on ``idempotency_key``.
+    """Enqueue or reuse one contextualization work unit.
 
-    If a work-unit for this conversion output already exists, it is returned
-    unchanged rather than duplicated — so an incremental re-ingest, or a backfill
-    overlapping an already-queued unit, reuses the open unit. Otherwise a new
-    ``QUEUED`` unit is inserted and flushed (so its ``id`` is available) and its
-    creation event is staged in the same session, so the caller's commit lands
-    both or neither.
-
-    The capacity check runs **after** the dedupe branch, so a request that resolves
-    to an existing unit is never refused. This is the only place contextualization
-    work-unit rows are constructed, so the limit binds every caller.
-
-    Does **not** commit; the caller owns the surrounding transaction.
-
-    Args:
-        session: Active session; the caller owns commit/rollback.
-        conversion_output_id: The conversion artifact locator to process.
-        source_id: The durable source identity, resolved by the caller from the
-            conversion output and carried onto the unit's runs and events.
-        queue_max_depth: The stage's declared capacity over its actionable
-            backlog; ``0`` declares no limit, and every caller must say which it means.
-        origin: The path creating the unit, recorded on its creation event.
-        principal: The acting principal, recorded on its creation event.
+    Existing units return unchanged without a capacity check. Otherwise the
+    function checks capacity, stages a queued unit and its creation event, and
+    does not commit.
 
     Returns:
-        The existing or newly-created :class:`ContextualizationJob`, and whether
-        this call created it.
+        The existing or new job and whether this call created it.
 
     Raises:
-        StageAtCapacityError: When the backlog is at or above ``queue_max_depth``
-            and the request does not resolve to an existing unit.
+        StageAtCapacityError: If a new unit would exceed ``queue_max_depth``.
     """
     key = _idempotency_key(conversion_output_id)
     existing = session.exec(
@@ -486,37 +410,18 @@ def enqueue_backfill(
     queue_max_depth: int,
     principal: str,
 ) -> list[ContextualizationJob]:
-    """Enqueue work-units for many documents (bulk/backfill mode) through the single path.
+    """Enqueue or reuse work units for many documents.
 
-    Each ``(conversion_output_id, source_id)`` pair is enqueued via
-    :func:`enqueue_document` with ``origin="backfill"``, so the same dedupe
-    applies and the resulting units are identical to incremental enqueue — only
-    volume and scheduling differ. Throttling and per-document commit batching
-    are the caller's concern; this function only stages the rows and does not
-    commit.
-
-    Capacity is read once for the batch and the input truncated to it. Documents
-    beyond the headroom stay pending for a later batch.
-
-    A corpus-wide backfill has a large downstream blast radius, so it is gated
-    behind explicit confirmation: nothing is enqueued unless ``confirmed`` is True
-    (see :func:`aizk.pipeline.invalidation.require_reprocessing_confirmation`).
-
-    Args:
-        session: Active session; the caller owns commit/rollback.
-        documents: The ``(conversion_output_id, source_id)`` pairs to enqueue.
-        confirmed: Explicit human approval for the corpus-wide operation; when
-            ``False`` (the default) nothing is enqueued and the gate raises.
-        queue_max_depth: The stage's declared capacity over its actionable
-            backlog; ``0`` declares no limit, and every caller must say which it means.
-        principal: The operator identity recorded on each created unit's
-            creation event.
+    Each pair uses :func:`enqueue_document`, so deduplication is shared with
+    incremental enqueue. Capacity limits new units and leaves excess candidates
+    pending. The function stages rows, does not commit, and requires
+    ``confirmed=True``.
 
     Returns:
-        The enqueued (or reused) work-units, one per admitted document.
+        The enqueued or reused work units.
 
     Raises:
-        ReprocessingConfirmationError: When ``confirmed`` is ``False``.
+        ReprocessingConfirmationError: When ``confirmed`` is false.
     """
     require_reprocessing_confirmation("corpus-wide contextualization backfill", confirmed=confirmed)
     candidates = list(documents)

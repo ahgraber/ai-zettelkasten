@@ -104,18 +104,10 @@ VARIANT_STAGE = "chunk_contextualization"
 
 
 class StalePlanError(RuntimeError):
-    """The active run a generation planned to reuse changed before it was persisted.
+    """Raised when a planned active run changes before persistence.
 
-    Raised at the persist boundary when the summary or variant run the lock-free
-    generation phase resolved against is no longer the active, matching run — so
-    the revisions in hand were conditioned on a generation that the apply step
-    would otherwise misrecord (a different summary) or cannot reuse (a superseded
-    variant run). It is **not** a :class:`ValueError`: the stage handler maps it to
-    a *retryable* failure, so the unit re-resolves and regenerates against the
-    current state on the next attempt rather than failing permanently. Under the
-    current freshness-gate / single-writer invariants this is not expected to fire;
-    it enforces those invariants so a future weakening surfaces loudly and safely
-    instead of corrupting provenance or permanently failing the unit.
+    The handler should retry the unit so it can resolve current state and regenerate
+    outside the write transaction.
     """
 
 
@@ -222,11 +214,9 @@ class ContextSource(str, Enum):
 
 @dataclass(frozen=True)
 class ResolvedChunkText:
-    """A chunk's selected downstream text, tagged with its source.
+    """A chunk's downstream text and the representation used to produce it.
 
-    ``source`` records whether the raw chunk text or the reconstructed
-    contextualized text was used, so a downstream raw-vs-contextualized
-    comparison knows which input produced its result.
+    ``source`` identifies raw or contextualized input for downstream provenance.
     """
 
     text: str
@@ -250,11 +240,10 @@ def summary_config_fingerprint(model_config: ModelConfig, summary_version: int) 
 
 
 def summary_derivation_key(document_text: str, summary_version: int, model_config: ModelConfig) -> str:
-    """Canonical derivation key for a summary run.
+    """Return a backend-portable derivation key for a summary run.
 
-    A function of the document's content and the resolved model/prompt/version
-    configuration only — no database-local id — so the key recomputes identically
-    on any backend.
+    The key depends on document content, resolved model configuration, prompt
+    identity, and ``summary_version``; it excludes database-local IDs.
     """
     return derivation_key(
         inputs={
@@ -291,15 +280,10 @@ def contextualization_run_derivation_key(
     context_version: int,
     model_config: ModelConfig,
 ) -> str:
-    """Canonical derivation key for a variant run.
+    """Return a backend-portable derivation key for a contextualization run.
 
-    Composed from the summary text's content fingerprint, the ordered chunk-set
-    content keys, the ``splitter_version`` of the chunking generation read, the
-    2p/1n context policy, prompt identity, resolved model configuration, and
-    ``context_version``. ``splitter_version`` participates so a re-chunk under a
-    new splitter supersedes the variants even when the chunk set is unchanged.
-    Chunks are identified by portable content key, not surrogate ``chunk_id``, so
-    the key is backend-portable.
+    The key combines summary content, ordered chunk content keys, splitter and
+    context versions, context-window policy, prompt identity, and model identity.
     """
     return derivation_key(
         inputs={
@@ -316,10 +300,9 @@ def contextualization_row_input_fingerprint(
     prior_1: "SplitterChunk | None",
     next_1: "SplitterChunk | None",
 ) -> str:
-    """Return a variant row's input fingerprint: the summary text and the working chunk's 2p/1n window.
+    """Return a fingerprint for a summary and a chunk's 2-prior/1-next window.
 
-    Chunks are identified by portable content key, not surrogate ``chunk_id``, so
-    the fingerprint is backend-portable. An absent neighbor is ``None``.
+    The fingerprint uses portable chunk keys and ``None`` for absent neighbors.
     """
     return fingerprint(
         {
@@ -342,11 +325,10 @@ def contextualization_row_derivation_key(
     context_version: int,
     model_config: ModelConfig,
 ) -> str:
-    """Canonical derivation key for one variant row.
+    """Return a derivation key for one contextualized variant row.
 
-    Shares the run's config fingerprint
-    (:func:`contextualization_config_fingerprint`); only the input fingerprint
-    narrows, to the working chunk's 2p/1n window.
+    The key combines the row's summary-and-neighbor input fingerprint with the
+    contextualization configuration fingerprint.
     """
     return derivation_key(
         inputs={
@@ -363,11 +345,9 @@ def _prompt_json(payload: dict[str, object]) -> str:
 
 
 def _summary_prompt(document_text: str) -> str:
-    """Build the per-document summary prompt.
+    """Build a summary prompt with length guidance.
 
-    Sends the core instructions plus the length guidance to the model, but only the
-    core feeds :data:`SUMMARY_PROMPT_HASH`; tuning the length nudge therefore does
-    not change the summary's derivation identity.
+    Only the core instructions contribute to ``SUMMARY_PROMPT_HASH``.
     """
     instructions = (
         f"{SUMMARY_INSTRUCTIONS} {SUMMARY_LENGTH_GUIDANCE_TEMPLATE.format(soft_limit=SUMMARY_SOFT_LIMIT_CHARS)}"
@@ -400,11 +380,12 @@ def _contextualization_framing(
 
 
 def _validate_summary_text(summary_text: str) -> str:
-    """Validate the model-produced document summary before persistence.
+    """Validate and normalize a model-produced summary.
 
-    Validates the stored (stripped) form so trailing whitespace does not tip an
-    otherwise in-budget summary over the limit, mirroring
-    :func:`_validate_contextualized_text`.
+    Returns the stripped text.
+
+    Raises:
+        ValueError: If the normalized summary exceeds ``MAX_SUMMARY_CHARS``.
     """
     normalized = summary_text.strip()
     if len(normalized) > MAX_SUMMARY_CHARS:
@@ -419,13 +400,10 @@ def _revision_limit(working_text: str) -> int:
 
 
 def _validate_contextualized_text(working_text: str, contextualized_text: str) -> str:
-    """Validate the model-produced contextualized revision before persistence.
+    """Validate and normalize a model-produced contextualized revision.
 
-    Empty output is valid and means the working chunk was already self-contained,
-    so the raw chunk is consumed unchanged. A non-empty revision is the rewritten,
-    self-contained passage; it may be longer than the working chunk (resolving
-    references adds words) but must stay within a chunk-relative budget so a
-    runaway or hallucinated expansion fails closed before it is persisted.
+    An empty result means the raw chunk is already self-contained. A non-empty
+    revision must fit the chunk-relative length limit.
     """
     normalized = contextualized_text.strip()
     if normalized == "":
@@ -454,20 +432,13 @@ def _verify_chunking_provenance(
     splitter_version: int,
     chunks: "Sequence[SplitterChunk]",
 ) -> None:
-    """Verify the chunks were produced by the referenced chunking run before recording it as provenance.
+    """Ensure that ``chunks`` belong to ``chunking_run_id`` before recording provenance.
 
-    Each variant records ``chunking_run_id`` (and folds ``splitter_version`` into
-    its derivation key) as the edge the backward trace follows to the chunk's
-    ``span`` and source markdown. That edge must be truthful, so this confirms the
-    run exists, is a chunking run for this source at this ``splitter_version``, and
-    that every supplied chunk appears in its manifest at the supplied span — the
-    ``chunk_id`` foreign key alone proves the chunk exists, not that it came from
-    this generation (a ``chunk_id`` appears in many).
+    The run must be a chunking run for ``source_id`` with the supplied
+    ``splitter_version``, and its manifest must contain each chunk at its span.
 
     Raises:
-        ValueError: If the run is missing, is not this source's chunking run, was
-            recorded at a different ``splitter_version``, or does not manifest a
-            supplied chunk at its span.
+        ValueError: If any provenance check fails.
     """
     run = session.get(PipelineRun, chunking_run_id)
     if run is None or run.stage != CHUNKING_STAGE:
@@ -491,10 +462,9 @@ def _verify_chunking_provenance(
 
 
 def generate_summary_text(client: "LLMClient", document_text: str) -> str:
-    """Run the summary LLM pass and return its raw (unvalidated) output.
+    """Generate unvalidated summary text without database access.
 
-    Pure model I/O with no database access, so a caller can run it outside the
-    write transaction; length validation happens at persist time.
+    Length validation occurs when the summary is persisted.
     """
     return client.generate(_summary_prompt(document_text))
 
@@ -508,26 +478,19 @@ def resolve_summary_text(
     summary_version: int = SUMMARY_VERSION,
     model_config: ModelConfig,
 ) -> str:
-    """Return the summary text to persist, reusing prior model work where possible.
+    """Return the summary for a derivation key, reusing an active run or memo when possible.
 
-    Spends at most one model call, and none when the active summary run or a
-    retained memo already covers the derivation key. Repeated calls under an
-    unchanged key return the same text, so every derivation key computed from it
-    downstream is stable across a retry.
-
-    **Not** read-only: a miss retains the validated output through an autonomous
-    memo write in its own short transaction. No transaction is held across the
-    model call.
+    The function makes at most one model call. On a miss, it validates the output
+    and stores it in a short autonomous transaction; it does not hold a
+    transaction across model I/O.
 
     Args:
-        engine: The shared engine; reads and the autonomous memo write each open
-            their own short session/transaction off it.
-        client: The single model access point for the summary pass.
-        source_id: The durable source identity; the memo ``scope_id``.
-        document_text: The document the summary pass reads on a miss, and the
-            source of the derivation key's content fingerprint.
-        summary_version: The summary behavior version.
-        model_config: The resolved model identity (in the derivation key).
+        engine: Engine used for reads and memo persistence.
+        client: Model client used on a miss.
+        source_id: Source scope for the memo.
+        document_text: Document content used for the summary and its key.
+        summary_version: Summary behavior version.
+        model_config: Resolved model identity in the key.
 
     Returns:
         The summary text to persist.
@@ -554,11 +517,9 @@ def _generate_one_revision(
     working: "SplitterChunk",
     next_1: "SplitterChunk | None",
 ) -> str:
-    """Run the contextualization LLM pass for one chunk and return its raw output.
+    """Generate one raw contextualization revision without database access.
 
-    Pure model I/O with no database access, so a memo-aware caller can generate a
-    single chunk on a miss while the bulk :func:`generate_revisions` retains its
-    pure form. Length validation happens at the memo-write / persist boundary.
+    Length validation occurs when the revision is memoized or persisted.
     """
     return client.generate(_contextualization_framing(summary_text, prior_2, prior_1, working, next_1))
 
@@ -568,11 +529,10 @@ def generate_revisions(
     summary_text: str,
     ordered_chunks: "Sequence[SplitterChunk]",
 ) -> list[str]:
-    """Run the per-chunk contextualization passes and return raw revisions, aligned to order.
+    """Generate raw revisions in document order.
 
-    Each chunk's 2-prior/1-next window is taken from ``ordered_chunks`` (document
-    order). Pure model I/O with no database access, so a caller can run it outside
-    the write transaction; length validation happens at persist time.
+    Each revision uses the chunk's 2-prior/1-next window. Length validation occurs
+    at persistence.
     """
     ordered = list(ordered_chunks)
     revisions: list[str] = []
@@ -595,33 +555,15 @@ def resolve_revisions(
     context_version: int = CONTEXT_VERSION,
     model_config: ModelConfig,
 ) -> list[str] | None:
-    """Return the per-chunk revisions to persist, reusing prior model work where possible.
+    """Return revisions, reusing a complete active run or retained memo entries.
 
-    The revision counterpart to :func:`resolve_summary_text`. Spends at most one
-    model call per chunk, and none at all when a complete active variant run
-    matches the run-level derivation key — which is what makes re-executing an
-    already-completed document free even after its memo entries were pruned on
-    success. A torn active run costs only the chunks not already retained.
-
-    **Not** read-only: each miss retains its validated revision through an
-    autonomous memo write. No transaction is held across a model call.
-
-    Args:
-        engine: The shared engine; reads and autonomous memo writes open their own
-            short sessions/transactions off it.
-        client: The single model access point for the per-chunk passes.
-        source_id: The durable source identity; the memo ``scope_id``.
-        summary_text: The resolved summary the revisions are conditioned on.
-        ordered_chunks: The source's chunks in document order; the 2p/1n window is
-            taken from this order.
-        splitter_version: The ``splitter_version`` of the chunking generation read.
-        context_version: The contextualization behavior version.
-        model_config: The resolved model identity (in the derivation key).
+    The function makes at most one model call per missing chunk. Each miss validates
+    and stores its output in an autonomous transaction; no transaction spans model
+    I/O.
 
     Returns:
-        ``None`` when a complete active variant run is to be reused, otherwise one
-        raw|empty revision per chunk in document order (``[]`` for a zero-chunk
-        document with no active run to reuse).
+        ``None`` when a complete active variant run is reused. Otherwise one raw or
+        empty revision per chunk in document order.
     """
     ordered = list(ordered_chunks)
     run_key = contextualization_run_derivation_key(
@@ -663,12 +605,10 @@ def consumed_output_memo_keys(
     context_version: int = CONTEXT_VERSION,
     model_config: ModelConfig,
 ) -> "list[tuple[MemoKind, str]]":
-    """Return the memo keys a completed generation consumed, for the success-path prune.
+    """Return the summary and revision memo keys consumed by a generation.
 
-    Exactly the summary and per-chunk revision keys :func:`resolve_summary_text`
-    and :func:`resolve_revisions` read or wrote under the same arguments, whether
-    each was a hit or a write. Pruning this set is key-exact, so a concurrent
-    same-source attempt working under different keys keeps its entries.
+    The keys match :func:`resolve_summary_text` and :func:`resolve_revisions`, so
+    pruning does not remove entries for concurrent work.
     """
     ordered = list(ordered_chunks)
     keys: list[tuple[MemoKind, str]] = [
@@ -701,43 +641,19 @@ def summarize_document(
     model_config: ModelConfig,
     precomputed_summary_text: str | None = None,
 ) -> DocumentSummary:
-    """Produce (or reuse) the active summary for a document.
+    """Produce or reuse the active summary for a document.
 
-    An active summary run under an unchanged :func:`summary_derivation_key` is
-    reused: its summary is returned unmodified, with no model call and no new
-    run. Reuse for a ``conversion_output_id`` other than the one the run recorded
-    also stages a :class:`~aizk.graph.datamodel.SummaryRunApplicability` row.
-    Otherwise a new run supersedes the prior active one and a new
-    :class:`DocumentSummary` is staged, costing one model call unless
-    ``precomputed_summary_text`` supplies the text.
+    An active run with the same derivation key is reused without a model call.
+    Otherwise the function stages a new run and summary, using the supplied text
+    or one model call. A different conversion-output locator adds an applicability
+    row. The locator and Markdown hash are recorded as provenance but do not enter
+    the derivation key.
 
-    ``conversion_output_id`` and ``markdown_hash_xx64`` are recorded on the
-    summary as verification provenance; neither enters the derivation key.
-
-    Does **not** commit; the caller owns the surrounding transaction. The
-    returned row is flushed, so its identity is usable before that commit.
-
-    Args:
-        session: Active session; the caller owns commit/rollback.
-        client: The model access point, unused when ``precomputed_summary_text``
-            is supplied.
-        source_id: The durable source identity; the run's scope.
-        conversion_output_id: Locator for the Markdown this summary consumed.
-        markdown_hash_xx64: Content hash of that Markdown.
-        document_text: The document to summarize, and the source of the
-            derivation key's content fingerprint.
-        summary_version: The summary behavior version.
-        model_config: The resolved model identity (in the derivation key).
-        precomputed_summary_text: Summary text the caller already generated
-            outside the write lock; validated here like a fresh generation.
-
-    Returns:
-        The active :class:`DocumentSummary` for the document.
+    The function does not commit. It flushes the returned row before returning.
 
     Raises:
-        StalePlanError: If ``precomputed_summary_text`` disagrees with the text
-            an active, key-matching run already holds — an overlapping attempt
-            re-summarized between plan and apply. Retryable.
+        StalePlanError: If supplied summary text conflicts with the active matching
+            run.
     """
     key = summary_derivation_key(document_text, summary_version, model_config)
     active = _active_run(session, SUMMARY_STAGE, source_id)
@@ -824,22 +740,12 @@ def record_summary_run_applicability(
 ) -> SummaryRunApplicability:
     """Validate and stage a summary-run applicability relation; the caller commits.
 
-    Records that summary run ``run_id``'s output is also current for
-    ``conversion_output_id``, whose markdown fingerprints to
-    ``input_fingerprint`` under the currently-resolved model/prompt/version
-    configuration. Idempotent on the primary key ``(run_id,
-    conversion_output_id)``: an identical relation returns the existing row. The
-    relation is append-only, with no update path.
+    The relation is append-only and idempotent on ``(run_id, conversion_output_id)``.
+    Existing rows are returned unchanged.
 
     Raises:
-        ValueError: If the run is missing, not active, or not a summary run; if
-            no :class:`~aizk.conversion.datamodel.output.ConversionOutput` row for
-            ``conversion_output_id`` belongs to the run's ``scope_id``; if the
-            candidate key recomputed from ``input_fingerprint`` and the resolved
-            config does not equal the run's ``derivation_key``; if the run has no
-            recorded :class:`DocumentSummary` (a torn run); or if an existing
-            relation for the same primary key carries a different
-            ``input_fingerprint``.
+        ValueError: If the run, conversion output, derivation key, summary, or
+            existing relation is inconsistent.
     """
     run = session.get(PipelineRun, run_id)
     if run is None or run.status != RunStatus.ACTIVE or run.stage != SUMMARY_STAGE:
@@ -877,17 +783,10 @@ def record_summary_run_applicability(
 
 
 def assert_variant_matches_run_input(run_input: ContextualizationRunInput, variant: ContextualizedChunk) -> None:
-    """Raise if a variant's provenance pointers do not match its run's recorded input.
-
-    Asserts the invariant that every :class:`ContextualizedChunk` in a run
-    carries the same ``(summary_run_id, chunking_run_id)`` pair as the run's
-    :class:`ContextualizationRunInput`, which is what keeps the run-level
-    fingerprints and the per-variant provenance consistent. Reads neither the
-    database nor any state beyond its two arguments.
+    """Validate a variant's run-level provenance pointers.
 
     Raises:
-        ValueError: If ``variant.summary_run_id`` or ``variant.chunking_run_id``
-            differs from ``run_input``'s.
+        ValueError: If either upstream run ID differs from the run input.
     """
     if variant.summary_run_id != run_input.summary_run_id or variant.chunking_run_id != run_input.chunking_run_id:
         raise ValueError(
@@ -911,65 +810,20 @@ def contextualize_chunks(
     precomputed_revisions: "Sequence[str] | None" = None,
     reuse_only: bool = False,
 ) -> list[ContextualizedChunk]:
-    """Produce (or reuse) the active contextualized variants for a source's chunks.
+    """Produce or reuse active contextualized variants for a source's chunks.
 
-    ``chunks`` must be in document order, read from the chunking generation
-    ``chunking_run_id``; each chunk's two prior and one next neighbors are taken
-    from that order. An active variant run under an unchanged
-    :func:`contextualization_run_derivation_key`, holding one variant per chunk,
-    is reused: its variants are returned unmodified, with no model calls and no
-    new run. Reuse under a ``(summary_run_id, chunking_run_id)`` pair other than
-    the one the run recorded also stages a
-    :class:`~aizk.graph.datamodel.ContextualizationRunApplicability` row.
+    ``chunks`` must be in document order. A complete active run with the same key
+    is reused without model calls; otherwise the function stages one variant per
+    chunk, including an empty revision when the raw chunk is already self-contained.
+    ``precomputed_revisions`` supplies outputs generated outside the write lock.
+    The source chunk rows are not modified.
 
-    Otherwise a new run supersedes the prior active one, staging one
-    :class:`~aizk.graph.datamodel.ContextualizationRunInput` (even for a
-    zero-chunk source) and one :class:`ContextualizedChunk` per chunk. Each
-    variant holds the model's self-contained revision, or an empty string when
-    the chunk was already self-contained. That path costs one model call per
-    chunk unless ``precomputed_revisions`` supplies them. The source chunk rows
-    are never written.
-
-    Does **not** commit; the caller owns the surrounding transaction.
-
-    Args:
-        session: Active session; the caller owns commit/rollback.
-        client: The single model access point.
-        source_id: The durable source identity; the run's scope and the chunks'
-            ``source_id``.
-        summary: The active document summary the variants are built from.
-        chunks: The source's persisted chunks in document order.
-        chunking_run_id: The chunking run whose manifest these chunks were read
-            from; recorded as provenance on each variant (a ``chunk_id`` appears
-            in many generations, so this disambiguates which one was read).
-        splitter_version: The ``splitter_version`` of that chunking generation;
-            folded into the derivation key so a re-chunk under a new splitter
-            supersedes the variants.
-        context_version: The contextualization behavior version.
-        model_config: The resolved model identity (in the derivation key).
-        precomputed_revisions: Raw per-chunk revisions already produced by the
-            caller's LLM pass (run outside the write lock), aligned to ``chunks``;
-            when ``None``, they are generated here. Ignored when the active run is
-            reused.
-        reuse_only: Set when the caller planned to reuse a complete active variant
-            run and so carries no revisions. Turns a plan mismatch at persist into
-            a retryable :class:`StalePlanError` rather than a model call inside
-            the write lock.
-
-    Returns:
-        The active list of :class:`ContextualizedChunk` for the document, in
-        document order.
+    The function does not commit; the caller owns the transaction.
 
     Raises:
-        StalePlanError: If ``reuse_only`` is set but no complete active variant
-            run matches the planned derivation key — a superseding generation
-            landed between plan and apply. Retryable.
-        ValueError: If the summary or any chunk does not belong to ``source_id``,
-            or if ``chunking_run_id`` does not reference a chunking run for this
-            source at this ``splitter_version`` whose manifest contains every
-            supplied chunk at its supplied span. Each variant records
-            ``chunking_run_id`` as the provenance a backward trace follows, so an
-            unverifiable pointer is refused before any variant is written.
+        StalePlanError: If ``reuse_only`` is set but the planned complete run is
+            unavailable.
+        ValueError: If the summary, chunks, or chunking-run provenance is invalid.
     """
     ordered = list(chunks)
     summary_run = session.get(PipelineRun, summary.run_id)
@@ -1018,10 +872,9 @@ def contextualize_chunks(
             logger.debug("Reusing active variant run id=%s for source=%s", active.id, source_id)
             return existing
 
-    # The generation phase planned to reuse a complete active run but it is gone or
-    # torn at persist (a superseding generation landed in between). Fail retryably
-    # rather than generating under the write lock or treating an empty precomputed
-    # set as a torn run.
+    # A complete active run can be reused without carrying revisions. If it vanishes
+    # or becomes incomplete before persistence, fail retryably instead of generating
+    # under the write lock or treating an empty precomputed set as a torn run.
     if reuse_only:
         raise StalePlanError(
             f"variant run for source {source_id!r} planned for reuse is no longer active/complete; "
@@ -1165,24 +1018,13 @@ def record_contextualization_run_applicability(
 ) -> ContextualizationRunApplicability:
     """Validate and stage a variant-run applicability relation; the caller commits.
 
-    Records that variant run ``run_id``'s output is also current for the
-    ``(summary_run_id, chunking_run_id)`` pair. Computes the input fingerprint
-    from the referenced summary's text and the referenced chunking run's manifest
-    chunk keys, so the caller cannot hand it a fingerprint that disagrees with
-    those inputs. Idempotent on the primary key ``(run_id, summary_run_id,
-    chunking_run_id)``: an identical relation returns the existing row. The
-    relation is append-only, with no update path.
+    The relation is append-only and idempotent on
+    ``(run_id, summary_run_id, chunking_run_id)``. Existing rows are returned
+    unchanged.
 
     Raises:
-        ValueError: If the run is missing, not active, or not a variant run; if
-            ``summary_run_id`` does not resolve to a summary run for the run's
-            ``scope_id``, or ``chunking_run_id`` to a chunking run for it; if the
-            candidate key recomputed from the referenced inputs and the resolved
-            config does not equal the run's ``derivation_key``; if the run's
-            variant count does not equal the referenced chunking run's manifest
-            size (a torn run); if the summary and chunking run share no conversion
-            output; or if an existing relation for the same primary key carries a
-            different ``input_fingerprint``.
+        ValueError: If the variant run, upstream runs, fingerprints, counts, or
+            shared conversion provenance is inconsistent.
     """
     run = session.get(PipelineRun, run_id)
     if run is None or run.status != RunStatus.ACTIVE or run.stage != VARIANT_STAGE:
@@ -1250,18 +1092,12 @@ def resolve_chunk_text(
     contextualized_text: str | None,
     contextualization_enabled: bool,
 ) -> ResolvedChunkText:
-    """Select the chunk text to consume downstream, honoring the contextualization toggle.
+    """Select raw or contextualized text for downstream consumption.
 
-    With contextualization disabled (or no variant available), the raw working
-    text is used and tagged :attr:`ContextSource.RAW`. With it enabled and a
-    variant present, the stored revision is used and tagged
-    :attr:`ContextSource.CONTEXTUALIZED` — except an empty revision, which the
-    model emits when the chunk is already self-contained: there the consumed text
-    is the raw chunk, still tagged :attr:`ContextSource.CONTEXTUALIZED` because the
-    contextualization run produced it (the run judged no rewrite was needed). The
-    tag lets a downstream consumer record which input produced its result for a
-    raw-vs-contextualized comparison; a consumer that needs "did the text change?"
-    checks whether the revision is non-empty rather than reading the tag.
+    Disabled contextualization or a missing variant returns raw text tagged
+    :attr:`ContextSource.RAW`. An available variant returns contextualized text,
+    including raw text tagged :attr:`ContextSource.CONTEXTUALIZED` when its
+    revision is empty. Inspect revision content to detect whether text changed.
     """
     if not contextualization_enabled or contextualized_text is None:
         return ResolvedChunkText(working_text, ContextSource.RAW)

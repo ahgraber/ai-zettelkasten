@@ -1,43 +1,9 @@
-"""Ranked, type-filtered content search over the FTS5 content index.
+"""Provide ranked search over active graph content.
 
-This module is the **query** side of the graph content index whose write side is
-:mod:`aizk.graph.content_index`. It exposes a :class:`SearchProvider` protocol —
-an operator query plus a content-type filter mapped to ranked, per-chunk results —
-and one FTS5/``bm25`` implementation (:class:`Fts5SearchProvider`, which opens its own
-read-only connection per query and never writes). The explorer
-depends on the protocol, not the concrete provider, so the relevance backend
-(``bm25`` today, a vector model later) is a swap with no caller change.
-
-A search returns only **active-generation** content. The index holds every
-committed chunk and variant row regardless of supersession (currency is decided at
-query time), so the provider filters each match against the source's currently
-active runs:
-
-- a ``kind='chunk'`` match counts only if its ``chunk_id`` is in the source's
-  **active chunking-run manifest** — that manifest row also carries the
-  ``span_start`` that anchors the result in document order;
-- a ``kind='contextualized'`` match counts only if its FTS ``run_id`` equals the
-  source's **active variant run** id, which is also what excludes a source still
-  mid-contextualization (no active variant run) and any retained intermediate
-  model output.
-
-A chunk has up to two matching FTS rows (its raw text and its contextualized
-representation), so matches are aggregated by ``chunk_id`` into a single
-:class:`SearchResult` carrying per-side flags (``matched_in_chunk`` /
-``matched_in_contextualized``); a self-contained chunk's contextualized
-representation is its raw text, so it can match on the contextualized side by its
-raw text. Each chunk's score is the best (minimum) ``bm25()`` over its matching
-rows; a document's score is the best (minimum) over its matching chunks. Results
-are ordered by document score ascending (SQLite ``bm25()`` is lower-is-better),
-and within a document by ``span_start`` ascending (true reading order, not the
-``chunk_id`` order the manifest helpers return).
-
-Operator input is treated as **literal search terms**, never as the FTS query
-language: each whitespace token is wrapped in double quotes (internal quotes
-doubled) so ``"``, ``*``, ``-``, and ``AND``/``OR``/``NEAR`` are matched
-literally, the built string is always passed as a bound parameter, empty or
-whitespace-only input short-circuits to no results without querying, and input is
-truncated to a bounded length so malformed input can never fail the page.
+:class:`SearchProvider` accepts literal operator terms and returns per-chunk
+results ordered by relevance and document position. :class:`Fts5SearchProvider`
+reads the append-only content index without writing. The provider excludes
+superseded generations and retained intermediate output.
 """
 
 from __future__ import annotations
@@ -62,11 +28,10 @@ MAX_QUERY_LENGTH = 200
 
 
 class SearchKind(str, Enum):
-    """Which side(s) of a chunk a search matches against.
+    """Which content side a search matches.
 
-    ``CHUNK`` restricts matches to the raw chunk text, ``CONTEXTUALIZED`` to the
-    contextualized representation (the stored revision, or the raw chunk text when
-    the revision is empty), and ``EITHER`` matches both.
+    ``CHUNK`` matches raw text, ``CONTEXTUALIZED`` matches the contextualized
+    representation, and ``EITHER`` matches both.
     """
 
     CHUNK = "chunk"
@@ -76,23 +41,11 @@ class SearchKind(str, Enum):
 
 @dataclass(frozen=True)
 class SearchResult:
-    """One ranked, per-chunk search hit.
+    """Ranked search hit for one chunk.
 
-    Carries identifiers, ordering keys, and per-side match flags only — never
-    rendered text or highlighting. A consumer resolves the raw and contextualized
-    display text and marks the query terms from these flags, keeping the provider
-    seam thin for a relevance-backend swap.
-
-    Attributes:
-        source_id: The source identity the chunk belongs to.
-        chunk_id: The surrogate chunk identity.
-        span_start: The chunk's start offset in the active generation's markdown;
-            the within-document ordering key.
-        score: The chunk's relevance score (best ``bm25()`` over its matching
-            rows); lower is more relevant.
-        matched_in_chunk: Whether the query matched the raw chunk text.
-        matched_in_contextualized: Whether the query matched the contextualized
-            representation.
+    ``score`` is the best matching-row score; lower scores rank higher. Match flags
+    identify whether raw or contextualized content matched. Display text and
+    highlighting are resolved by the caller.
     """
 
     source_id: UUID
@@ -105,47 +58,28 @@ class SearchResult:
 
 @runtime_checkable
 class SearchProvider(Protocol):
-    """A ranked, type-filtered content search over active-generation content.
+    """Search active-generation content and return ranked per-chunk results.
 
-    Implementations map an operator query and a :class:`SearchKind` filter to a
-    list of :class:`SearchResult`, ordered by document relevance then document
-    order. Treating input safely at the boundary (literal terms, empty short-
-    circuit, bounded length) is part of the contract, so every implementation
-    accepts arbitrary operator input without raising.
+    Implementations treat input as literal terms, order results by document
+    relevance then document order, and return an empty list for unusable or
+    unmatched input.
     """
 
     def search(self, query: str, kind: SearchKind = SearchKind.EITHER) -> list[SearchResult]:
-        """Return ranked per-chunk results for ``query`` under the ``kind`` filter.
+        """Return results for ``query`` filtered by ``kind``.
 
-        Args:
-            query: Raw operator input, treated as literal search terms.
-            kind: Which side(s) of a chunk to match against.
-
-        Returns:
-            Per-chunk results ordered by document score ascending, then by
-            ``span_start`` ascending within a document. Empty when the query has
-            no usable terms or nothing matches.
+        Results are ordered by document relevance, then ``span_start``. Empty or
+        whitespace-only queries return an empty list.
         """
         ...
 
 
 def escape_fts_query(query: str) -> str | None:
-    """Escape operator input into a literal-term FTS5 ``MATCH`` string.
+    """Convert operator input to a literal-term FTS5 ``MATCH`` string.
 
-    Truncates to :data:`MAX_QUERY_LENGTH`, splits on whitespace, and wraps each
-    token in double quotes (doubling any internal double quote) so every FTS5
-    operator character — ``"``, ``*``, ``-``, and the ``AND``/``OR``/``NEAR``
-    keywords — is matched literally rather than interpreted. The quoted tokens are
-    joined by spaces (implicit ``AND``). The returned string is intended to be
-    passed as a bound parameter, never interpolated.
-
-    Args:
-        query: Raw operator input.
-
-    Returns:
-        The literal-term ``MATCH`` string, or ``None`` when the input has no
-        usable terms (empty or whitespace-only) and the search must short-circuit
-        to no results.
+    Truncates input to ``MAX_QUERY_LENGTH`` and quotes each whitespace token,
+    including internal quotes. Returns ``None`` for empty or whitespace-only input.
+    Callers must bind the result as a query parameter.
     """
     tokens = query[:MAX_QUERY_LENGTH].split()
     if not tokens:
@@ -193,30 +127,20 @@ _SEARCH_SQL = (
 
 
 class Fts5SearchProvider:
-    """A :class:`SearchProvider` backed by the SQLite FTS5 ``graph_content_fts`` index.
+    """Search active-generation content with SQLite FTS5.
 
-    Holds the shared engine and opens its own short, read-only (AUTOCOMMIT)
-    connection per query; it never writes or commits. Matching is ranked by SQLite
-    ``bm25()`` (lower is more relevant) and filtered to active-generation content at
-    query time.
+    Each query uses a short read-only connection and SQLite ``bm25()`` ranking.
     """
 
     def __init__(self, engine: "Engine") -> None:
-        """Store the engine the provider opens a read-only connection against per query.
-
-        Args:
-            engine: The shared engine; each :meth:`search` opens its own connection.
-        """
+        """Store the shared database engine."""
         self._engine = engine
 
     def search(self, query: str, kind: SearchKind = SearchKind.EITHER) -> list[SearchResult]:
-        """Return ranked per-chunk results for ``query`` under the ``kind`` filter.
+        """Return active-generation results for ``query`` and ``kind``.
 
-        Escapes the input to literal terms (short-circuiting empty/whitespace-only
-        input to no results), runs the ``MATCH`` with the active-generation filters
-        and per-row ``bm25()``, then aggregates by ``chunk_id`` into one result per
-        chunk (per-side flags, best-score) and orders documents by their best score
-        ascending and chunks within a document by ``span_start`` ascending.
+        Empty or whitespace-only input returns no results. Results contain one row per
+        chunk, ordered by document score and then ``span_start``.
         """
         match = escape_fts_query(query)
         if match is None:
@@ -244,14 +168,10 @@ class Fts5SearchProvider:
 
 
 def _aggregate(rows: list) -> list[SearchResult]:  # noqa: ANN001 - DBAPI Row sequence
-    """Aggregate matching FTS rows by ``chunk_id`` into ranked per-chunk results.
+    """Aggregate FTS rows into one ranked result per chunk.
 
-    A chunk has up to two matching rows (raw and contextualized); they collapse
-    into one result carrying both per-side flags, scored by the best (minimum)
-    ``bm25()`` across them. Documents are ordered by their best chunk score
-    ascending (lower is more relevant); within a document, chunks are ordered by
-    ``span_start`` ascending. Stable, deterministic ordering for equal scores comes
-    from sorting on ``(score, source_id)`` for documents and ``span_start`` for chunks.
+    Scores use the best matching row; chunks are ordered by document score and
+    ``span_start``.
     """
     by_chunk: dict[UUID, SearchResult] = {}
     for kind_value, chunk_id, source_id, span_start, score in rows:

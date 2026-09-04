@@ -1,33 +1,8 @@
-"""Cold-start dataset statistics over the corpus mention dataset.
+"""Compute read-only cold-start statistics for the active corpus mention dataset.
 
-The **corpus dataset** is the union of every source's *active* extraction run
-(:data:`~aizk.graph.mention_store.MENTION_EXTRACTION_STAGE`) — a superseded
-run's mentions and co-occurrence links are never counted, matching how the
-active corpus is already defined elsewhere in this stage (see
-:mod:`aizk.graph.persistence`). :func:`compute_dataset_statistics` is a pure,
-sessionable read: it takes an open :class:`~sqlmodel.Session` and returns a
-frozen, JSON-serializable :class:`DatasetStatistics` snapshot, with no side
-effects and no opinion about how the session or engine were constructed — the
-same shape as :func:`aizk.graph.persistence.active_chunking_run` and friends.
-
-Every statistic is reported per **anchor-class partition** (``source`` /
-``revision``) plus a **combined total** — mirroring how
-:class:`~aizk.graph.datamodel.Mention` itself partitions by ``anchor_kind``:
-
-- **Mention counts and singleton rate.** ``singleton_rate`` is the fraction of
-  *distinct surface forms* in a partition that carry exactly one mention
-  corpus-wide within that partition — a lexical hapax-rate proxy for the
-  post-canonicalization singleton rate ADR-006 names as a cold-start graph
-  viability metric. Canonicalization does not exist yet, so exact
-  surface-form identity is the closest available approximation: a surface
-  form is a singleton here if and only if it occurs exactly once across every
-  chunk in the partition, not merely once *per chunk*.
-- **Mentions per chunk.** The mean mention count per chunk, averaged only over
-  chunks carrying at least one mention of the partition's class(es);
-  ``chunk_count`` is that same denominator, reported alongside the mean so a
-  near-zero mean is distinguishable from a near-zero chunk count.
-- **Co-occurrence density.** See :class:`CooccurrenceStatistics` for the
-  definition and the choice between links-per-chunk and links-per-mention.
+The dataset is the union of mentions and co-occurrences in each source's active
+extraction run. Statistics include source, revision, combined, and co-occurrence
+partitions and return as a JSON-serializable :class:`DatasetStatistics`.
 """
 
 from __future__ import annotations
@@ -113,33 +88,18 @@ class CooccurrenceClassStatistics(BaseModel):
 
 
 class CooccurrenceStatistics(BaseModel):
-    """Co-occurrence density, partitioned by a link's endpoint classes.
+    """Co-occurrence link counts and density by endpoint class.
 
-    **Density is links per eligible chunk**, not links per mention: a chunk
-    with ``k`` mentions contributes up to ``C(k, 2)`` links, so links-per-mention
-    would re-derive the same skew ``mentions_per_chunk`` already reports rather
-    than adding an independent signal. Links-per-chunk instead measures how
-    densely connected a typical multi-mention chunk's mention set is, which is
-    what candidate-generation and blocking calibration need.
-
-    ``eligible_chunk_count`` — chunks carrying at least two mentions of *any*
-    class — is the single shared denominator for every sub-partition below, so
-    what varies across ``source_source`` / ``revision_revision`` / ``mixed`` /
-    ``total`` is a link's classification, not its normalization base; the three
-    exclusive sub-partitions therefore sum to ``total`` in both ``link_count``
-    and ``density``. A link is classified by its two endpoint mentions'
-    ``anchor_kind``: both ``source`` -> ``source_source``; both ``revision`` ->
-    ``revision_revision``; one of each -> ``mixed``.
+    Density uses eligible chunks, defined as chunks with at least two mentions.
+    All partitions share that denominator. ``source_source``,
+    ``revision_revision``, and ``mixed`` are exclusive and sum to ``total``.
 
     Attributes:
-        eligible_chunk_count: Chunks in the corpus dataset carrying at least
-            two mentions of any class — the shared density denominator.
-        source_source: Links whose both endpoints are source-anchored.
-        revision_revision: Links whose both endpoints are revision-anchored.
-        mixed: Links with one source-anchored and one revision-anchored
-            endpoint.
-        total: Every co-occurrence link in the corpus dataset, regardless of
-            endpoint class.
+        eligible_chunk_count: Shared density denominator.
+        source_source: Links with two source-anchored endpoints.
+        revision_revision: Links with two revision-anchored endpoints.
+        mixed: Links with one endpoint of each class.
+        total: All co-occurrence links.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -152,23 +112,17 @@ class CooccurrenceStatistics(BaseModel):
 
 
 class DatasetStatistics(BaseModel):
-    """Cold-start statistics over the corpus mention dataset (the union of sources' active extraction runs).
+    """Statistics over active extraction runs in the corpus dataset.
 
-    Mention counts are additive across the ``source`` / ``revision`` partitions
-    (they sum to ``total``), but singleton counts are **per-partition and
-    non-additive**: each partition counts its surface forms over its own
-    mentions only, so a surface with one source-anchored and one
-    revision-anchored mention is a singleton in each class partition yet not in
-    ``total``, where it occurs twice.
+    Mention counts sum across source and revision partitions. Singleton counts do
+    not, because each partition counts surface forms independently.
 
     Attributes:
-        source_count: Distinct sources contributing to the corpus dataset (one
-            active extraction run per source, by construction).
-        source: Statistics over source-anchored mentions only.
-        revision: Statistics over revision-anchored mentions only.
-        total: Statistics over every mention, both classes combined.
-        cooccurrence: Co-occurrence link density, partitioned by endpoint
-            class (see :class:`CooccurrenceStatistics`).
+        source_count: Number of contributing sources.
+        source: Source-anchored mention statistics.
+        revision: Revision-anchored mention statistics.
+        total: Combined mention statistics.
+        cooccurrence: Link density by endpoint class.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -261,20 +215,16 @@ def _cooccurrence_statistics(
 
 
 def compute_dataset_statistics(session: "Session") -> DatasetStatistics:
-    """Compute cold-start statistics over the corpus mention dataset.
+    """Compute read-only statistics over the active mention dataset.
 
-    Reads only *active* :data:`~aizk.graph.mention_store.MENTION_EXTRACTION_STAGE`
-    runs — a superseded run's mentions and links are excluded, so the returned
-    snapshot always reflects the corpus dataset as it currently stands,
-    independent of which sources a particular extraction invocation touched.
-    Pure and read-only: no run, mention, or link row is written or mutated.
+    Superseded runs are excluded. The result contains mention and co-occurrence
+    statistics for source, revision, and combined partitions.
 
     Args:
         session: Active, read-only session.
 
     Returns:
-        The computed :class:`DatasetStatistics`, JSON-serializable via
-        ``.model_dump_json()``.
+        The computed :class:`DatasetStatistics`.
     """
     active_runs = session.exec(
         select(PipelineRun.id, PipelineRun.scope_id).where(

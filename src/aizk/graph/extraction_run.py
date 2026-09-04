@@ -1,46 +1,9 @@
-"""The per-source extraction unit of work, its currentness classification, and its two entry points.
+"""Extract and persist one source's mentions under an active extraction run.
 
-This module is the single write path both run modes go through for one
-source's extraction: :func:`extract_document` resolves a source's chunks,
-extracts their mentions, and persists them under one extraction run, in three
-phases:
-
-1. **Read** (an ordinary, short-lived session) — resolve the source's active
-   chunking run, its chunks in document order, the payload extraction would
-   read per chunk, and the run whose output that payload equals (see
-   :func:`_resolve_upstream_run`). The candidate derivation key
-   (:func:`~aizk.graph.mention_store.extraction_derivation_key`) then tells
-   whether the active extraction run already matches.
-2. **Extract** (pure, no DB writes) — only when the candidate key does not
-   match the active run: select each chunk's input text per ``input_policy``
-   and run the injected :class:`~aizk.graph.extraction.EntityExtractor` over it
-   via :func:`~aizk.graph.extraction.extract_chunk_mentions`. Model calls
-   happen only here, never inside a write transaction.
-3. **Write** (one short ``BEGIN IMMEDIATE`` transaction) — re-validates the
-   plan against current state. A matching candidate key reconciles: records
-   :class:`~aizk.graph.datamodel.ExtractionRunApplicability` when the resolved
-   upstream run differs from what the active run recorded, and returns without
-   invoking the extractor or touching mentions. Otherwise it opens (or reuses)
-   the source's extraction run, records its
-   :class:`~aizk.graph.datamodel.ExtractionRunInput` on a new run, and persists
-   every chunk's drafts, so the run record and all of its mention/co-occurrence
-   rows commit atomically. Either way, a plan invalidated between the read and
-   write phases raises :class:`~aizk.graph.contextualization.StalePlanError` and
-   commits nothing.
-
-:func:`extract_source` (incremental) and :func:`extract_corpus` (bulk/backfill)
-are thin entry points that both delegate to :func:`extract_document`, so
-run-mode independence — the same inputs and versions yield the same mentions and
-co-occurrences regardless of mode — holds by construction rather than by two
-write paths staying in sync. Neither entry point does any scheduling,
-throttling, or concurrency control; that is the caller's/runtime's concern.
-
-:class:`Currentness` and :func:`classify_extraction_sources` /
-:func:`classify_extraction_source` are the stage's currentness derivation, read
-from persisted columns alone (no chunk or variant content is loaded).
-:func:`stale_extraction_sources` is the ``STALE`` subset — the only class the
-dashboard's stale count reports. :func:`record_extraction_run_applicability` is
-the one writer of applicability rows.
+The module provides currentness classification and incremental and bulk entry
+points. Read and extraction work occur before the short write transaction.
+Unchanged derivation keys reuse the active run; changed inputs create a
+superseding run. The extraction and co-occurrence rows commit together.
 """
 
 from __future__ import annotations
@@ -99,11 +62,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class DocumentExtractionResult:
-    """The extraction run :func:`extract_document` produced (or reused) for one source.
+    """Result of extracting one source.
 
-    Carries the run id and counts as primitives (not the ORM
-    :class:`~aizk.pipeline.run.PipelineRun`, which detaches once the write
-    transaction commits) so the caller can log or assert without re-querying.
+    Carries primitive run and output counts that remain usable after the write
+    transaction closes.
     """
 
     run_id: int
@@ -125,23 +87,17 @@ class _ChunkWorkItem:
     chunk_id: UUID
     raw_text: str
     extraction_input: ExtractionInput
-    #: The chunk's portable content key (:func:`~aizk.graph.fingerprints.chunk_key`),
-    #: so the extract phase can build the run's input-payload fingerprint after
-    #: the read session closes.
+    #: The chunk's portable content key (:func:`~aizk.graph.fingerprints.chunk_key`) lets
+    #: fingerprint construction run after the read session closes.
     chunk_key: str
 
 
 class Currentness(str, Enum):
-    """A source's active extraction run's freshness against currently-resolved state.
+    """Freshness of a source's active extraction run.
 
-    ``STALE`` — the payload or configuration a re-extraction would consume
-    differs from what the active run recorded; re-extracting supersedes it.
-    ``NEEDS_RECONCILIATION`` — the payload is unchanged, but the active run
-    recorded a since-superseded upstream run and no
-    :class:`~aizk.graph.datamodel.ExtractionRunApplicability` row covers the
-    currently-resolved one; a reconciliation pass records that applicability with
-    no extractor calls. ``CURRENT`` — the active run's provenance already matches,
-    directly or through an applicability row.
+    ``CURRENT`` matches resolved provenance. ``NEEDS_RECONCILIATION`` has the same
+    payload but lacks applicability for the resolved upstream run. ``STALE`` has a
+    changed payload or configuration.
     """
 
     CURRENT = "current"
@@ -156,14 +112,10 @@ def _resolve_upstream_run(
     input_policy: InputPolicy,
     chunking_run: PipelineRun,
 ) -> PipelineRun:
-    """Resolve the run whose output a source's extraction consumes.
+    """Resolve the upstream run used by extraction.
 
-    Under ``input_policy = "raw"`` extraction consumes the chunking generation
-    unconditionally, so this is always the active chunking run. Under
-    ``input_policy = "contextualized"`` it is the source's active
-    :data:`~aizk.graph.contextualization.VARIANT_STAGE` run when one exists, else
-    the chunking run — so when a contextualization run later appears, the
-    upstream output changes and the next extraction opens a superseding run.
+    Raw input always uses the active chunking run. Contextualized input uses the
+    active variant run when present, and otherwise uses the chunking run.
     """
     if input_policy == INPUT_POLICY_CONTEXTUALIZED:
         variant_run = session.exec(
@@ -179,11 +131,10 @@ def _resolve_upstream_run(
 
 
 def _replan_upstream(session: "Session", *, source_id: UUID, input_policy: InputPolicy) -> PipelineRun:
-    """Re-resolve the run whose output extraction currently consumes, inside the write transaction.
+    """Resolve the upstream run inside the write transaction.
 
     Raises:
-        StalePlanError: If the source no longer has an active chunking run —
-            reported as a retryable stale plan rather than an unrelated crash.
+        StalePlanError: If the source has no active chunking run.
     """
     chunking_run = active_chunking_run(session, source_id)
     if chunking_run is None or chunking_run.id is None:
@@ -195,17 +146,13 @@ def _replan_upstream(session: "Session", *, source_id: UUID, input_policy: Input
 
 
 def _upstream_output_fingerprint(session: "Session", upstream_run: "PipelineRun") -> str:
-    """Return the persisted output fingerprint of an upstream chunking or contextualization run.
+    """Return the persisted output fingerprint for a chunking or variant run.
 
-    Reads the immutable provenance row the producing stage wrote —
-    :attr:`~aizk.graph.datamodel.ChunkRunInput.chunk_set_fingerprint` for a
-    chunking run, :attr:`~aizk.graph.datamodel.ContextualizationRunInput.output_fingerprint`
-    for a contextualization run — never recomputed from content.
+    The function reads the producing stage's provenance row instead of
+    recomputing the fingerprint.
 
     Raises:
-        ValueError: If ``upstream_run``'s stage is neither, or its provenance row
-            is missing (that persist is atomic with the run, so a missing row is
-            a programming error, not a race).
+        ValueError: If the stage is unsupported or its provenance row is missing.
     """
     assert upstream_run.id is not None  # noqa: S101 — an active run is always persisted
     if upstream_run.stage == CHUNKING_STAGE:
@@ -226,15 +173,10 @@ def _upstream_output_fingerprint(session: "Session", upstream_run: "PipelineRun"
 def _classify_extraction(
     session: "Session", *, resolved: "ResolvedExtractionConfig", scope_ids: "Sequence[UUID] | None" = None
 ) -> dict[UUID, "Currentness"]:
-    """Classify sources' active extraction runs against currently-resolved upstream and configuration state.
+    """Classify active extraction runs against resolved upstream and configuration.
 
-    Issues a fixed number of statements regardless of how many sources are
-    classified, comparing persisted fingerprint columns in Python. Loads no chunk
-    or variant text.
-
-    ``scope_ids`` narrows the corpus without changing the query shape, so
-    :func:`classify_extraction_sources` and :func:`classify_extraction_source`
-    share this body and cannot disagree.
+    The query count is fixed for the selected scope, and the function does not
+    load chunk or variant text.
     """
     config_fingerprint = resolved.config_fingerprint()
 
@@ -313,19 +255,17 @@ def _classify_extraction(
 def classify_extraction_sources(
     session: "Session", *, resolved: "ResolvedExtractionConfig"
 ) -> dict[UUID, Currentness]:
-    """Classify every source with an active extraction run, in a fixed number of statements.
+    """Classify sources with active extraction runs.
 
-    A source with no active chunking run, or no active extraction run, is
-    absent from the returned mapping — not classified, not stale. See
-    :class:`Currentness` for what each class means.
+    Sources without active chunking or extraction runs are absent. The mapping
+    contains each classified source's ``scope_id`` and :class:`Currentness`.
 
     Args:
         session: Active, read-only session.
-        resolved: The currently-resolved extraction configuration (see
-            :func:`~aizk.graph.extraction.resolve_extraction_config`).
+        resolved: The currently-resolved extraction configuration.
 
     Returns:
-        Each classified source's ``scope_id`` mapped to its :class:`Currentness`.
+        The classification mapping.
     """
     return _classify_extraction(session, resolved=resolved)
 
@@ -333,11 +273,10 @@ def classify_extraction_sources(
 def classify_extraction_source(
     session: "Session", source_id: UUID, *, resolved: "ResolvedExtractionConfig"
 ) -> Currentness | None:
-    """Classify one source's active extraction run; ``None`` when it is not classified.
+    """Classify one source's active extraction run.
 
-    Prefer this to :func:`classify_extraction_sources` when asking about a single
-    source: it costs a bounded query set scoped to that source rather than a
-    corpus scan. The two agree by construction on any source both classify.
+    Return ``None`` when no active chunking or extraction run exists. This
+    source-scoped call uses a bounded query set.
 
     Args:
         session: Active, read-only session.
@@ -348,19 +287,17 @@ def classify_extraction_source(
 
 
 def stale_extraction_sources(session: "Session", *, resolved: "ResolvedExtractionConfig") -> set[UUID]:
-    """Return the scope ids whose active extraction run is :attr:`Currentness.STALE`.
+    """Return source IDs whose active extraction run is ``STALE``.
 
-    Staleness never makes a source pending — no staleness condition admits work
-    automatically. It marks work an operator may choose to re-admit. A
-    :attr:`Currentness.NEEDS_RECONCILIATION` source is re-admittable too but is
-    not in this set; :func:`classify_extraction_sources` returns both classes.
+    Stale sources are not admitted automatically. Sources in
+    ``NEEDS_RECONCILIATION`` are excluded.
 
     Args:
         session: Active, read-only session.
         resolved: The currently-resolved extraction configuration.
 
     Returns:
-        The stale sources' ``scope_id`` values.
+        The stale source IDs.
     """
     return {
         source_id
@@ -377,26 +314,15 @@ def record_extraction_run_applicability(
     input_policy: InputPolicy,
     resolved: "ResolvedExtractionConfig",
 ) -> ExtractionRunApplicability:
-    """Record (or return the existing) applicability of an extraction run to another upstream run.
+    """Record applicability of an extraction run to an upstream run.
 
-    Records that the source's chunking or contextualization generation moved on
-    to ``upstream_run_id`` but produced output equal to what the active
-    extraction run already consumed. The relation's ``input_fingerprint`` is read
-    from the upstream run's persisted output fingerprint rather than taken as an
-    argument, so a caller cannot record one that disagrees.
-
-    Append-only, with no update path; an identical relation returns the existing
-    row. Does **not** commit; the caller owns the transaction.
+    The upstream fingerprint is read from persisted provenance. The relation is
+    append-only and idempotent; an existing identical relation is returned. The
+    function does not commit.
 
     Raises:
-        ValueError: If ``run_id`` is not an active extraction run; if
-            ``upstream_run_id`` is not a chunking or contextualization run
-            sharing its ``scope_id``; if the candidate key recomputed from the
-            upstream output fingerprint and ``resolved`` does not equal the run's
-            ``derivation_key``; if the run has no
-            :class:`~aizk.graph.datamodel.ExtractionRunInput`; or if the same
-            primary key is already recorded with a different ``input_policy`` or
-            ``input_fingerprint``.
+        ValueError: If either run is invalid, provenance is missing, the
+            derivation key does not match, or an existing relation conflicts.
     """
     run = session.get(PipelineRun, run_id)
     if run is None or run.status != RunStatus.ACTIVE or run.stage != MENTION_EXTRACTION_STAGE:
@@ -446,14 +372,10 @@ def record_extraction_run_applicability(
 
 
 def _resolve_extraction_input(session: "Session", chunk: "Chunk", *, input_policy: InputPolicy) -> ExtractionInput:
-    """Resolve the text one chunk is read from, honoring the run-level ``input_policy``.
+    """Resolve a chunk's extraction input under ``input_policy``.
 
-    ``raw`` is a run-level policy, not a per-chunk fact: every chunk is read
-    from its own raw text regardless of whether a contextualized variant
-    exists, so this short-circuits
-    :func:`~aizk.graph.extraction.select_extraction_input` entirely rather than
-    consulting it and discarding a contextualized result. ``contextualized``
-    delegates to it for the active-variant-else-raw-fallback resolution.
+    Raw policy returns chunk text. Contextualized policy uses the active variant
+    with raw fallback.
     """
     if input_policy == INPUT_POLICY_RAW:
         return ExtractionInput(text=chunk.text, input_kind=INPUT_KIND_RAW)
@@ -471,19 +393,11 @@ def _reconcile_active_run(
     planned_input_fingerprint: str,
     chunk_count: int,
 ) -> DocumentExtractionResult:
-    """Reconcile a candidate key that already matches the active extraction run — no extractor call.
+    """Reconcile an active run whose derivation key still matches.
 
-    Re-validates the plan inside the write transaction: the active run and the
-    resolved upstream run must still be what the read phase planned against, and
-    the upstream run's output fingerprint must still equal the planned payload.
-    Either mismatch raises :class:`~aizk.graph.contextualization.StalePlanError`
-    and commits nothing rather than misrecording provenance.
-
-    When the resolved upstream run differs from what the active run's
-    :class:`~aizk.graph.datamodel.ExtractionRunInput` recorded (the
-    :attr:`Currentness.NEEDS_RECONCILIATION` case), records
-    :class:`~aizk.graph.datamodel.ExtractionRunApplicability` for the new pair.
-    The run-input row itself is never rewritten.
+    Revalidate the planned run and upstream fingerprint in the write transaction.
+    Record applicability when the upstream run changed without changing the
+    consumed payload. Never rewrite the run-input row.
     """
     with begin_immediate(engine) as session:
         current_upstream = _replan_upstream(session, source_id=source_id, input_policy=input_policy)
@@ -532,44 +446,29 @@ def extract_document(
     extractor: EntityExtractor,
     input_policy: InputPolicy,
 ) -> DocumentExtractionResult:
-    """Extract and persist one source's mentions, committing the whole document at once.
+    """Extract and persist one source in one document transaction.
 
-    Costs at most one ``extractor`` call per chunk, and none when the source's
-    active extraction run already covers the payload and configuration the call
-    resolves to. That case reconciles instead: no new run and no mentions
-    rewritten, only a
-    :class:`~aizk.graph.datamodel.ExtractionRunApplicability` row when the
-    resolved upstream generation moved on. Otherwise a new run supersedes the
-    prior active one and persists its
-    :class:`~aizk.graph.datamodel.ExtractionRunInput`, mentions, and
-    co-occurrences.
+    The function calls the extractor at most once per chunk. It reuses the active
+    run and records applicability when the resolved payload and configuration
+    match. Otherwise it opens a superseding run and persists the run input,
+    mentions, and co-occurrences.
 
-    Opens its own transactions off ``engine`` and commits. Every write for the
-    document lands in one of them, so a mid-persist failure leaves no new run and
-    no readable mentions from the attempt. The extractor is never invoked while
-    that transaction is open, so model latency never holds the writer's lock.
+    The read and extraction phases run outside the write transaction. Model calls
+    do not hold the writer lock. A stale plan raises without committing.
 
     Args:
-        engine: The shared engine; the read phase and the write phase each open
-            their own short session/transaction off it.
-        source_id: The durable source identity; the extraction run's scope.
-        extractor: The single injected NER access point (see
-            :class:`~aizk.graph.extraction.EntityExtractor`).
-        input_policy: The raw-vs-contextualized input toggle (see
-            :data:`~aizk.graph.mention_store.InputPolicy`).
+        engine: Shared engine for the read and write sessions.
+        source_id: Source identity for the extraction run.
+        extractor: Injected NER extractor.
+        input_policy: Raw or contextualized input policy.
 
     Returns:
-        A :class:`DocumentExtractionResult` with the active run's id and counts.
+        The active run ID and output counts.
 
     Raises:
-        ValueError: If ``input_policy`` is not one of
-            :data:`~aizk.graph.mention_store.InputPolicy`'s legal values —
-            refused before any read or extractor call; or if the source has no
-            active chunking run, since an unchunked source has nothing to
-            extract.
-        StalePlanError: If the active extraction run or the resolved upstream's
-            output changed between resolving the work and committing it. Nothing
-            is committed. Retryable.
+        ValueError: If the input policy is invalid or the source has no active
+            chunking run.
+        StalePlanError: If planned upstream state changes before persistence.
     """
     resolved = ResolvedExtractionConfig(
         extractor_version=extractor.extractor_version,
@@ -584,7 +483,7 @@ def extract_document(
                 f"source {source_id!r} has no active chunking run; an unchunked source has nothing to extract"
             )
         # Materialize each chunk's work item into plain values while the read
-        # session is still open, so the extract phase below never touches ORM
+        # session is still open, so code after the session closes never touches ORM
         # instances detached from a closed session.
         work_items = [
             _ChunkWorkItem(
@@ -690,13 +589,7 @@ def extract_source(
     extractor: EntityExtractor,
     input_policy: InputPolicy,
 ) -> DocumentExtractionResult:
-    """Extract one source incrementally, through the same per-document unit :func:`extract_corpus` uses.
-
-    The incremental entry point: one call processes one source. It adds no
-    logic beyond naming the enqueue pattern — both this and :func:`extract_corpus`
-    delegate to :func:`extract_document`, so the produced run and mention records
-    are identical regardless of which entry point drove them.
-    """
+    """Extract one source using the per-document extraction operation."""
     return extract_document(engine, source_id=source_id, extractor=extractor, input_policy=input_policy)
 
 
@@ -707,33 +600,20 @@ def extract_corpus(
     extractor: EntityExtractor,
     input_policy: InputPolicy,
 ) -> list[DocumentExtractionResult]:
-    """Extract many sources in bulk/backfill mode, one document transaction at a time.
+    """Extract sources in the given order, one document transaction at a time.
 
-    Iterates :func:`extract_document` per source — the same per-document unit
-    :func:`extract_source` uses — so a batch run produces exactly the records an
-    equivalent sequence of incremental calls would. Throttling, scheduling, and
-    concurrency are the caller's/runtime's concern; this function only sequences
-    the per-document calls.
-
-    Failure semantics: each document commits its own transaction, so a
-    mid-corpus failure propagates immediately while every already-processed
-    source's run and mentions stay committed. The return value is
-    all-or-nothing — a raised failure yields no result list — so it cannot tell
-    the caller which sources committed; recover that from the store
-    (:func:`~aizk.graph.mention_store.active_extraction_run` per source), and
-    re-invoking with the same inputs is safe because each per-document unit is
-    idempotent on its derivation key.
+    Each source commits independently. A failure propagates after prior sources
+    commit, and the function returns no partial result list. Repeating the same
+    inputs is safe because each document operation is idempotent.
 
     Args:
-        engine: The shared engine, passed through to each :func:`extract_document`
-            call.
-        source_ids: The sources to extract, processed in the given order.
-        extractor: The single injected NER access point, shared across sources.
-        input_policy: The raw-vs-contextualized input toggle, shared across
-            sources.
+        engine: Shared engine passed to each document operation.
+        source_ids: Sources to process in order.
+        extractor: Shared injected NER extractor.
+        input_policy: Input policy shared by all sources.
 
     Returns:
-        One :class:`DocumentExtractionResult` per source, in ``source_ids`` order.
+        One result per source, in ``source_ids`` order.
     """
     return [
         extract_document(engine, source_id=source_id, extractor=extractor, input_policy=input_policy)

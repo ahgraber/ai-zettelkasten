@@ -1,23 +1,7 @@
-"""Foreground dataset-run orchestration: target-source selection, the confirmation gate, and extraction.
+"""Run a foreground extraction pass over selected sources.
 
-The dataset run is a distinct entry point from the extraction worker
-(:mod:`aizk.graph.extraction_worker`): it drives
-:func:`~aizk.graph.extraction_run.extract_corpus` synchronously in the calling
-process, over an explicitly-selected target-source set, to produce the
-mention dataset the canonicalization change is calibrated against — rather
-than claiming work-units from :class:`~aizk.graph.datamodel.ExtractionJob`
-through the shared runtime.
-
-:func:`resolve_target_source_ids` selects that target set; when the caller
-does not name sources explicitly, the set is built by scanning the corpus (all
-sources with an active chunking run, or a bounded ``limit`` sample of them),
-so :func:`run_dataset_extraction` gates that case behind explicit confirmation
-via :func:`aizk.pipeline.invalidation.require_reprocessing_confirmation` — the
-same gate and mechanism
-:func:`aizk.graph.extraction_workunit.enqueue_extraction_backfill` uses for its
-corpus-wide backfill enqueue. An explicit, operator-named source list is never
-gated, mirroring how :func:`aizk.graph.extraction_workunit.enqueue_extraction`
-enqueues one named source without confirmation.
+Explicit source lists run without confirmation. Corpus scans require confirmation
+and use the active chunking runs to select sources.
 """
 
 from __future__ import annotations
@@ -48,26 +32,19 @@ def resolve_target_source_ids(
     source_ids: "Sequence[UUID] | None" = None,
     limit: int | None = None,
 ) -> list[UUID]:
-    """Resolve a dataset run's target sources.
+    """Resolve the target sources for a dataset run.
 
-    An explicit ``source_ids`` sequence is used verbatim (order-preserved,
-    duplicates removed) — an operator-named target set. Otherwise every source
-    with an active chunking run is the target set (an unchunked source has
-    nothing to extract, mirroring
-    :func:`aizk.graph.extraction_run.extract_document`'s own rejection),
-    ordered by run-creation time with ``scope_id`` as the tiebreaker — a total
-    order, so the sample stays reproducible even when several runs share one
-    ``created_at`` timestamp; ``limit`` caps that set to its first N sources
-    when supplied.
+    Use explicit source IDs in input order after removing duplicates. When
+    ``source_ids`` is ``None``, return active chunking sources ordered by
+    ``(created_at, scope_id)`` and apply ``limit``.
 
     Args:
         session: Active, read-only session.
-        source_ids: Explicit target sources, or ``None`` to scan the corpus.
-        limit: Caps a corpus scan's target set to its first N sources; ignored
-            when ``source_ids`` is supplied.
+        source_ids: Explicit sources, or ``None`` for a corpus scan.
+        limit: Maximum corpus-scan target count.
 
     Returns:
-        The resolved target ``source_id`` list.
+        The resolved source IDs.
     """
     if source_ids is not None:
         seen: set[UUID] = set()
@@ -99,39 +76,24 @@ def run_dataset_extraction(
     extractor: "EntityExtractor",
     input_policy: "InputPolicy",
 ) -> list["DocumentExtractionResult"]:
-    """Resolve target sources, gate a corpus-scanning selection behind confirmation, and extract.
+    """Resolve targets, require confirmation for corpus scans, and extract.
 
-    Only an **implicit** selection — a full corpus scan or a ``limit``-bounded
-    sample of it — is confirmation-gated. An explicit ``source_ids``
-    enumeration is treated as deliberate operator intent regardless of its
-    length and therefore bypasses the gate: the operator named every target,
-    so there is no unreviewed blast radius for the gate to guard.
-
-    Re-running with unchanged inputs is a cheap no-op: each target source's
-    extraction reuses its active run when the run's derivation key is
-    unchanged (see :func:`aizk.graph.mention_store.open_extraction_run`), so
-    invoking this repeatedly over an unchanged corpus writes no new rows.
+    Explicit source IDs bypass confirmation. Corpus scans require ``confirmed=True``.
+    Repeating unchanged inputs reuses active extraction runs.
 
     Args:
-        engine: The shared engine; passed through to
-            :func:`~aizk.graph.extraction_run.extract_corpus`.
-        source_ids: Explicit target sources, or ``None`` to scan the corpus
-            (see :func:`resolve_target_source_ids`).
-        limit: Caps a corpus scan's target set; ignored when ``source_ids`` is
-            supplied.
-        confirmed: Explicit human approval for a corpus-scanning selection;
-            ignored when ``source_ids`` is supplied (an explicit target set is
-            never gated).
-        extractor: The injected NER extractor.
-        input_policy: The raw-vs-contextualized input toggle.
+        engine: Shared engine passed to extraction.
+        source_ids: Explicit sources, or ``None`` for a corpus scan.
+        limit: Maximum corpus-scan target count.
+        confirmed: Approval for a corpus scan.
+        extractor: Injected NER extractor.
+        input_policy: Raw or contextualized input policy.
 
     Returns:
-        One :class:`~aizk.graph.extraction_run.DocumentExtractionResult` per
-        target source, in resolution order.
+        One result per target source, in resolution order.
 
     Raises:
-        ReprocessingConfirmationError: If ``source_ids`` is ``None`` (a
-            corpus-scanning selection) and ``confirmed`` is ``False``.
+        ReprocessingConfirmationError: If a corpus scan is not confirmed.
     """
     with Session(engine) as session:
         targets = resolve_target_source_ids(session, source_ids=source_ids, limit=limit)

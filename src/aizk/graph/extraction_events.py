@@ -1,16 +1,7 @@
-"""Transition-event kinds and typed payloads for the extraction stage.
+"""Define lifecycle event kinds and typed payloads for extraction.
 
-The extraction stage's work-unit lifecycle transitions are recorded on the
-shared ``pipeline_events`` log via :func:`aizk.pipeline.events.record_transition`.
-That helper is stage-agnostic and validates only that the payload's ``kind``
-matches the transition ``kind``; the per-kind field contract is owned here by
-one pydantic model per kind (``extra="forbid"`` so an unknown field is
-rejected on write).
-
-The stage name stamped on every event is :data:`EXTRACTION_STAGE`; each event
-also carries the ``source_id`` source identity and, where a run exists, the
-``run_id`` of the work-unit's extraction run, so a source's progress is
-resolvable across stages by a single ``source_id`` query.
+Payloads are validated here before the shared pipeline event writer records them.
+Events carry the stage and source identities and, when available, the run identity.
 """
 
 from __future__ import annotations
@@ -34,14 +25,7 @@ EXTRACTION_STAGE = MENTION_EXTRACTION_STAGE
 
 
 class ExtractionEventKind(str, Enum):
-    """Event kinds recorded for an extraction work-unit's lifecycle.
-
-    No ``skipped_superseded`` kind exists here: unlike contextualization's
-    unit-of-work (which preflights a newer conversion output and short-circuits
-    as a no-op), ``extract_document`` has no analogous freshness-supersession
-    check — it always either persists mentions under the source's active
-    extraction run or raises.
-    """
+    """Event kinds recorded for an extraction work-unit lifecycle."""
 
     QUEUED = "queued"
     CLAIMED = "claimed"
@@ -72,11 +56,7 @@ class ClaimedPayload(BaseModel):
 
 
 class SucceededPayload(BaseModel):
-    """Payload for the ``RUNNING → SUCCEEDED`` terminal transition.
-
-    Records the mention count the run produced so the audit row summarizes the
-    unit's output without joining the mention table.
-    """
+    """Payload for a successful transition, including the mention count."""
 
     model_config = ConfigDict(extra="forbid")
     kind: Literal["succeeded"] = "succeeded"
@@ -84,11 +64,7 @@ class SucceededPayload(BaseModel):
 
 
 class FailedPayload(BaseModel):
-    """Payload for a ``RUNNING → FAILED`` terminal transition.
-
-    ``retryable`` records whether the unit remains eligible for another attempt
-    (within the attempt cap) or has reached a permanent failure.
-    """
+    """Payload for a failed transition and its retry classification."""
 
     model_config = ConfigDict(extra="forbid")
     kind: Literal["failed"] = "failed"

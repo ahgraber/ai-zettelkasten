@@ -31,12 +31,7 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class LLMClient(Protocol):
-    """A model accessed as one substitutable dependency through one method.
-
-    Implementations turn a fully-built prompt into model output text. The stage
-    makes no model call outside :meth:`generate`, so a recording or deterministic
-    implementation observes and drives every invocation.
-    """
+    """Generates model output from a prompt."""
 
     def generate(self, prompt: str) -> str:
         """Return the model's text completion for ``prompt``."""
@@ -44,13 +39,7 @@ class LLMClient(Protocol):
 
 
 class PydanticAILLMClient:
-    """Production :class:`LLMClient` backed by a ``pydantic-ai`` agent.
-
-    Holds a string-output agent and runs each prompt synchronously, returning the
-    agent's text output. The agent (model, instructions, settings) is constructed
-    by the composition root and injected, keeping provider details out of the
-    contextualization logic.
-    """
+    """Production :class:`LLMClient` backed by an injected ``pydantic-ai`` agent."""
 
     def __init__(self, agent: "Agent[None, str]") -> None:
         """Store the injected string-output agent."""
@@ -67,13 +56,10 @@ def _default_responder(prompt: str) -> str:
 
 
 class StubLLMClient:
-    """Deterministic, recording :class:`LLMClient` for tests.
+    """Deterministic recording :class:`LLMClient` for tests.
 
-    Records every prompt it receives at :attr:`prompts` (so a test can assert the
-    stage routes all model calls through this one access point) and returns a
-    deterministic completion. The default completion is a stable hash of the
-    prompt; pass ``responder`` to return canned output — for example a
-    referent-naming context blurb — for a specific scenario.
+    Stores prompts in :attr:`prompts` and returns a stable hash-based completion by
+    default. ``responder`` supplies custom output.
     """
 
     def __init__(self, responder: Callable[[str], str] | None = None) -> None:
@@ -89,12 +75,11 @@ class StubLLMClient:
 
 @dataclass(frozen=True)
 class ModelConfig:
-    """The resolved model identity a derivation key fingerprints — not the alias that named it.
+    """Resolved model identity used in derivation fingerprints.
 
-    ``provider`` is the OpenAI-compatible base URL, ``model`` the model name, and
-    ``settings`` sorted ``(name, value)`` generation-setting pairs (empty today).
-    An alias swap that resolves to the same triple keeps the same fingerprint; a
-    changed resolution under an unchanged alias changes it.
+    ``provider`` is the base URL, ``model`` is the model name, and ``settings``
+    contains sorted generation-setting pairs. Equivalent resolved identities keep
+    the same fingerprint even when aliases differ.
     """
 
     provider: str

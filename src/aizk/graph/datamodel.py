@@ -128,30 +128,12 @@ def _utcnow() -> datetime.datetime:
 
 
 class Chunk(SQLModel, table=True):
-    """A persisted structural chunk emitted by the splitter, identified by a stable surrogate.
+    """Persisted structural chunk with stable identity.
 
-    One row per distinct sameness-key ``(source_id, heading_path, ordinal,
-    content_hash)`` — enforced by the ``ix_graph_chunks_sameness_key`` unique
-    index — carrying **stable identity facts only**. ``chunk_id`` is a surrogate
-    assigned once at persistence, never content-derived; the ``content_hash``
-    survives as a separate observable column. Rows are immutable and
-    run-independent: persisting a chunk whose sameness-key already exists reuses
-    the row (and its surrogate) unchanged, and the same ``chunk_id`` is shared
-    across every chunking run it appears in via :class:`ChunkRunManifest`.
-
-    Generation-varying facts — the source ``markdown_hash_xx64``, the
-    ``splitter_version``, and the chunk's ``span`` in that generation's markdown —
-    are deliberately **not** stored here; they live on :class:`ChunkRunInput` and
-    :class:`ChunkRunManifest`. Storing them on the shared row would be a
-    first-writer lie: a chunk re-emitted unchanged by a later generation would
-    report whichever generation wrote the row first. ``heading_path`` (a tuple) is
-    stored as a canonical JSON array in ``heading_path_json``; the persistence
-    layer owns the lossless mapping back to the in-memory contract.
-
-    ``source_id`` is a ``UUID`` — the referential source identity, as everywhere
-    else in the schema, including ``pipeline_runs.scope_id``, so the two compare
-    directly in SQL. The splitter's in-memory chunk carries the same identity as a
-    string, so the persistence layer converts at that boundary.
+    Each row represents one ``(source_id, heading_path, ordinal, content_hash)``
+    sameness key. ``chunk_id`` is reused across runs and rows are immutable.
+    Generation-varying Markdown hash, splitter version, and span belong to run
+    tables. ``heading_path_json`` stores the heading path as a canonical JSON array.
     """
 
     __tablename__ = "graph_chunks"
@@ -180,23 +162,11 @@ class Chunk(SQLModel, table=True):
 
 
 class ChunkRunInput(SQLModel, table=True):
-    """The Markdown a chunking run consumed: a retrievable locator plus its hash.
+    """Input provenance for a chunking run.
 
-    One row per chunking run (``run_id`` primary key). Records the
-    ``conversion_output_id`` locator for the exact Markdown the run read and that
-    Markdown's ``markdown_hash_xx64`` so the input is both retrievable and
-    verifiable after the run is superseded — recovering what a generation
-    consumed without re-running the splitter. ``run_id`` is a logical reference to
-    ``pipeline_runs.id`` (no foreign key) so superseded-run compaction can delete
-    freely.
-
-    ``conversion_output_id`` is the **stringified** form of the conversion
-    artifact locator (``ConversionOutput.id``, an integer PK). It is stored as
-    text — matching the splitter's ``converted_artifact_id`` contract — to keep
-    the graph schema decoupled from the conversion stage's PK type and portable
-    along ADR-003's Postgres path; a caller dereferencing it back to a
-    ``ConversionOutput`` row converts to the native id type at that boundary. It
-    is a locator, never a derivation input.
+    Stores the conversion-output locator, Markdown hash, and emitted chunk-set
+    fingerprint. ``conversion_output_id`` is a string locator, not a derivation
+    input; ``run_id`` is a logical reference to ``pipeline_runs.id``.
     """
 
     __tablename__ = "graph_chunk_run_inputs"
@@ -211,15 +181,9 @@ class ChunkRunInput(SQLModel, table=True):
 
 
 class ChunkRunApplicability(SQLModel, table=True):
-    """A chunking run's output was also the current chunk set for another conversion output.
+    """Records that a chunking run is current for another conversion output.
 
-    Recorded when :func:`~aizk.graph.persistence.persist_chunks` reuses the active
-    run (unchanged derivation key and manifest) for a ``conversion_output_id``
-    that differs from the run's :class:`ChunkRunInput`. Append-only and idempotent
-    on the primary key ``(run_id, conversion_output_id)``. A currentness check
-    that resolves a ``conversion_output_id`` to a chunking run consults both this
-    table and :class:`ChunkRunInput`. ``run_id`` is a logical reference to
-    ``pipeline_runs.id`` (no foreign key).
+    Rows are append-only and idempotent on ``(run_id, conversion_output_id)``.
     """
 
     __tablename__ = "graph_chunk_run_applicability"
@@ -231,15 +195,10 @@ class ChunkRunApplicability(SQLModel, table=True):
 
 
 class ChunkRunManifest(SQLModel, table=True):
-    """Append-only manifest of the chunks a chunking run produced, with their spans.
+    """Append-only chunk membership and span for a chunking run.
 
-    The composite primary key ``(run_id, chunk_id)`` makes re-persisting a chunk
-    within the same run idempotent (no duplicate entry) and never mutates an
-    existing row. ``span_start`` / ``span_end`` capture where the chunk sat in
-    *this* generation's markdown — a generation-varying fact that does not belong
-    on the shared chunk identity. ``run_id`` is a logical reference to
-    ``pipeline_runs.id`` (no foreign key); ``chunk_id`` foreign keys into
-    :class:`Chunk`.
+    The composite key ``(run_id, chunk_id)`` makes membership idempotent. Spans
+    belong to the generation, while ``chunk_id`` identifies shared chunk data.
     """
 
     __tablename__ = "graph_chunk_run_manifest"
@@ -258,17 +217,11 @@ class ChunkRunManifest(SQLModel, table=True):
 
 
 class DocumentSummary(SQLModel, table=True):
-    """A run-scoped per-document summary produced by one LLM pass over the document.
+    """Run-scoped summary for one document.
 
-    Carries the source markdown hash, the consumed ``conversion_output_id`` as
-    provenance (so the summary's input is retrievable as well as verifiable), and
-    the ``summary_version``; the owning run carries the derivation key that
-    produced it (the source markdown's content fingerprint, prompt identity,
-    resolved model identity, and version) and is scoped to the durable source
-    identity.
-    Re-summarizing a document whose derivation-key inputs are unchanged reuses the
-    active summary run; a change to any opens a new run that supersedes the prior,
-    leaving this row present and unmodified.
+    Stores the source hash and conversion-output locator as provenance, plus the
+    summary version and text. The active run's derivation key controls reuse and
+    supersession; this row remains immutable.
     """
 
     __tablename__ = "graph_document_summaries"
@@ -294,13 +247,9 @@ class DocumentSummary(SQLModel, table=True):
 
 
 class SummaryRunApplicability(SQLModel, table=True):
-    """A summary run's output was also the current summary for another conversion output.
+    """Records that a summary run is current for another conversion output.
 
-    Recorded when :func:`~aizk.graph.contextualization.summarize_document` reuses
-    the active run for a ``conversion_output_id`` that differs from the run's
-    :class:`DocumentSummary`. Append-only and idempotent on the primary key
-    ``(run_id, conversion_output_id)``, mirroring :class:`ChunkRunApplicability`.
-    ``run_id`` is a logical reference to ``pipeline_runs.id`` (no foreign key).
+    Rows are append-only and idempotent on ``(run_id, conversion_output_id)``.
     """
 
     __tablename__ = "graph_summary_run_applicability"
@@ -312,34 +261,15 @@ class SummaryRunApplicability(SQLModel, table=True):
 
 
 class ContextualizedChunk(SQLModel, table=True):
-    """A run-scoped per-chunk contextualized variant: the model's self-contained revision.
+    """Run-scoped contextualized variant for one chunk.
 
-    Holds the dereferencing revision the model produced — the working chunk
-    rewritten so every outside reference is resolved inline (``contextualized_text``)
-    — or an empty string when the chunk was already self-contained, in which case
-    the raw chunk is consumed unchanged. The revision is a separate, derived
-    artifact: it is separately addressable from the chunk (its own ``id``) and
-    never mutates the source :class:`Chunk` row, which stays the cited,
-    source-faithful unit.
+    ``contextualized_text`` contains a self-contained revision, or an empty string
+    when the raw chunk is already self-contained. The revision does not modify the
+    source :class:`Chunk` row.
 
-    ``derivation_key`` records the contextualization inputs — the summary
-    text's content fingerprint, the working chunk's content key, the 2p/1n
-    neighboring chunks' content keys (the portable sameness-key fingerprints,
-    not the surrogate ``chunk_id``s), the ``splitter_version`` of the chunking
-    generation read, the context-window policy, prompt identity, and resolved
-    model identity used to build the variant — alongside ``context_version``.
-    A change to any derivation-key input or to
-    ``context_version`` opens a new run whose variant supersedes the prior;
-    unchanged inputs and version reuse the active run.
-
-    ``summary_run_id`` and ``chunking_run_id`` are provenance-only pointers (to
-    the ``pipeline_runs`` rows of the summary read and the exact chunking
-    generation whose manifest was read) — direct joins for operator/debug lookup
-    and the backward-trace chain. ``chunking_run_id`` disambiguates which
-    generation the variant read, since a ``chunk_id`` may appear in many. Both are
-    local run locators, so they are deliberately kept **out** of
-    ``derivation_key``; reuse/supersession is decided by the content-derived
-    identities the key carries, not by these row ids.
+    ``summary_run_id`` and ``chunking_run_id`` identify the upstream runs used for
+    provenance. ``derivation_key`` uses content-derived inputs and excludes local
+    run IDs.
     """
 
     __tablename__ = "graph_contextualized_chunks"
@@ -364,18 +294,10 @@ class ContextualizedChunk(SQLModel, table=True):
 
 
 class ContextualizationRunInput(SQLModel, table=True):
-    """The provenance and fingerprints a variant run recorded, one row per run.
+    """Provenance and fingerprints for a contextualization run.
 
-    Written by :func:`~aizk.graph.contextualization.contextualize_chunks` in the
-    run's own transaction (also for a zero-chunk run), immutable thereafter.
-    ``summary_run_id`` and ``chunking_run_id`` are the provenance pointers every
-    :class:`ContextualizedChunk` row in the run also carries, recorded once at the
-    run level (enforced by ``assert_variant_matches_run_input``).
-    ``input_fingerprint`` covers the summary text and the ordered chunk-set keys
-    consumed; ``config_fingerprint`` the prompt, version, window policy, and model
-    identity; ``output_fingerprint`` is ``payload_fingerprint`` over the emitted
-    variants (or the raw chunk when a revision is empty), in document order.
-    ``run_id`` is a logical reference to ``pipeline_runs.id`` (no foreign key).
+    Records upstream run IDs, input/config fingerprints, and output fingerprint.
+    The row is written once per run, including zero-chunk runs.
     """
 
     __tablename__ = "graph_contextualization_run_inputs"
@@ -389,13 +311,10 @@ class ContextualizationRunInput(SQLModel, table=True):
 
 
 class ContextualizationRunApplicability(SQLModel, table=True):
-    """A variant run's output was also the current variants for another (summary, chunking) pair.
+    """Records that a variant run is current for another summary/chunking pair.
 
-    Recorded when :func:`~aizk.graph.contextualization.contextualize_chunks`
-    reuses the active run for a ``(summary_run_id, chunking_run_id)`` pair that
-    differs from the run's own :class:`ContextualizationRunInput`. Append-only and
-    idempotent on the primary key ``(run_id, summary_run_id, chunking_run_id)``.
-    ``run_id`` is a logical reference to ``pipeline_runs.id`` (no foreign key).
+    Rows are append-only and idempotent on
+    ``(run_id, summary_run_id, chunking_run_id)``.
     """
 
     __tablename__ = "graph_contextualization_run_applicability"
@@ -414,37 +333,12 @@ class ContextualizationRunApplicability(SQLModel, table=True):
 
 
 class ContextualizationOutputMemo(SQLModel, table=True):
-    """A durable checkpoint of a validated contextualization model output.
+    """Durable memo of validated model output for resuming partial contextualization.
 
-    Internal scratch state for resuming a partially-completed contextualization
-    attempt: it caches the validated summary and per-chunk revision outputs keyed
-    by their input-deterministic derivation keys, so a retry re-invokes the model
-    only for outputs not already retained. It is **not** a product projection — the
-    operator and explorer surfaces read :class:`DocumentSummary` /
-    :class:`ContextualizedChunk`, never this table — and a row never makes a run,
-    summary, or variant active or readable.
-
-    Identity is ``(kind, scope_id, derivation_key)``:
-
-    - ``kind`` discriminates the summary output (``summary``) from a per-chunk
-      revision (``revision``); a single discriminated table avoids two near-identical
-      tables, and the keys never collide across kinds because their JSON shapes
-      differ and ``kind`` partitions them.
-    - ``scope_id`` is the durable source identity, a UUID. It is load-bearing for
-      the summary kind, whose derivation key does **not** embed the source: without
-      it two distinct sources with byte-identical Markdown would share a summary
-      entry. The revision key is already source-distinct via its ``chunk_id``, so
-      ``scope_id`` is redundant-but-harmless there and keeps the schema uniform; it
-      also makes the success-path prune key set well-defined per source.
-    - ``derivation_key`` is the respective input-deterministic derivation key — the
-      summary derivation key for ``summary``, the per-row variant derivation key for
-      ``revision``.
-
-    ``output_text`` stores the validated, normalized model output; ``''`` is a legal
-    value meaning the model judged the chunk already self-contained — a present-empty
-    entry that is a reuse hit, distinct from an absent entry (a miss that
-    re-invokes the model). ``created_at`` is recorded so a later permanent-failure /
-    TTL sweep is actionable.
+    The key is ``(kind, scope_id, derivation_key)``. ``kind`` distinguishes summary
+    and revision outputs; ``output_text`` stores normalized output, and ``''`` is a
+    present empty value distinct from a miss. Memo rows are scratch state, not
+    product projections, and do not activate runs or outputs.
     """
 
     __tablename__ = "graph_contextualization_output_memo"
@@ -481,31 +375,12 @@ class ContextualizationOutputMemo(SQLModel, table=True):
 
 
 class ContextualizationJob(SQLModel, table=True):
-    """A claimable work-unit: chunk-persist and contextualize one converted document.
+    """Claimable work unit for chunk-persist and contextualization of one document.
 
-    Mirrors the conversion stage's ``conversion_jobs`` — one row per document to
-    process, scoped to the durable source identity ``source_id`` — so the shared
-    runtime's claim/lease/retry/stale-recovery machinery can drive the graph stage
-    the same way it drives conversion. The runtime owns the lifecycle transitions
-    (this change only enqueues rows and runs the unit-of-work); the stage adapter
-    that claims and finalizes units is a separate concern.
-
-    Identity vocabulary follows the conversion pattern:
-
-    - ``id`` is the local claim handle (a row surrogate), never a derivation input.
-    - ``idempotency_key`` deduplicates enqueue requests, so re-enqueueing the same
-      document (incremental re-ingest, or a backfill overlapping an open unit)
-      reuses the existing row instead of creating a second.
-    - ``conversion_output_id`` is the local artifact locator used to fetch the
-      Markdown the unit splits and persists; it is a locator, never a derivation
-      input. ``source_id`` is the durable source identity carried onto the runs
-      and transition events. Both are stored as plain (logical) references rather
-      than cross-stage foreign keys, matching the graph stage's run-reference
-      convention and keeping the work-unit table self-contained.
-
-    ``status`` is the runtime's generic :class:`~aizk.pipeline.lifecycle.WorkUnitStatus`;
-    ``attempts`` and the ``*_at`` scheduling columns carry the retry/lease
-    bookkeeping the runner reads.
+    ``idempotency_key`` deduplicates enqueue requests. ``conversion_output_id`` is
+    a Markdown locator; ``source_id`` scopes the runs and transition events.
+    ``status`` and scheduling fields carry runtime claim, lease, and retry state;
+    the runtime owns lifecycle transitions.
     """
 
     __tablename__ = "graph_contextualization_jobs"
@@ -552,35 +427,15 @@ class ContextualizationJob(SQLModel, table=True):
 
 
 class ExtractionJob(SQLModel, table=True):
-    """A claimable work-unit: extract one source's entity mentions and co-occurrence links.
+    """Claimable work unit for extracting one source's mentions and co-occurrence links.
 
-    Mirrors :class:`ContextualizationJob` — one row per source to extract,
-    scoped to the durable source identity ``source_id`` — so the shared
-    runtime's claim/lease/retry/stale-recovery machinery drives the extraction
-    stage the same way it drives contextualization. Unlike
-    :class:`ContextualizationJob`, the row carries no upstream artifact
-    locator: ``aizk.graph.extraction_run.extract_document`` resolves the
-    source's active chunking run (and, per the worker's configured input
-    policy, its active contextualized variants) directly from ``source_id``,
-    so the extractor choice and input policy are worker configuration, not job
-    fields.
+    The row is scoped and deduplicated by ``source_id``. It has no upstream artifact
+    locator; extraction resolves upstream runs and applies worker input policy.
+    Enqueue reuses terminal rows, while re-extraction requeues the row or uses the
+    direct extraction entry points after configuration changes.
 
-    This surface deduplicates on the source alone (``idempotency_key`` =
-    ``source:{source_id}``) and never re-enqueues a terminal unit: enqueue
-    reuses whatever row exists — including a ``SUCCEEDED`` one, as a no-op —
-    and the operator retry re-queues only failed/cancelled/timed-out units. It
-    is therefore **not** a re-extraction trigger. Re-extraction after an
-    upstream-generation change re-queues this same row: the operator's re-extract
-    action (:func:`~aizk.graph.job_actions.apply_extraction_readmission`) makes
-    a finished unit claimable again once the source's upstream is superseded. Re-extraction after an extractor, materializer, or input-policy
-    change happens through the direct entry points
-    (:func:`~aizk.graph.extraction_run.extract_source` /
-    :func:`~aizk.graph.extraction_run.extract_corpus`), where the run's
-    derivation key decides reuse versus supersession.
-
-    ``status`` is the runtime's generic :class:`~aizk.pipeline.lifecycle.WorkUnitStatus`;
-    ``attempts`` and the ``*_at`` scheduling columns carry the retry/lease
-    bookkeeping the runner reads.
+    ``status`` and scheduling fields carry runtime claim, lease, and retry state;
+    the runtime owns lifecycle transitions.
     """
 
     __tablename__ = "graph_extraction_jobs"
@@ -625,17 +480,11 @@ class ExtractionJob(SQLModel, table=True):
 
 
 class ExtractionRunInput(SQLModel, table=True):
-    """The provenance and fingerprints an extraction run recorded, one row per run.
+    """Provenance and fingerprints recorded for one extraction run.
 
-    Written by :func:`~aizk.graph.extraction_run.extract_document` in the run's
-    write transaction, immutable thereafter. ``upstream_run_id`` is the run whose
-    output the extraction consumed — the active contextualization (variant) run
-    under ``input_policy="contextualized"`` when one exists, else the active
-    chunking run. ``input_fingerprint`` is ``payload_fingerprint`` over the chunk
-    texts read under ``input_policy``, in document order; it equals that upstream
-    run's persisted output fingerprint by construction. ``config_fingerprint``
-    covers the extractor, materializer, and input-policy versions. ``run_id`` is a
-    logical reference to ``pipeline_runs.id`` (no foreign key).
+    ``upstream_run_id`` identifies the consumed upstream output. ``input_fingerprint``
+    covers the chunk texts selected by ``input_policy``; ``config_fingerprint``
+    covers extractor, materializer, and policy versions.
     """
 
     __tablename__ = "graph_extraction_run_inputs"
@@ -648,13 +497,9 @@ class ExtractionRunInput(SQLModel, table=True):
 
 
 class ExtractionRunApplicability(SQLModel, table=True):
-    """An extraction run's output was also current against another upstream run.
+    """Records that an extraction run is current against another upstream run.
 
-    Recorded when a reconciliation pass finds the extraction run's candidate key
-    unchanged against an ``upstream_run_id`` other than the run's own
-    :class:`ExtractionRunInput`. Append-only and idempotent on the primary key
-    ``(run_id, upstream_run_id)``. ``run_id`` is a logical reference to
-    ``pipeline_runs.id`` (no foreign key).
+    Rows are append-only and idempotent on ``(run_id, upstream_run_id)``.
     """
 
     __tablename__ = "graph_extraction_run_applicability"
@@ -667,44 +512,19 @@ class ExtractionRunApplicability(SQLModel, table=True):
 
 
 class Mention(SQLModel, table=True):
-    """An append-only, run-scoped entity-mention record produced by an extraction run.
+    """Append-only, run-scoped entity mention.
 
-    ``mention_id`` is a surrogate assigned at persistence (a fresh UUID, never
-    content-derived), matching the :class:`Chunk` ``chunk_id`` convention: a
-    content-derived identity would collide across extraction runs, and a run-local
-    identity would not be portable across a logical migration. ``run_id`` is a
-    logical reference to ``pipeline_runs.id`` (no foreign key, so superseded-run
-    compaction can delete freely); ``chunk_id`` is a real foreign key into
-    :class:`Chunk`, making "a mention's source chunk is resolvable" a database
-    invariant.
+    ``mention_id`` is a persistence-assigned UUID. ``run_id`` identifies the
+    extraction run and ``chunk_id`` identifies the source chunk.
 
-    ``anchor_kind`` partitions mentions into two classes. A ``source``-anchored
-    mention's surface form occurs in the raw chunk text: it carries
-    ``source_span_start`` / ``source_span_end`` (the occurrence's offsets in the raw
-    chunk) and ``source_occurrence_key`` (a cross-run-stable diagnostic hash of that
-    occurrence). A ``revision``-anchored mention was resolved only by the
-    contextualized revision and does not occur verbatim in the raw chunk: it carries
-    no raw span or occurrence key, and its raw provenance is the chunk itself plus
-    its recorded input. A mention read from raw input (``input_kind = raw``) is
-    always ``source``-anchored; this implication is validated at the persistence
-    boundary, not by a ``CHECK`` constraint, since it spans two columns' legal value
-    sets rather than one row's internal consistency.
+    ``anchor_kind`` is ``source`` when the surface form has a raw span and
+    ``revision`` when contextualized text resolves the mention without a raw span.
+    Raw input always uses ``source`` anchoring. ``input_kind``, ``input_ref``, and
+    input spans identify the exact text read; ``input_ref`` is canonical JSON and
+    may include the contextualization run ID.
 
-    ``input_kind`` / ``input_ref`` / ``input_span_start`` / ``input_span_end``
-    record the exact text the mention was read from (the raw chunk or an active
-    contextualized variant) — the **working span** a disambiguation-context
-    embedding is recomputed over on demand. ``input_ref`` is canonical JSON: for raw
-    input, ``{"chunk_id": ...}``; for contextualized input,
-    ``{"chunk_id": ..., "context_version": ..., "run_id": ...}`` where ``run_id`` is
-    the contextualization run the variant was read from — a provenance-only local
-    locator, like :attr:`ContextualizedChunk.summary_run_id`. The persistence layer
-    writes this JSON; this model only stores the ``Text`` column.
-
-    Two per-anchor-class partial unique indexes back within-run idempotency, rather
-    than one index over the nullable source span: SQL ``UNIQUE`` treats ``NULL`` as
-    distinct from every other ``NULL``, so a single index spanning
-    ``source_span_start`` / ``source_span_end`` would never deduplicate
-    revision-anchored rows (whose spans are always ``NULL``).
+    Partial unique indexes enforce one raw mention per occurrence and one revision
+    mention per chunk and surface form.
     """
 
     __tablename__ = "graph_mentions"
@@ -776,22 +596,12 @@ class Mention(SQLModel, table=True):
 
 
 class MentionCooccurrence(SQLModel, table=True):
-    """A flat link recording one unordered intra-chunk mention pair within a run.
+    """Unordered pair of mentions from one chunk and extraction run.
 
-    The pair key is schema-enforced: composite primary key
-    ``(run_id, mention_id_lo, mention_id_hi)``, a ``CHECK`` constraint enforcing
-    ``mention_id_lo < mention_id_hi`` (canonical order, which also excludes
-    self-pairs), and both endpoints foreign-keying into :attr:`Mention.mention_id`.
-    Storing the pair once (not two directed rows) avoids double-counting while still
-    serving symmetric lookups: querying either endpoint's column reaches the pair,
-    and :attr:`mention_id_hi` carries its own index so a lookup rooted at the
-    higher-ordered endpoint is indexed as directly as one rooted at the lower
-    (covered by the primary key's leading columns).
-
-    ``chunk_id`` is the chunk both endpoints share — a plain column, since the
-    schema-enforced part of "same chunk" is that persistence validates it before
-    insert, not a table-level constraint tying it to the endpoints' own
-    ``chunk_id``s.
+    The primary key ``(run_id, mention_id_lo, mention_id_hi)`` and
+    ``mention_id_lo < mention_id_hi`` enforce one canonical pair and exclude
+    self-pairs. Both endpoints reference :class:`Mention`; ``chunk_id`` records
+    the shared chunk.
     """
 
     __tablename__ = "graph_mention_cooccurrences"

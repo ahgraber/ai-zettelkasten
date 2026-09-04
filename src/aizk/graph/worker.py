@@ -1,20 +1,7 @@
-"""Composition root for the contextualization worker.
+"""Run the contextualization worker with injected model and Markdown dependencies.
 
-Assembles the injected dependencies — the ``pydantic-ai`` model client and the
-S3-backed Markdown source — wires them into the
-:class:`~aizk.graph.handler.ContextualizationStageHandler`, and drives it through
-the shared :class:`~aizk.pipeline.runner.StageRunner`. Resolves the engine from the
-shared database foundation and reuses the conversion S3 client (the graph tables
-share the database and the Markdown it reads is a conversion output).
-
-The model endpoint is required: :func:`build_llm_client` raises
-:class:`~aizk.conversion.utilities.startup.StartupValidationError` when the
-OpenAI-compatible triple is not fully configured, so the worker refuses to start
-rather than claiming work it cannot complete.
-
-The process also hosts the stage's admission loop
-(:class:`~aizk.graph.admission.AdmissionLoop`), so admission needs no process of
-its own. It admits nothing unless automatic admission is switched on for the stage.
+The worker requires a complete model endpoint and hosts the stage admission loop.
+Admission remains disabled unless the graph configuration enables it.
 """
 
 from __future__ import annotations
@@ -43,11 +30,10 @@ logger = logging.getLogger(__name__)
 
 
 def build_llm_client(config: "ContextualizationConfig") -> PydanticAILLMClient:
-    """Build the injected model client from the OpenAI-compatible endpoint triple.
+    """Build the model client from the configured endpoint.
 
     Raises:
-        StartupValidationError: If the base-url / api-key / model triple is not
-            fully configured (contextualization cannot run without a model).
+        StartupValidationError: If the endpoint is incomplete.
     """
     if not config.llm_enabled:
         raise StartupValidationError(
@@ -70,15 +56,7 @@ def run_graph_worker(
     contextualization_config: "ContextualizationConfig",
     admission_config: "AdmissionConfig | None" = None,
 ) -> int:
-    """Build the contextualization stage handler and drive it via the shared runner.
-
-    Reuses the conversion database engine and S3 client; constructs the model
-    client and Markdown source; runs the supervised claim/execute/finalize loop
-    until shutdown. Returns the runner's exit code.
-
-    The stage's admission loop runs alongside, stopped and joined before the worker
-    returns.
-    """
+    """Run the contextualization worker and its admission loop until shutdown."""
     admission_config = admission_config if admission_config is not None else AdmissionConfig()
     engine = get_engine(DatabaseConfig().database_url)
     llm_client = build_llm_client(contextualization_config)

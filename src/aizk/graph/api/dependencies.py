@@ -1,9 +1,8 @@
-"""FastAPI dependencies for the contextualization operator API.
+"""Provide FastAPI dependencies for the graph operator API.
 
-Reuses the conversion service's cached engine and session helpers (the graph
-tables live in the conversion database), reading the shared configuration from
-``app.state`` so tests can override either the configuration or the session
-dependency directly.
+Dependencies reuse the conversion database and shared application configuration.
+External readers and search providers remain injectable for tests and route
+composition.
 """
 
 from __future__ import annotations
@@ -29,22 +28,12 @@ if TYPE_CHECKING:
 
 
 def get_config(request: Request) -> ConversionConfig:
-    """Return the shared configuration instance from application state.
-
-    ``Request`` is imported at runtime (not under ``TYPE_CHECKING``) so FastAPI
-    can resolve the annotation and inject the request rather than mistaking it for
-    a query parameter.
-    """
+    """Return the shared configuration from application state."""
     return request.app.state.config
 
 
 def get_admission_config(request: Request) -> "AdmissionConfig":
-    """Return the graph admission settings from application state.
-
-    The intake routes read each stage's declared capacity and the refusal delay
-    from here, so a test overrides ``app.state.admission_config`` rather than the
-    process environment.
-    """
+    """Return the graph admission settings from application state."""
     return request.app.state.admission_config
 
 
@@ -54,23 +43,10 @@ def get_db_session(_request: Request) -> "Iterator[Session]":
 
 
 def get_blob_reader(request: Request) -> "BlobReader":
-    """Return the production blob reader for the explorer's on-demand markdown read.
-
-    Builds the conversion stage's :class:`~aizk.conversion.storage.s3_client.S3Client`
-    from the shared configuration; it satisfies the
-    :class:`~aizk.graph.markdown_source.BlobReader` protocol via ``get_object_bytes``.
-    Injected (not constructed inline in the route) so a test overrides it with an
-    in-memory fake and the explorer never reaches real S3.
-    """
+    """Return the production blob reader for source Markdown."""
     return S3Client(get_config(request))
 
 
 def get_search_provider(_request: Request) -> "SearchProvider":
-    """Return the content search provider for the explorer's search-results view.
-
-    Builds an FTS5-backed :class:`~aizk.graph.search.Fts5SearchProvider` over the
-    shared database engine. Injected behind the
-    :class:`~aizk.graph.search.SearchProvider` protocol so a test overrides it and so
-    the relevance backend is a swap with no route change.
-    """
+    """Return the content search provider for the explorer."""
     return Fts5SearchProvider(get_engine(DatabaseConfig().database_url))

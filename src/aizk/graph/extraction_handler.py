@@ -1,45 +1,9 @@
-"""The extraction stage's :class:`~aizk.pipeline.handler.StageHandler`.
+"""Adapt extraction work-units to :class:`~aizk.pipeline.handler.StageHandler`.
 
-This adapter exposes the extraction stage's per-source unit-of-work (extract
-and persist one source's entity mentions and co-occurrence links, keyed by its
-integer ``ExtractionJob.id``) to the generic pipeline runner. The runner owns
-the claim/lease loop, bounded concurrency, wall-clock timeout, stale-recovery
-scheduling, and the ``BEGIN IMMEDIATE`` transaction around ``claim_next`` /
-``recover_stale`` / ``finalize``; this handler owns the extraction-specific
-surface: the claim/recovery queries, the unit-of-work execution, result
-classification, the run ``scope_id`` (the source ``source_id``), and the
-in-process timeout/concurrency declarations.
-
-Transaction ownership and at-least-once (per the change's design):
-
-- ``claim_next`` / ``recover_stale`` / ``finalize`` run inside the runner-owned
-  transaction and never commit — their work-unit status transitions co-commit
-  with the runner's bookkeeping.
-- ``execute`` runs **outside** that transaction and calls
-  :func:`aizk.graph.extraction_run.extract_document`, which opens its own
-  short ``BEGIN IMMEDIATE`` to commit the extraction run and its mention /
-  co-occurrence rows in one transaction. The work-unit's terminal transition
-  therefore commits separately from the domain writes; if the process dies
-  between them the unit is recovered (``recover_stale``) and ``execute``
-  re-runs. Re-execution is safe because ``extract_document`` is idempotent on
-  its derivation key — an unchanged source reuses its active extraction run
-  and produces no duplicate mention or co-occurrence rows.
-
-The work-unit's transition events carry the ``source_id`` source identity and,
-on the terminal success event, the extraction run's ``run_id``, so a source's
-progress is resolvable across stages.
-
-Cancellation is cooperative and best-effort, mirroring the contextualization
-handler, with one narrowing: ``extract_document`` (unlike contextualization's
-``process_document``) takes no ``is_cancelled`` callback, since a per-source
-NER pass has no long-running, interruptible phase analogous to the multi-pass
-LLM summary/revision generation — cancellation is honored only at entry
-(before ``execute`` begins), not mid-flight. The unit runs in-process and
-cannot be force-terminated once started, so ``cancel`` records the request and
-the runner resolves ``CANCELLED`` / ``TIMED_OUT`` from its own slot state.
-A cancel that lands after execute entry does not prevent the document's run
-and mentions from committing — the ``CANCELLED`` status marks the unit's
-lifecycle, not the absence of produced data.
+The handler owns extraction-specific claim, recovery, execution, and result
+mapping. The runner owns lifecycle transactions, leases, concurrency, timeouts,
+and stale recovery. Domain extraction commits its own short transaction. An
+in-process cancellation request is honored at execution entry.
 """
 
 from __future__ import annotations
@@ -95,21 +59,16 @@ def _utcnow() -> datetime.datetime:
 
 
 def _error_code(exc: BaseException) -> str:
-    """Classify an exception into a short, stable error code for the audit row."""
+    """Classify an exception into a stable error code."""
     if isinstance(exc, ValueError):
         return "unprocessable_input"
     return type(exc).__name__
 
 
 def _error_message(exc: BaseException) -> str:
-    """Return a stable, scrubbed category message for the audit row and operator API.
+    """Return a scrubbed category message for persistence and the operator API.
 
-    Raw exception text (model or DB errors) may embed identifiers or SQL
-    fragments; it is persisted into ``error_message`` and returned by the
-    operator API, so it must not carry that detail across the boundary. Only
-    this category text is persisted/returned — the precise stable classifier
-    stays in :func:`_error_code`, and the full exception (with traceback) is
-    logged internally in :meth:`ExtractionStageHandler.execute` for diagnosis.
+    The function excludes raw exception text from those boundaries.
     """
     if isinstance(exc, ValueError):
         return "input could not be processed"
@@ -119,10 +78,7 @@ def _error_message(exc: BaseException) -> str:
 class ExtractionStageHandler:
     """Drive extraction work-units through the generic pipeline runner.
 
-    The work-unit handle is the integer ``ExtractionJob.id``. The NER
-    extractor and input policy are injected dependencies, so a deterministic
-    substitute extractor drives the stage in tests with no change to this
-    logic.
+    The handler receives the extractor and input policy as dependencies.
     """
 
     def __init__(
@@ -137,23 +93,17 @@ class ExtractionStageHandler:
         retry_base_delay_seconds: float = DEFAULT_RETRY_BASE_DELAY_SECONDS,
         retry_max_attempts: int = DEFAULT_RETRY_MAX_ATTEMPTS,
     ) -> None:
-        """Store the engine, injected dependencies, and runner-facing configuration.
+        """Configure the extraction stage handler.
 
         Args:
-            engine: The shared SQLite engine; the unit-of-work
-                (``extract_document``) opens its own short ``BEGIN IMMEDIATE``
-                for the domain writes (after the lock-free read/extract phase).
-            extractor: The single injected NER access point.
-            input_policy: The raw-vs-contextualized input toggle every
-                extraction under this handler runs with.
-            timeout_seconds: Wall-clock timeout per unit (the runner enforces it).
-            concurrency: Maximum units the runner may execute simultaneously.
-            stale_after_minutes: Minutes in ``RUNNING`` before recovery reclaims a
-                unit.
-            retry_base_delay_seconds: Retry backoff base; wait is
-                ``base * 2**attempts``.
-            retry_max_attempts: Attempt cap after which a retryable failure
-                becomes permanent.
+            engine: Shared engine used by extraction operations.
+            extractor: Injected NER extractor.
+            input_policy: Input mode for extraction.
+            timeout_seconds: Per-unit wall-clock timeout.
+            concurrency: Maximum concurrent units.
+            stale_after_minutes: Age for stale-unit recovery.
+            retry_base_delay_seconds: Base retry delay.
+            retry_max_attempts: Maximum attempts before permanent failure.
         """
         self._engine = engine
         self._extractor = extractor
@@ -182,22 +132,13 @@ class ExtractionStageHandler:
         return EXTRACTION_STAGE
 
     def validate_dependencies(self) -> None:
-        """A no-op: dependency gating happens by eager extractor construction in the composition root.
-
-        :func:`aizk.graph.extraction_worker.build_extractor` constructs the
-        pinned extractor before the runner starts; a missing dependency or
-        model artifact raises :class:`ImportError` there, which the CLI maps
-        to a startup failure. By the time this handler exists, its one
-        external dependency is already proven constructible.
-        """
+        """Validate dependencies after the composition root constructs the extractor."""
         return None
 
     def scope_id(self, handle: int) -> str:
-        """Return the run ``scope_id`` for ``handle``: the source ``source_id``.
+        """Return the source ID for a work-unit handle.
 
-        Reads the work-unit's durable source identity (runs are scoped per
-        source, not per work-unit). Returns the bare handle as a fallback when
-        the row is missing, so correlation logging never raises.
+        Return the handle as a string when the work-unit row is missing.
         """
         with Session(self._engine) as session:
             job = session.get(ExtractionJob, handle)
@@ -219,15 +160,11 @@ class ExtractionStageHandler:
         return Isolation.IN_PROCESS
 
     def map_result(self, result_or_exc: StageResult | BaseException) -> TerminalOutcome:
-        """Map an execution result or exception to a terminal outcome.
+        """Map execution results and exceptions to terminal outcomes.
 
-        A successful result maps to ``SUCCEEDED``. A :class:`ValueError` — the
-        type raised for unprocessable input (an unchunked source, or an
-        invalid ``input_policy``) — maps to a ``permanent`` ``FAILED``; any
-        other exception (a transient model or I/O error) maps to a
-        ``retryable`` ``FAILED``. ``TIMED_OUT`` and ``CANCELLED`` are resolved
-        by the runner from its slot state for in-process units and do not pass
-        through here.
+        Success maps to ``SUCCEEDED``. ``ValueError`` maps to permanent ``FAILED``;
+        other exceptions map to retryable ``FAILED``. The runner handles cancellation
+        and timeouts.
         """
         if isinstance(result_or_exc, BaseException):
             if isinstance(result_or_exc, ValueError):
@@ -241,14 +178,11 @@ class ExtractionStageHandler:
         return TerminalOutcome(WorkUnitStatus.SUCCEEDED)
 
     def claim_next(self, session: "Session") -> int | None:
-        """Claim the oldest eligible work-unit, transition it to ``RUNNING``, or ``None``.
+        """Claim the oldest eligible work-unit and transition it to ``RUNNING``.
 
-        Runs inside the runner-owned ``BEGIN IMMEDIATE`` transaction: selects the
-        oldest (by ``queued_at``) unit that is ``QUEUED`` or a retryable
-        ``FAILED`` whose retry-wait has elapsed, transitions it to ``RUNNING``,
-        post-increments ``attempts`` (the claim is the attempt counter's source of
-        truth), and records the ``claimed`` event. Returns the claimed id, or
-        ``None`` when none is eligible. Does not commit.
+        Eligible units are queued or retryable failed units whose wait elapsed. The
+        method increments attempts, records the claim event, and does not commit.
+        Return ``None`` when no unit is eligible.
         """
         now = _utcnow()
         job = session.exec(
@@ -283,13 +217,10 @@ class ExtractionStageHandler:
         return job.id
 
     def recover_stale(self, session: "Session") -> list[int]:
-        """Reset units stranded in ``RUNNING`` past the stale threshold to eligible.
+        """Reset stale ``RUNNING`` units to retryable ``FAILED`` units.
 
-        Runs inside the runner-owned transaction: reclaims ``RUNNING`` units whose
-        ``started_at`` is older than ``stale_after_minutes`` to ``FAILED`` with an
-        immediate retry-wait (so the next claim re-runs them), recording a
-        ``recovered_stale`` event for each. Does not increment ``attempts`` (a
-        stale reset is not an attempt) and does not commit. Returns the reset ids.
+        The method records a recovery event, leaves attempts unchanged, and does not
+        commit. Return the reset IDs.
         """
         now = _utcnow()
         stale_before = now - datetime.timedelta(minutes=self._stale_after_minutes)
@@ -326,19 +257,13 @@ class ExtractionStageHandler:
         return recovered
 
     def execute(self, handle: int) -> StageResult:
-        """Run the unit-of-work for ``handle``; bridge result/error details.
+        """Execute one extraction work-unit.
 
-        Resolves the work-unit's source identity, honors an entry-time
-        cancellation, then runs :func:`~aizk.graph.extraction_run.extract_document`.
-        Stashes the extraction run id + mention count for the ``SUCCEEDED``
-        event; on any :class:`Exception` stashes the scrubbed error code +
-        message for the ``FAILED`` event and re-raises so ``map_result``
-        classifies it.
+        Skip work already cancelled. Store success or scrubbed failure details for
+        finalization, and re-raise execution errors.
 
         Raises:
-            ValueError: If the work-unit row is missing, the source has no
-                active chunking run, or ``input_policy`` is invalid
-                (unprocessable input — see :func:`~aizk.graph.extraction_run.extract_document`).
+            ValueError: If the work-unit or its extraction input is invalid.
         """
         with Session(self._engine) as session:
             job = session.get(ExtractionJob, handle)
@@ -376,21 +301,11 @@ class ExtractionStageHandler:
         return result
 
     def finalize(self, session: "Session", handle: int, outcome: TerminalOutcome) -> None:
-        """Write the work-unit's terminal status + event into the runner's transaction.
+        """Persist the terminal work-unit status and event in the runner transaction.
 
-        Runs inside the runner-owned ``BEGIN IMMEDIATE`` transaction and does not
-        commit. The success terminal status is written here (the domain writes
-        committed separately in :meth:`execute`); the ``SUCCEEDED`` event carries
-        the extraction ``run_id``. A ``FAILED`` outcome is retryable (an immediate-
-        backoff retry-wait, re-eligible) only while ``attempts`` is below the cap;
-        otherwise it is permanent (``earliest_next_attempt_at`` cleared,
-        ``finished_at`` set). ``CANCELLED`` / ``TIMED_OUT`` are recorded terminal.
-
-        Reads the execute→finalize bridges without clearing them: the runner retains
-        the slot and re-invokes finalize on a finalize-time DB error, so clearing
-        here would make the retry record ``run_id=None`` or replace the real
-        scrubbed error with the unknown-error fallback. :meth:`cleanup` releases the
-        bridges, once, only after the durable commit.
+        The method does not commit. Failed units retry until the attempt cap; cancelled
+        and timed-out units remain terminal. Success events include the extraction run
+        ID. Bridge data remains available until :meth:`cleanup` runs after commit.
         """
         with self._lock:
             success = self._success.get(handle)
@@ -459,7 +374,6 @@ class ExtractionStageHandler:
             )
             return
 
-        # WorkUnitStatus.FAILED — retry class is required on the outcome.
         error_code, error_message = error if error is not None else ("extraction_error", "unknown error")
         retryable = outcome.retry_class is RetryClass.RETRYABLE and job.attempts < self._retry_max_attempts
         if retryable:
@@ -504,19 +418,9 @@ class ExtractionStageHandler:
             self._cancelled.add(handle)
 
     def _is_cancelled(self, handle: int) -> bool:
-        """Return ``True`` if cancellation has been requested for ``handle``, from either source.
+        """Return whether a handle has an in-process or durable cancellation request.
 
-        Consults two places so a cancel from either path stops in-flight work:
-
-        - the in-process request set — the runner's cooperative cancel and
-          wall-clock-timeout enforcement, set within this process; and
-        - the **durable** work-unit status — an operator cancel committed by the
-          API, typically in a *different* process, which the in-process set would
-          never observe.
-
-        Checked only at entry (before :func:`~aizk.graph.extraction_run.extract_document`
-        runs), not mid-flight, since that function accepts no cancellation
-        callback (see the module docstring).
+        The check runs only before extraction starts.
         """
         with self._lock:
             if handle in self._cancelled:

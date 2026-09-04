@@ -1,29 +1,9 @@
-"""Admission: creating the work-units a stage's upstream state says should exist.
+"""Create graph-stage work-units from pending upstream state.
 
-Admission is distinct from the runtime's *discovery*, which selects already-queued
-units to claim. Admission asks a stage what work it is missing, and creates it.
-
-A stage participates by declaring an :class:`AdmissionAdapter` — its pending-work
-derivation, its enqueue primitive, its capacity, and whether automatic admission
-is switched on. Declaring one is optional and queryable
-(:func:`admission_adapter_for`): a stage that declares none is never admitted
-into, and is otherwise unaffected.
-
-The pass (:func:`run_admission_pass`) is a bounded query plus an enqueue in one
-short write transaction. It has no memory: the pending set derives from current
-state, so work a pass leaves out — at capacity, or on interruption — is still
-pending for the next pass. Because enqueue dedupes on ``idempotency_key``, a pass
-that overlaps an intake submission or a backfill creates nothing twice.
-
-:class:`AdmissionLoop` runs the pass on an interval inside a stage's existing
-worker process, so admission needs no scheduler, no queue broker, and no new
-process to supervise.
-
-The loop runs on its own thread, so an admitting worker holds two writers rather
-than one: the loop and the runner's claim/finalize path, both taking the writer
-lock on the same engine. Under SQLite's single-writer serialization they take
-turns rather than conflict, which is why the pass keeps its transaction short —
-a long pass does not corrupt anything, it stalls the claim path beside it.
+:class:`AdmissionAdapter` defines pending-work selection, enqueue, capacity, and
+whether automatic admission is enabled. :func:`run_admission_pass` performs one
+bounded write transaction and leaves omitted work pending. :class:`AdmissionLoop`
+runs the pass in a worker thread at a fixed interval.
 """
 
 from __future__ import annotations
@@ -56,21 +36,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class AdmissionAdapter:
-    """One stage's declaration of the work it can be admitted into.
+    """Configuration for admitting one stage's pending work.
 
     Attributes:
-        stage: The stage this adapter admits work for.
-        model: The stage's work-unit table, read to measure remaining capacity.
-        pending_work: The stage's pending-work derivation, ``(session, limit) ->
-            keys``. Each key identifies work that should have a work-unit and does
-            not; the ``limit`` bounds the result after the derivation is applied.
-        enqueue: The stage's enqueue primitive, ``(session, key, queue_max_depth,
-            principal) -> (unit, created)``. Admission calls this rather than
-            constructing rows, so an admitted unit is identical to one any other
-            path creates.
-        queue_max_depth: The stage's declared capacity; ``0`` declares no limit.
-        enabled: Whether automatic admission is switched on for this stage.
-            Off by default, so turning the flow on is a deliberate act.
+        stage: Stage name.
+        model: Work-unit model used to measure capacity.
+        pending_work: Function that returns pending keys up to a limit.
+        enqueue: Function that creates or reuses a work-unit.
+        queue_max_depth: Capacity limit; ``0`` disables the limit.
+        enabled: Whether automatic admission runs.
     """
 
     stage: str
@@ -116,41 +90,22 @@ _ADAPTER_FACTORIES: "dict[str, Callable[[AdmissionConfig], AdmissionAdapter]]" =
 
 
 def admission_adapter_for(stage: str, config: "AdmissionConfig") -> AdmissionAdapter | None:
-    """Return the stage's admission adapter, or ``None`` when the stage declares none.
+    """Return the adapter for ``stage``, or ``None`` when it has no admission path.
 
-    This is the contract's feature detection: a stage that declares no
-    pending-work derivation reports ``None`` here, and admission never creates
-    work for it. Its enqueue and processing behavior is unaffected.
-
-    Args:
-        stage: The stage to query.
-        config: The graph admission settings the adapter reads its capacity and
-            enable flag from.
+    The adapter reflects ``config``'s capacity and enabled flag.
     """
     factory = _ADAPTER_FACTORIES.get(stage)
     return factory(config) if factory is not None else None
 
 
 def run_admission_pass(engine: "Engine", adapter: AdmissionAdapter) -> int:
-    """Admit a stage's pending work, up to its capacity, in one short write transaction.
+    """Admit pending work through ``adapter`` in one short write transaction.
 
-    Creates work-units only for the stage's pending set, through the stage's own
-    enqueue, so an admitted unit is identical to one any other path would create.
-    Over unchanged state a repeat pass creates nothing: the admitted work is no
-    longer pending.
-
-    The pass admits at most :data:`~aizk.pipeline.lifecycle.MAX_BULK_SELECTION`
-    units, whatever the declared capacity, so one pass never grows with the
-    pending corpus; the remainder stays pending for the next pass. Admission also
-    stops at capacity when the declared limit is smaller than that ceiling. A
-    stage with automatic admission switched off admits nothing.
-
-    Args:
-        engine: The shared engine; the pass opens its own short transaction.
-        adapter: The stage's declaration.
+    A disabled or full stage creates no units. The pass creates at most
+    ``MAX_BULK_SELECTION`` units; omitted work remains pending.
 
     Returns:
-        How many work-units the pass created.
+        The number of work-units created.
     """
     if not adapter.enabled:
         return 0
@@ -194,13 +149,10 @@ def run_admission_pass(engine: "Engine", adapter: AdmissionAdapter) -> int:
 
 
 class AdmissionLoop:
-    """Runs a stage's admission pass on an interval, in its worker process.
+    """Run a stage's admission pass on an interval in a worker process.
 
-    Owns one background thread. :meth:`start` and :meth:`stop` bracket the
-    worker's claim/execute loop; :meth:`stop` signals the thread and joins it, so
-    a worker shutdown leaves no thread behind. A pass that raises is logged and
-    the loop continues — admission is self-healing, so a transient failure costs
-    one interval rather than the loop.
+    The loop owns one background thread. ``stop`` signals and joins it; pass errors
+    are logged and the loop continues.
     """
 
     def __init__(

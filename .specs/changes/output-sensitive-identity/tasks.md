@@ -96,7 +96,7 @@ Production never runs the new binary against the old database; the pave is part 
 
 ## Follow-up — `aizk.graph` package review
 
-- [ ] Run the `simplify` skill over `src/aizk/graph`: remove duplication, dead code, needless indirection, and comment noise the phases left behind; suite and hooks green.
+- [x] Run the `simplify` skill over `src/aizk/graph`: remove duplication, dead code, needless indirection, and comment noise the phases left behind; suite and hooks green.
 - [ ] Run the `refactor` skill over `src/aizk/graph`: plan any structural change the simplify pass surfaced (oversized functions, module boundaries), get approval, land it behavior-preserving; suite and hooks green.
 - [ ] Code-review `src/aizk/graph` with Codex through the agent-fleet skill (not yet installed; the owner supplies the link), as the skill's trial run; triage its findings.
 

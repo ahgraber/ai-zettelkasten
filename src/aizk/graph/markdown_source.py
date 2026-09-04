@@ -27,11 +27,7 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class BlobReader(Protocol):
-    """Reads an object's raw bytes by storage key.
-
-    The conversion stage's S3 client satisfies this structurally via its
-    ``get_object_bytes`` method; tests supply an in-memory double.
-    """
+    """Reads raw bytes from blob storage by key."""
 
     def get_object_bytes(self, s3_key: str) -> bytes:
         """Return the raw bytes stored under ``s3_key``."""
@@ -42,17 +38,12 @@ class S3MarkdownSource:
     """Fetches a conversion output's Markdown from blob storage by locator."""
 
     def __init__(self, engine: "Engine", blob_reader: BlobReader) -> None:
-        """Store the engine (to resolve the output row) and the blob reader."""
+        """Initialize with the engine and blob reader used to resolve and load output data."""
         self._engine = engine
         self._blob_reader = blob_reader
 
     def load(self, conversion_output_id: int) -> LoadedMarkdown:
-        """Return the Markdown text and its recorded hash for a conversion output.
-
-        Resolves the ``ConversionOutput`` row for the blob key and the hash the
-        conversion stage recorded, then reads and decodes the Markdown blob. The
-        caller (:func:`~aizk.graph.workunit.process_document`) verifies the text
-        hashes to ``markdown_hash_xx64``.
+        """Return Markdown text and its recorded hash for a conversion output.
 
         Raises:
             ValueError: If no conversion output exists for the locator.

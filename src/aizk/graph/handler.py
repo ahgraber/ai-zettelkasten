@@ -1,38 +1,9 @@
-"""The contextualization stage's :class:`~aizk.pipeline.handler.StageHandler`.
+"""Adapt contextualization work-units to :class:`~aizk.pipeline.handler.StageHandler`.
 
-This adapter exposes the graph stage's per-document unit-of-work (chunk-persist
-and contextualize one converted document, keyed by its integer
-``ContextualizationJob.id``) to the generic pipeline runner. The runner owns the
-claim/lease loop, bounded concurrency, wall-clock timeout, stale-recovery
-scheduling, and the ``BEGIN IMMEDIATE`` transaction around ``claim_next`` /
-``recover_stale`` / ``finalize``; this handler owns the graph-specific surface:
-the claim/recovery queries, the unit-of-work execution, result classification,
-the run ``scope_id`` (the source ``source_id``), and the in-process
-timeout/concurrency declarations.
-
-Transaction ownership and at-least-once (per the change's design):
-
-- ``claim_next`` / ``recover_stale`` / ``finalize`` run inside the runner-owned
-  transaction and never commit — their work-unit status transitions co-commit
-  with the runner's bookkeeping.
-- ``execute`` runs **outside** that transaction and opens its **own**
-  ``BEGIN IMMEDIATE`` to commit the domain writes (the chunking, summary, and
-  variant runs with their rows). The work-unit's terminal transition therefore
-  commits separately from the domain writes; if the process dies between them
-  the unit is recovered (``recover_stale``) and ``execute`` re-runs. Re-execution
-  is safe because :func:`aizk.graph.workunit.process_document` is idempotent on
-  its derivation keys — an unchanged document reuses its active runs and produces
-  no duplicate chunk, summary, or variant.
-
-The work-unit's transition events carry the ``source_id`` source identity and,
-on the terminal success event, the ``run_id`` of the work-unit's chunking run
-(the root of the backward-trace chain), so a source's progress is resolvable
-across stages.
-
-Cancellation is cooperative and best-effort: the unit runs in-process and cannot
-be force-terminated, so ``cancel`` records the request and the runner resolves
-``CANCELLED`` / ``TIMED_OUT`` from its own slot state. A per-document unit is
-short, so it is not interrupted mid-flight.
+The handler owns graph-specific claim, recovery, execution, and result mapping.
+The runner owns lifecycle transactions, leases, concurrency, timeouts, and stale
+recovery. The document domain operation commits its own short transaction outside
+the runner transaction.
 """
 
 from __future__ import annotations

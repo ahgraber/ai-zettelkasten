@@ -1,44 +1,9 @@
-"""Command-line entrypoints for the graph stage (contextualization + extraction).
+"""Provide the ``aizk-graph`` commands for workers, serving, backfills, and dataset extraction.
 
-Mirrors the conversion CLI's structure. ``main`` loads the environment and
-configures structured logging once, before any command runs, so every subcommand
-uses the identical logging procedure.
-
-- ``worker`` drives the contextualization stage through the shared runner: set a
-  descriptive process title, run migrations (graph tables live in the shared
-  migration tree alongside every other stage's), then run the loop.
-- ``extraction-worker`` drives the extraction stage through the same shared
-  runner, as a separate process/subcommand: extraction and contextualization
-  are independently claimable, scalable stages over their own work-unit
-  tables, so they run as distinct worker processes rather than one process
-  driving two runners.
-- ``extract-dataset`` runs a **synchronous, foreground** extraction pass over an
-  explicitly-selected target-source set (see
-  :mod:`aizk.graph.dataset_extraction`) — distinct from ``extraction-worker``,
-  which claims work-units through the shared runtime — and prints the
-  resulting corpus mention dataset's cold-start statistics
-  (:mod:`aizk.graph.dataset_stats`) as JSON on stdout. A corpus-scanning target
-  selection (no ``--source-id``) requires ``--yes`` confirmation.
-- ``backfill`` and ``extraction-backfill`` enqueue each stage's work-units over
-  the corpus (see :mod:`aizk.graph.backfill`). They enqueue only — the units they
-  create stay ``QUEUED`` until the matching worker claims them — and an implicit
-  corpus-scan selection requires ``--yes`` confirmation.
-- ``serve`` runs the operator API (jobs monitor + content explorer, for both
-  stages) over uvicorn.
-- ``fetch-gliner2-weights`` is the one-time setup step that pre-fetches the
-  pinned GLiNER2 model weights into the local directory
-  :class:`~aizk.graph.extraction.Gliner2Extractor` loads from; it never runs as
-  part of a worker's startup, since a stage adapter must never reach the network
-  for model weights.
-
-No worker command manages Litestream: the graph stage reuses the conversion
-database, whose replication is owned by the conversion service (only the
-process matching ``litestream_start_role`` replicates). Migrations are run by
-either worker (or ``extract-dataset``) on startup or by ``aizk-conversion
-db-init``; ``serve`` does not migrate.
-
-Registered as the ``aizk-graph`` console script; also runnable via
-``python -m aizk.graph.cli``.
+Workers run the graph stages, backfills enqueue work, ``serve`` starts the
+operator API, and ``extract-dataset`` runs a foreground extraction pass. Corpus
+scans require explicit confirmation. Commands set descriptive process titles at
+their process boundaries.
 """
 
 from __future__ import annotations
@@ -104,13 +69,10 @@ def _cmd_serve(_args: argparse.Namespace) -> int:
 
 
 def _cmd_fetch_gliner2_weights(_args: argparse.Namespace) -> int:
-    """Pre-fetch the pinned GLiNER2 weights into the configured local model directory.
+    """Download the pinned GLiNER2 weights into the configured local directory.
 
-    Lazily imports ``huggingface_hub`` (it arrives with the ``ner`` dependency
-    group) and downloads the exact pinned revision recorded in
-    :class:`~aizk.graph.config.NerConfig`, so :class:`~aizk.graph.extraction.Gliner2Extractor`
-    can load strictly from disk at runtime. A one-time setup step, not part of
-    ``worker`` startup.
+    The command downloads the revision in :class:`~aizk.graph.config.NerConfig`;
+    workers load the weights from disk.
     """
     setproctitle("graph-fetch-gliner2-weights")
     ner_config = NerConfig()
@@ -147,14 +109,9 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
 
 
 def _cmd_extraction_worker(_args: argparse.Namespace) -> int:
-    """Run the extraction worker until shutdown; return its exit code.
+    """Run the extraction worker until shutdown and return its exit code.
 
-    Gates on :class:`ImportError` rather than :class:`~aizk.conversion.utilities.startup.StartupValidationError`:
-    the extraction stage's startup-time failure is its pinned extractor's
-    dependency/model-artifact construction (see
-    :func:`aizk.graph.extraction_worker.build_extractor`), which already
-    raises :class:`ImportError` naming the fix, unlike contextualization's
-    model-endpoint configuration gate.
+    Return 1 when extractor setup raises ``ImportError``.
     """
     setproctitle("graph-extraction-worker")
     extraction_config = ExtractionConfig()
@@ -167,17 +124,11 @@ def _cmd_extraction_worker(_args: argparse.Namespace) -> int:
 
 
 def _cmd_backfill(args: argparse.Namespace) -> int:
-    """Enqueue contextualization work-units over the corpus, or over named outputs.
+    """Enqueue contextualization work-units for named outputs or a corpus scan.
 
-    Migrates first (a backfill is often the first thing run against a fresh
-    database), then delegates target selection and enqueue to
-    :func:`~aizk.graph.backfill.run_contextualization_backfill`. Enqueue only: the
-    units it creates stay ``QUEUED`` until ``aizk-graph worker`` claims them.
-
-    A ``--output-id`` naming no conversion output is operator input, so it is
-    reported as a usage error rather than raised as a traceback. A stage at its
-    declared capacity is reported the same way: the backlog, not the command, is
-    what has to change.
+    The command runs migrations first and leaves created units ``QUEUED``. A
+    corpus scan requires ``--yes``; invalid output ids and capacity refusals exit
+    with a usage error.
     """
     setproctitle("graph-backfill")
     run_migrations()
@@ -202,14 +153,10 @@ def _cmd_backfill(args: argparse.Namespace) -> int:
 
 
 def _cmd_extraction_backfill(args: argparse.Namespace) -> int:
-    """Enqueue extraction work-units over the corpus, or over named sources.
+    """Enqueue extraction work-units for named sources or a corpus scan.
 
-    Migrates first, then delegates to
-    :func:`~aizk.graph.backfill.run_extraction_backfill`. Enqueue only: the units
-    it creates stay ``QUEUED`` until ``aizk-graph extraction-worker`` claims them.
-
-    A stage at capacity is reported as a usage error rather than raised as a
-    traceback: the backlog, not the command, is what has to change.
+    The command runs migrations first and leaves created units ``QUEUED``. A
+    corpus scan requires ``--yes``; capacity refusals exit with a usage error.
     """
     setproctitle("graph-extraction-backfill")
     run_migrations()
@@ -233,19 +180,11 @@ def _cmd_extraction_backfill(args: argparse.Namespace) -> int:
 
 
 def _cmd_extract_dataset(args: argparse.Namespace) -> int:
-    """Run a foreground extraction dataset pass, then print corpus cold-start statistics as JSON.
+    """Run a foreground extraction dataset pass and print corpus statistics as JSON.
 
-    Resolves the target-source set (explicit ``--source-id``, else a corpus
-    scan optionally capped by ``--limit``; see
-    :func:`aizk.graph.dataset_extraction.resolve_target_source_ids`), gates a
-    corpus-scanning selection behind ``--yes`` confirmation, and runs
-    :func:`~aizk.graph.extraction_run.extract_corpus` synchronously in this
-    process — a foreground run, not a claim through the extraction worker's
-    work-unit queue. Re-invoking over an unchanged corpus is a cheap no-op
-    (each target source's extraction reuses its active run when its
-    derivation key is unchanged). The printed statistics always describe the
-    full corpus mention dataset — the union of every source's active
-    extraction run — not only the sources this invocation extracted.
+    Explicit source selections run without confirmation. Corpus scans require
+    ``--yes`` and may use ``--limit``. Statistics cover all active extraction runs,
+    not only sources selected for this invocation.
     """
     setproctitle("graph-extract-dataset")
     extraction_config = ExtractionConfig()
@@ -282,8 +221,6 @@ def _cmd_extract_dataset(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Parse arguments and dispatch the contextualization CLI command."""
     load_process_dotenv_once()
-    # One structured-logging setup for every subcommand, before any runs — the
-    # same procedure the conversion CLI uses.
     configure_logging(ConversionConfig())
     parser = argparse.ArgumentParser(prog="aizk-graph")
     subparsers = parser.add_subparsers(dest="command", required=True)

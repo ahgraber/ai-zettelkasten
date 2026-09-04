@@ -1,19 +1,8 @@
-"""The content explorer: the graph operator's chunk browser and paired search.
+"""Serve the HTML content explorer for graph operators.
 
-These HTMX server-rendered routes are mounted on the graph operator app
-(``graph/api/main.py``) at ``/ui/explore`` behind its ``TrustedHostMiddleware``
-perimeter, and every route resolves the request
-:class:`~aizk.conversion.auth.principal.Principal` through the same
-:func:`~aizk.conversion.api.dependencies.get_principal` dependency the JSON API
-uses, so the explorer is no weaker a perimeter than the API beside it. The routes
-are ``include_in_schema=False`` where mounted, keeping HTML out of the OpenAPI.
-
-The document browser's left spine lists the active chunking run's chunks in reading
-order with their chunking facts; the detail panel shows the selected chunk's current
-contextualized representation (distinct from the raw chunk) with provenance and the
-on-demand reconstructed source markdown; the search view renders one paired
-raw │ contextualized row per matching chunk. Task monitoring lives in the
-descriptor-driven console (:mod:`aizk.console`), not here.
+The routes show active chunking and contextualized content, source provenance, and
+search results. They require the same principal as the JSON API and keep HTML
+routes out of OpenAPI.
 """
 
 from __future__ import annotations
@@ -51,9 +40,7 @@ router = APIRouter(prefix="/ui/explore", tags=["ui"])
 
 _TEMPLATES = Jinja2Templates(directory=str(importlib.resources.files("aizk.graph") / "templates"))
 
-# --------------------------------------------------------------------------- #
 # Explorer — document browser, detail panel, and paired search results.
-#
 # The document browser's left spine lists the active chunking run's chunks in
 # reading (``span_start``) order with their chunking facts; the right detail panel
 # shows the selected chunk's *current contextualized representation* (via
@@ -63,7 +50,6 @@ _TEMPLATES = Jinja2Templates(directory=str(importlib.resources.files("aizk.graph
 # paired raw │ contextualized row per matching chunk, marking the operator's term
 # on whichever side(s) matched; selecting a row opens the document browser at that
 # chunk with the detail panel populated.
-# --------------------------------------------------------------------------- #
 
 
 def _heading_path(chunk) -> list[str]:  # noqa: ANN001 - Chunk row
@@ -72,21 +58,15 @@ def _heading_path(chunk) -> list[str]:  # noqa: ANN001 - Chunk row
 
 
 def _source_title(session: Session, source_id: UUID) -> str:
-    """Return the enriched source title for a ``source_id``, falling back to the id.
-
-    A missing source row falls back to the ``source_id`` string, mirroring the
-    jobs page's title fallback.
-    """
+    """Return a source title, falling back to ``source_id``."""
     source = session.exec(select(Source).where(Source.source_id == source_id)).first()
     return (source.title if source is not None else None) or str(source_id)
 
 
 def _active_variant_run(session: Session, source_id: UUID) -> PipelineRun | None:
-    """Return the source's active contextualized-variant run, or ``None``.
+    """Return the active variant run, or ``None`` when the source has no committed one.
 
-    ``None`` means the source has no committed active variant run — a source still
-    mid-contextualization or never contextualized — so the explorer shows raw chunks
-    with no contextualized representation.
+    Without an active variant run, callers use raw chunks.
     """
     return session.exec(
         select(PipelineRun).where(
@@ -98,12 +78,7 @@ def _active_variant_run(session: Session, source_id: UUID) -> PipelineRun | None
 
 
 def _active_variants_by_chunk(session: Session, variant_run: PipelineRun | None) -> dict[UUID, ContextualizedChunk]:
-    """Map ``chunk_id`` → its committed variant in the active variant run.
-
-    Empty when there is no active variant run, so a source mid-contextualization
-    contributes no contextualized representation and no retained intermediate output
-    (the memo) is ever read here.
-    """
+    """Map chunk IDs to variants in ``variant_run``; return empty when absent."""
     if variant_run is None or variant_run.id is None:
         return {}
     variants = session.exec(select(ContextualizedChunk).where(ContextualizedChunk.run_id == variant_run.id)).all()
@@ -111,19 +86,10 @@ def _active_variants_by_chunk(session: Session, variant_run: PipelineRun | None)
 
 
 def highlight_terms(content: str, terms: list[str]) -> str:
-    """HTML-escape ``content`` and wrap each literal term occurrence in ``<mark>``.
+    """Escape ``content`` and wrap literal, case-insensitive term matches in ``<mark>``.
 
-    Content is escaped **first**, so arbitrary document text cannot inject markup;
-    only the explorer's own ``<mark>`` tags are then added. Each operator term is
-    matched literally (case-insensitive) against the escaped text. Returns markup
-    safe to render with autoescaping disabled (the template marks it ``|safe``).
-
-    Args:
-        content: Raw chunk or revision text to display.
-        terms: The operator's whitespace-split search terms to mark.
-
-    Returns:
-        HTML-escaped ``content`` with literal term matches wrapped in ``<mark>``.
+    Return HTML safe to render with autoescaping disabled. Terms are whitespace-
+    separated literal input.
     """
     escaped = html.escape(content)
     usable = [term for term in terms if term]
@@ -134,13 +100,9 @@ def highlight_terms(content: str, terms: list[str]) -> str:
 
 
 def _resolve_representation(raw_text: str, variant: ContextualizedChunk | None) -> tuple[str, bool, bool]:
-    """Return the chunk's current contextualized representation and its partition flags.
+    """Resolve the current representation and return ``(text, has_variant, self_contained)``.
 
-    Applies :func:`resolve_chunk_text` over the active variant (contextualization
-    enabled iff a variant exists). Returns ``(text, has_variant, self_contained)``:
-    ``has_variant`` is whether an active variant row exists; ``self_contained`` is
-    whether that variant's revision is empty (the run judged no rewrite needed, so
-    the raw chunk is the consumed representation).
+    An empty variant revision marks a self-contained chunk.
     """
     contextualized_text = variant.contextualized_text if variant is not None else None
     resolved = resolve_chunk_text(
@@ -156,12 +118,9 @@ def _resolve_representation(raw_text: str, variant: ContextualizedChunk | None) 
 def _spine_chunks(
     session: Session, source_id: UUID
 ) -> tuple[list[dict[str, Any]], PipelineRun | None, PipelineRun | None]:
-    """Build the spine entries for a source's active chunking run, in reading order.
+    """Return active chunks in reading order with display metadata.
 
-    Lists the active chunking run's chunks ordered by ``span_start`` (document
-    order), each with its heading path, span, char count, and self-contained marker
-    (true iff its active variant's revision is empty). Returns the spine entries and
-    the active chunking and variant runs (either may be ``None``).
+    Also returns the active chunking and variant runs. Either run can be ``None``.
     """
     chunking_run = active_chunking_run(session, source_id)
     variant_run = _active_variant_run(session, source_id)
@@ -192,18 +151,10 @@ def _load_detail(
     chunk_id: UUID,
     search_terms: list[str],
 ) -> dict[str, Any] | None:
-    """Build the detail-panel context for a chunk, or ``None`` if not in the active run.
+    """Build detail context for a chunk in the active run, or return ``None``.
 
-    Resolves the chunk's current contextualized representation via
-    :func:`resolve_chunk_text` over the active variant run's committed variant
-    (revision, or the raw chunk text marked self-contained when the revision is
-    empty), distinct from the raw chunk. Surfaces provenance — the producing variant
-    run with its ``context_version`` and resolved model identity
-    (``model_provider`` / ``model_model``), plus lineage to the document summary,
-    the chunking generation, and the source markdown — and
-    reconstructs the source markdown **on demand** through the injected blob reader;
-    a missing conversion output degrades the markdown section rather than failing the
-    page. ``search_terms`` are marked on the rendered raw / contextualized text.
+    Includes highlighted raw and contextualized text, provenance, and source
+    Markdown. Missing source Markdown is represented as unavailable.
     """
     chunking_run = active_chunking_run(session, source_id)
     if chunking_run is None or chunking_run.id is None:
@@ -263,13 +214,10 @@ def _load_detail(
 
 
 def _load_source_markdown(session: Session, blob_reader: "BlobReader", chunking_run_id: int) -> dict[str, Any]:
-    """Reconstruct the source markdown on demand, degrading gracefully on a missing output.
+    """Load source Markdown from the chunking run, or return an unavailable result.
 
-    The source markdown's locator is the chunking run's input
-    ``conversion_output_id`` (a string; ``S3MarkdownSource.load`` takes the int row
-    id). A missing run input or a missing conversion output (the reader raises
-    :class:`ValueError`) degrades the markdown section — recording the locator and an
-    ``available=False`` flag — rather than returning a 500.
+    Missing run input and reader ``ValueError``/``OSError`` produce
+    ``available=False`` instead of an exception.
     """
     from aizk.graph.markdown_source import S3MarkdownSource
 
@@ -300,13 +248,10 @@ def graph_ui_explorer(
     source_id: Annotated[UUID | None, Query()] = None,
     chunk_id: Annotated[UUID | None, Query()] = None,
 ):
-    """Render the document browser: the active chunking run's spine and a detail panel.
+    """Render the document browser for the active chunking run.
 
-    The left spine lists the active chunking run's chunks ordered by ``span_start``
-    (heading path, span, char count, self-contained marker); the right detail panel
-    shows the selected chunk's current contextualized representation when a
-    ``chunk_id`` is given. A full page on a normal load, or the inner partial on an
-    ``HX-Request`` so a selection swaps the browser without a reload.
+    Returns a full page or an HTMX panel response. A selected ``chunk_id`` adds its
+    detail context.
     """
     spine, chunking_run, variant_run = ([], None, None) if not source_id else _spine_chunks(session, source_id)
     title = _source_title(session, source_id) if source_id else ""
@@ -364,13 +309,9 @@ def _search_rows(
     query: str,
     kind: SearchKind,
 ) -> list[dict[str, Any]]:
-    """Run the search and build one paired raw │ contextualized row per matching chunk.
+    """Build one paired raw/contextualized row for each matching chunk.
 
-    For each :class:`~aizk.graph.search.SearchResult`, renders the raw chunk text and
-    the chunk's current contextualized representation (via :func:`resolve_chunk_text`
-    over the active variant), marking the operator's terms on whichever side(s)
-    matched (the per-side flags), so one chunk yields one row regardless of how many
-    sides it matched.
+    Marks terms only on sides reported as matched by the provider.
     """
     terms = query.split()
     rows: list[dict[str, Any]] = []
@@ -397,7 +338,6 @@ def _search_rows(
                 "self_contained": self_contained,
                 "matched_in_chunk": result.matched_in_chunk,
                 "matched_in_contextualized": result.matched_in_contextualized,
-                # Mark the term only on the side(s) the provider flagged as matched.
                 "raw_html": highlight_terms(chunk.text, terms) if result.matched_in_chunk else html.escape(chunk.text),
                 "representation_html": (
                     highlight_terms(representation, terms)
@@ -418,14 +358,10 @@ def graph_ui_explorer_search(
     query: Annotated[str, Form(max_length=200)] = "",
     kind: Annotated[str | None, Form()] = None,
 ):
-    """Render the paired search-results partial for an operator query.
+    """Render paired search results for a literal operator query.
 
-    Posts the operator's literal query (and optional ``chunk``/``contextualized``/
-    ``either`` type filter) and renders one paired raw │ contextualized row per
-    matching chunk, with the term marked on whichever side(s) matched. An empty or
-    whitespace-only query yields an empty result set. Selecting a row opens the
-    document browser at that chunk (an ``hx-get`` to the explorer route), with the
-    detail panel populated.
+    An empty query returns no rows. The optional ``kind`` filter selects the
+    matching content side.
     """
     search_kind = _parse_search_kind(kind)
     rows = _search_rows(session, provider, query=query, kind=search_kind)

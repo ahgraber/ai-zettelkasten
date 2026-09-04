@@ -1,29 +1,8 @@
-"""Persist entity mentions and their intra-chunk co-occurrence under extraction runs.
+"""Persist run-scoped entity mentions and intra-chunk co-occurrence links.
 
-This module owns the mention store's write path:
-
-- :class:`ResolvedExtractionConfig` — the extraction configuration currently in
-  force (extractor, materializer, and input-policy versions), the "config" half
-  of every extraction derivation key.
-- :func:`extraction_derivation_key` / :func:`derive_source_occurrence_key` — the
-  deterministic key derivations. ``extraction_derivation_key`` composes
-  :func:`aizk.pipeline.identity.derivation_key` from a payload fingerprint and
-  :meth:`ResolvedExtractionConfig.config_fingerprint`;
-  ``derive_source_occurrence_key`` mirrors
-  :func:`aizk.chunking.datamodel.derive_chunk_content_key`.
-- :class:`MentionDraft` — the in-memory contract extraction emits, mirroring how
-  :class:`aizk.chunking.Chunk` is the splitter's in-memory contract.
-- :func:`active_extraction_run` / :func:`open_extraction_run` — thin wrappers
-  over the shared ``pipeline_runs`` primitive (mirroring
-  :func:`aizk.graph.persistence.active_chunking_run` /
-  :func:`aizk.pipeline.run.reuse_or_record_run`), scoping an extraction run to a
-  source.
-- :func:`persist_mentions` — the append-only, idempotent write path that turns
-  drafts into :class:`~aizk.graph.datamodel.Mention` rows and their intra-chunk
-  :class:`~aizk.graph.datamodel.MentionCooccurrence` links, validating each
-  draft's provenance (run congruence, chunk resolution, source scoping,
-  contextualized-locator resolution, and span integrity) against authoritative
-  rows before any write.
+The module defines extraction-key inputs, mention drafts, provenance validation,
+run helpers, and the append-only persistence path. Drafts are validated before
+writes, and persistence is idempotent within the run.
 """
 
 from __future__ import annotations
@@ -76,13 +55,9 @@ _VALID_INPUT_POLICIES: frozenset[str] = frozenset({INPUT_POLICY_CONTEXTUALIZED, 
 
 @dataclass(frozen=True)
 class ResolvedExtractionConfig:
-    """The extraction configuration currently in force: everything besides the payload that fixes the key.
+    """Immutable extraction configuration used to derive a run key.
 
-    Bundles the extractor version, the post-NER materializer version, and the
-    raw-vs-contextualized ``input_policy`` toggle. Immutable, and valid only for
-    a legal ``input_policy``. Build one with
-    :func:`~aizk.graph.extraction.resolve_extraction_config`, which needs no
-    extractor instance and no loaded model.
+    The configuration contains extractor, materializer, and input-policy versions.
     """
 
     extractor_version: str
@@ -90,14 +65,10 @@ class ResolvedExtractionConfig:
     input_policy: InputPolicy
 
     def __post_init__(self) -> None:
-        """Reject an ``input_policy`` outside :data:`InputPolicy`'s two legal values.
-
-        Validated at construction so a typo'd policy cannot mint a novel,
-        unreachable derivation key at any call site.
+        """Validate the extraction input policy.
 
         Raises:
-            ValueError: If ``input_policy`` is not one of :data:`InputPolicy`'s
-                legal values.
+            ValueError: If ``input_policy`` is not ``raw`` or ``contextualized``.
         """
         if self.input_policy not in _VALID_INPUT_POLICIES:
             raise ValueError(
@@ -117,17 +88,10 @@ class ResolvedExtractionConfig:
 
 
 def extraction_derivation_key(*, input_fingerprint: str, config_fingerprint: str) -> str:
-    """Canonical derivation key for an extraction run.
+    """Return the derivation key for an extraction payload and configuration.
 
-    A function of exactly two semantic inputs: ``input_fingerprint``, a
-    :func:`~aizk.graph.fingerprints.payload_fingerprint` over the chunk texts
-    extraction read in document order, and ``config_fingerprint`` from
-    :meth:`ResolvedExtractionConfig.config_fingerprint`. No surrogate id and no
-    upstream run's key participates — an upstream change is observed through its
-    effect on the payload — so the key recomputes identically on any backend.
-
-    Changing either input yields a different key, so the source's next extraction
-    opens a superseding run; an unchanged key reuses the active run.
+    Changing either fingerprint changes the key. An unchanged key allows the
+    active run to be reused.
     """
     return derivation_key(inputs={"input": input_fingerprint, "config": config_fingerprint})
 
@@ -139,32 +103,11 @@ def derive_source_occurrence_key(
     source_span_end: int,
     source_anchor_text: str,
 ) -> str:
-    """Derive a source-anchored mention's cross-run-stable occurrence key.
+    """Return a deterministic cross-run key for a source occurrence.
 
-    A deterministic, cross-process-stable hash of the four inputs — the chunk the
-    occurrence sits in, its span, and the raw text at that span — computed the same
-    way :func:`aizk.chunking.datamodel.derive_chunk_content_key` derives a chunk's
-    portable content key: a compact canonical JSON array hashed with xxh64. Never
-    Python's builtin ``hash()``, which is randomized per-process and not a legal
-    persisted or cross-process value. ``chunk_id`` enters the hash input in its
-    canonical dashed string form (``str(chunk_id)``), so the key is stable
-    regardless of the identity's in-memory or storage representation.
-
-    This key is a non-primary, cross-run diagnostic: two extraction runs that
-    both detect the same source occurrence yield distinct :class:`Mention` rows
-    (each belonging to its own run) with equal ``source_occurrence_key``s, which
-    supports gold-set alignment and run-to-run diffing. A mention's identity
-    remains its surrogate ``mention_id``, never this key. The key takes no run
-    parameter, so it is run-independent by construction.
-
-    Args:
-        chunk_id: The raw chunk the occurrence sits in.
-        source_span_start: Start offset of the occurrence in the raw chunk text.
-        source_span_end: End offset of the occurrence in the raw chunk text.
-        source_anchor_text: The raw text at ``[source_span_start, source_span_end)``.
-
-    Returns:
-        Hex-encoded xxHash64 digest (16 characters).
+    The key hashes the chunk ID, source span, and anchor text with canonical JSON.
+    It is stable across processes, has a 16-character xxHash64 representation, and
+    does not identify the persisted mention row.
     """
     canonical = json.dumps(
         [str(chunk_id), source_span_start, source_span_end, source_anchor_text],
@@ -175,47 +118,26 @@ def derive_source_occurrence_key(
 
 
 class MentionDraft(BaseModel):
-    """An in-memory entity-mention detection, emitted by extraction and consumed by :func:`persist_mentions`.
+    """In-memory entity mention produced by extraction and consumed by persistence.
 
-    Mirrors how :class:`aizk.chunking.Chunk` is the splitter's in-memory contract:
-    extraction is a pure, I/O-free producer of drafts, and this module is the
-    distinct component that durably stores them and assigns each mention its
-    surrogate identity.
-
-    A draft's input locator identifies the exact text it was read from —
-    ``chunk_id`` alone for raw input, or ``chunk_id`` plus ``context_version`` and
-    ``contextualization_run_id`` for a contextualized variant — which
-    :func:`persist_mentions` serializes to the ``input_ref`` canonical-JSON column
-    (``{"chunk_id": ...}`` or ``{"chunk_id": ..., "context_version": ...,
-    "run_id": ...}``, matching :class:`~aizk.graph.datamodel.Mention`'s documented
-    shape).
-
-    ``source_anchor_text`` is the raw text at ``[source_span_start,
-    source_span_end)`` — carried here only to derive ``source_occurrence_key`` at
-    persistence time; it is not itself a stored column.
+    A draft records the raw chunk, detected surface, input locator, and input span.
+    ``input_kind="raw"`` requires a source anchor. Contextualized input requires
+    both ``context_version`` and ``contextualization_run_id``. A source anchor
+    requires both source-span offsets and ``source_anchor_text``; a revision anchor
+    has none of them.
 
     Attributes:
-        chunk_id: The raw :class:`~aizk.graph.datamodel.Chunk` this detection
-            belongs to.
-        anchor_kind: ``source`` (the surface form occurs in the raw chunk text) or
-            ``revision`` (resolved only by a contextualized revision).
-        surface_form: The detected entity surface text. Must be non-empty: an
-            empty surface is never a detection.
-        input_kind: ``raw`` or ``contextualized`` — which text the detection was
-            read from.
-        context_version: The contextualized variant's version, present iff
-            ``input_kind`` is ``contextualized``.
-        contextualization_run_id: The contextualization run the variant was read
-            from, present iff ``input_kind`` is ``contextualized``.
+        chunk_id: Raw chunk identity.
+        anchor_kind: ``source`` or ``revision``.
+        surface_form: Non-empty detected surface text.
+        input_kind: Text kind used for extraction.
+        context_version: Context version for contextualized input.
+        contextualization_run_id: Contextualization run for contextualized input.
         input_span_start: Start offset of the detection in the input text.
         input_span_end: End offset of the detection in the input text.
-        source_span_start: Start offset of the occurrence in the raw chunk text;
-            present iff ``anchor_kind`` is ``source``.
-        source_span_end: End offset of the occurrence in the raw chunk text;
-            present iff ``anchor_kind`` is ``source``.
-        source_anchor_text: The raw chunk text at
-            ``[source_span_start, source_span_end)``; present iff ``anchor_kind``
-            is ``source``.
+        source_span_start: Start offset in raw text for a source anchor.
+        source_span_end: End offset in raw text for a source anchor.
+        source_anchor_text: Raw text at the source span.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -234,11 +156,10 @@ class MentionDraft(BaseModel):
 
     @model_validator(mode="after")
     def _check_anchor_class_congruence(self) -> "MentionDraft":
-        """Enforce that source fields are present iff ``anchor_kind`` is ``source``.
+        """Require source provenance fields exactly for source anchors.
 
-        A source-anchored draft must carry its span pair and anchor text together;
-        a revision-anchored draft must carry none of them — partial provenance
-        (a span with no anchor text, or vice versa) is never a legal draft.
+        Raises:
+            ValueError: If the fields do not match ``anchor_kind``.
         """
         source_fields = (self.source_span_start, self.source_span_end, self.source_anchor_text)
         if self.anchor_kind == ANCHOR_KIND_SOURCE:
@@ -255,11 +176,10 @@ class MentionDraft(BaseModel):
 
     @model_validator(mode="after")
     def _check_context_locator_congruence(self) -> "MentionDraft":
-        """Enforce that ``context_version``/``contextualization_run_id`` are present iff contextualized.
+        """Require context locator fields exactly for contextualized input.
 
-        A raw-input draft's locator is ``chunk_id`` alone; a contextualized-input
-        draft's locator additionally pins the exact variant read, so both fields
-        must be present together.
+        Raises:
+            ValueError: If the context fields do not match ``input_kind``.
         """
         context_fields = (self.context_version, self.contextualization_run_id)
         if self.input_kind == INPUT_KIND_RAW:
@@ -270,12 +190,10 @@ class MentionDraft(BaseModel):
         return self
 
     def input_ref_json(self) -> str:
-        """Serialize this draft's input locator to the canonical ``input_ref`` JSON text.
+        """Serialize the input locator as canonical JSON.
 
-        Raw input serializes to ``{"chunk_id": ...}``; contextualized input to
-        ``{"chunk_id": ..., "context_version": ..., "run_id": ...}`` — matching
-        :class:`~aizk.graph.datamodel.Mention`'s documented ``input_ref`` shape.
-        ``chunk_id`` serializes to its canonical dashed string form.
+        Raw input stores ``chunk_id``. Contextualized input also stores
+        ``context_version`` and ``run_id``.
         """
         locator: dict[str, str | int] = {"chunk_id": str(self.chunk_id)}
         if self.input_kind != INPUT_KIND_RAW:
@@ -302,33 +220,20 @@ def open_extraction_run(
     resolved: "ResolvedExtractionConfig",
     input_fingerprint: str,
 ) -> PipelineRun:
-    """Open (or reuse) a source's extraction run under the shared run primitive.
+    """Open or reuse the source's active extraction run.
 
-    Scoped per source (``scope_id = source_id``), like the chunking and
-    contextualization runs upstream. An unchanged derivation key reuses the
-    source's active extraction run; a changed key opens a new active run that
-    supersedes the prior one. Supersession is a status transition only, so the
-    prior run's mentions remain present and unmodified.
-
-    The run's ``version_stamps`` are derived from the same arguments as its
-    derivation key, so a caller cannot record stamps that disagree with the key.
-
-    Does **not** commit; the caller owns the surrounding transaction.
+    An unchanged derivation key reuses the active run. A changed key creates a
+    superseding run while preserving prior mentions. The function records version
+    stamps from the same inputs as the key and does not commit.
 
     Args:
-        session: Active session; the caller owns commit/rollback.
-        source_id: The durable source identity; the run's scope.
-        resolved: The extraction configuration currently in force; its
-            :meth:`~ResolvedExtractionConfig.config_fingerprint` is the ``config``
-            half of the derivation key, and its fields are recorded as version
-            stamps.
-        input_fingerprint: The payload fingerprint over the chunk texts
-            extraction read; the ``input`` half of the derivation key, also
-            recorded as a version stamp.
+        session: Active session; the caller owns commit and rollback.
+        source_id: Source identity for the run.
+        resolved: Extraction configuration used for the key and stamps.
+        input_fingerprint: Fingerprint of the extracted payload.
 
     Returns:
-        The reused active :class:`~aizk.pipeline.run.PipelineRun`, or the
-        newly-activated one.
+        The active or newly-created pipeline run.
     """
     config_fingerprint = resolved.config_fingerprint()
     key = extraction_derivation_key(input_fingerprint=input_fingerprint, config_fingerprint=config_fingerprint)
@@ -407,12 +312,10 @@ def _contextualized_locator(draft: "MentionDraft") -> tuple[UUID, int, int]:
 
 
 def _consumed_text(draft: "MentionDraft", chunk: Chunk, variant: ContextualizedChunk | None) -> str:
-    """Return the text a draft's ``input_span`` indexes into.
+    """Return the text indexed by a draft's input span.
 
-    Raw drafts consume the chunk's raw text; contextualized drafts consume the
-    resolved variant's non-empty ``contextualized_text``. A present-empty variant
-    never reaches here: :func:`_validate_provenance` rejects a contextualized
-    draft whose variant is present-empty before span validation runs.
+    Raw drafts use chunk text. Contextualized drafts use the resolved non-empty
+    variant.
     """
     if draft.input_kind == INPUT_KIND_RAW:
         return chunk.text
@@ -421,28 +324,15 @@ def _consumed_text(draft: "MentionDraft", chunk: Chunk, variant: ContextualizedC
 
 
 def _validate_provenance(session: "Session", *, run: PipelineRun, mentions: "Sequence[MentionDraft]") -> None:
-    """Validate a batch of drafts' provenance against authoritative rows, before any write.
+    """Validate draft provenance before persistence.
 
-    Runs the full checklist for the whole batch and raises on the first failing
-    check, naming every offending draft/value; a later check never runs once an
-    earlier one has failed. Each distinct ``chunk_id``'s :class:`Chunk` row and
-    each distinct contextualized locator's :class:`ContextualizedChunk` row is
-    loaded at most once for the whole batch.
+    The checks cover run status, chunk ownership, input-kind congruence,
+    contextualized locator resolution, and source and input spans. The function
+    raises on the first failure and loads each distinct chunk and variant at most
+    once.
 
     Raises:
-        ValueError: If ``run`` is not an active mention-extraction run; if any
-            draft's ``chunk_id`` does not resolve to a persisted :class:`Chunk`;
-            if a resolved chunk's ``source_id`` does not equal ``run.scope_id``;
-            if any draft has ``input_kind = raw`` but is not source-anchored; if a
-            contextualized draft's locator does not resolve to a persisted
-            :class:`ContextualizedChunk`, or resolves to a present-empty variant
-            (``contextualized_text = ''`` — the already-self-contained case, where
-            extraction reads the raw chunk text and must record the mention with
-            raw ``input_kind`` and the chunk as its ``input_ref``); if a
-            source-anchored draft's ``source_span`` is out of bounds, inverted, or
-            does not slice the raw chunk text to both ``source_anchor_text`` and
-            ``surface_form``; or if any draft's ``input_span`` is out of bounds or
-            does not slice the consumed input text to ``surface_form``.
+        ValueError: If any provenance or span check fails.
     """
     if run.stage != MENTION_EXTRACTION_STAGE or run.status != RunStatus.ACTIVE:
         raise ValueError(
@@ -550,71 +440,25 @@ def persist_mentions(
     run: PipelineRun,
     mentions: "Sequence[MentionDraft]",
 ) -> list[Mention]:
-    """Persist a batch of mention drafts under ``run``, append-only and idempotent.
+    """Persist mention drafts under an extraction run.
 
-    Validates the entire batch against authoritative rows before any write (see
-    :func:`_validate_provenance` for the full checklist: run congruence, chunk
-    resolution, per-source scoping, the raw-input-implies-source-anchored rule,
-    contextualized-locator resolution, and source/input span integrity). Anchor-class
-    field congruence is already enforced by :class:`MentionDraft`'s own validators.
+    The function validates the full batch before writing, reuses existing mentions
+    by anchor-class identity, and inserts missing rows. It is append-only and
+    idempotent. Co-occurrence links cover all mentions in each touched chunk and
+    use conflict-safe insertion.
 
-    For a contextualized draft, the consumed input text is the resolved
-    :class:`~aizk.graph.datamodel.ContextualizedChunk`'s non-empty
-    ``contextualized_text``. A locator resolving to a present-empty variant
-    (``contextualized_text = ''``, the already-self-contained case) is rejected:
-    extraction reads the raw chunk text in that case, so a conformant extractor
-    records the mention with raw ``input_kind`` and the chunk as its ``input_ref``.
-
-    For each draft, resolves an existing row in ``run.id`` by its per-anchor-class
-    identity tuple (source: ``(run_id, chunk_id, source_span_start,
-    source_span_end, surface_form)``; revision: ``(run_id, chunk_id,
-    surface_form)``) and reuses it unchanged if present; otherwise inserts a new
-    row with a minted ``str(uuid4())`` ``mention_id``, the serialized
-    canonical-JSON ``input_ref``, and — for source-anchored rows —
-    ``source_occurrence_key`` derived via
-    :func:`derive_source_occurrence_key`. A persisted mention row is never updated
-    or deleted. Resolution is race-safe under the project's single serialized
-    writer (one writer transaction at a time), so no additional locking is
-    needed here. Within one call, a class tuple already resolved (reused from the
-    store or newly inserted) is tracked in an in-memory dict, so a later draft
-    sharing that tuple resolves to the same pending row without a redundant store
-    lookup or a flush per draft; the whole batch is flushed exactly once, before
-    co-occurrence linking.
-
-    Co-occurrence linking: after resolving/inserting every draft, for each
-    distinct ``(run, chunk)`` touched by this call, records one
-    :class:`~aizk.graph.datamodel.MentionCooccurrence` row per unordered pair
-    drawn from **all** of that chunk's mentions in the run — including mentions
-    persisted by an earlier call — so a retry or a second batch touching the same
-    chunk converges to the complete pair set rather than only the pairs newly
-    introduced. Endpoints belong to the same run and chunk by construction, since
-    the pairs are computed from the chunk's own run-scoped mention set; no
-    redundant runtime check is needed. Pairs are ordered canonically by comparing
-    the two ``mention_id`` ``uuid.UUID`` values (an order consistent with SQLite's
-    and Postgres's default ``TEXT`` collation over the stored dashless hex form)
-    and inserted as one multi-row ``ON CONFLICT DO NOTHING`` statement per chunk
-    (on the composite primary key), so a retried chunk cannot duplicate or
-    disorder a link and a chunk's pairs cost one round trip rather than one per
-    pair.
-
-    Does **not** commit; the caller owns the surrounding transaction (mirroring
-    :func:`aizk.graph.persistence.persist_chunks`).
+    The function flushes once before linking and does not commit.
 
     Args:
-        session: Active session; the caller owns commit/rollback.
-        run: The extraction run the drafts belong to (see
-            :func:`open_extraction_run`).
+        session: Active session; the caller owns commit and rollback.
+        run: Extraction run for the drafts.
         mentions: The mention drafts to persist.
 
     Returns:
-        The persisted :class:`~aizk.graph.datamodel.Mention` rows for the supplied
-        drafts, in draft order — a reused draft's row is returned as stored (the
-        authoritative state), not re-derived from the draft. Drafts within one
-        batch that share a class-identity tuple resolve to the same stored row,
-        so the returned list carries aliased entries for such duplicates.
+        Persisted mention rows in draft order.
 
     Raises:
-        ValueError: See :func:`_validate_provenance`.
+        ValueError: If provenance or span validation fails.
     """
     _validate_provenance(session, run=run, mentions=mentions)
 
@@ -673,21 +517,10 @@ def persist_mentions(
 
 
 def _link_chunk_cooccurrences(session: "Session", *, run_id: int, chunk_id: UUID) -> None:
-    """Record every unordered co-occurrence pair among a chunk's mentions in ``run_id``.
+    """Record all co-occurrence pairs for a run's chunk.
 
-    Reads **all** of the chunk's mentions in the run (not only those newly
-    inserted by the current call), so a retry or a second batch touching the same
-    chunk converges to the complete pair set. Pairs are ordered canonically by
-    comparing the two ``mention_id`` ``uuid.UUID`` values — an order consistent
-    with SQLite's and Postgres's default ``TEXT`` collation over the stored
-    dashless hex form — and inserted as one multi-row ``ON CONFLICT DO NOTHING``
-    statement on the composite primary key ``(run_id, mention_id_lo, mention_id_hi)`` (conflict
-    resolution applies per row, so this is idempotent exactly like the
-    single-pair form it replaces), matching the memo's insert-or-ignore
-    idempotency pattern (:func:`aizk.graph.persistence.memo_upsert_and_read`) at
-    one round trip per chunk instead of one per pair. Endpoints belong to the
-    same run and chunk by construction: the pairs are computed from the chunk's
-    own run-scoped mention set.
+    The function reads all mentions in the chunk and inserts canonical pairs with
+    conflict-safe semantics.
     """
     chunk_mention_ids = list(
         session.exec(select(Mention.mention_id).where(Mention.run_id == run_id, Mention.chunk_id == chunk_id)).all()

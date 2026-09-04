@@ -1,23 +1,7 @@
-"""Composition root for the extraction worker.
+"""Run the extraction worker with an eagerly constructed NER extractor.
 
-Assembles the injected NER extractor (spaCy or GLiNER2, selected by
-:class:`~aizk.graph.config.ExtractionConfig`), wires it into the
-:class:`~aizk.graph.extraction_handler.ExtractionStageHandler`, and drives it
-through the shared :class:`~aizk.pipeline.runner.StageRunner`. Resolves the
-engine from the shared database foundation the graph stage already reuses
-from conversion (the extraction stage's tables live in that same database).
-
-The pinned extractor is constructed eagerly, before the runner starts:
-:class:`~aizk.graph.extraction.SpacyExtractor` and
-:class:`~aizk.graph.extraction.Gliner2Extractor` both raise
-:class:`ImportError` naming the fix (the ``ner`` dependency group, or the
-one-time ``aizk-graph fetch-gliner2-weights`` pre-fetch) when their pinned
-dependency or model artifact is unavailable, so the worker refuses to start
-rather than claiming work it cannot complete.
-
-The process also hosts the stage's admission loop
-(:class:`~aizk.graph.admission.AdmissionLoop`), so admission needs no process of
-its own. It admits nothing unless automatic admission is switched on for the stage.
+Missing NER dependencies or local model weights fail before the runner starts.
+The worker also hosts admission when graph configuration enables it.
 """
 
 from __future__ import annotations
@@ -58,14 +42,10 @@ def run_extraction_worker(
     extraction_config: "ExtractionConfig",
     admission_config: "AdmissionConfig | None" = None,
 ) -> int:
-    """Build the extraction stage handler and drive it via the shared runner.
+    """Run the extraction stage until shutdown.
 
-    Reuses the conversion/graph database engine; constructs the configured
-    extractor; runs the supervised claim/execute/finalize loop until shutdown.
-    Returns the runner's exit code.
-
-    The stage's admission loop runs alongside, stopped and joined before the worker
-    returns.
+    The function builds the configured handler and extractor, then returns the
+    shared runner's exit code. Admission stops before the worker returns.
     """
     admission_config = admission_config if admission_config is not None else AdmissionConfig()
     engine = get_engine(DatabaseConfig().database_url)

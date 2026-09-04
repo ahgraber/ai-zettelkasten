@@ -1,24 +1,8 @@
-"""Corpus backfill runs for the graph stages.
+"""Run bounded contextualization and extraction backfills.
 
-A backfill resolves a target set from current state, enqueues it through the
-stage's existing enqueue primitives, and reports how much of that target set was
-newly enqueued versus reused. It only enqueues: the work-units it creates stay
-``QUEUED`` until a worker claims them.
-
-Both runs follow the target-selection convention
-:mod:`aizk.graph.dataset_extraction` established — an explicit, operator-named
-target set is deliberate intent and is never confirmation-gated, while an
-implicit corpus scan passes through
-:func:`aizk.pipeline.invalidation.require_reprocessing_confirmation`. Because
-every enqueue primitive dedupes on its ``idempotency_key``, re-running over an
-unchanged corpus enqueues nothing new.
-
-``dry_run`` performs the same work in a transaction that is rolled back instead
-of committed, so the reported counts are the real ones rather than an estimate
-computed by a second code path that could disagree with the first. A dry run
-persists nothing and therefore has no blast radius to approve, so it satisfies
-the confirmation gate on its own — previewing what a corpus sweep would do is
-how an operator decides whether to confirm it.
+Explicit targets are enqueued directly. Corpus scans require confirmation.
+Both operations respect stage capacity and return counts for targeted, enqueued,
+and reused work-units.
 """
 
 from __future__ import annotations
@@ -45,14 +29,12 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class BackfillResult:
-    """How a backfill run resolved and enqueued its target set.
+    """Counts for a backfill target set.
 
     Attributes:
-        targeted: Work the run put through the stage's enqueue. A corpus scan
-            truncated at capacity reports the admitted batch; what it left out is
-            logged and stays eligible for a later run.
-        enqueued: Targets that did not have a work-unit and now do.
-        reused: Targets whose work-unit already existed, in any status.
+        targeted: Number of targets passed to enqueue after capacity truncation.
+        enqueued: Number of new work-units.
+        reused: Number of existing work-units.
     """
 
     targeted: int
@@ -75,40 +57,28 @@ def run_contextualization_backfill(
     queue_max_depth: int,
     principal: str,
 ) -> BackfillResult:
-    """Enqueue contextualization work-units for conversion outputs.
+    """Enqueue contextualization work-units for selected conversion outputs.
 
-    An explicit ``output_ids`` enumeration is enqueued verbatim through the
-    ungated single-enqueue path. Otherwise the target set is each source's newest
-    conversion output (see
-    :func:`aizk.graph.enqueue.latest_output_ids_per_source`), optionally capped by
-    ``limit``, and the corpus-wide enqueue is confirmation-gated.
-
-    Both paths are bounded by the stage's declared capacity: a corpus scan
-    truncates to the batch's headroom, while a named enumeration refuses once the
-    backlog is full, so the run commits nothing rather than partially.
+    Explicit ``output_ids`` are enqueued without confirmation. A corpus scan uses
+    the newest output per source and requires ``confirmed`` unless ``dry_run`` is
+    true. Both paths enforce capacity and commit nothing on a capacity refusal.
 
     Args:
-        engine: The shared engine.
-        output_ids: Explicit target outputs, or ``None`` to scan the corpus.
-        limit: Caps a corpus scan's target set; ignored when ``output_ids`` is
-            supplied.
-        confirmed: Explicit approval for a corpus scan; ignored when
-            ``output_ids`` is supplied or when ``dry_run`` is set.
-        dry_run: Resolve and enqueue, then roll back instead of committing.
-        queue_max_depth: The stage's declared capacity over its actionable
-            backlog; ``0`` declares no limit, and every caller must say which it means.
-        principal: The operator identity recorded on each created unit's
-            creation event.
+        engine: Shared database engine.
+        output_ids: Explicit outputs, or ``None`` for a corpus scan.
+        limit: Maximum number of outputs in a corpus scan.
+        confirmed: Approves a corpus scan.
+        dry_run: Rolls back after resolving and enqueueing.
+        queue_max_depth: Maximum actionable backlog; ``0`` disables the limit.
+        principal: Identity recorded on creation events.
 
     Returns:
-        The run's :class:`BackfillResult`.
+        The resulting :class:`BackfillResult`.
 
     Raises:
-        ReprocessingConfirmationError: If ``output_ids`` is ``None`` and neither
-            ``confirmed`` nor ``dry_run`` is set.
-        StageAtCapacityError: If a named output cannot be enqueued because the
-            stage is at capacity.
-        ValueError: If a named output id has no conversion output.
+        ReprocessingConfirmationError: If a corpus scan is not confirmed.
+        StageAtCapacityError: If a named output cannot be enqueued.
+        ValueError: If a named output does not exist.
     """
     with Session(engine) as session:
         # Take the writer lock before reading the backlog. The capacity check counts
@@ -162,40 +132,28 @@ def run_extraction_backfill(
     queue_max_depth: int,
     principal: str,
 ) -> BackfillResult:
-    """Enqueue extraction work-units for sources with something to extract.
+    """Enqueue extraction work-units for selected sources.
 
-    An explicit ``source_ids`` enumeration is enqueued verbatim through the
-    ungated single-enqueue path. Otherwise every source with an active chunking
-    run is enqueued through the confirmation-gated corpus-wide path (see
-    :func:`aizk.graph.extraction_workunit.enqueue_extraction_backfill`), which
-    resolves its own target set.
-
-    Both paths are bounded by the stage's declared capacity: a corpus scan
-    truncates to the batch's headroom, while a named enumeration refuses once the
-    backlog is full, so the run commits nothing rather than partially.
+    Explicit ``source_ids`` are enqueued without confirmation. A corpus scan
+    requires ``confirmed`` unless ``dry_run`` is true and is bounded by capacity.
 
     Args:
-        engine: The shared engine.
-        source_ids: Explicit target sources, or ``None`` to scan the corpus.
-        confirmed: Explicit approval for a corpus scan; ignored when
-            ``source_ids`` is supplied or when ``dry_run`` is set.
-        dry_run: Resolve and enqueue, then roll back instead of committing.
-        queue_max_depth: The stage's declared capacity over its actionable
-            backlog; ``0`` declares no limit, and every caller must say which it means.
-        principal: The operator identity recorded on each created unit's
-            creation event.
+        engine: Shared database engine.
+        source_ids: Explicit sources, or ``None`` for a corpus scan.
+        confirmed: Approves a corpus scan.
+        dry_run: Rolls back after resolving and enqueueing.
+        queue_max_depth: Maximum actionable backlog; ``0`` disables the limit.
+        principal: Identity recorded on creation events.
 
     Returns:
-        The run's :class:`BackfillResult`.
+        The resulting :class:`BackfillResult`.
 
     Raises:
-        ReprocessingConfirmationError: If ``source_ids`` is ``None`` and neither
-            ``confirmed`` nor ``dry_run`` is set.
-        StageAtCapacityError: If a named source cannot be enqueued because the
-            stage is at capacity.
+        ReprocessingConfirmationError: If a corpus scan is not confirmed.
+        StageAtCapacityError: If a named source cannot be enqueued.
     """
     with Session(engine) as session:
-        # Writer lock first, for the reason given in the contextualization backfill.
+        # Hold the writer lock while counting and inserting so the capacity bound stays exact.
         session.exec(text("BEGIN IMMEDIATE"))
         before = _unit_count(session, ExtractionJob)
 

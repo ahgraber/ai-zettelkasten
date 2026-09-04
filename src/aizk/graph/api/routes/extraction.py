@@ -1,16 +1,7 @@
-"""Operator routes for extraction work-units: submit, list, detail, retry, cancel.
+"""Provide extraction work-unit routes.
 
-Mirrors ``aizk.graph.api.routes`` (the contextualization work-unit routes)
-exactly in structure and behavior, parameterized for
-:class:`~aizk.graph.datamodel.ExtractionJob`. Submission resolves on the source
-identity rather than a conversion output.
-
-Read endpoints query the work-unit table; the retry and cancel mutations run in a
-``BEGIN IMMEDIATE`` transaction and co-commit a transition event via
-:func:`aizk.pipeline.events.record_transition`, so a status change never
-exists without its audit event. Retry re-queues a terminal unit (so the worker
-re-claims it); cancel writes a terminal ``CANCELLED`` status (cooperative for a
-running unit — the worker resolves the outcome from its slot state).
+Submission, listing, retry, and cancellation use the extraction work-unit
+domain and co-commit lifecycle events with status changes.
 """
 
 from __future__ import annotations
@@ -75,9 +66,8 @@ def submit_job(
 ) -> ExtractionJobResponse | JSONResponse:
     """Submit one source for entity-mention extraction.
 
-    Answers 201 with the created work-unit, 200 with the existing one when the
-    source is already enqueued, 404 when no such source exists, and 503 when the
-    stage is at capacity.
+    Returns 201 for a new unit, 200 for an existing unit, 404 when the source is
+    missing, and 503 when the stage is at capacity.
     """
     session.exec(text("BEGIN IMMEDIATE"))
     # Resolved on the durable ``source_id`` identity, not the table's row surrogate.
@@ -144,10 +134,9 @@ def retry_job(
     session: Annotated["Session", Depends(get_db_session)],
     _principal: _Principal,
 ) -> ExtractionJobResponse:
-    """Re-queue a terminal work-unit so the worker re-claims it.
+    """Re-queue a terminal work-unit, clear retry state, and record the event.
 
-    Rejects (409) a unit that is not in a re-queueable terminal status. Clears the
-    error/retry-wait fields and records a ``requeued`` transition event.
+    Returns 409 when the status is not re-queueable.
     """
     session.exec(text("BEGIN IMMEDIATE"))
     job = _get_or_404(session, job_id)
@@ -166,11 +155,10 @@ def cancel_job(
     session: Annotated["Session", Depends(get_db_session)],
     _principal: _Principal,
 ) -> ExtractionJobResponse:
-    """Cancel a work-unit, writing a terminal ``CANCELLED`` status.
+    """Cancel a work-unit and record terminal ``CANCELLED`` status.
 
-    Rejects (409) a unit not in a cancellable status. For a running unit this is
-    cooperative — the worker resolves the outcome from its slot state — but the
-    operator-visible status flips immediately.
+    Returns 409 when the status is not cancellable. Running units stop
+    cooperatively.
     """
     session.exec(text("BEGIN IMMEDIATE"))
     job = _get_or_404(session, job_id)

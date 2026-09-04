@@ -23,12 +23,10 @@ if TYPE_CHECKING:
 
 @contextlib.contextmanager
 def begin_immediate(engine: "Engine") -> "Iterator[Session]":
-    """Open a ``BEGIN IMMEDIATE`` session; commit on success, roll back on error.
+    """Open a ``BEGIN IMMEDIATE`` session.
 
-    Acquires the single serialized writer's lock up front so a writer never
-    deadlocks on a lock upgrade. The transaction is held only for the duration of
-    the ``with`` block, so callers must keep that block free of slow work (e.g. a
-    model call) to avoid serializing every other writer.
+    Commits on success, rolls back on error, and holds the writer lock for the
+    ``with`` block. Callers must keep slow work outside the block.
     """
     session = Session(engine)
     try:

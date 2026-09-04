@@ -39,21 +39,18 @@ class PayloadItem(NamedTuple):
 
 
 def payload_fingerprint(items: "Sequence[PayloadItem]") -> str:
-    """Return the order-sensitive fingerprint of a stage's payload.
+    """Return an order-sensitive fingerprint of chunk keys, input kinds, and text fingerprints.
 
-    Equal fingerprints mean identical chunk keys, input kinds, and text
-    fingerprints in the same order; a reordering changes the result.
+    Reordering items changes the result.
     """
     return fingerprint([item._asdict() for item in items])
 
 
 def chunk_key(chunk: "SplitterChunk | GraphChunk") -> str:
-    """Return a chunk's portable content key, from either its in-memory or persisted shape.
+    """Return a portable content key for an in-memory or persisted chunk.
 
-    A function of ``(source_id, heading_path, ordinal, content_hash)`` only, so
-    the splitter's :class:`~aizk.chunking.Chunk` and the
-    :class:`~aizk.graph.datamodel.Chunk` row it was persisted as yield the same
-    key, and the same logical chunk keys the same on any backend.
+    The key depends on ``source_id``, ``heading_path``, ``ordinal``, and
+    ``content_hash``.
     """
     if isinstance(chunk, GraphChunk):
         return derive_chunk_content_key(

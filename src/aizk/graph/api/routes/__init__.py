@@ -1,17 +1,7 @@
-"""Operator routes for contextualization work-units: submit, list, detail, retry, cancel.
+"""Provide contextualization work-unit routes.
 
-Submission resolves the referenced conversion output and calls the stage's domain
-enqueue in the request transaction, so an intake-created unit is identical to one
-created by any other path. Capacity is enforced at that enqueue seam rather than
-in front of this one caller, so a full stage is refused with the same 503 and
-``Retry-After`` the conversion service uses.
-
-Read endpoints query the work-unit table; the retry and cancel mutations run in a
-``BEGIN IMMEDIATE`` transaction and co-commit a transition event via
-:func:`aizk.pipeline.events.record_transition`, so a status change never exists
-without its audit event. Retry re-queues a terminal unit (so the worker re-claims
-it); cancel writes a terminal ``CANCELLED`` status (cooperative for a running
-unit — the worker resolves the outcome from its slot state).
+Submission, listing, retry, and cancellation use the graph work-unit domain and
+co-commit lifecycle events with status changes.
 """
 
 from __future__ import annotations
@@ -82,12 +72,7 @@ INTAKE_RESPONSES: dict[int | str, dict[str, Any]] = {
 
 
 def queue_full_response(retry_after_seconds: int) -> JSONResponse:
-    """Return the fleet's capacity refusal: 503 carrying ``Retry-After``.
-
-    The body matches the conversion service's
-    :class:`~aizk.conversion.api.schemas.QueueFullResponse`, so a client backs off
-    the same way whichever service refused it.
-    """
+    """Return a 503 capacity response with ``Retry-After`` and the standard body."""
     return JSONResponse(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         content={"detail": "Queue is at capacity", "retry_after": retry_after_seconds},
@@ -114,9 +99,8 @@ def submit_job(
 ) -> ContextualizationJobResponse | JSONResponse:
     """Submit one converted document for contextualization.
 
-    Answers 201 with the created work-unit, 200 with the existing one when the
-    output is already enqueued, 404 when no such output exists, and 503 when the
-    stage is at capacity.
+    Returns 201 for a new unit, 200 for an existing unit, 404 when the output is
+    missing, and 503 when the stage is at capacity.
     """
     session.exec(text("BEGIN IMMEDIATE"))
     try:
@@ -181,10 +165,9 @@ def retry_job(
     session: Annotated["Session", Depends(get_db_session)],
     _principal: _Principal,
 ) -> ContextualizationJobResponse:
-    """Re-queue a terminal work-unit so the worker re-claims it.
+    """Re-queue a terminal work-unit, clear retry state, and record the event.
 
-    Rejects (409) a unit that is not in a re-queueable terminal status. Clears the
-    error/retry-wait fields and records a ``requeued`` transition event.
+    Returns 409 when the status is not re-queueable.
     """
     session.exec(text("BEGIN IMMEDIATE"))
     job = _get_or_404(session, job_id)
@@ -203,11 +186,10 @@ def cancel_job(
     session: Annotated["Session", Depends(get_db_session)],
     _principal: _Principal,
 ) -> ContextualizationJobResponse:
-    """Cancel a work-unit, writing a terminal ``CANCELLED`` status.
+    """Cancel a work-unit and record terminal ``CANCELLED`` status.
 
-    Rejects (409) a unit not in a cancellable status. For a running unit this is
-    cooperative — the worker resolves the outcome from its slot state — but the
-    operator-visible status flips immediately.
+    Returns 409 when the status is not cancellable. Running units stop
+    cooperatively.
     """
     session.exec(text("BEGIN IMMEDIATE"))
     job = _get_or_404(session, job_id)

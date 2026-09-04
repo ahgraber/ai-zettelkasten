@@ -1,42 +1,9 @@
-"""FTS5 content-index maintenance for graph chunk and contextualized text.
+"""Maintain the append-only FTS5 projection of graph content.
 
-The graph stage keeps a single SQLite FTS5 virtual table,
-``graph_content_fts``, indexing both the raw chunk text (``kind='chunk'``) and
-each contextualized variant (``kind='contextualized'``) so an operator can search
-content with a raw ``MATCH``. The index is **append-only derived state**: rows are
-inserted inside the existing write transactions as chunks and variants are
-committed, and every committed row is indexed regardless of active/superseded
-status — currency is decided at query time, not by the index. Indexing only from
-the committed persist path (never the contextualization output memo) structurally
-guarantees retained intermediate model outputs are never searchable.
-
-This module owns the table's DDL, the two append-only live-insert helpers the
-persist path calls inside its transaction, and the :func:`rebuild_content_index`
-routine that reconstructs the index from the source tables for replay or
-corruption recovery. The Alembic migration that creates the table carries its own
-inline copy of the DDL and backfill SQL — migrations must stay stable against app
-refactors, so they do not import this module, and each migration's copy targets
-the schema as of that revision; the ``test_rebuild_reproduces_content`` test
-guards that a rebuild and the live inserts agree on today's schema.
-
-The index's ``scope_id`` and ``chunk_id`` columns match what they exist to join:
-``pipeline_runs.scope_id`` and ``graph_chunks.chunk_id`` /
-``graph_chunk_run_manifest.chunk_id``. All four columns bind through the ORM
-``Uuid`` type, so each pair shares one storage form (dashless hex under SQLite):
-the live inserts bind a ``uuid.UUID`` through that type, and the rebuild copies
-``graph_chunks.source_id`` and ``graph_chunks.chunk_id`` verbatim rather than
-rendering them. A diverged value inserts without error and simply matches no run
-or no manifest entry, so both write paths reject one first: the rebuild checks the
-stored form of the columns it copies, and the live inserts check that the values
-handed to them are ``uuid.UUID`` instances.
-
-The FTS ``run_id`` column is load-bearing only for contextualized rows: a
-contextualized row's ``run_id`` is the variant run id, used at query time to keep
-only the active variant run's rows. A chunk row's ``run_id`` is not query
-load-bearing (chunk membership is decided by joining the active chunking-run
-manifest on ``chunk_id``); the live insert records the creating chunking run id,
-while the backfill/rebuild — where the creating run is not recoverable from the
-stored chunk row — leaves it ``NULL``.
+The index stores committed raw chunks and contextualized variants. Queries
+choose active-generation rows, while :func:`rebuild_content_index` reconstructs
+the projection from source tables. Live inserts run in the caller's transaction;
+rebuilds use the caller's connection and transaction.
 """
 
 from __future__ import annotations
@@ -84,13 +51,11 @@ _BACKFILL_CONTEXTUALIZED_SQL = (
     "FROM graph_contextualized_chunks cc JOIN graph_chunks c ON c.chunk_id = cc.chunk_id"
 )
 
-#: Insert one chunk row into the index. Bound parameters mirror the column order.
 _INSERT_CHUNK_SQL = (
     "INSERT INTO graph_content_fts (text, kind, chunk_id, run_id, scope_id) "
     "VALUES (:text, 'chunk', :chunk_id, :run_id, :scope_id)"
 )
 
-#: Insert one contextualized row into the index.
 _INSERT_CONTEXTUALIZED_SQL = (
     "INSERT INTO graph_content_fts (text, kind, chunk_id, run_id, scope_id) "
     "VALUES (:text, 'contextualized', :chunk_id, :run_id, :scope_id)"
@@ -98,40 +63,13 @@ _INSERT_CONTEXTUALIZED_SQL = (
 
 
 def _assert_scope_key_form(scope_id: object) -> None:
-    """Reject a scope identity the search join could never match.
-
-    The index's ``scope_id`` binds through the ORM ``Uuid`` type, matching
-    ``pipeline_runs.scope_id``. A value that is not a ``uuid.UUID`` instance would
-    bind incorrectly (or not at all) and the content would stay committed but
-    unfindable. Rejecting at the insert makes the mismatch an error naming the
-    value, rather than silence discovered later as missing search results.
-
-    Args:
-        scope_id: The scope identity about to be indexed.
-
-    Raises:
-        TypeError: If ``scope_id`` is not a ``uuid.UUID`` instance.
-    """
+    """Reject a non-UUID scope identity before indexing."""
     if not isinstance(scope_id, UUID):
         raise TypeError(f"scope_id {scope_id!r} is not a UUID; the content index would match no run")
 
 
 def _assert_chunk_identity(chunk_id: object) -> None:
-    """Reject a chunk identity the manifest join could never match.
-
-    The index's ``chunk_id`` binds through the ORM ``Uuid`` type, matching
-    ``graph_chunk_run_manifest.chunk_id``. A value that is not a ``uuid.UUID``
-    instance would bind incorrectly (or not at all) and the content would stay
-    committed but unjoinable to any manifest entry. Rejecting at the insert makes
-    the mismatch an error naming the value, rather than silence discovered later
-    as missing search results.
-
-    Args:
-        chunk_id: The chunk identity about to be indexed.
-
-    Raises:
-        TypeError: If ``chunk_id`` is not a ``uuid.UUID`` instance.
-    """
+    """Reject a non-UUID chunk identity before indexing."""
     if not isinstance(chunk_id, UUID):
         raise TypeError(f"chunk_id {chunk_id!r} is not a UUID; the content index would match no manifest entry")
 
@@ -144,22 +82,9 @@ def index_chunk_content(
     run_id: int | None,
     scope_id: UUID,
 ) -> None:
-    """Append one ``kind='chunk'`` row to the content index in the caller's transaction.
+    """Stage a raw chunk in the caller's content-index transaction.
 
-    Called once per chunk-row *creation* in the persist path (a reused ``chunk_id``
-    is not re-created, so it is not re-indexed). Does not commit; the caller owns
-    the transaction.
-
-    Args:
-        session: Active session whose connection carries the open write transaction.
-        text_: The raw chunk text to index.
-        chunk_id: The surrogate chunk identity.
-        run_id: The creating chunking run id (not query load-bearing for chunks).
-        scope_id: The chunking run's scope — the source identity the search join
-            matches against ``pipeline_runs.scope_id``.
-
-    Raises:
-        TypeError: If ``scope_id`` or ``chunk_id`` is not a ``uuid.UUID`` instance.
+    Does not commit. ``scope_id`` and ``chunk_id`` must be UUID instances.
     """
     _assert_scope_key_form(scope_id)
     _assert_chunk_identity(chunk_id)
@@ -177,23 +102,9 @@ def index_contextualized_content(
     run_id: int | None,
     scope_id: UUID,
 ) -> None:
-    """Append one ``kind='contextualized'`` row to the content index in the caller's transaction.
+    """Stage a contextualized row in the caller's content-index transaction.
 
-    Called once per committed variant. The caller passes the raw chunk text when
-    the variant's revision is empty (a self-contained chunk's contextualized
-    representation is its raw text). Does not commit; the caller owns the
-    transaction.
-
-    Args:
-        session: Active session whose connection carries the open write transaction.
-        text_: The text to index (the revision, or the raw chunk text when empty).
-        chunk_id: The source chunk identity.
-        run_id: The variant run id (query load-bearing — the active-variant filter).
-        scope_id: The variant run's scope — the source identity the search join
-            matches against ``pipeline_runs.scope_id``.
-
-    Raises:
-        TypeError: If ``scope_id`` or ``chunk_id`` is not a ``uuid.UUID`` instance.
+    Does not commit. ``scope_id`` and ``chunk_id`` must be UUID instances.
     """
     _assert_scope_key_form(scope_id)
     _assert_chunk_identity(chunk_id)
@@ -206,21 +117,10 @@ def index_contextualized_content(
 
 
 def _assert_uuid_storage_form(connection: Connection) -> None:
-    """Fail before the backfill copies a stored chunk identity that is not the ``sa.Uuid`` form.
-
-    :data:`_BACKFILL_CHUNKS_SQL` and :data:`_BACKFILL_CONTEXTUALIZED_SQL` copy
-    ``graph_chunks.source_id`` and ``graph_chunks.chunk_id`` verbatim into the
-    index's ``scope_id`` and ``chunk_id``, so a value of the wrong length or case
-    on either column would carry a corrupted identity into the index rather than
-    raising. Rejecting first turns that into an error naming the count, at the
-    point where the data is still inspectable.
-
-    Args:
-        connection: The connection the rebuild statements will run on.
+    """Validate stored chunk identities before rebuilding the content index.
 
     Raises:
-        ValueError: If any ``graph_chunks.source_id`` or ``graph_chunks.chunk_id``
-            is not 32 lowercase hex characters.
+        ValueError: If a source or chunk identity is not 32 lowercase hex characters.
     """
     offenders = connection.execute(
         text("SELECT count(*) FROM graph_chunks WHERE source_id NOT GLOB :storage_form"),
@@ -243,20 +143,10 @@ def _assert_uuid_storage_form(connection: Connection) -> None:
 
 
 def rebuild_content_index(connection: Connection) -> None:
-    """Reconstruct ``graph_content_fts`` from the source tables (replay / recovery).
+    """Rebuild the content index from committed chunk and variant rows.
 
-    Clears the index and re-backfills it from every committed ``graph_chunks`` and
-    ``graph_contextualized_chunks`` row — the same all-committed-rows backfill the
-    creating migration performs — so the index is a faithful, regenerable
-    projection of the content rather than only of content written after it existed.
-    Runs on the given connection; the caller owns the transaction.
-
-    Args:
-        connection: An open connection whose transaction the rebuild runs within.
-
-    Raises:
-        ValueError: If any stored chunk identity is not the ``sa.Uuid`` storage
-            form the backfill's verbatim copy requires.
+    Runs on ``connection`` without committing. Raises ``ValueError`` for invalid
+    stored UUID forms.
     """
     _assert_uuid_storage_form(connection)
     connection.execute(text("DELETE FROM graph_content_fts"))

@@ -1,13 +1,7 @@
-"""FastAPI application factory for the operator console.
+"""Build the graph operator FastAPI application.
 
-The app serves the graph JSON API and the descriptor-driven operator console
-(dashboard, task monitor, drill-down, actions) plus the content explorer.
-
-The lifespan stores the shared :class:`~aizk.conversion.utilities.config.ConversionConfig`
-on ``app.state`` (the graph stage reuses the conversion database); routes read it
-through :func:`~aizk.graph.api.dependencies.get_config`. Environment is taken from
-the process — the deployment exports it, or the ``aizk-graph`` CLI loads it — so
-the app does not read ``.env`` here and tests stay hermetic.
+The lifespan loads shared configuration and admission settings into
+``app.state`` for route dependencies.
 """
 
 from __future__ import annotations

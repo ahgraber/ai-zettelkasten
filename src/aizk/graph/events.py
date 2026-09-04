@@ -1,16 +1,7 @@
-"""Transition-event kinds and typed payloads for the contextualization stage.
+"""Define lifecycle event kinds and typed payloads for contextualization.
 
-The graph stage's work-unit lifecycle transitions are recorded on the shared
-``pipeline_events`` log via :func:`aizk.pipeline.events.record_transition`. That
-helper is stage-agnostic and validates only that the payload's ``kind`` matches
-the transition ``kind``; the per-kind field contract is owned here by one
-pydantic model per kind (``extra="forbid"`` so an unknown field is rejected on
-write).
-
-The stage name stamped on every event is :data:`CONTEXTUALIZATION_STAGE`; each
-event also carries the ``source_id`` source identity and, where a run exists, the
-``run_id`` of the work-unit's chunking run, so a source's progress is resolvable
-across stages by a single ``source_id`` query.
+Payloads are validated here before the shared pipeline event writer records them.
+Events carry the stage and source identities and, when available, the run identity.
 """
 
 from __future__ import annotations
@@ -60,10 +51,9 @@ class ClaimedPayload(BaseModel):
 
 
 class SucceededPayload(BaseModel):
-    """Payload for the ``RUNNING → SUCCEEDED`` terminal transition.
+    """Payload for a successful contextualization transition.
 
-    Records the variant count the run produced (one per persisted chunk) so the
-    audit row summarizes the unit's output without joining the run tables.
+    ``variant_count`` records the number of persisted variants.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -72,12 +62,7 @@ class SucceededPayload(BaseModel):
 
 
 class SkippedSupersededPayload(BaseModel):
-    """Payload for a unit that did nothing because a newer source output already won.
-
-    Recorded when the work-unit's conversion output is no longer the latest for
-    its source: the older unit reaches ``SUCCEEDED`` as a no-op (it correctly
-    wrote nothing) rather than superseding the newer generation's runs.
-    """
+    """Payload for a unit skipped because a newer source output superseded it."""
 
     model_config = ConfigDict(extra="forbid")
     kind: Literal["skipped_superseded"] = "skipped_superseded"
@@ -85,11 +70,7 @@ class SkippedSupersededPayload(BaseModel):
 
 
 class FailedPayload(BaseModel):
-    """Payload for a ``RUNNING → FAILED`` terminal transition.
-
-    ``retryable`` records whether the unit remains eligible for another attempt
-    (within the attempt cap) or has reached a permanent failure.
-    """
+    """Payload for a failed transition, including retry eligibility."""
 
     model_config = ConfigDict(extra="forbid")
     kind: Literal["failed"] = "failed"
