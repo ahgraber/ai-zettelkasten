@@ -29,7 +29,7 @@ class DoclingConverterConfig(BaseSettings):
     pdf_max_pages: int = 250
     ocr_enabled: bool = True
     table_structure_enabled: bool = True
-    picture_description_model: str = "openai/gpt-5.4-nano"
+    picture_description_model: str = "openai/gpt-5.6-luna"
     picture_timeout: float = 180.0
     picture_classification_enabled: bool = True
     picture_description_base_url: str = ""

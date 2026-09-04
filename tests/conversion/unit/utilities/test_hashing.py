@@ -6,6 +6,7 @@ import json
 from aizk.conversion.utilities.config import DoclingConverterConfig
 from aizk.conversion.utilities.hashing import (
     build_output_config_snapshot,
+    compute_config_hash,
     compute_idempotency_key,
     compute_markdown_hash,
 )
@@ -92,6 +93,17 @@ def test_idempotency_key_stable_under_picture_description_url_and_api_key_rotati
     key_a = compute_idempotency_key("source_hash", "docling", snapshot_a)
     key_b = compute_idempotency_key("source_hash", "docling", snapshot_b)
     assert key_a == key_b
+
+
+def test_compute_config_hash_differs_when_picture_description_model_differs():
+    """Spec: changing PICTURE_DESCRIPTION_MODEL alone changes the config fingerprint."""
+    config_a = DoclingConverterConfig(_env_file=None, picture_description_model="openai/gpt-5.6-luna")
+    config_b = DoclingConverterConfig(_env_file=None, picture_description_model="openai/gpt-5-nano")
+
+    snapshot_a = build_output_config_snapshot(config_a, picture_description_enabled=True)
+    snapshot_b = build_output_config_snapshot(config_b, picture_description_enabled=True)
+
+    assert compute_config_hash(snapshot_a) != compute_config_hash(snapshot_b)
 
 
 def test_idempotency_key_differs_when_picture_classification_toggled():

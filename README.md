@@ -90,6 +90,10 @@ Storage (S3 or compatible):
 - `AIZK_S3_SECRET_ACCESS_KEY`
 - `AIZK_S3_REGION` (default `us-east-1`)
 
+Docling picture description (optional):
+
+- `AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_MODEL` (default `openai/gpt-5.6-luna`) — model id used only when `..._PICTURE_DESCRIPTION_BASE_URL` and `..._PICTURE_DESCRIPTION_API_KEY` are both set.
+
 Litestream (SQLite replication):
 
 - `AIZK_LITESTREAM_ENABLED` (default `true`)
@@ -165,7 +169,7 @@ just extraction-worker         # uv run aizk-graph extraction-worker
 just extract-dataset --limit 10 --yes
 ```
 
-The contextualization worker needs the model endpoint triple — `AIZK_GRAPH__CONTEXTUALIZATION__LLM_BASE_URL`, `..._LLM_API_KEY`, and `..._LLM_MODEL` — and refuses to start without it.
+The contextualization worker needs the model endpoint triple — `AIZK_GRAPH__CONTEXTUALIZATION__LLM_BASE_URL`, `..._LLM_API_KEY`, and `..._LLM_MODEL` (for example `openai/gpt-5.6-luna`) — and refuses to start without it.
 `just fetch-gliner2-weights` needs `HF_TOKEN`.
 
 `aizk-graph serve` listens on its own port (default `0.0.0.0:8001`, set via `AIZK_GRAPH__CONTEXTUALIZATION__OPERATOR_API_PORT`) so it can run alongside the conversion API.
