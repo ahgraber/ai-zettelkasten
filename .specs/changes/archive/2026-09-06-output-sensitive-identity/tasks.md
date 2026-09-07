@@ -97,10 +97,16 @@ Production never runs the new binary against the old database; the pave is part 
 ## Follow-up — `aizk.graph` package review
 
 - [x] Run the `simplify` skill over `src/aizk/graph`: remove duplication, dead code, needless indirection, and comment noise the phases left behind; suite and hooks green.
-- [ ] Run the `refactor` skill over `src/aizk/graph`: plan any structural change the simplify pass surfaced (oversized functions, module boundaries), get approval, land it behavior-preserving; suite and hooks green.
-- [ ] Code-review `src/aizk/graph` with Codex through the agent-fleet skill (not yet installed; the owner supplies the link), as the skill's trial run; triage its findings.
+- [x] Plan the structural change the simplify pass surfaced.
+  The plan grew past this change's boundary — it moves modules across the whole `src/aizk` tree and reverses a baseline shared-table clause — so it becomes its own SDD change.
+  Planning artifacts: `._scratch/osi/refactor/` (`summary.md`, `moves.md`, `target-map.md`, `verification.md`).
+- [x] Code-review `src/aizk/graph` with Codex agents through the agent bridge.
+  Delivered as the five simplify audit lenses plus the two adversarial reviews of the refactor plan; findings triaged into the applied docstring/comment pass and the refactor change's deferred list.
 
-## Phase 4 — Release & pave (after the follow-up)
+## Phase 4 — Release & pave (owner-operated, at merge and deploy)
+
+The code is complete and verified; these three run on the deployment, not in the change.
+`0.2.0` bumps on `main` through the release tooling, and the rebuild happens as the `0.2.0` deployment.
 
 - [ ] Bump version to `0.2.0`; update the changelog via the release tooling.
 - [ ] Execute the runbook: stop services; archive old DB + WAL + config + binary version; verify the archive restores; create the fresh database; start `0.2.0`.
@@ -108,7 +114,8 @@ Production never runs the new binary against the old database; the pave is part 
 
 ## Closeout
 
-- [ ] Sync delta specs into baseline (`sdd-sync`); while syncing, correct the stale prose in `graph-work-intake` and `pipeline-work-admission` Technical Notes/Purpose (spend-bound overclaims → creation-gate framing).
-- [ ] Rebase the open `keyterm-extraction-foundation` change against the synced identity and key contracts.
-- [ ] Clean `._scratch/`: remove the 2026-08-28 review record, L4 analysis/plan, retype plan, and `review-20260827/` diff packets; update the memory entries that point at them.
-- [ ] Archive the change (`sdd-archive`).
+- [x] Sync delta specs into baseline (`sdd-sync`); while syncing, correct the stale prose in `graph-work-intake` and `pipeline-work-admission` Technical Notes/Purpose (spend-bound overclaims → creation-gate framing).
+- [x] Rebase the open `keyterm-extraction-foundation` change against the synced identity and key contracts.
+- [x] Clean `._scratch/`: remove the 2026-08-28 review record, L4 analysis/plan, retype plan, and `review-20260827/` diff packets; update the memory entries that point at them.
+- [x] Archive the change (`sdd-archive`).
+  Archived with the three release-and-rebuild items open; they run on the deployment, not in the change.

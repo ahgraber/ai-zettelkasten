@@ -9,7 +9,7 @@
       "post": {
         "tags": ["contextualizations"],
         "summary": "Submit Job",
-        "description": "Submit one converted document for contextualization.\n\nAnswers 201 with the created work-unit, 200 with the existing one when the\noutput is already enqueued, 404 when no such output exists, and 503 when the\nstage is at capacity.",
+        "description": "Submit one converted document for contextualization.\n\nReturns 201 for a new unit, 200 for an existing unit, 404 when the output is\nmissing, and 503 when the stage is at capacity.",
         "operationId": "submit_job_v1_contextualizations_post",
         "requestBody": {
           "required": true,
@@ -190,7 +190,7 @@
       "post": {
         "tags": ["contextualizations"],
         "summary": "Retry Job",
-        "description": "Re-queue a terminal work-unit so the worker re-claims it.\n\nRejects (409) a unit that is not in a re-queueable terminal status. Clears the\nerror/retry-wait fields and records a ``requeued`` transition event.",
+        "description": "Re-queue a terminal work-unit, clear retry state, and record the event.\n\nReturns 409 when the status is not re-queueable.",
         "operationId": "retry_job_v1_contextualizations__job_id__retry_post",
         "parameters": [
           {
@@ -231,7 +231,7 @@
       "post": {
         "tags": ["contextualizations"],
         "summary": "Cancel Job",
-        "description": "Cancel a work-unit, writing a terminal ``CANCELLED`` status.\n\nRejects (409) a unit not in a cancellable status. For a running unit this is\ncooperative \u2014 the worker resolves the outcome from its slot state \u2014 but the\noperator-visible status flips immediately.",
+        "description": "Cancel a work-unit and record terminal ``CANCELLED`` status.\n\nReturns 409 when the status is not cancellable. Running units stop\ncooperatively.",
         "operationId": "cancel_job_v1_contextualizations__job_id__cancel_post",
         "parameters": [
           {
@@ -272,7 +272,7 @@
       "post": {
         "tags": ["extractions"],
         "summary": "Submit Job",
-        "description": "Submit one source for entity-mention extraction.\n\nAnswers 201 with the created work-unit, 200 with the existing one when the\nsource is already enqueued, 404 when no such source exists, and 503 when the\nstage is at capacity.",
+        "description": "Submit one source for entity-mention extraction.\n\nReturns 201 for a new unit, 200 for an existing unit, 404 when the source is\nmissing, and 503 when the stage is at capacity.",
         "operationId": "submit_job_v1_extractions_post",
         "requestBody": {
           "required": true,
@@ -453,7 +453,7 @@
       "post": {
         "tags": ["extractions"],
         "summary": "Retry Job",
-        "description": "Re-queue a terminal work-unit so the worker re-claims it.\n\nRejects (409) a unit that is not in a re-queueable terminal status. Clears the\nerror/retry-wait fields and records a ``requeued`` transition event.",
+        "description": "Re-queue a terminal work-unit, clear retry state, and record the event.\n\nReturns 409 when the status is not re-queueable.",
         "operationId": "retry_job_v1_extractions__job_id__retry_post",
         "parameters": [
           {
@@ -494,7 +494,7 @@
       "post": {
         "tags": ["extractions"],
         "summary": "Cancel Job",
-        "description": "Cancel a work-unit, writing a terminal ``CANCELLED`` status.\n\nRejects (409) a unit not in a cancellable status. For a running unit this is\ncooperative \u2014 the worker resolves the outcome from its slot state \u2014 but the\noperator-visible status flips immediately.",
+        "description": "Cancel a work-unit and record terminal ``CANCELLED`` status.\n\nReturns 409 when the status is not cancellable. Running units stop\ncooperatively.",
         "operationId": "cancel_job_v1_extractions__job_id__cancel_post",
         "parameters": [
           {
