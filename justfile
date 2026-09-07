@@ -130,9 +130,12 @@ backfill TARGET="all" *ARGS:
 
 # ------------------------------------------------------------- quality ---
 
+# Test workers, defaulting to a third of the cores.
+workers := `n=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 3); echo $(( n / 3 > 1 ? n / 3 : 1 ))`
+
 # Run the test suite in parallel, excluding the subprocess lifecycle tests.
 test *ARGS:
-    uv run pytest -n auto -m "not integration_lifecycle" tests/ {{ ARGS }}
+    uv run pytest -n {{ workers }} -m "not integration_lifecycle" tests/ {{ ARGS }}
 
 # Run the subprocess lifecycle tests; these are incompatible with xdist.
 test-lifecycle *ARGS:
@@ -143,7 +146,7 @@ test-all: test test-lifecycle
 
 # Run the parallel suite with a coverage report.
 coverage:
-    uv run pytest -n auto -m "not integration_lifecycle" --cov=src --cov-report=term-missing tests/
+    uv run pytest -n {{ workers }} -m "not integration_lifecycle" --cov=src --cov-report=term-missing tests/
 
 # Lint and format with ruff.
 format:

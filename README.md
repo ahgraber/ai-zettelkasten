@@ -17,7 +17,8 @@ A Zettelkasten is a way of connecting atomic ideas into a linked (hypertextual),
 
 Each node must have:
 
-1. A unique address - Defined by a hash based on the content of the note. `xxHash` might be used for an exact hash, `minhash` for textual similarity (i.e., similar words, letters), and/or `semhash` for semantic similarity.
+1. A unique address - Defined by a hash based on the content of the note.
+   `xxHash` might be used for an exact hash, `minhash` for textual similarity (i.e., similar words, letters), and/or `semhash` for semantic similarity.
 2. Content - The individual (atomic) piece of knowledge.
 3. References - The source reference(s) for the content.
 
@@ -132,9 +133,8 @@ Docs: see `docs/Litestream.md` for full setup and sidecar guidance.
 
 ## Running `aizk`
 
-Each stage has its own console script. `db-init` runs the shared Alembic
-migrations (it creates both the conversion and graph tables — run it once); each
-`worker` also migrates on startup.
+Each stage has its own console script.
+`db-init` runs the shared Alembic migrations (it creates both the conversion and graph tables — run it once); each `worker` also migrates on startup.
 
 Each recipe below wraps its console script in `op run --env-file=.env.op --`.
 To skip 1Password, clear the prefix before the recipe name: `just op= serve`.
@@ -316,10 +316,11 @@ See the `sdd-*` family of [ahgraber/skills: Agent skills](https://github.com/ahg
 
 Tests are hermetic: they never read `.env`, so no recipe here runs under `op run`.
 
-Run the suite in parallel across CPU cores using [pytest-xdist](https://pytest-xdist.readthedocs.io/en/stable/):
+Run the suite in parallel using [pytest-xdist](https://pytest-xdist.readthedocs.io/en/stable/):
 
 ```sh
-just test    # uv run pytest -n auto -m "not integration_lifecycle" tests/
+just test                # uv run pytest -n <cores/3> -m "not integration_lifecycle" tests/
+just workers=2 test      # override the worker count for one run
 ```
 
 Subprocess lifecycle tests (`integration_lifecycle`) are incompatible with xdist and must be run separately:

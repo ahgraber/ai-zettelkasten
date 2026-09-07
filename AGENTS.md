@@ -209,9 +209,12 @@ Keep them general: name the role a component plays, not the current stage that h
 
 ## Testing
 
-- Run tests via `uv run pytest tests/`.
-- For parallel execution, use `pytest-xdist`: `uv run pytest -n auto -m "not integration_lifecycle" tests/`.
-- Tests marked `integration_lifecycle` (subprocess lifecycle with `pytest-isolate`) are incompatible with xdist; run them separately: `uv run pytest -m integration_lifecycle tests/`.
+- Run tests via `just test`, which runs `pytest-xdist` over a third of the cores and excludes the lifecycle tests.
+  The suite is bound by interpreter startup and module import, so `-n auto` spends every core on workers that stop making it faster and bog the machine down.
+  Set the worker count for one run with `just workers=2 test`.
+- Both recipes forward extra arguments: `just test tests/graph -k contextualization`.
+  Call `uv run pytest` directly only for an option the recipes do not forward.
+- Tests marked `integration_lifecycle` (subprocess lifecycle with `pytest-isolate`) are incompatible with xdist; run them separately via `just test-lifecycle`. `just test-all` runs both in order.
 - Do not use `pytest-run-parallel` — it is a thread-safety stress tester (runs the same test N times in N threads), not a test suite parallelizer.
 
 ### Resource leak detection with pyleak
