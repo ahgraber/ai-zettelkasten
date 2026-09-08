@@ -37,6 +37,8 @@ from pydantic import BaseModel
 from sqlalchemy import Column, DateTime, Index, Text, func
 from sqlmodel import Field, SQLModel
 
+from aizk.utilities.clock import utcnow
+
 if TYPE_CHECKING:
     from sqlmodel import Session
 
@@ -44,11 +46,6 @@ logger = logging.getLogger(__name__)
 
 #: The paths that create a work-unit; recorded on the creation event.
 CreationOrigin = Literal["intake", "admission", "backfill"]
-
-
-def _utcnow() -> datetime.datetime:
-    """Return a timezone-aware UTC timestamp."""
-    return datetime.datetime.now(datetime.timezone.utc)
 
 
 class _UnsetType:
@@ -120,7 +117,7 @@ class PipelineEvent(SQLModel, table=True):
     kind: str = Field(sa_column=Column(Text, nullable=False))
     attempt: int | None = Field(default=None, nullable=True)
     occurred_at: datetime.datetime = Field(
-        default_factory=_utcnow,
+        default_factory=utcnow,
         sa_column=Column(
             DateTime(),
             nullable=False,

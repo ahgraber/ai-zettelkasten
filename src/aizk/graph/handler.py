@@ -33,6 +33,7 @@ from aizk.graph.workunit import ProcessResult, SkippedSuperseded, process_docume
 from aizk.pipeline.events import record_transition
 from aizk.pipeline.handler import Isolation, StageResult
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
+from aizk.utilities.clock import utcnow
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine
@@ -52,11 +53,6 @@ DEFAULT_STALE_AFTER_MINUTES = 30.0
 DEFAULT_RETRY_BASE_DELAY_SECONDS = 2.0
 #: Default maximum attempts before a retryable failure becomes permanent.
 DEFAULT_RETRY_MAX_ATTEMPTS = 3
-
-
-def _utcnow() -> datetime.datetime:
-    """Return a timezone-aware UTC timestamp."""
-    return datetime.datetime.now(datetime.timezone.utc)
 
 
 def _error_code(exc: BaseException) -> str:
@@ -213,7 +209,7 @@ class ContextualizationStageHandler:
         truth), and records the ``claimed`` event. Returns the claimed id, or
         ``None`` when none is eligible. Does not commit.
         """
-        now = _utcnow()
+        now = utcnow()
         job = session.exec(
             select(ContextualizationJob)
             .where(
@@ -254,7 +250,7 @@ class ContextualizationStageHandler:
         ``recovered_stale`` event for each. Does not increment ``attempts`` (a
         stale reset is not an attempt) and does not commit. Returns the reset ids.
         """
-        now = _utcnow()
+        now = utcnow()
         stale_before = now - datetime.timedelta(minutes=self._stale_after_minutes)
         jobs = session.exec(
             select(ContextualizationJob)
@@ -374,7 +370,7 @@ class ContextualizationStageHandler:
         job = session.get(ContextualizationJob, handle)
         if job is None:
             return
-        now = _utcnow()
+        now = utcnow()
         status = outcome.status
 
         if status is WorkUnitStatus.SUCCEEDED:

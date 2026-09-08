@@ -23,7 +23,7 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.processing.errors import ConversionArtifactsMissingError, SubprocessMetadataInvalid
-from aizk.conversion.processing.types import SubprocessMetadata, _utcnow
+from aizk.conversion.processing.types import SubprocessMetadata
 from aizk.conversion.storage.manifest import (
     generate_manifest_v2,
     save_manifest,
@@ -38,6 +38,8 @@ from aizk.conversion.utilities.paths import (
 )
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
+from aizk.utilities.clock import utcnow
+from aizk.utilities.paths import open_nofollow
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +67,7 @@ def _upload_nofollow(path: Path, s3_key: str, s3_client: S3Client) -> str:
         S3UploadError: If the upload fails.
     """
     try:
-        fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+        fd = open_nofollow(path, os.O_RDONLY)
     except OSError as exc:
         if exc.errno == errno.ELOOP:
             raise WorkspaceEscape(f"Symlink detected at open time — possible TOCTOU: {path}") from exc
@@ -347,10 +349,10 @@ def _execute_upload(plan: _UploadPlan, job_id: int, config: ConversionConfig) ->
         # record loses the link to the artifact row.
         session.flush()
 
-        job.finished_at = _utcnow()
+        job.finished_at = utcnow()
         job.error_code = None
         job.error_message = None
-        job.updated_at = _utcnow()
+        job.updated_at = utcnow()
         record_transition(
             session,
             job,

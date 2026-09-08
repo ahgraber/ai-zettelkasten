@@ -19,7 +19,6 @@ console never couples to another app's internals.
 
 from __future__ import annotations
 
-import datetime as dt
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import String, cast, func, or_
@@ -43,6 +42,7 @@ from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.job_actions import apply_job_cancel, apply_job_delete, apply_job_retry
 from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.utilities.clock import utcnow
 
 if TYPE_CHECKING:
     from sqlmodel import Session
@@ -71,11 +71,6 @@ _SORTABLE_COLUMNS: dict[str, Any] = {
     "queued_at": ConversionJob.queued_at,
     "created_at": ConversionJob.created_at,
 }
-
-
-def _utcnow() -> dt.datetime:
-    """Return a timezone-aware UTC timestamp for a job-action mutation."""
-    return dt.datetime.now(dt.timezone.utc)
 
 
 def _parse_status(value: str | None) -> ConversionJobStatus | None:
@@ -247,14 +242,14 @@ DESCRIPTOR = StageDescriptor(
             key="retry",
             applied_label="retried",
             apply=lambda session, job, principal: apply_job_retry(
-                session, job, _utcnow(), submitted_by=principal.subject
+                session, job, utcnow(), submitted_by=principal.subject
             ),
         ),
         StageAction(
             key="cancel",
             applied_label="cancelled",
             apply=lambda session, job, principal: apply_job_cancel(
-                session, job, _utcnow(), cancelled_by=principal.subject
+                session, job, utcnow(), cancelled_by=principal.subject
             ),
         ),
         StageAction(

@@ -12,7 +12,8 @@ from aizk.conversion.datamodel.events import record_source_event
 from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.source import Source as SourceRecord
 from aizk.conversion.processing.errors import JobDataIntegrityError
-from aizk.conversion.processing.types import SubprocessMetadata, _utcnow
+from aizk.conversion.processing.types import SubprocessMetadata
+from aizk.utilities.clock import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,7 @@ def _write_source_enrichment(
                 source.source_type = source_type
                 if subprocess_meta.content_type:
                     source.content_type = subprocess_meta.content_type
-                source.updated_at = _utcnow()
+                source.updated_at = utcnow()
                 session.add(source)
                 session.commit()
                 update_succeeded = True

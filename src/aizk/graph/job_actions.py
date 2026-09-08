@@ -7,7 +7,6 @@ helpers do not commit.
 
 from __future__ import annotations
 
-import datetime as dt
 from typing import TYPE_CHECKING, Any
 
 from aizk.graph.events import (
@@ -25,6 +24,7 @@ from aizk.graph.extraction_events import (
 from aizk.graph.extraction_run import Currentness, classify_extraction_source
 from aizk.pipeline.events import record_transition
 from aizk.pipeline.lifecycle import WorkUnitStatus, is_terminal
+from aizk.utilities.clock import utcnow
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -37,11 +37,6 @@ if TYPE_CHECKING:
 RETRYABLE_FROM = frozenset({WorkUnitStatus.FAILED, WorkUnitStatus.CANCELLED, WorkUnitStatus.TIMED_OUT})
 #: Statuses an operator may cancel a work-unit from.
 CANCELLABLE_FROM = frozenset({WorkUnitStatus.QUEUED, WorkUnitStatus.RUNNING, WorkUnitStatus.FAILED})
-
-
-def _utcnow() -> dt.datetime:
-    """Return a timezone-aware UTC timestamp."""
-    return dt.datetime.now(dt.timezone.utc)
 
 
 def _build_transitions(
@@ -65,7 +60,7 @@ def _build_transitions(
         """
         if job.status not in RETRYABLE_FROM:
             raise ValueError(f"cannot retry a work-unit in status {job.status.value!r}")
-        now = _utcnow()
+        now = utcnow()
         job.attempts = 0
         job.error_code = None
         job.error_message = None
@@ -92,7 +87,7 @@ def _build_transitions(
         """
         if job.status not in CANCELLABLE_FROM:
             raise ValueError(f"cannot cancel a work-unit in status {job.status.value!r}")
-        now = _utcnow()
+        now = utcnow()
         job.finished_at = now
         job.updated_at = now
         record_transition(
@@ -139,7 +134,7 @@ def apply_extraction_readmission(session: "Session", job: Any, *, resolved: "Res
     if classification not in (Currentness.STALE, Currentness.NEEDS_RECONCILIATION):
         refused = classification.value if classification is not None else "not classified"
         raise ValueError(f"cannot re-extract a source that is {refused}")
-    now = _utcnow()
+    now = utcnow()
     job.attempts = 0
     job.error_code = None
     job.error_message = None

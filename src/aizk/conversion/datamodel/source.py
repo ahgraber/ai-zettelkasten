@@ -8,6 +8,8 @@ from pydantic import model_validator
 from sqlalchemy import Column, Text
 from sqlmodel import Field, Relationship, SQLModel
 
+from aizk.utilities.clock import utcnow
+
 
 class Source(SQLModel, table=True):
     """Source identity row — canonical durable identity for anything the system can convert."""
@@ -31,11 +33,11 @@ class Source(SQLModel, table=True):
     content_type: str | None = Field(default=None, max_length=10, nullable=True)
     source_type: str | None = Field(default=None, max_length=20, nullable=True)
     created_at: datetime.datetime = Field(
-        default_factory=lambda: datetime.datetime.now(datetime.timezone.utc),
+        default_factory=utcnow,
         nullable=False,
     )
     updated_at: datetime.datetime = Field(
-        default_factory=lambda: datetime.datetime.now(datetime.timezone.utc),
+        default_factory=utcnow,
         nullable=False,
     )
 

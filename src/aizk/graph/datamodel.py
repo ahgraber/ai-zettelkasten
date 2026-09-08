@@ -95,6 +95,7 @@ from sqlalchemy import (
 from sqlmodel import Field, SQLModel
 
 from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.utilities.clock import utcnow
 
 #: The two kinds of contextualization model output the memo retains. The summary
 #: output (``summary``) and each per-chunk revision (``revision``) are the only
@@ -120,11 +121,6 @@ ANCHOR_KIND_REVISION: AnchorKind = "revision"
 InputKind = Literal["raw", "contextualized"]
 INPUT_KIND_RAW: InputKind = "raw"
 INPUT_KIND_CONTEXTUALIZED: InputKind = "contextualized"
-
-
-def _utcnow() -> datetime.datetime:
-    """Return a timezone-aware UTC timestamp."""
-    return datetime.datetime.now(datetime.timezone.utc)
 
 
 class Chunk(SQLModel, table=True):
@@ -241,7 +237,7 @@ class DocumentSummary(SQLModel, table=True):
     #: downstream currentness check reads this column instead of recomputing it.
     summary_text_fingerprint: str = Field(nullable=False)
     created_at: datetime.datetime = Field(
-        default_factory=_utcnow,
+        default_factory=utcnow,
         sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
     )
 
@@ -288,7 +284,7 @@ class ContextualizedChunk(SQLModel, table=True):
     contextualized_text: str = Field(sa_column=Column(Text, nullable=False))
     derivation_key: str = Field(sa_column=Column(Text, nullable=False))
     created_at: datetime.datetime = Field(
-        default_factory=_utcnow,
+        default_factory=utcnow,
         sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
     )
 
@@ -369,7 +365,7 @@ class ContextualizationOutputMemo(SQLModel, table=True):
     derivation_key: str = Field(sa_column=Column(Text, nullable=False))
     output_text: str = Field(sa_column=Column(Text, nullable=False))
     created_at: datetime.datetime = Field(
-        default_factory=_utcnow,
+        default_factory=utcnow,
         sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
     )
 
@@ -417,11 +413,11 @@ class ContextualizationJob(SQLModel, table=True):
     started_at: datetime.datetime | None = Field(default=None, nullable=True)
     finished_at: datetime.datetime | None = Field(default=None, nullable=True)
     created_at: datetime.datetime = Field(
-        default_factory=_utcnow,
+        default_factory=utcnow,
         sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
     )
     updated_at: datetime.datetime = Field(
-        default_factory=_utcnow,
+        default_factory=utcnow,
         sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
     )
 
@@ -470,11 +466,11 @@ class ExtractionJob(SQLModel, table=True):
     started_at: datetime.datetime | None = Field(default=None, nullable=True)
     finished_at: datetime.datetime | None = Field(default=None, nullable=True)
     created_at: datetime.datetime = Field(
-        default_factory=_utcnow,
+        default_factory=utcnow,
         sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
     )
     updated_at: datetime.datetime = Field(
-        default_factory=_utcnow,
+        default_factory=utcnow,
         sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
     )
 
@@ -590,7 +586,7 @@ class Mention(SQLModel, table=True):
     source_span_end: int | None = Field(default=None, nullable=True)
     source_occurrence_key: str | None = Field(default=None, nullable=True)
     created_at: datetime.datetime = Field(
-        default_factory=_utcnow,
+        default_factory=utcnow,
         sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
     )
 

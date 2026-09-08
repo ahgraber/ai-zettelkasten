@@ -24,13 +24,10 @@ from uuid import UUID
 from sqlalchemy import Column, DateTime, Enum as SAEnum, Index, Text, func, text
 from sqlmodel import Field, SQLModel, select
 
+from aizk.utilities.clock import utcnow
+
 if TYPE_CHECKING:
     from sqlmodel import Session
-
-
-def _utcnow() -> datetime.datetime:
-    """Return a timezone-aware UTC timestamp."""
-    return datetime.datetime.now(datetime.timezone.utc)
 
 
 class RunStatus(str, Enum):
@@ -83,7 +80,7 @@ class PipelineRun(SQLModel, table=True):
     version_stamps_json: str = Field(default="{}", sa_column=Column(Text, nullable=False))
     supersedes_run_id: int | None = Field(default=None, nullable=True)
     created_at: datetime.datetime = Field(
-        default_factory=_utcnow,
+        default_factory=utcnow,
         sa_column=Column(
             DateTime(),
             nullable=False,

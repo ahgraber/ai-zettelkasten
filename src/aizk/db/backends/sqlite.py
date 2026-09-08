@@ -24,6 +24,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
 from aizk.db.config import DatabaseBackend, DatabaseConfig
+from aizk.utilities.process import terminate_process_group
 
 logger = logging.getLogger(__name__)
 
@@ -156,22 +157,32 @@ class LitestreamManager:
         atexit.register(self.stop)
 
     def stop(self) -> None:
-        """Terminate the Litestream replication process."""
-        if self._process is None:
+        """Terminate the Litestream replication process.
+
+        Signals the whole process group and waits for it to go, escalating to
+        ``SIGKILL`` if it does not, then waiting again so a caller that returns
+        from ``stop`` knows replication is no longer writing.
+        """
+        process = self._process
+        if process is None:
             return
-        if self._process.poll() is not None:
+        if process.poll() is not None:
             return
-        try:
-            os.killpg(self._process.pid, signal.SIGTERM)
-            self._process.wait(timeout=5)
-        except ProcessLookupError:
-            logger.info("Litestream process already exited.")
-        except subprocess.TimeoutExpired:
+
+        def _terminate() -> None:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                logger.info("Litestream process already exited.")
+
+        def _kill() -> None:
             logger.warning("Litestream did not exit; sending SIGKILL.")
             try:
-                os.killpg(self._process.pid, signal.SIGKILL)
+                os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 logger.info("Litestream process already exited after SIGKILL.")
+
+        terminate_process_group(_terminate, _kill, lambda: process.poll() is None)
 
     def _restore(self, binary: str, config_path: Path) -> None:
         env = _litestream_env(self._config)

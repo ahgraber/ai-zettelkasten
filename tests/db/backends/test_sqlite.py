@@ -4,14 +4,22 @@ Covers the `sqlite-replication` spec contracts: config-file emission and the
 Litestream manager's eligibility and lifecycle, scoped to the SQLite backend.
 """
 
+import functools
+import logging
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+import signal
+from unittest.mock import MagicMock, call, patch
 import yaml
 
 from pyleak import no_thread_leaks
 import pytest
 
 from aizk.db.backends.sqlite import LitestreamManager, SqliteDurabilityConfig, _write_config_file
+from aizk.utilities.process import terminate_process_group
+
+#: Grace period the escalation test runs the shipped termination sequence under, so
+#: reaching the SIGKILL branch costs milliseconds rather than the shipped default.
+_FAST_GRACE_SECONDS = 0.05
 
 
 def test_write_config_file_emits_expected_yaml(tmp_path: Path) -> None:
@@ -160,11 +168,26 @@ def _litestream_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sqlit
 
 
 def test_start_stop_lifecycle_no_thread_leaks(_litestream_config, monkeypatch) -> None:
-    """start() followed by stop() leaves no leaked threads or zombie process handles."""
+    """start() followed by stop() leaves no leaked threads or zombie process handles.
+
+    ``stop()`` decides on the process's liveness: it polls after ``SIGTERM``,
+    escalates to ``SIGKILL`` only while the process is still there, and waits
+    again after the kill, so a caller that returns from ``stop()`` knows
+    replication is no longer writing. This mock models a process that exits on
+    ``SIGTERM``, so exactly one signal is sent and the escalation is not entered.
+    """
+    exited = False
+
+    def _poll() -> int | None:
+        return 0 if exited else None
+
+    def _killpg(_pid: int, _sig: int) -> None:
+        nonlocal exited
+        exited = True
+
     mock_process = MagicMock()
-    mock_process.poll.return_value = None  # Process is "running"
+    mock_process.poll.side_effect = _poll
     mock_process.pid = 12345
-    mock_process.wait.return_value = 0
 
     with (
         patch(
@@ -175,7 +198,7 @@ def test_start_stop_lifecycle_no_thread_leaks(_litestream_config, monkeypatch) -
             "aizk.db.backends.sqlite.subprocess.Popen",
             return_value=mock_process,
         ),
-        patch("aizk.db.backends.sqlite.os.killpg") as mock_killpg,
+        patch("aizk.db.backends.sqlite.os.killpg", side_effect=_killpg) as mock_killpg,
         patch("atexit.register"),
     ):
         manager = LitestreamManager(_litestream_config, role="worker")
@@ -186,8 +209,62 @@ def test_start_stop_lifecycle_no_thread_leaks(_litestream_config, monkeypatch) -
 
             manager.stop()
 
-        mock_killpg.assert_called_once()
-        mock_process.wait.assert_called_once()
+        mock_killpg.assert_called_once_with(12345, signal.SIGTERM)
+
+
+def test_stop_escalates_to_sigkill_when_sigterm_is_ignored(_litestream_config, caplog) -> None:
+    """A process that ignores ``SIGTERM`` is killed, and ``stop()`` waits for it to go.
+
+    Both signals go to the same process group, the escalation is announced, and the
+    post-kill poll keeps ``stop()`` from returning while replication may still be
+    writing. The grace period is shortened so the escalation is reached in
+    milliseconds; the sequence under test is the shipped one.
+    """
+    killed = False
+    polls_after_kill = 0
+
+    def _poll() -> int | None:
+        nonlocal polls_after_kill
+        if not killed:
+            return None
+        polls_after_kill += 1
+        return 0
+
+    def _killpg(_pid: int, sig: int) -> None:
+        nonlocal killed
+        if sig == signal.SIGKILL:
+            killed = True
+
+    mock_process = MagicMock()
+    mock_process.poll.side_effect = _poll
+    mock_process.pid = 12345
+
+    with (
+        patch(
+            "aizk.db.backends.sqlite._resolve_litestream_binary",
+            return_value="/usr/bin/litestream",
+        ),
+        patch(
+            "aizk.db.backends.sqlite.subprocess.Popen",
+            return_value=mock_process,
+        ),
+        patch(
+            "aizk.db.backends.sqlite.terminate_process_group",
+            functools.partial(terminate_process_group, grace_seconds=_FAST_GRACE_SECONDS),
+        ),
+        patch("aizk.db.backends.sqlite.os.killpg", side_effect=_killpg) as mock_killpg,
+        patch("atexit.register"),
+    ):
+        manager = LitestreamManager(_litestream_config, role="worker")
+
+        with no_thread_leaks(action="raise"), caplog.at_level(logging.WARNING, logger="aizk.db.backends.sqlite"):
+            manager.start()
+
+            manager.stop()
+
+        assert mock_killpg.call_args_list == [call(12345, signal.SIGTERM), call(12345, signal.SIGKILL)]
+        assert polls_after_kill >= 1, "stop() returned without waiting for the killed process"
+        assert "Litestream did not exit; sending SIGKILL." in caplog.text
 
 
 def test_stop_without_start_is_noop(_litestream_config) -> None:

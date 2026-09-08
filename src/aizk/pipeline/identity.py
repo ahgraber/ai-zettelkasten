@@ -60,11 +60,19 @@ version-heterogeneous corpus is valid and queryable.
 from __future__ import annotations
 
 import hashlib
-import json
 from typing import TYPE_CHECKING
+
+from aizk.utilities.hashing import canonical_json, content_fingerprint, fingerprint
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+
+__all__ = [
+    "DERIVATION_KEY_FORMAT",
+    "content_fingerprint",
+    "derivation_key",
+    "fingerprint",
+]
 
 #: The composition every shipped output-sensitive derivation key follows:
 #: ``derivation_key(inputs={"input": input_fingerprint, "config": config_fingerprint})``.
@@ -72,41 +80,6 @@ if TYPE_CHECKING:
 #: operator or a future migration can see which key-composition rule produced a
 #: given ``derivation_key`` without decoding it.
 DERIVATION_KEY_FORMAT = "sha256-output-v1"
-
-
-def fingerprint(value: object) -> str:
-    """Return the full-width SHA-256 hex digest of ``value``'s canonical JSON.
-
-    Serializes ``value`` with sorted keys, compact separators, and no ASCII
-    escaping, so a nested mapping's key order never affects the digest — the same
-    canonicalization :func:`derivation_key` applies to its own envelope. Production
-    code compares two ``fingerprint`` values for equality and never decodes one.
-
-    Args:
-        value: A JSON-serializable value (typically a mapping of a stage's
-            declared inputs).
-
-    Returns:
-        The 64-character lowercase hex SHA-256 digest.
-    """
-    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
-def content_fingerprint(text: str) -> str:
-    """Return the full-width SHA-256 hex digest of ``text``'s UTF-8 bytes.
-
-    Always the full digest — never the 64-bit truncation some stages compute for
-    a shorter change-detection hash (e.g. ``markdown_hash_xx64``) — so it is safe
-    to use as an output-sensitive derivation-key input.
-
-    Args:
-        text: The text to fingerprint (e.g. a chunk's or a document's content).
-
-    Returns:
-        The 64-character lowercase hex SHA-256 digest.
-    """
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def derivation_key(
@@ -143,10 +116,5 @@ def derivation_key(
         A hex-encoded SHA-256 digest over the canonical serialization of
         ``inputs`` and ``upstream_keys``.
     """
-    canonical = json.dumps(
-        {"inputs": dict(inputs), "upstream": list(upstream_keys)},
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
+    canonical = canonical_json({"inputs": dict(inputs), "upstream": list(upstream_keys)}, ensure_ascii=False)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

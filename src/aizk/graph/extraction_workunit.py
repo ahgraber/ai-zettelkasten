@@ -8,7 +8,6 @@ the existing source unit through the operator action.
 
 from __future__ import annotations
 
-import datetime
 import logging
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -23,6 +22,7 @@ from aizk.pipeline.events import record_transition
 from aizk.pipeline.invalidation import require_reprocessing_confirmation
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus
+from aizk.utilities.clock import utcnow
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -33,11 +33,6 @@ if TYPE_CHECKING:
     from aizk.pipeline.events import CreationOrigin
 
 logger = logging.getLogger(__name__)
-
-
-def _utcnow() -> datetime.datetime:
-    """Return a timezone-aware UTC timestamp."""
-    return datetime.datetime.now(datetime.timezone.utc)
 
 
 def _idempotency_key(source_id: UUID) -> str:
@@ -87,7 +82,7 @@ def enqueue_extraction(
         idempotency_key=key,
         source_id=source_id,
         status=WorkUnitStatus.QUEUED,
-        queued_at=_utcnow(),
+        queued_at=utcnow(),
     )
     session.add(job)
     session.flush()

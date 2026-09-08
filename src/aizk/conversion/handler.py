@@ -76,7 +76,7 @@ from aizk.conversion.processing.errors import (
 )
 from aizk.conversion.processing.source import _get_source_ref, _write_source_enrichment
 from aizk.conversion.processing.subproc import _is_job_cancelled, _spawn_and_supervise
-from aizk.conversion.processing.types import SubprocessMetadata, _utcnow
+from aizk.conversion.processing.types import SubprocessMetadata
 from aizk.conversion.processing.uploader import _execute_upload, _prepare_upload
 from aizk.conversion.queries import claim_next_in_session, recover_stale_in_session
 from aizk.conversion.utilities.config import ConversionConfig
@@ -85,6 +85,7 @@ from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 from aizk.pipeline.handler import Isolation, StageResult
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
+from aizk.utilities.clock import utcnow
 
 if TYPE_CHECKING:
     import multiprocessing as mp
@@ -485,7 +486,7 @@ class ConversionStageHandler:
             with Session(engine) as session:
                 job_record = session.get(ConversionJob, handle)
                 if job_record:
-                    job_record.updated_at = _utcnow()
+                    job_record.updated_at = utcnow()
                     record_transition(
                         session,
                         job_record,
@@ -689,7 +690,7 @@ class ConversionStageHandler:
         job = session.get(ConversionJob, handle)
         if job is None or job.status == ConversionJobStatus.CANCELLED:
             return
-        now = _utcnow()
+        now = utcnow()
         job.updated_at = now
         job.finished_at = now
         record_transition(
@@ -722,7 +723,7 @@ class ConversionStageHandler:
         job = session.get(ConversionJob, handle)
         if job is None or job.status == ConversionJobStatus.CANCELLED:
             return
-        now = _utcnow()
+        now = utcnow()
         if retryable:
             delay = self._config.retry_base_delay_seconds * (2**job.attempts)
             job.earliest_next_attempt_at = now + datetime.timedelta(seconds=delay)

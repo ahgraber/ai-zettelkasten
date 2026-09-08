@@ -7,6 +7,8 @@ from uuid import UUID
 from sqlalchemy import Column, Text
 from sqlmodel import Field, Relationship, SQLModel
 
+from aizk.utilities.clock import utcnow
+
 
 class ConversionOutput(SQLModel, table=True):
     """Represents successful conversion artifacts and metadata."""
@@ -27,7 +29,7 @@ class ConversionOutput(SQLModel, table=True):
     docling_version: str = Field(max_length=20, nullable=False)
     pipeline_name: str = Field(max_length=50, nullable=False)
     created_at: datetime.datetime = Field(
-        default_factory=lambda: datetime.datetime.now(datetime.timezone.utc),
+        default_factory=utcnow,
         nullable=False,
         index=True,
     )

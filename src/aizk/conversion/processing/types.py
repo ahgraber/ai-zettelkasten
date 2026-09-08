@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import datetime as dt
 import re
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -121,8 +120,3 @@ def select_source_title(document_title: str | None, resolver_title: str | None) 
     if _is_usable(resolver_title):
         return resolver_title.strip()[:MAX_SOURCE_TITLE_LEN]  # type: ignore[union-attr]
     return None
-
-
-def _utcnow() -> dt.datetime:
-    """Return timezone-aware UTC timestamp."""
-    return dt.datetime.now(dt.timezone.utc)

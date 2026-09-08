@@ -32,6 +32,7 @@ from aizk.graph.extraction_run import extract_document
 from aizk.pipeline.events import record_transition
 from aizk.pipeline.handler import Isolation, StageResult
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
+from aizk.utilities.clock import utcnow
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine
@@ -51,11 +52,6 @@ DEFAULT_STALE_AFTER_MINUTES = 30.0
 DEFAULT_RETRY_BASE_DELAY_SECONDS = 2.0
 #: Default maximum attempts before a retryable failure becomes permanent.
 DEFAULT_RETRY_MAX_ATTEMPTS = 3
-
-
-def _utcnow() -> datetime.datetime:
-    """Return a timezone-aware UTC timestamp."""
-    return datetime.datetime.now(datetime.timezone.utc)
 
 
 def _error_code(exc: BaseException) -> str:
@@ -184,7 +180,7 @@ class ExtractionStageHandler:
         method increments attempts, records the claim event, and does not commit.
         Return ``None`` when no unit is eligible.
         """
-        now = _utcnow()
+        now = utcnow()
         job = session.exec(
             select(ExtractionJob)
             .where(
@@ -222,7 +218,7 @@ class ExtractionStageHandler:
         The method records a recovery event, leaves attempts unchanged, and does not
         commit. Return the reset IDs.
         """
-        now = _utcnow()
+        now = utcnow()
         stale_before = now - datetime.timedelta(minutes=self._stale_after_minutes)
         jobs = session.exec(
             select(ExtractionJob)
@@ -314,7 +310,7 @@ class ExtractionStageHandler:
         job = session.get(ExtractionJob, handle)
         if job is None:
             return
-        now = _utcnow()
+        now = utcnow()
         status = outcome.status
 
         if status is WorkUnitStatus.SUCCEEDED:

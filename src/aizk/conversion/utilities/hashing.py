@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import hashlib
-import json
 
 from aizk.conversion.utilities.config import DoclingConverterConfig
-from aizk.utilities.hashing import compute_markdown_hash
+from aizk.utilities.hashing import canonical_json, compute_markdown_hash
 
 __all__ = [
     "build_output_config_snapshot",
@@ -17,8 +16,12 @@ __all__ = [
 
 
 def _canonical_json(payload) -> str:
-    """Return a compact, key-sorted JSON string for deterministic hashing."""
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    """Return a compact, key-sorted JSON string for deterministic hashing.
+
+    Escapes non-ASCII characters: conversion's idempotency and config digests were
+    minted under that envelope and changing it would remint every stored key.
+    """
+    return canonical_json(payload, ensure_ascii=True)
 
 
 def _docling_config_payload(config: DoclingConverterConfig) -> dict[str, object]:

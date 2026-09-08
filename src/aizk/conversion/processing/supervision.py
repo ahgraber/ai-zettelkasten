@@ -13,6 +13,8 @@ import threading
 import time
 
 from aizk.conversion.processing.types import SupervisionResult
+from aizk.utilities.clock import utcnow
+from aizk.utilities.process import terminate_process_group
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +71,7 @@ def _collect_status_messages(
                 new_phase = message.get("message", last_phase)
                 if on_phase_event is not None:
                     try:
-                        on_phase_event(new_phase, dt.datetime.now(dt.timezone.utc))
+                        on_phase_event(new_phase, utcnow())
                     except Exception:
                         logger.warning(
                             "Phase-event callback raised for job %s phase %r",
@@ -92,11 +94,11 @@ def _terminate_and_wait(
     parent_pgid: int | None,
 ) -> None:
     """SIGTERM → wait 5s → SIGKILL → wait 5s."""
-    _terminate_child_process(process, parent_pgid, signal.SIGTERM)
-    process.join(timeout=5.0)
-    if process.is_alive() and process.pid:
-        _terminate_child_process(process, parent_pgid, signal.SIGKILL)
-        process.join(timeout=5.0)
+    terminate_process_group(
+        lambda: _terminate_child_process(process, parent_pgid, signal.SIGTERM),
+        lambda: _terminate_child_process(process, parent_pgid, signal.SIGKILL),
+        process.is_alive,
+    )
 
 
 def _supervise_conversion_process(

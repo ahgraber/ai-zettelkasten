@@ -40,17 +40,13 @@ from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.job_actions import apply_job_cancel, apply_job_retry
 from aizk.conversion.utilities.hashing import compute_idempotency_key
+from aizk.utilities.clock import utcnow
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/jobs", tags=["jobs"])
 
 _source_ref_adapter = TypeAdapter(SourceRef)
-
-
-def _utcnow() -> dt.datetime:
-    """Return timezone-aware UTC timestamp."""
-    return dt.datetime.now(dt.timezone.utc)
 
 
 def _job_to_response(
@@ -149,7 +145,7 @@ def submit_job(
     # Source materialization: INSERT OR IGNORE + SELECT
     # Pre-generate UUID in case this is a new source row
     candidate_uuid = uuid4()
-    now_utc = _utcnow()
+    now_utc = utcnow()
 
     session.commit()  # end any auto-begun read transaction
 
@@ -212,7 +208,7 @@ def submit_job(
             headers={"Retry-After": str(config.queue_retry_after_seconds)},
         )
 
-    now = _utcnow()
+    now = utcnow()
     job = ConversionJob(
         source_id=source.source_id,
         owner_id=principal.subject,
@@ -347,7 +343,7 @@ def retry_job(
     job = session.get(ConversionJob, job_id)
     if not job or job.owner_id != principal.subject:
         raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
-    now = _utcnow()
+    now = utcnow()
     try:
         apply_job_retry(session, job, now, submitted_by=principal.subject)
     except ValueError as exc:
@@ -373,7 +369,7 @@ def cancel_job(
     job = session.get(ConversionJob, job_id)
     if not job or job.owner_id != principal.subject:
         raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
-    now = _utcnow()
+    now = utcnow()
     try:
         apply_job_cancel(session, job, now, cancelled_by=principal.subject)
     except ValueError as exc:
@@ -396,7 +392,7 @@ def bulk_job_actions(
 ) -> BulkActionResponse:
     """Apply retry or cancel actions across multiple jobs."""
     session.exec(text("BEGIN IMMEDIATE"))
-    now = _utcnow()
+    now = utcnow()
     results: list[BulkActionResult] = []
     success = 0
     errors = 0

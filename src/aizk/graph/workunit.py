@@ -47,7 +47,6 @@ foreign/superseded content never reaches the model.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import datetime
 import logging
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -70,6 +69,7 @@ from aizk.pipeline.events import record_transition
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.invalidation import require_reprocessing_confirmation
 from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.utilities.clock import utcnow
 from aizk.utilities.hashing import compute_markdown_hash
 
 if TYPE_CHECKING:
@@ -82,11 +82,6 @@ if TYPE_CHECKING:
     from aizk.pipeline.events import CreationOrigin
 
 logger = logging.getLogger(__name__)
-
-
-def _utcnow() -> datetime.datetime:
-    """Return a timezone-aware UTC timestamp."""
-    return datetime.datetime.now(datetime.timezone.utc)
 
 
 @dataclass(frozen=True)
@@ -380,7 +375,7 @@ def enqueue_document(
         conversion_output_id=conversion_output_id,
         source_id=source_id,
         status=WorkUnitStatus.QUEUED,
-        queued_at=_utcnow(),
+        queued_at=utcnow(),
     )
     session.add(job)
     session.flush()

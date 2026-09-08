@@ -22,8 +22,8 @@ from aizk.conversion.datamodel.events import (
     record_transition,
 )
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
-from aizk.conversion.processing.types import _utcnow
 from aizk.conversion.utilities.config import ConversionConfig
+from aizk.utilities.clock import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ def recover_stale_in_session(session: Session, config: ConversionConfig) -> list
     single source of truth for the stale-recovery query + transition, used by
     the pipeline runner adapter (which passes its own session).
     """
-    now = _utcnow()
+    now = utcnow()
     stale_before = now - dt.timedelta(minutes=config.worker_stale_job_minutes)
 
     jobs = session.exec(
@@ -90,7 +90,7 @@ def claim_next_in_session(session: Session) -> int | None:
     of truth for the claim query + transition, used by the pipeline runner
     adapter (which passes its own ``BEGIN IMMEDIATE`` session).
     """
-    now = _utcnow()
+    now = utcnow()
     job = session.exec(
         select(ConversionJob)
         .where(ConversionJob.status.in_([ConversionJobStatus.QUEUED, ConversionJobStatus.FAILED_RETRYABLE]))

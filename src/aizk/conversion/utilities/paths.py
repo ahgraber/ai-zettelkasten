@@ -9,6 +9,7 @@ from pathlib import Path
 import unicodedata
 
 from aizk.conversion.core.errors import WorkspaceEscape
+from aizk.utilities.paths import open_nofollow
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,7 @@ def read_text_nofollow(path: Path, *, encoding: str = "utf-8") -> str:
         OSError: For other filesystem errors.
     """
     try:
-        fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+        fd = open_nofollow(path, os.O_RDONLY)
     except OSError as exc:
         if exc.errno == errno.ELOOP:
             logger.warning(
@@ -185,9 +186,9 @@ def write_text_nofollow(path: Path, content: str, *, encoding: str = "utf-8") ->
         FileExistsError: If a non-symlink already exists at ``path``.
         OSError: For other filesystem errors.
     """
-    flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_EXCL
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     try:
-        fd = os.open(str(path), flags, 0o600)
+        fd = open_nofollow(path, flags, 0o600)
     except OSError as exc:
         if exc.errno == errno.ELOOP:
             # Some platforms surface a symlink leaf as ELOOP with O_NOFOLLOW.
