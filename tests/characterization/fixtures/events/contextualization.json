@@ -1,0 +1,57 @@
+{
+  "queued": {
+    "payload_class": "QueuedPayload",
+    "inputs": { "origin": "intake", "principal": "operator" },
+    "model_dump_json": "{\"kind\":\"queued\",\"origin\":\"intake\",\"principal\":\"operator\"}"
+  },
+  "claimed": {
+    "payload_class": "ClaimedPayload",
+    "inputs": {
+      "claimed_at": { "__datetime__": "2026-01-15T12:00:00+00:00" },
+      "worker_pid": 4242
+    },
+    "model_dump_json": "{\"kind\":\"claimed\",\"claimed_at\":\"2026-01-15T12:00:00Z\",\"worker_pid\":4242}"
+  },
+  "succeeded": {
+    "payload_class": "SucceededPayload",
+    "inputs": { "variant_count": 12 },
+    "model_dump_json": "{\"kind\":\"succeeded\",\"variant_count\":12}"
+  },
+  "skipped_superseded": {
+    "payload_class": "SkippedSupersededPayload",
+    "inputs": { "superseding_output_id": 9 },
+    "model_dump_json": "{\"kind\":\"skipped_superseded\",\"superseding_output_id\":9}"
+  },
+  "failed": {
+    "payload_class": "FailedPayload",
+    "inputs": {
+      "error_code": "model_unavailable",
+      "error_message": "upstream returned 503",
+      "retryable": true
+    },
+    "model_dump_json": "{\"kind\":\"failed\",\"error_code\":\"model_unavailable\",\"error_message\":\"upstream returned 503\",\"retryable\":true}"
+  },
+  "cancelled": {
+    "payload_class": "CancelledPayload",
+    "inputs": { "cancellation_reason": "operator request" },
+    "model_dump_json": "{\"kind\":\"cancelled\",\"cancellation_reason\":\"operator request\"}"
+  },
+  "timed_out": {
+    "payload_class": "TimedOutPayload",
+    "inputs": { "timeout_seconds": 900.0 },
+    "model_dump_json": "{\"kind\":\"timed_out\",\"timeout_seconds\":900.0}"
+  },
+  "recovered_stale": {
+    "payload_class": "RecoveredStalePayload",
+    "inputs": {
+      "stale_after_minutes": 15.0,
+      "last_started_at": { "__datetime__": "2026-01-15T11:30:00+00:00" }
+    },
+    "model_dump_json": "{\"kind\":\"recovered_stale\",\"stale_after_minutes\":15.0,\"last_started_at\":\"2026-01-15T11:30:00Z\"}"
+  },
+  "requeued": {
+    "payload_class": "RequeuedPayload",
+    "inputs": { "requeue_reason": "operator retry" },
+    "model_dump_json": "{\"kind\":\"requeued\",\"requeue_reason\":\"operator retry\"}"
+  }
+}

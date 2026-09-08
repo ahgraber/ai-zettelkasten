@@ -1,0 +1,740 @@
+{
+  "aizk.utilities.hashing::compute_markdown_hash": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": { "markdown_text": "# Title\r\n\r\nBody text.\n" },
+        "expected": "d30c924b260cf4af"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": { "markdown_text": "# 日本語\r\n\r\n本文 ✓\n" },
+        "expected": "d0c32023db43bd32"
+      }
+    ]
+  },
+  "aizk.pipeline.identity::fingerprint": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": { "value": { "b": 2, "a": "one" } },
+        "expected": "7a9a3db4467bcafabfe99a3c0e019a28f3c3bc979bc884887d8d76fccdc60e08"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": { "value": { "b": 2, "a": "日本語 ✓" } },
+        "expected": "7555ece84320d97671efd02d53c0ff811e564c24e3c3b772c7514c6082784a27"
+      }
+    ]
+  },
+  "aizk.pipeline.identity::content_fingerprint": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": { "text": "chunk body" },
+        "expected": "af7e425db58e92f1a789ed12319bc072a4ba1ac93e280ef42ca4f5fdcae1a80c"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": { "text": "日本語 ✓" },
+        "expected": "82efc577ff540f650c66470f0e788cccfa601d56f1e5350f7078aaa0398f05d3"
+      }
+    ]
+  },
+  "aizk.pipeline.identity::derivation_key": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "inputs": { "config": "config-one", "input": "input-one" },
+          "upstream_keys": ["upstream-one", "upstream-two"]
+        },
+        "expected": "b0d09d5640d1edbf7e2517da5eaec69af2a34af1571180502a26a3856a20b8c9"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": {
+          "inputs": { "config": "日本語", "input": "input-one" },
+          "upstream_keys": ["✓"]
+        },
+        "expected": "937907764dd1d8496f13895282e4475fc8dbc40c70f3061a53e70cb37e3dd0fe"
+      }
+    ]
+  },
+  "aizk.conversion.utilities.hashing::compute_idempotency_key": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "source_ref_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          "converter_name": "docling",
+          "config_snapshot": { "ocr_enabled": false, "pdf_max_pages": 10 }
+        },
+        "expected": "1536ad8ebfab9e175215f063f517bbe30d702551198c130c26e46961b07223dd"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": {
+          "source_ref_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          "converter_name": "docling",
+          "config_snapshot": { "picture_description_model": "日本語 ✓" }
+        },
+        "expected": "ce6ad8e09850cd2bc915beb91850901e3cfa764efc818c14517d952de03f0e45"
+      }
+    ]
+  },
+  "aizk.conversion.utilities.hashing::compute_config_hash": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": { "config_payload": { "ocr_enabled": true, "pdf_max_pages": 25 } },
+        "expected": "251bdd5f9beeacda"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": { "config_payload": { "picture_description_model": "日本語 ✓" } },
+        "expected": "159cbae6b68ddcf1"
+      }
+    ]
+  },
+  "aizk.conversion.core.source_ref::compute_source_ref_hash": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": { "url": "https://example.com/page.html" },
+        "expected": "264123028bc65aae7ddfba8193e828ccea00cedad6a1880426e563d8e3b4b69c"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": { "url": "https://example.com/日本語.html" },
+        "expected": "bd9c7e7ba12ec4df853f545df952599fa701ff0818cc59158d4308dee49f479b"
+      }
+    ]
+  },
+  "aizk.conversion.core.source_ref::InlineHtmlRef.to_dedup_payload": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": { "body_text": "<html><body>plain body</body></html>" },
+        "expected": "953ee61c699312840e3ff4f78836ac6455634ea41eb7b2905485cdd91fa62278"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": { "body_text": "<html><body>日本語 ✓</body></html>" },
+        "expected": "d3316d179645213d2588ae176b4fb5ac6107a27d2c0f7694ef444ec8a61d0582"
+      }
+    ]
+  },
+  "aizk.chunking.datamodel::derive_chunk_content_key": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "source_id": "11111111-1111-4111-8111-111111111111",
+          "heading_path": ["Overview", "Setup"],
+          "ordinal": 0,
+          "content_hash": "0123456789abcdef"
+        },
+        "expected": "fca367266ae92107"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": {
+          "source_id": "11111111-1111-4111-8111-111111111111",
+          "heading_path": ["日本語", "✓"],
+          "ordinal": 2,
+          "content_hash": "fedcba9876543210"
+        },
+        "expected": "f8e8e38b5172d401"
+      }
+    ]
+  },
+  "aizk.graph.mention_store::derive_source_occurrence_key": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "chunk_id": "22222222-2222-4222-8222-222222222222",
+          "source_span_start": 10,
+          "source_span_end": 24,
+          "source_anchor_text": "Ada Lovelace"
+        },
+        "expected": "8a484a2bdedc3994"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": {
+          "chunk_id": "22222222-2222-4222-8222-222222222222",
+          "source_span_start": 10,
+          "source_span_end": 24,
+          "source_anchor_text": "日本語 ✓"
+        },
+        "expected": "425c8f528a3bd692"
+      }
+    ]
+  },
+  "aizk.graph.mention_store::ResolvedExtractionConfig.config_fingerprint": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "extractor_version": "gliner2-v1",
+          "materializer_version": "mention-v1",
+          "input_policy": "raw"
+        },
+        "expected": "1e3fd425c3ea0e3511289bbdc168a8319321fdbdbd9cc9a64f2d7ffd66235f65"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": {
+          "extractor_version": "日本語-v1",
+          "materializer_version": "mention-v1",
+          "input_policy": "contextualized"
+        },
+        "expected": "1cfcc676cd346115493d92f0ad68b8e63c2b9e7c6f465594a9b66d488c8230a1"
+      }
+    ]
+  },
+  "aizk.graph.mention_store::extraction_derivation_key": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "input_fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          "config_fingerprint": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+        },
+        "expected": "ff3cc1a7cdf2b3a97f8d1981fe9431e5ce9d7c33c1b808b349cfb62e45e2d2cb"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": {
+          "input_fingerprint": "日本語 ✓",
+          "config_fingerprint": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+        },
+        "expected": "04bcd196ef6a78e5787437fddcad6d56752af193a945c294b0103f11df625895"
+      }
+    ]
+  },
+  "aizk.graph.fingerprints::payload_fingerprint": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "items": [
+            {
+              "chunk_key": "0123456789abcdef",
+              "input_kind": "raw",
+              "text_fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            },
+            {
+              "chunk_key": "fedcba9876543210",
+              "input_kind": "contextualized",
+              "text_fingerprint": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+            }
+          ]
+        },
+        "expected": "5c0fb7011dfe532e81bd50ac9e61bd2558a5516ce73d085c9c5d960c80f97286"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": {
+          "items": [
+            {
+              "chunk_key": "日本語 ✓",
+              "input_kind": "raw",
+              "text_fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            }
+          ]
+        },
+        "expected": "361d70210b3f5ce59cc627fce284a2c3dcb1c7b4309725531e4fc977401a4e82"
+      }
+    ]
+  },
+  "aizk.graph.fingerprints::chunk_key": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "chunk": {
+            "content_hash": "0123456789abcdef",
+            "source_id": "11111111-1111-4111-8111-111111111111",
+            "heading_path": ["Overview"],
+            "ordinal": 0,
+            "text": "Plain chunk body.",
+            "char_count": 17,
+            "converted_artifact_id": "33333333-3333-4333-8333-333333333333",
+            "markdown_hash_xx64": "aaaaaaaaaaaaaaaa",
+            "span": [0, 17],
+            "splitter_version": 2
+          }
+        },
+        "expected": "534a6beac3ad73ed"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": {
+          "chunk": {
+            "content_hash": "fedcba9876543210",
+            "source_id": "11111111-1111-4111-8111-111111111111",
+            "heading_path": ["日本語"],
+            "ordinal": 1,
+            "text": "本文 ✓",
+            "char_count": 4,
+            "converted_artifact_id": "33333333-3333-4333-8333-333333333333",
+            "markdown_hash_xx64": "aaaaaaaaaaaaaaaa",
+            "span": [17, 21],
+            "splitter_version": 2
+          }
+        },
+        "expected": "0136ed1845762e3d"
+      }
+    ]
+  },
+  "aizk.graph.contextualization::_stable_hash": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": { "text": "prompt identity" },
+        "expected": "ee9d5de564f67468"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": { "text": "日本語 ✓" },
+        "expected": "82efc577ff540f65"
+      }
+    ]
+  },
+  "aizk.graph.contextualization::_stable_payload_hash": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "payload": { "kind": "summary_prompt", "fields": ["instructions", "document"] }
+        },
+        "expected": "df9644b858e040c6"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": { "payload": { "kind": "日本語 ✓", "fields": ["instructions"] } },
+        "expected": "8388150abf9a1e5a"
+      }
+    ]
+  },
+  "aizk.graph.contextualization::SUMMARY_PROMPT_HASH": {
+    "cases": [{ "label": "constant", "inputs": {}, "expected": "97f2e2fcb0f437fb" }]
+  },
+  "aizk.graph.contextualization::CONTEXT_PROMPT_HASH": {
+    "cases": [{ "label": "constant", "inputs": {}, "expected": "506537c150fb72a1" }]
+  },
+  "aizk.graph.llm::model_config_fingerprint": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "model_config": {
+            "provider": "https://models.example.com/v1",
+            "model": "summary-model",
+            "settings": [["temperature", "0"]]
+          }
+        },
+        "expected": "39e8639933e95ba0c533998de98be4988cf47cb7aec01854621ffd7005a3007d"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": {
+          "model_config": {
+            "provider": "https://models.example.com/v1",
+            "model": "日本語 ✓",
+            "settings": []
+          }
+        },
+        "expected": "4fb1079b8438d344a824d91008d707290a4aec76a6f00799831c8c08c6cd0c0a"
+      }
+    ]
+  },
+  "aizk.graph.llm::_default_responder": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": { "prompt": "summarize this" },
+        "expected": "stub-output:e8159d64f4d055d2"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": { "prompt": "日本語 ✓" },
+        "expected": "stub-output:ba7d9aaf491614cd"
+      }
+    ]
+  },
+  "aizk.graph.persistence::chunking_input_fingerprint": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "markdown_fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        },
+        "expected": "fa765e98e0eb81e54d8ae3a50e2470b8bfabe21e12cc8c2fe374c36bdeab2c32"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": { "markdown_fingerprint": "日本語 ✓" },
+        "expected": "cef5f12309f3ce275d378edfb4c98d0176de5662e1611bc35e4f10a0d9c310d6"
+      }
+    ]
+  },
+  "aizk.graph.persistence::chunking_config_fingerprint": {
+    "cases": [
+      {
+        "label": "splitter_version_1",
+        "inputs": { "splitter_version": 1 },
+        "expected": "f4449a49fe533593f9cc08dec0d4fa92eaf2dea4950d84db45673c7763799812"
+      },
+      {
+        "label": "splitter_version_2",
+        "inputs": { "splitter_version": 2 },
+        "expected": "6dfa62a000e321657e6a5df39443bbd283fd79644226a7393200ef6bd225a742"
+      }
+    ]
+  },
+  "aizk.graph.persistence::chunking_derivation_key": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "markdown_fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          "splitter_version": 2
+        },
+        "expected": "fab009c7648f6137e0305fc7ca4cc80220de8f00c1ba3ce9d234b4af889ccdf9"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": { "markdown_fingerprint": "日本語 ✓", "splitter_version": 2 },
+        "expected": "9b9c5d6f06ae2aabd78e771361de4734c7b1c21a8f565b3820f06af52d5f4df4"
+      }
+    ]
+  },
+  "aizk.graph.contextualization::summary_input_fingerprint": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": { "document_text": "The document body." },
+        "expected": "a5a2efaabc896e37917abf33d47d74d9e928bd73e88de88b69d49c2583024c36"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": { "document_text": "日本語 ✓" },
+        "expected": "563e6862cd04719ce4bebaa3e0cdb4149899fe931b9e90951d70d07c0380ec14"
+      }
+    ]
+  },
+  "aizk.graph.contextualization::summary_config_fingerprint": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "model_config": {
+            "provider": "https://models.example.com/v1",
+            "model": "summary-model",
+            "settings": []
+          },
+          "summary_version": 3
+        },
+        "expected": "7b9448a8c82e1f1aead158bc713b3319ffd490f76f1e74397c8b8780fc2fcf12"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": {
+          "model_config": {
+            "provider": "https://models.example.com/v1",
+            "model": "日本語 ✓",
+            "settings": []
+          },
+          "summary_version": 3
+        },
+        "expected": "8d6e57726d3b6a58daaed2ad92fb6db6805a75209a07ccc9299f888f39c36f9b"
+      }
+    ]
+  },
+  "aizk.graph.contextualization::summary_derivation_key": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "document_text": "The document body.",
+          "summary_version": 3,
+          "model_config": {
+            "provider": "https://models.example.com/v1",
+            "model": "summary-model",
+            "settings": []
+          }
+        },
+        "expected": "09fb95eb67c588ddc241911c9175cc95834688f2fa613763934e06fcdf6dc9c5"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": {
+          "document_text": "日本語 ✓",
+          "summary_version": 3,
+          "model_config": {
+            "provider": "https://models.example.com/v1",
+            "model": "日本語 ✓",
+            "settings": []
+          }
+        },
+        "expected": "7c6d56b20e8fcf5fe5dca81594fcac030497a33a67228c9ee007ddf2eae03811"
+      }
+    ]
+  },
+  "aizk.graph.contextualization::contextualization_run_input_fingerprint": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "summary_text": "A short summary.",
+          "chunk_keys": ["0123456789abcdef", "fedcba9876543210"]
+        },
+        "expected": "76caeb39a0933ed0c77c80fd456ef0641490c50934244316d3b58210ca6bfd88"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": { "summary_text": "日本語 ✓", "chunk_keys": ["日本語 ✓"] },
+        "expected": "891668cae0d5ee23c213f718ec37e89b7834bc612bda08ab788128cd60f503e5"
+      }
+    ]
+  },
+  "aizk.graph.contextualization::contextualization_config_fingerprint": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "splitter_version": 2,
+          "context_version": 4,
+          "model_config": {
+            "provider": "https://models.example.com/v1",
+            "model": "context-model",
+            "settings": []
+          }
+        },
+        "expected": "2e90f29b0b7b44c11f2f73b437849a8ad2b1434492a1c43e47b5921afd07cb42"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": {
+          "splitter_version": 2,
+          "context_version": 4,
+          "model_config": {
+            "provider": "https://models.example.com/v1",
+            "model": "日本語 ✓",
+            "settings": []
+          }
+        },
+        "expected": "fa3360c55c87bd9d1c848d1102b50057b6c2dae0bdb1a6eb814f8664f0f3b07e"
+      }
+    ]
+  },
+  "aizk.graph.contextualization::contextualization_run_derivation_key": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "summary_text": "A short summary.",
+          "ordered_chunks": [
+            {
+              "content_hash": "0123456789abcdef",
+              "source_id": "11111111-1111-4111-8111-111111111111",
+              "heading_path": ["Overview"],
+              "ordinal": 0,
+              "text": "Plain chunk body.",
+              "char_count": 17,
+              "converted_artifact_id": "33333333-3333-4333-8333-333333333333",
+              "markdown_hash_xx64": "aaaaaaaaaaaaaaaa",
+              "span": [0, 17],
+              "splitter_version": 2
+            }
+          ],
+          "splitter_version": 2,
+          "context_version": 4,
+          "model_config": {
+            "provider": "https://models.example.com/v1",
+            "model": "context-model",
+            "settings": []
+          }
+        },
+        "expected": "2209fcaa3906c5ed3803f449bd0855d1b9f1b6060f127333c4fa2947a242cff0"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": {
+          "summary_text": "日本語 ✓",
+          "ordered_chunks": [
+            {
+              "content_hash": "fedcba9876543210",
+              "source_id": "11111111-1111-4111-8111-111111111111",
+              "heading_path": ["日本語"],
+              "ordinal": 1,
+              "text": "本文 ✓",
+              "char_count": 4,
+              "converted_artifact_id": "33333333-3333-4333-8333-333333333333",
+              "markdown_hash_xx64": "aaaaaaaaaaaaaaaa",
+              "span": [17, 21],
+              "splitter_version": 2
+            }
+          ],
+          "splitter_version": 2,
+          "context_version": 4,
+          "model_config": {
+            "provider": "https://models.example.com/v1",
+            "model": "日本語 ✓",
+            "settings": []
+          }
+        },
+        "expected": "c19b01e1942bacaedbac257880fd79a9a2fd03414e48ef6aaeb1bf824836ee6e"
+      }
+    ]
+  },
+  "aizk.graph.contextualization::contextualization_row_input_fingerprint": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "summary_text": "A short summary.",
+          "working": {
+            "content_hash": "0123456789abcdef",
+            "source_id": "11111111-1111-4111-8111-111111111111",
+            "heading_path": ["Overview"],
+            "ordinal": 1,
+            "text": "Plain chunk body.",
+            "char_count": 17,
+            "converted_artifact_id": "33333333-3333-4333-8333-333333333333",
+            "markdown_hash_xx64": "aaaaaaaaaaaaaaaa",
+            "span": [17, 34],
+            "splitter_version": 2
+          },
+          "prior_2": null,
+          "prior_1": {
+            "content_hash": "abcdef0123456789",
+            "source_id": "11111111-1111-4111-8111-111111111111",
+            "heading_path": ["Overview"],
+            "ordinal": 0,
+            "text": "Earlier chunk.",
+            "char_count": 14,
+            "converted_artifact_id": "33333333-3333-4333-8333-333333333333",
+            "markdown_hash_xx64": "aaaaaaaaaaaaaaaa",
+            "span": [0, 14],
+            "splitter_version": 2
+          },
+          "next_1": null
+        },
+        "expected": "dcd9679f3700b59277728d0089ca129485634c0ea66171888ee03af4d147d98f"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": {
+          "summary_text": "日本語 ✓",
+          "working": {
+            "content_hash": "fedcba9876543210",
+            "source_id": "11111111-1111-4111-8111-111111111111",
+            "heading_path": ["日本語"],
+            "ordinal": 0,
+            "text": "本文 ✓",
+            "char_count": 4,
+            "converted_artifact_id": "33333333-3333-4333-8333-333333333333",
+            "markdown_hash_xx64": "aaaaaaaaaaaaaaaa",
+            "span": [0, 4],
+            "splitter_version": 2
+          },
+          "prior_2": null,
+          "prior_1": null,
+          "next_1": null
+        },
+        "expected": "d037edcb134343341514414b058ebb6b2eaa8c28bb9b39558f442a17a454c53b"
+      }
+    ]
+  },
+  "aizk.graph.contextualization::contextualization_row_derivation_key": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "summary_text": "A short summary.",
+          "working": {
+            "content_hash": "0123456789abcdef",
+            "source_id": "11111111-1111-4111-8111-111111111111",
+            "heading_path": ["Overview"],
+            "ordinal": 1,
+            "text": "Plain chunk body.",
+            "char_count": 17,
+            "converted_artifact_id": "33333333-3333-4333-8333-333333333333",
+            "markdown_hash_xx64": "aaaaaaaaaaaaaaaa",
+            "span": [17, 34],
+            "splitter_version": 2
+          },
+          "prior_2": null,
+          "prior_1": null,
+          "next_1": null,
+          "splitter_version": 2,
+          "context_version": 4,
+          "model_config": {
+            "provider": "https://models.example.com/v1",
+            "model": "context-model",
+            "settings": []
+          }
+        },
+        "expected": "c2053eca6cd459e7013550360629c2f9eea8795cf6a4cc9ef21dba21429a1f38"
+      },
+      {
+        "label": "non_ascii",
+        "inputs": {
+          "summary_text": "日本語 ✓",
+          "working": {
+            "content_hash": "fedcba9876543210",
+            "source_id": "11111111-1111-4111-8111-111111111111",
+            "heading_path": ["日本語"],
+            "ordinal": 0,
+            "text": "本文 ✓",
+            "char_count": 4,
+            "converted_artifact_id": "33333333-3333-4333-8333-333333333333",
+            "markdown_hash_xx64": "aaaaaaaaaaaaaaaa",
+            "span": [0, 4],
+            "splitter_version": 2
+          },
+          "prior_2": null,
+          "prior_1": null,
+          "next_1": null,
+          "splitter_version": 2,
+          "context_version": 4,
+          "model_config": {
+            "provider": "https://models.example.com/v1",
+            "model": "日本語 ✓",
+            "settings": []
+          }
+        },
+        "expected": "0772ec920319dbca872a928b17f144b38633888f31e8f2718961d8a51525b7f2"
+      }
+    ]
+  },
+  "aizk.chunking.splitter::split": {
+    "cases": [
+      {
+        "label": "ascii",
+        "inputs": {
+          "markdown_text": "# Overview\n\nFirst paragraph.\n\n## Setup\n\nSecond paragraph.\n",
+          "source_id": "11111111-1111-4111-8111-111111111111",
+          "converted_artifact_id": "33333333-3333-4333-8333-333333333333",
+          "markdown_hash_xx64": "aaaaaaaaaaaaaaaa"
+        },
+        "expected": ["d723c0c364ead012", "4903a759a7346cb1"]
+      },
+      {
+        "label": "non_ascii",
+        "inputs": {
+          "markdown_text": "# 日本語\n\n本文 ✓\n\n## 節\n\n二段落目 ✓\n",
+          "source_id": "11111111-1111-4111-8111-111111111111",
+          "converted_artifact_id": "33333333-3333-4333-8333-333333333333",
+          "markdown_hash_xx64": "aaaaaaaaaaaaaaaa"
+        },
+        "expected": ["af9b40f29719f20c", "f5207db2cd40b00d"]
+      }
+    ]
+  }
+}
