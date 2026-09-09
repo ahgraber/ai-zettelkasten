@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import ClassVar, Literal, Sequence
 
+# ConfigurationError is defined in the leaf error module so any layer can raise it,
+# and is re-exported here beside the other conversion error classes.
+from aizk.utilities.errors import ConfigurationError
+
 
 class FetcherNotRegistered(LookupError):  # noqa: N818 — canonical spec name
     """Raised when dispatch is attempted for a kind with no registered adapter."""
@@ -63,17 +67,6 @@ class RegistrationRoleMismatch(TypeError):  # noqa: N818 — canonical spec name
     """
 
     error_code = "registration_role_mismatch"
-    retryable: ClassVar[bool] = False
-
-
-class ConfigurationError(RuntimeError):  # noqa: N818 — canonical spec name
-    """Raised at startup when the deployment configuration is invalid.
-
-    Startup-time error: e.g. IngressPolicy references a kind not registered in
-    the FetcherRegistry. Never raised at request-handling time.
-    """
-
-    error_code = "configuration_error"
     retryable: ClassVar[bool] = False
 
 

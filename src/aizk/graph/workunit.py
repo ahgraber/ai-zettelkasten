@@ -78,7 +78,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy import Engine
 
-    from aizk.graph.llm import LLMClient, ModelConfig
+    from aizk.ai.providers.llm import LLMClient, ModelConfig
     from aizk.pipeline.events import CreationOrigin
 
 logger = logging.getLogger(__name__)

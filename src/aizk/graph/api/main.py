@@ -9,17 +9,18 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
-from starlette.middleware.trustedhost import TrustedHostMiddleware
-
 from fastapi import FastAPI
 
 from aizk.console.dashboard import router as console_dashboard_router
 from aizk.console.routes import router as console_router
-from aizk.conversion.utilities.config import AuthSettings, ConversionConfig
+from aizk.conversion.utilities.config import ConversionConfig
 from aizk.graph.api.routes import router
 from aizk.graph.api.routes.extraction import router as extraction_router
 from aizk.graph.api.routes.ui import router as explorer_router
 from aizk.graph.config import AdmissionConfig
+from aizk.service.api import build_app
+from aizk.service.auth import AuthSettings
+from aizk.service.settings import ServiceSettings
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -35,21 +36,24 @@ async def lifespan(app: FastAPI) -> "AsyncIterator[None]":
 
 
 def create_app() -> FastAPI:
-    """Build the contextualization operator FastAPI application."""
-    app = FastAPI(title="aizk operator console", lifespan=lifespan)
-    # Mirror the conversion API perimeter: enforce the trusted-host allowlist before
-    # route handlers run (HTTP 400 on a Host-header mismatch), in case the graph
-    # operator API is served on its own listener rather than only behind conversion's.
-    # Reads the shared ConversionConfig allowlist; reverse proxies must rewrite Host.
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=ConversionConfig().trusted_hosts)
-    app.include_router(router)
-    app.include_router(extraction_router)
-    # HTML operator surfaces, all behind the same trusted-host perimeter and resolving
-    # the same principal as the JSON API, kept out of the generated OpenAPI:
-    # the descriptor-driven console (dashboard + task monitor + drill-down + actions)
-    # with the app-root redirect to the dashboard, and the content explorer.
-    app.include_router(console_router, include_in_schema=False)
-    app.include_router(console_dashboard_router, include_in_schema=False)
-    app.include_router(explorer_router, include_in_schema=False)
+    """Build the contextualization operator FastAPI application.
 
-    return app
+    The operator API mirrors the conversion API perimeter, in case it is served
+    on its own listener rather than only behind conversion's. The HTML operator
+    surfaces — the descriptor-driven console (dashboard + task monitor +
+    drill-down + actions) with the app-root redirect to the dashboard, and the
+    content explorer — sit behind that same perimeter and resolve the same
+    principal as the JSON API, and are kept out of the generated OpenAPI.
+    """
+    return build_app(
+        title="aizk operator console",
+        routers=[
+            router,
+            extraction_router,
+            (console_router, {"include_in_schema": False}),
+            (console_dashboard_router, {"include_in_schema": False}),
+            (explorer_router, {"include_in_schema": False}),
+        ],
+        lifespan=lifespan,
+        trusted_hosts=ServiceSettings().trusted_hosts,
+    )

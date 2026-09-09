@@ -27,7 +27,7 @@ from aizk.pipeline.lifecycle import WorkUnitStatus
 if TYPE_CHECKING:
     from sqlmodel import Session
 
-    from aizk.conversion.auth import Principal
+    from aizk.service.auth import Principal
 
 
 #: Graph stages persist :class:`WorkUnitStatus`, so their rollup is the identity map.
@@ -60,7 +60,7 @@ class StageDescriptor:
     """Everything the console needs to operate one pipeline stage.
 
     The list/count/detail/action callables receive the resolved request
-    :class:`~aizk.conversion.auth.Principal` and preserve each stage's own
+    :class:`~aizk.service.auth.Principal` and preserve each stage's own
     principal-scoping contract (conversion scopes to the owner; graph stages, whose
     work-units carry no owner, add none).
 

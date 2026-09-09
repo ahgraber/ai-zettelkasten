@@ -49,7 +49,7 @@ from aizk.conversion.core.errors import EgressPolicyError
 from aizk.conversion.utilities.config import DoclingConverterConfig
 from aizk.conversion.utilities.html_prefetch import PrefetchPolicy, prefetch_images
 from aizk.conversion.utilities.paths import figure_dir
-from aizk.utilities.mlflow_tracing import trace_model_call
+from aizk.utilities.tracing import trace_model_call
 
 logger = logging.getLogger(__name__)
 

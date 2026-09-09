@@ -16,6 +16,7 @@ import pytest
 
 from aizk.conversion import cli as conversion_cli
 from aizk.graph import cli as graph_cli
+from aizk.service import cli as service_cli
 
 # The flags the justfile's `all` branch accepts and forwards to every leg.
 # test_all_target_forwards_exactly_these_flags keeps this in step with the recipe.
@@ -57,8 +58,9 @@ def test_every_backfill_leg_accepts_the_forwarded_flags(
     A leg whose parser rejects one of them aborts ``just backfill all`` under
     ``set -e``, so the corpus is swept partially or not at all.
     """
-    monkeypatch.setattr(module, "load_process_dotenv_once", lambda: None)
-    monkeypatch.setattr(module, "configure_logging", lambda _config: None)
+    monkeypatch.setattr(service_cli, "load_process_dotenv_once", lambda: None)
+    monkeypatch.setattr(service_cli, "configure_logging", lambda _settings: None)
+    monkeypatch.setattr(service_cli, "configure_mlflow_tracing", lambda _settings: None)
     monkeypatch.setattr(module, "ConversionConfig", lambda: None)
     monkeypatch.setattr(module, command_attr, lambda _args: 0)
 
@@ -70,8 +72,9 @@ def test_no_backfill_leg_submits_work_without_confirmation(
     module: object, subcommand: str, command_attr: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Every leg exposes ``--yes``, so the recipe's sign-off requirement holds across all three."""
-    monkeypatch.setattr(module, "load_process_dotenv_once", lambda: None)
-    monkeypatch.setattr(module, "configure_logging", lambda _config: None)
+    monkeypatch.setattr(service_cli, "load_process_dotenv_once", lambda: None)
+    monkeypatch.setattr(service_cli, "configure_logging", lambda _settings: None)
+    monkeypatch.setattr(service_cli, "configure_mlflow_tracing", lambda _settings: None)
     monkeypatch.setattr(module, "ConversionConfig", lambda: None)
 
     captured: dict[str, object] = {}

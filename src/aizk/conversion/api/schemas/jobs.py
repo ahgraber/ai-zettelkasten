@@ -13,6 +13,10 @@ from aizk.conversion.core.source_ref import SourceRef
 from aizk.conversion.datamodel.job import ConversionJobStatus
 from aizk.pipeline.lifecycle import MAX_BULK_SELECTION
 
+# The capacity refusal body is shared with the other stages' intake routes and is
+# re-exported here beside the conversion job schemas.
+from aizk.service.api.responses import QueueFullResponse
+
 
 class JobSubmission(BaseModel):
     """Request schema for job submission."""
@@ -90,13 +94,6 @@ class OutputResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
-
-
-class QueueFullResponse(BaseModel):
-    """Response schema when the job queue is at capacity."""
-
-    detail: str
-    retry_after: int
 
 
 class BulkJobActionRequest(BaseModel):

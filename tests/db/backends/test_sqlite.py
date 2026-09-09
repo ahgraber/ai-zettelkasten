@@ -15,6 +15,7 @@ from pyleak import no_thread_leaks
 import pytest
 
 from aizk.db.backends.sqlite import LitestreamManager, SqliteDurabilityConfig, _write_config_file
+from aizk.storage.settings import ObjectStorageSettings
 from aizk.utilities.process import terminate_process_group
 
 #: Grace period the escalation test runs the shipped termination sequence under, so
@@ -120,10 +121,15 @@ def _durability(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **overrides: st
     return SqliteDurabilityConfig(_env_file=None)
 
 
+def _object_storage() -> ObjectStorageSettings:
+    """Read the object store the manager replicates to from the environment ``_durability`` set."""
+    return ObjectStorageSettings(_env_file=None)
+
+
 def test_replication_disabled_by_config_is_inert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """SQLite backend active, replication disabled → manager inert, no subprocess, no raise."""
     config = _durability(tmp_path, monkeypatch, AIZK_LITESTREAM_ENABLED="false")
-    manager = LitestreamManager(config, role="worker")
+    manager = LitestreamManager(config, role="worker", object_storage=_object_storage())
 
     with patch("aizk.db.backends.sqlite.subprocess.Popen") as mock_popen:
         manager.start()
@@ -135,7 +141,7 @@ def test_replication_disabled_by_config_is_inert(tmp_path: Path, monkeypatch: py
 def test_replication_role_not_included_is_inert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """SQLite backend active, enabled, but role excluded (and not ``both``) → manager inert."""
     config = _durability(tmp_path, monkeypatch, AIZK_LITESTREAM_START_ROLE="api")
-    manager = LitestreamManager(config, role="worker")
+    manager = LitestreamManager(config, role="worker", object_storage=_object_storage())
 
     with patch("aizk.db.backends.sqlite.subprocess.Popen") as mock_popen:
         manager.start()
@@ -147,7 +153,7 @@ def test_replication_role_not_included_is_inert(tmp_path: Path, monkeypatch: pyt
 def test_replication_file_less_sqlite_is_inert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """SQLite backend active but in-memory (no file path) → manager inert."""
     config = _durability(tmp_path, monkeypatch, database_url="sqlite://")
-    manager = LitestreamManager(config, role="worker")
+    manager = LitestreamManager(config, role="worker", object_storage=_object_storage())
 
     with patch("aizk.db.backends.sqlite.subprocess.Popen") as mock_popen:
         manager.start()
@@ -201,7 +207,7 @@ def test_start_stop_lifecycle_no_thread_leaks(_litestream_config, monkeypatch) -
         patch("aizk.db.backends.sqlite.os.killpg", side_effect=_killpg) as mock_killpg,
         patch("atexit.register"),
     ):
-        manager = LitestreamManager(_litestream_config, role="worker")
+        manager = LitestreamManager(_litestream_config, role="worker", object_storage=_object_storage())
 
         with no_thread_leaks(action="raise"):
             manager.start()
@@ -255,7 +261,7 @@ def test_stop_escalates_to_sigkill_when_sigterm_is_ignored(_litestream_config, c
         patch("aizk.db.backends.sqlite.os.killpg", side_effect=_killpg) as mock_killpg,
         patch("atexit.register"),
     ):
-        manager = LitestreamManager(_litestream_config, role="worker")
+        manager = LitestreamManager(_litestream_config, role="worker", object_storage=_object_storage())
 
         with no_thread_leaks(action="raise"), caplog.at_level(logging.WARNING, logger="aizk.db.backends.sqlite"):
             manager.start()
@@ -269,7 +275,50 @@ def test_stop_escalates_to_sigkill_when_sigterm_is_ignored(_litestream_config, c
 
 def test_stop_without_start_is_noop(_litestream_config) -> None:
     """Calling stop() before start() does nothing."""
-    manager = LitestreamManager(_litestream_config, role="worker")
+    manager = LitestreamManager(_litestream_config, role="worker", object_storage=_object_storage())
 
     with no_thread_leaks(action="raise"):
         manager.stop()  # Should not raise
+
+
+def test_replica_and_credentials_come_from_the_passed_object_store(
+    _litestream_config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The written replica and the replicate process's credentials come from the passed object store.
+
+    The manager owns no object-storage values of its own, so a caller that hands
+    it a different store replicates to that store — proven by values that appear
+    nowhere in the durability settings. The ambient AWS variables are cleared
+    because the manager only supplies a default for a name the environment does
+    not already carry.
+    """
+    for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"):
+        monkeypatch.delenv(name, raising=False)
+    object_storage = ObjectStorageSettings(
+        _env_file=None,
+        s3_endpoint_url="https://blobs.example.net",
+        s3_bucket_name="ignored-when-litestream-names-one",
+        s3_access_key_id="passed-key-id",
+        s3_secret_access_key="passed-secret",  # noqa: S106 - a fixed test value, not a credential
+        s3_region="eu-west-3",
+    )
+    manager = LitestreamManager(_litestream_config, role="worker", object_storage=object_storage)
+
+    with (
+        patch("aizk.db.backends.sqlite._resolve_litestream_binary", return_value="/usr/bin/litestream"),
+        patch("aizk.db.backends.sqlite.subprocess.Popen") as mock_popen,
+        patch("atexit.register"),
+    ):
+        manager.start()
+
+    replica = yaml.safe_load(Path(_litestream_config.litestream_config_path).read_text(encoding="utf-8"))["dbs"][0][
+        "replicas"
+    ][0]
+    assert replica["region"] == "eu-west-3"
+    assert replica["endpoint"] == "https://blobs.example.net"
+    assert replica["bucket"] == "test-bucket"
+
+    env = mock_popen.call_args.kwargs["env"]
+    assert env["AWS_ACCESS_KEY_ID"] == "passed-key-id"
+    assert env["AWS_SECRET_ACCESS_KEY"] == "passed-secret"  # noqa: S105 - a fixed test value, not a credential
+    assert env["AWS_REGION"] == "eu-west-3"

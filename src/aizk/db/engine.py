@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from sqlalchemy import Engine, event
+from sqlalchemy import Engine, event, text
 from sqlmodel import Session, SQLModel, create_engine
+
+from aizk.utilities.errors import StartupValidationError
 
 
 def _configure_sqlite_pragmas(engine: Engine) -> None:
@@ -61,6 +63,23 @@ def get_engine(database_url: str) -> Engine:
         _configure_sqlite_pragmas(engine)
     _ENGINE_CACHE[database_url] = engine
     return engine
+
+
+def probe_database(database_url: str) -> None:
+    """Verify the database at ``database_url`` is reachable with a trivial query.
+
+    Args:
+        database_url: The SQLAlchemy URL the process will work against.
+
+    Raises:
+        StartupValidationError: If the database cannot be opened or queried.
+    """
+    try:
+        engine = get_engine(database_url)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as exc:
+        raise StartupValidationError(f"Database is unreachable: {exc}") from exc
 
 
 def get_session(engine: Engine) -> Iterator[Session]:

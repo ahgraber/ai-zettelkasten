@@ -47,7 +47,7 @@ from aizk.utilities.clock import utcnow
 if TYPE_CHECKING:
     from sqlmodel import Session
 
-    from aizk.conversion.auth import Principal
+    from aizk.service.auth import Principal
 
 #: Conversion's native status enum rolled up onto the generic lifecycle vocabulary.
 #: ``UPLOAD_PENDING`` counts as running and both failed variants collapse to

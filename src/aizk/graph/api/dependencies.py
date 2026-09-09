@@ -1,8 +1,9 @@
 """Provide FastAPI dependencies for the graph operator API.
 
-Dependencies reuse the conversion database and shared application configuration.
 External readers and search providers remain injectable for tests and route
-composition.
+composition. The shared providers are re-exported from
+:mod:`aizk.service.api.dependencies` as the same objects, so a dependency
+override keyed on either path resolves the same callable.
 """
 
 from __future__ import annotations
@@ -11,35 +12,29 @@ from typing import TYPE_CHECKING
 
 from fastapi import Request
 
-from aizk.conversion.storage.s3_client import S3Client
-from aizk.conversion.utilities.config import ConversionConfig
 from aizk.db.config import DatabaseConfig
-from aizk.db.engine import get_engine, get_session
+from aizk.db.engine import get_engine
 from aizk.graph.search import Fts5SearchProvider
+from aizk.service.api.dependencies import get_config, get_db_session
+from aizk.storage.s3 import S3Client
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
-    from sqlmodel import Session
-
     from aizk.graph.config import AdmissionConfig
     from aizk.graph.markdown_source import BlobReader
     from aizk.graph.search import SearchProvider
 
-
-def get_config(request: Request) -> ConversionConfig:
-    """Return the shared configuration from application state."""
-    return request.app.state.config
+__all__ = [
+    "get_admission_config",
+    "get_blob_reader",
+    "get_config",
+    "get_db_session",
+    "get_search_provider",
+]
 
 
 def get_admission_config(request: Request) -> "AdmissionConfig":
     """Return the graph admission settings from application state."""
     return request.app.state.admission_config
-
-
-def get_db_session(_request: Request) -> "Iterator[Session]":
-    """Yield a request-scoped session on the shared database engine."""
-    yield from get_session(get_engine(DatabaseConfig().database_url))
 
 
 def get_blob_reader(request: Request) -> "BlobReader":

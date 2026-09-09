@@ -1,10 +1,20 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 
 import pytest
 
-from aizk.utilities import mlflow_tracing
+from aizk.utilities import tracing
+
+
+@dataclass
+class _TracingSettings:
+    """The tracing configuration a process hands to ``configure_mlflow_tracing``."""
+
+    enabled: bool
+    tracking_uri: str = ""
+    experiment_name: str = ""
 
 
 class _FakeSpan:
@@ -42,7 +52,7 @@ def test_sanitize_trace_attributes() -> None:
         "request_count": 3,
     }
 
-    sanitized = mlflow_tracing.sanitize_trace_attributes(attributes)
+    sanitized = tracing.sanitize_trace_attributes(attributes)
 
     assert sanitized == {
         "model": "text-embedding-3-small",
@@ -50,11 +60,10 @@ def test_sanitize_trace_attributes() -> None:
     }
 
 
-def test_trace_model_call_noop_when_disabled(monkeypatch) -> None:
-    mlflow_tracing.configure_mlflow_tracing(enabled=False)
-    monkeypatch.delenv("MLFLOW_TRACING_ENABLED", raising=False)
+def test_trace_model_call_noop_when_disabled() -> None:
+    tracing.configure_mlflow_tracing(_TracingSettings(enabled=False))
 
-    with mlflow_tracing.trace_model_call(name="embedding.batch", span_type="EMBEDDING", attributes={"model": "m"}):
+    with tracing.trace_model_call(name="embedding.batch", span_type="EMBEDDING", attributes={"model": "m"}):
         executed = True
 
     assert executed is True
@@ -64,14 +73,16 @@ def test_trace_model_call_sets_status_and_latency(monkeypatch) -> None:
     span = _FakeSpan()
     fake_mlflow = _FakeMlflow(span)
 
-    mlflow_tracing.configure_mlflow_tracing(
-        enabled=True,
-        tracking_uri="http://mlflow:5000",
-        experiment_name="aizk-conversion",
+    tracing.configure_mlflow_tracing(
+        _TracingSettings(
+            enabled=True,
+            tracking_uri="http://mlflow:5000",
+            experiment_name="aizk-conversion",
+        )
     )
-    monkeypatch.setattr(mlflow_tracing, "_load_mlflow", lambda: fake_mlflow)
+    monkeypatch.setattr(tracing, "_load_mlflow", lambda: fake_mlflow)
 
-    with mlflow_tracing.trace_model_call(
+    with tracing.trace_model_call(
         name="llm.chat.completions.batch",
         span_type="CHAT_MODEL",
         attributes={"model": "gpt-test"},
@@ -90,10 +101,10 @@ def test_trace_model_call_is_non_disruptive_on_span_creation_failure(monkeypatch
         def start_span(self, **_kwargs):
             raise RuntimeError("cannot start span")
 
-    mlflow_tracing.configure_mlflow_tracing(enabled=True)
-    monkeypatch.setattr(mlflow_tracing, "_load_mlflow", lambda: _FailingMlflow())
+    tracing.configure_mlflow_tracing(_TracingSettings(enabled=True))
+    monkeypatch.setattr(tracing, "_load_mlflow", lambda: _FailingMlflow())
 
-    with mlflow_tracing.trace_model_call(name="embedding.batch", span_type="EMBEDDING", attributes={"model": "m"}):
+    with tracing.trace_model_call(name="embedding.batch", span_type="EMBEDDING", attributes={"model": "m"}):
         value = 41 + 1
 
     assert value == 42
@@ -102,12 +113,12 @@ def test_trace_model_call_is_non_disruptive_on_span_creation_failure(monkeypatch
 def test_trace_model_call_marks_error_status(monkeypatch) -> None:
     span = _FakeSpan()
     fake_mlflow = _FakeMlflow(span)
-    mlflow_tracing.configure_mlflow_tracing(enabled=True)
-    monkeypatch.setattr(mlflow_tracing, "_load_mlflow", lambda: fake_mlflow)
+    tracing.configure_mlflow_tracing(_TracingSettings(enabled=True))
+    monkeypatch.setattr(tracing, "_load_mlflow", lambda: fake_mlflow)
 
     with (
         pytest.raises(ValueError, match="boom"),
-        mlflow_tracing.trace_model_call(
+        tracing.trace_model_call(
             name="llm.chat.completions.batch",
             span_type="CHAT_MODEL",
             attributes={"model": "gpt-test"},

@@ -22,7 +22,7 @@ Splitting summary and variant into two runs is required so a standalone
 summary under unchanged summary inputs.
 
 Every model invocation passes through the single injected
-:class:`~aizk.graph.llm.LLMClient` access point, so a deterministic substitute
+:class:`~aizk.ai.providers.llm.LLMClient` access point, so a deterministic substitute
 drives the runs in tests with no change to this logic. Contextualization is a
 **dereferencing revision**: the model rewrites the working chunk into a
 self-contained passage with every cross-reference resolved inline, and that
@@ -58,6 +58,7 @@ from uuid import UUID
 
 from sqlmodel import Session, select
 
+from aizk.ai.providers.llm import ModelConfig, model_config_fingerprint
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.graph._version import CONTEXT_VERSION, SUMMARY_VERSION
 from aizk.graph.content_index import index_contextualized_content
@@ -74,7 +75,6 @@ from aizk.graph.datamodel import (
     SummaryRunApplicability,
 )
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
-from aizk.graph.llm import ModelConfig, model_config_fingerprint
 from aizk.graph.persistence import (
     CHUNKING_STAGE,
     document_order_chunks,
@@ -91,9 +91,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy import Engine
 
+    from aizk.ai.providers.llm import LLMClient
     from aizk.chunking import Chunk as SplitterChunk
     from aizk.graph.datamodel import MemoKind
-    from aizk.graph.llm import LLMClient
 
 logger = logging.getLogger(__name__)
 

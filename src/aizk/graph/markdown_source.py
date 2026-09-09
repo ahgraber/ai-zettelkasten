@@ -11,7 +11,7 @@ graph stage decoupled from boto3/S3 details and deterministically testable.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING
 
 from sqlmodel import Session
 
@@ -19,19 +19,14 @@ from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.graph.enqueue import latest_output_id
 from aizk.graph.workunit import LoadedMarkdown
 
+# The blob-reader protocol is owned by the object-storage package and re-exported
+# here for importers written against this path.
+from aizk.storage import BlobReader
+
 if TYPE_CHECKING:
     from uuid import UUID
 
     from sqlalchemy import Engine
-
-
-@runtime_checkable
-class BlobReader(Protocol):
-    """Reads raw bytes from blob storage by key."""
-
-    def get_object_bytes(self, s3_key: str) -> bytes:
-        """Return the raw bytes stored under ``s3_key``."""
-        ...
 
 
 class S3MarkdownSource:

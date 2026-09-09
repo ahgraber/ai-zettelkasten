@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
     from sqlmodel import Session
 
-    from aizk.conversion.auth import Principal
+    from aizk.service.auth import Principal
 
 _DEFAULT_SORT = "created_at"
 

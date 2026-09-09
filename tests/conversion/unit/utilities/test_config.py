@@ -272,25 +272,15 @@ def test_builders_do_not_call_load_dotenv(module):
 def test_composition_roots_call_guarded_dotenv_loader(module):
     """True process entrypoints must use the shared guarded dotenv loader.
 
-    If this test fails after removing or moving a call, update the composition
-    root accordingly rather than deleting the test.
+    A CLI reaches the loader through the shared process preamble; the API
+    lifespan and the spawned conversion child call it directly. Either spelling
+    satisfies the rule. If this test fails after removing or moving a call,
+    update the composition root accordingly rather than deleting the test.
     """
-    assert _calls_named_function(_module_path(module), "load_process_dotenv_once"), (
-        f"{module} must call load_process_dotenv_once() — it is a process composition root."
-    )
-
-
-def test_guarded_dotenv_loader_calls_python_dotenv_once(monkeypatch):
-    import aizk.conversion.utilities.dotenv as dotenv_utils
-
-    calls: list[bool] = []
-    monkeypatch.setattr(dotenv_utils, "_DOTENV_LOADED", False)
-    monkeypatch.setattr(dotenv_utils, "load_dotenv", lambda: calls.append(True))
-
-    dotenv_utils.load_process_dotenv_once()
-    dotenv_utils.load_process_dotenv_once()
-
-    assert calls == [True]
+    source = _module_path(module)
+    assert _calls_named_function(source, "load_process_dotenv_once") or _calls_named_function(
+        source, "prepare_process"
+    ), f"{module} must load dotenv — it is a process composition root."
 
 
 @pytest.mark.isolate

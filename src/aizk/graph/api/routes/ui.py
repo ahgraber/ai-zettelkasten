@@ -20,8 +20,6 @@ from sqlmodel import Session, select
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.templating import Jinja2Templates
 
-from aizk.conversion.api.dependencies import get_principal
-from aizk.conversion.auth import Principal
 from aizk.conversion.datamodel.source import Source
 from aizk.graph.api.dependencies import get_blob_reader, get_db_session, get_search_provider
 from aizk.graph.contextualization import VARIANT_STAGE, ContextSource, resolve_chunk_text
@@ -29,6 +27,7 @@ from aizk.graph.datamodel import Chunk, ContextualizedChunk, DocumentSummary
 from aizk.graph.persistence import active_chunking_run, document_order_chunks, run_input
 from aizk.graph.search import SearchKind
 from aizk.pipeline.run import PipelineRun, RunStatus
+from aizk.service.auth import Principal, get_principal
 
 if TYPE_CHECKING:
     from aizk.graph.markdown_source import BlobReader

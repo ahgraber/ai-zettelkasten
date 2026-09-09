@@ -28,7 +28,6 @@ from aizk.conversion.storage.manifest import (
     generate_manifest_v2,
     save_manifest,
 )
-from aizk.conversion.storage.s3_client import S3Client, S3Error
 from aizk.conversion.utilities.config import ConversionConfig
 from aizk.conversion.utilities.paths import (
     figure_paths,
@@ -38,6 +37,7 @@ from aizk.conversion.utilities.paths import (
 )
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
+from aizk.storage.s3 import S3Client, S3Error
 from aizk.utilities.clock import utcnow
 from aizk.utilities.paths import open_nofollow
 
@@ -56,7 +56,7 @@ def _upload_nofollow(path: Path, s3_key: str, s3_client: S3Client) -> str:
         path: Validated workspace-local path (must already pass
             :func:`~aizk.conversion.utilities.paths._assert_within`).
         s3_key: Destination S3 object key.
-        s3_client: Configured :class:`~aizk.conversion.storage.s3_client.S3Client`.
+        s3_client: Configured :class:`~aizk.storage.s3.S3Client`.
 
     Returns:
         S3 URI of the uploaded object.

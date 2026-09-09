@@ -24,12 +24,10 @@ from aizk.conversion.core.errors import ChainNotTerminated
 from aizk.conversion.core.protocols import RefResolver
 from aizk.conversion.core.registry import ConverterRegistry, FetcherRegistry
 from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
-from aizk.conversion.utilities.startup import (
-    probe_database,
-    probe_karakeep,
-    probe_picture_description,
-    probe_s3,
-)
+from aizk.conversion.wiring.probes import probe_karakeep, probe_picture_description
+from aizk.db.config import DatabaseConfig
+from aizk.db.engine import probe_database
+from aizk.storage.probe import probe_s3
 
 
 def register_fetchers(
@@ -97,8 +95,8 @@ def build_startup_probes(
     runs each before any work is accepted.
     """
     probes: list[Callable[[], None]] = [
-        partial(probe_s3, cfg),
-        partial(probe_database, cfg),
+        partial(probe_s3, cfg.storage),
+        partial(probe_database, DatabaseConfig().database_url),
     ]
     if "karakeep_bookmark" in fetcher_registry.registered_kinds():
         probes.append(partial(probe_karakeep, karakeep_cfg))

@@ -140,10 +140,10 @@ def _install_memory_s3(monkeypatch: pytest.MonkeyPatch) -> dict[str, bytes]:
     def _get_object_bytes(self, s3_key: str) -> bytes:
         return storage[s3_key]
 
-    monkeypatch.setattr("aizk.conversion.storage.s3_client.S3Client.__init__", _init)
-    monkeypatch.setattr("aizk.conversion.storage.s3_client.S3Client.upload_file", _upload_file)
-    monkeypatch.setattr("aizk.conversion.storage.s3_client.S3Client.upload_fileobj", _upload_fileobj)
-    monkeypatch.setattr("aizk.conversion.storage.s3_client.S3Client.get_object_bytes", _get_object_bytes)
+    monkeypatch.setattr("aizk.storage.s3.S3Client.__init__", _init)
+    monkeypatch.setattr("aizk.storage.s3.S3Client.upload_file", _upload_file)
+    monkeypatch.setattr("aizk.storage.s3.S3Client.upload_fileobj", _upload_fileobj)
+    monkeypatch.setattr("aizk.storage.s3.S3Client.get_object_bytes", _get_object_bytes)
     return storage
 
 

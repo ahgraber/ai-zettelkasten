@@ -11,11 +11,11 @@ persisted.
 Adding a new auth mode (e.g. ``token``, ``proxy_headers``, ``oidc``) is a
 delta on FOUR sites — no schema migration is required:
 
-1. ``Principal.provenance`` literal in ``auth/principal.py`` — widen the
+1. ``Principal.provenance`` literal in ``aizk/service/auth.py`` — widen the
    ``Literal[...]`` to admit the new provenance string.
-2. ``AuthSettings.auth_mode`` validator in ``utilities/config.py`` — remove
+2. ``AuthSettings.auth_mode`` validator in ``aizk/service/auth.py`` — remove
    the new mode from the "reserved but not implemented" rejection branch.
-3. ``get_principal`` resolver in ``api/dependencies.py`` — add a ``case``
+3. ``get_principal`` resolver in ``aizk/service/auth.py`` — add a ``case``
    arm in the ``match settings.auth_mode:`` block that constructs the
    :class:`Principal` from request state (headers, cookies, OIDC claims,
    etc.) appropriate to the new mode.
@@ -24,6 +24,6 @@ delta on FOUR sites — no schema migration is required:
    tests.
 """
 
-from aizk.conversion.auth.principal import Principal
+from aizk.service.auth import Principal
 
 __all__ = ["Principal"]

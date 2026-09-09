@@ -5,7 +5,7 @@ work-units with server-side filter/search/sort/pagination; the drill-down shows
 the unit's lifecycle event trail (from the shared ``pipeline_events``) plus the
 stage's optional runs/artifact detail; the actions route applies a stage's
 declared bulk actions with skip-and-report semantics. Every route resolves the
-same request :class:`~aizk.conversion.auth.Principal` the JSON APIs require and
+same request :class:`~aizk.service.auth.Principal` the JSON APIs require and
 sits behind the app's trusted-host perimeter, so the console is no weaker a
 perimeter than the APIs beside it.
 """
@@ -25,11 +25,10 @@ from aizk.console.descriptors import StageDescriptor, get_descriptor, registered
 from aizk.console.monitor import BASE_COLUMN_COUNT, format_bulk_notice, format_dt
 from aizk.console.rendering import TEMPLATES
 import aizk.console.stages  # noqa: F401 -- import registers the stage descriptors
-from aizk.conversion.api.dependencies import get_principal
-from aizk.conversion.auth import Principal
 from aizk.graph.api.dependencies import get_db_session
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import MAX_BULK_SELECTION
+from aizk.service.auth import Principal, get_principal
 
 logger = logging.getLogger(__name__)
 

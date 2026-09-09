@@ -7,25 +7,29 @@ stays hermetic.
 
 from __future__ import annotations
 
+import ast
+import inspect
 from types import SimpleNamespace
 
 import pytest
 
 from aizk.conversion import cli
+from aizk.service import cli as service_cli
 
 
 @pytest.fixture(autouse=True)
 def _stub_process_setup(monkeypatch: pytest.MonkeyPatch) -> None:
     """Neutralize process-global side effects shared by every command."""
-    monkeypatch.setattr(cli, "load_process_dotenv_once", lambda: None)
-    monkeypatch.setattr(cli, "setproctitle", lambda _title: None)
+    monkeypatch.setattr(service_cli, "load_process_dotenv_once", lambda: None)
+    monkeypatch.setattr(service_cli, "configure_mlflow_tracing", lambda _settings: None)
+    monkeypatch.setattr(cli, "set_process_title", lambda _title: None)
     monkeypatch.setattr(cli, "ConversionConfig", lambda: SimpleNamespace())
 
 
 def test_main_configures_logging_before_running_db_init(monkeypatch: pytest.MonkeyPatch) -> None:
     """``main`` configures logging for db-init too — every command shares one logging procedure."""
     calls: list[str] = []
-    monkeypatch.setattr(cli, "configure_logging", lambda _config: calls.append("log"))
+    monkeypatch.setattr(service_cli, "configure_logging", lambda _settings: calls.append("log"))
     monkeypatch.setattr("aizk.db.migrations.run_migrations", lambda: calls.append("migrate"))
 
     assert cli.main(["db-init"]) == 0
@@ -33,9 +37,25 @@ def test_main_configures_logging_before_running_db_init(monkeypatch: pytest.Monk
     assert calls == ["log", "migrate"]
 
 
+def test_every_command_titles_its_process() -> None:
+    """The titles a host sees for this CLI's processes are exactly these four."""
+    tree = ast.parse(inspect.getsource(cli))
+
+    titles = {
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "set_process_title"
+        and isinstance(node.args[0], ast.Constant)
+    }
+
+    assert titles == {"docling-db-init", "docling-api", "docling-worker", "docling-backfill"}
+
+
 def _stub_backfill_clients(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub the config and client construction the backfill command performs."""
-    monkeypatch.setattr(cli, "configure_logging", lambda _config: None)
+    monkeypatch.setattr(service_cli, "configure_logging", lambda _settings: None)
     monkeypatch.setattr(cli, "ConversionConfig", lambda: SimpleNamespace(api_host="127.0.0.1", api_port=8000))
     monkeypatch.setattr(cli, "KarakeepFetcherConfig", lambda: SimpleNamespace(base_url="http://kk", api_key="k"))
     monkeypatch.setattr(cli, "KarakeepClient", lambda **_kwargs: SimpleNamespace())
@@ -138,7 +158,7 @@ def test_backfill_reports_an_unconfigured_karakeep_client_as_a_usage_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Missing KaraKeep credentials are a configuration error, reported without a traceback."""
-    monkeypatch.setattr(cli, "configure_logging", lambda _config: None)
+    monkeypatch.setattr(service_cli, "configure_logging", lambda _settings: None)
     monkeypatch.setattr(cli, "ConversionConfig", lambda: SimpleNamespace(api_host="127.0.0.1", api_port=8000))
     monkeypatch.setattr(cli, "KarakeepFetcherConfig", lambda: SimpleNamespace(base_url=None, api_key=None))
 

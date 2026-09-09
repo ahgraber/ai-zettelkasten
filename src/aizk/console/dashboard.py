@@ -9,7 +9,7 @@ a pending-work or staleness derivation, its count of sources behind the stage is
 shown beside the lifecycle columns — work the stage owes but has no unit for, and
 work it finished against upstream state that has since moved on. The app root
 (``/``) redirects here. Both sit behind the app's trusted-host perimeter and
-resolve the same request :class:`~aizk.conversion.auth.Principal` the JSON APIs
+resolve the same request :class:`~aizk.service.auth.Principal` the JSON APIs
 require.
 """
 
@@ -25,10 +25,9 @@ from fastapi.responses import RedirectResponse
 from aizk.console.descriptors import registered_stages, rollup_counts
 from aizk.console.rendering import TEMPLATES
 import aizk.console.stages  # noqa: F401 -- import registers the stage descriptors
-from aizk.conversion.api.dependencies import get_principal
-from aizk.conversion.auth import Principal
 from aizk.graph.api.dependencies import get_db_session
 from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.service.auth import Principal, get_principal
 
 #: The generic lifecycle categories the dashboard columns render, in order.
 CATEGORIES: list[str] = [status.value for status in WorkUnitStatus]

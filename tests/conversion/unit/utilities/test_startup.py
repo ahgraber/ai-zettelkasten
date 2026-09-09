@@ -9,7 +9,7 @@ from botocore.exceptions import ClientError
 import httpx
 import pytest
 
-from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
+from aizk.conversion.utilities.config import DoclingConverterConfig, KarakeepFetcherConfig
 from aizk.conversion.utilities.startup import (
     StartupValidationError,
     log_feature_summary,
@@ -18,6 +18,8 @@ from aizk.conversion.utilities.startup import (
     probe_picture_description,
     probe_s3,
 )
+from aizk.service.settings import ServiceSettings
+from aizk.storage.settings import ObjectStorageSettings
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -25,14 +27,20 @@ from aizk.conversion.utilities.startup import (
 
 
 @pytest.fixture()
-def config(monkeypatch: pytest.MonkeyPatch) -> ConversionConfig:
-    """Return a ConversionConfig with minimal valid settings."""
+def config(monkeypatch: pytest.MonkeyPatch) -> ObjectStorageSettings:
+    """Return object-storage settings with minimal valid values."""
     monkeypatch.setenv("AIZK_S3_ACCESS_KEY_ID", "test")
     monkeypatch.setenv("AIZK_S3_SECRET_ACCESS_KEY", "test")
     monkeypatch.setenv("AIZK_S3_REGION", "us-east-1")
     monkeypatch.setenv("AIZK_S3_BUCKET_NAME", "test-bucket")
     monkeypatch.setenv("AIZK_S3_ENDPOINT_URL", "http://localhost:9000")
-    return ConversionConfig(_env_file=None)
+    return ObjectStorageSettings(_env_file=None)
+
+
+@pytest.fixture()
+def settings() -> ServiceSettings:
+    """Return service-wide settings with every optional feature off."""
+    return ServiceSettings(_env_file=None)
 
 
 @pytest.fixture()
@@ -52,10 +60,10 @@ def karakeep_cfg() -> KarakeepFetcherConfig:
 # ---------------------------------------------------------------------------
 
 
-def test_probe_s3_succeeds_when_bucket_reachable(config: ConversionConfig) -> None:
+def test_probe_s3_succeeds_when_bucket_reachable(config: ObjectStorageSettings) -> None:
     mock_boto = MagicMock()
     with patch(
-        "aizk.conversion.utilities.startup.S3Client",
+        "aizk.storage.probe.S3Client",
         return_value=MagicMock(client=mock_boto, config=config),
     ):
         probe_s3(config)
@@ -63,7 +71,7 @@ def test_probe_s3_succeeds_when_bucket_reachable(config: ConversionConfig) -> No
     mock_boto.head_bucket.assert_called_once_with(Bucket="test-bucket")
 
 
-def test_probe_s3_raises_on_client_error(config: ConversionConfig) -> None:
+def test_probe_s3_raises_on_client_error(config: ObjectStorageSettings) -> None:
     error = ClientError(
         {"Error": {"Code": "403", "Message": "Forbidden"}},
         "HeadBucket",
@@ -71,17 +79,17 @@ def test_probe_s3_raises_on_client_error(config: ConversionConfig) -> None:
     mock_s3 = MagicMock()
     mock_s3.client.head_bucket.side_effect = error
     with (
-        patch("aizk.conversion.utilities.startup.S3Client", return_value=mock_s3),
+        patch("aizk.storage.probe.S3Client", return_value=mock_s3),
         pytest.raises(StartupValidationError, match="test-bucket.*unreachable"),
     ):
         probe_s3(config)
 
 
-def test_probe_s3_raises_on_connection_error(config: ConversionConfig) -> None:
+def test_probe_s3_raises_on_connection_error(config: ObjectStorageSettings) -> None:
     mock_s3 = MagicMock()
     mock_s3.client.head_bucket.side_effect = ConnectionError("refused")
     with (
-        patch("aizk.conversion.utilities.startup.S3Client", return_value=mock_s3),
+        patch("aizk.storage.probe.S3Client", return_value=mock_s3),
         pytest.raises(StartupValidationError, match="unreachable"),
     ):
         probe_s3(config)
@@ -97,7 +105,7 @@ def test_probe_karakeep_succeeds_when_reachable() -> None:
     mock_response.status_code = 200
     mock_response.raise_for_status = MagicMock()
 
-    with patch("aizk.conversion.utilities.startup.httpx.get", return_value=mock_response) as mock_get:
+    with patch("aizk.conversion.wiring.probes.httpx.get", return_value=mock_response) as mock_get:
         probe_karakeep(KarakeepFetcherConfig(_env_file=None, base_url="http://karakeep.local", api_key="test-key"))
 
     mock_get.assert_called_once_with(
@@ -122,7 +130,7 @@ def test_probe_karakeep_raises_on_http_error() -> None:
     mock_response = httpx.Response(status_code=401, request=httpx.Request("GET", "http://test"))
     with (
         patch(
-            "aizk.conversion.utilities.startup.httpx.get",
+            "aizk.conversion.wiring.probes.httpx.get",
             side_effect=httpx.HTTPStatusError("401", request=mock_response.request, response=mock_response),
         ),
         pytest.raises(StartupValidationError, match="HTTP 401"),
@@ -132,7 +140,7 @@ def test_probe_karakeep_raises_on_http_error() -> None:
 
 def test_probe_karakeep_raises_on_connection_error() -> None:
     with (
-        patch("aizk.conversion.utilities.startup.httpx.get", side_effect=httpx.ConnectError("refused")),
+        patch("aizk.conversion.wiring.probes.httpx.get", side_effect=httpx.ConnectError("refused")),
         pytest.raises(StartupValidationError, match="unreachable"),
     ):
         probe_karakeep(KarakeepFetcherConfig(_env_file=None, base_url="http://karakeep.local", api_key="test-key"))
@@ -144,37 +152,37 @@ def test_probe_karakeep_raises_on_connection_error() -> None:
 
 
 def test_log_feature_summary_all_enabled(
-    config: ConversionConfig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    settings: ServiceSettings, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     docling_cfg = DoclingConverterConfig(
         _env_file=None,
         picture_description_base_url="http://llm.local/v1",
         picture_description_api_key="key",
     )
-    config.mlflow_tracing_enabled = True
+    settings.mlflow.enabled = True
     # Litestream state is read from the SQLite durability config's own env.
     monkeypatch.setenv("AIZK_LITESTREAM_ENABLED", "true")
     monkeypatch.setenv("AIZK_LITESTREAM_S3_BUCKET_NAME", "backup-bucket")
 
     with caplog.at_level(logging.INFO):
-        log_feature_summary(config, docling_cfg, "worker")
+        log_feature_summary(settings, docling_cfg, "worker")
 
     assert "startup feature summary" in caplog.text
 
 
 def test_log_feature_summary_all_disabled(
-    config: ConversionConfig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    settings: ServiceSettings, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     docling_cfg = DoclingConverterConfig(
         _env_file=None,
         picture_description_base_url="",
         picture_description_api_key="",
     )
-    config.mlflow_tracing_enabled = False
+    settings.mlflow.enabled = False
     monkeypatch.setenv("AIZK_LITESTREAM_ENABLED", "false")
 
     with caplog.at_level(logging.INFO):
-        log_feature_summary(config, docling_cfg, "api")
+        log_feature_summary(settings, docling_cfg, "api")
 
     assert "startup feature summary" in caplog.text
 
@@ -204,7 +212,7 @@ def test_log_feature_summary_all_disabled(
     ids=["all-disabled", "all-enabled", "mixed-disabled", "only-picture-disabled"],
 )
 def test_log_feature_summary_combinations(
-    config: ConversionConfig,
+    settings: ServiceSettings,
     monkeypatch: pytest.MonkeyPatch,
     base_url: str,
     api_key: str,
@@ -218,17 +226,36 @@ def test_log_feature_summary_combinations(
         picture_description_base_url=base_url,
         picture_description_api_key=api_key,
     )
-    config.mlflow_tracing_enabled = mlflow
+    settings.mlflow.enabled = mlflow
     monkeypatch.setenv("AIZK_LITESTREAM_ENABLED", "true" if litestream_enabled else "false")
     monkeypatch.setenv("AIZK_LITESTREAM_S3_BUCKET_NAME", litestream_bucket)
 
-    with patch("aizk.conversion.utilities.startup.logger") as mock_logger:
-        log_feature_summary(config, docling_cfg, "worker")
+    with patch("aizk.conversion.wiring.probes.logger") as mock_logger:
+        log_feature_summary(settings, docling_cfg, "worker")
 
     call_kwargs = mock_logger.info.call_args
     features = call_kwargs.kwargs["extra"]["features"]
     disabled_features = {name for name, state in features.items() if state["status"] == "disabled"}
     assert disabled_features == expected_disabled
+
+
+def test_log_feature_summary_names_the_variable_that_disabled_tracing(
+    settings: ServiceSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Disabled tracing reports the variable an operator sets to turn it back on."""
+    docling_cfg = DoclingConverterConfig(
+        _env_file=None,
+        picture_description_base_url="",
+        picture_description_api_key="",
+    )
+    settings.mlflow.enabled = False
+    monkeypatch.setenv("AIZK_LITESTREAM_ENABLED", "false")
+
+    with patch("aizk.conversion.wiring.probes.logger") as mock_logger:
+        log_feature_summary(settings, docling_cfg, "worker")
+
+    features = mock_logger.info.call_args.kwargs["extra"]["features"]
+    assert features["mlflow_tracing"] == {"status": "disabled", "reason": "AIZK_MLFLOW__ENABLED is false"}
 
 
 # ---------------------------------------------------------------------------
@@ -240,18 +267,16 @@ def test_probe_database_succeeds_when_reachable() -> None:
     from sqlalchemy import create_engine
 
     engine = create_engine("sqlite://")  # in-memory; SELECT 1 needs no tables
-    cfg = ConversionConfig(_env_file=None)
     with patch("aizk.db.engine.get_engine", return_value=engine):
-        probe_database(cfg)  # must not raise
+        probe_database("sqlite://")  # must not raise
 
 
 def test_probe_database_raises_when_unreachable() -> None:
-    cfg = ConversionConfig(_env_file=None)
     with (
         patch("aizk.db.engine.get_engine", side_effect=Exception("db boom")),
         pytest.raises(StartupValidationError, match="Database is unreachable"),
     ):
-        probe_database(cfg)
+        probe_database("sqlite://")
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +307,7 @@ def test_probe_picture_description_succeeds_on_200() -> None:
     )
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
-    with patch("aizk.conversion.utilities.startup.httpx.get", return_value=mock_response):
+    with patch("aizk.conversion.wiring.probes.httpx.get", return_value=mock_response):
         probe_picture_description(docling_cfg)
 
 
@@ -294,7 +319,7 @@ def test_probe_picture_description_raises_on_non_2xx() -> None:
     )
     with (
         patch(
-            "aizk.conversion.utilities.startup.httpx.get",
+            "aizk.conversion.wiring.probes.httpx.get",
             side_effect=httpx.HTTPStatusError("401", request=MagicMock(), response=MagicMock(status_code=401)),
         ),
         pytest.raises(StartupValidationError, match="401"),
@@ -310,7 +335,7 @@ def test_probe_picture_description_raises_on_connection_error() -> None:
     )
     with (
         patch(
-            "aizk.conversion.utilities.startup.httpx.get",
+            "aizk.conversion.wiring.probes.httpx.get",
             side_effect=httpx.ConnectError("refused"),
         ),
         pytest.raises(StartupValidationError, match="unreachable"),

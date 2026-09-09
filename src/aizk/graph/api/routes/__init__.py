@@ -6,7 +6,7 @@ co-commit lifecycle events with status changes.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated
 
 from sqlalchemy import func, text
 from sqlmodel import select
@@ -14,9 +14,6 @@ from sqlmodel import select
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import JSONResponse
 
-from aizk.conversion.api.dependencies import get_principal
-from aizk.conversion.api.schemas import QueueFullResponse
-from aizk.conversion.auth.principal import Principal
 from aizk.graph.api.dependencies import get_admission_config, get_db_session
 from aizk.graph.api.schemas import (
     ContextualizationJobList,
@@ -31,6 +28,11 @@ from aizk.graph.job_actions import (
     apply_contextualization_retry as _apply_retry,
 )
 from aizk.pipeline.lifecycle import WorkUnitStatus
+
+# The capacity refusal is shared with the other stages' intake routes and is
+# re-exported here for the routes composed on top of this module.
+from aizk.service.api.responses import INTAKE_RESPONSES, queue_full_response
+from aizk.service.auth import Principal, get_principal
 
 if TYPE_CHECKING:
     from sqlmodel import Session
@@ -51,33 +53,6 @@ def _get_or_404(session: "Session", job_id: int) -> ContextualizationJob:
     if job is None:
         raise HTTPException(status_code=404, detail=f"contextualization work-unit {job_id} not found")
     return job
-
-
-#: The capacity refusal, declared so a generated client knows to read the header
-#: rather than discovering it at runtime. Each intake route adds its own 200 and
-#: 404 to this, since both are returned from the handler body and neither is
-#: inferable from the decorator's ``status_code``.
-INTAKE_RESPONSES: dict[int | str, dict[str, Any]] = {
-    503: {
-        "model": QueueFullResponse,
-        "description": "Stage is at capacity",
-        "headers": {
-            "Retry-After": {
-                "description": "Seconds to wait before resubmitting.",
-                "schema": {"type": "integer"},
-            }
-        },
-    },
-}
-
-
-def queue_full_response(retry_after_seconds: int) -> JSONResponse:
-    """Return a 503 capacity response with ``Retry-After`` and the standard body."""
-    return JSONResponse(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        content={"detail": "Queue is at capacity", "retry_after": retry_after_seconds},
-        headers={"Retry-After": str(retry_after_seconds)},
-    )
 
 
 @router.post(

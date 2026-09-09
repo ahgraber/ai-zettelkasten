@@ -1,9 +1,10 @@
 """Tests for the contextualization worker composition root.
 
-``build_llm_client`` gates startup on the OpenAI-compatible endpoint triple and,
-when configured, constructs a ``pydantic-ai`` agent client (no network call at
-construction). ``run_graph_worker`` additionally wires the stage's admission loop
-around the runner. Live model and S3 wiring are exercised only against a real
+``run_graph_worker`` gates startup on the OpenAI-compatible endpoint triple before
+anything runs, hands the resolved triple to the provider client builder, and wires
+the stage's admission loop around the runner. ``build_llm_client`` constructs a
+``pydantic-ai`` agent client from a resolved triple (no network call at
+construction). Live model and S3 wiring are exercised only against a real
 deployment, not here.
 """
 
@@ -14,49 +15,29 @@ from typing import Any
 
 import pytest
 
+from aizk.ai.providers.llm import PydanticAILLMClient, build_llm_client
 from aizk.conversion.utilities.startup import StartupValidationError
 from aizk.graph import worker as worker_module
 from aizk.graph.admission import AdmissionAdapter
 from aizk.graph.config import AdmissionConfig, ContextualizationConfig
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
-from aizk.graph.llm import PydanticAILLMClient
-from aizk.graph.worker import build_llm_client, run_graph_worker
+from aizk.graph.worker import run_graph_worker
 
 
-def test_build_llm_client_requires_configured_endpoint() -> None:
-    """An unconfigured model endpoint fails startup rather than running headless."""
-    config = ContextualizationConfig(llm_base_url="", llm_api_key="", llm_model="")
-    assert config.llm_enabled is False
-    with pytest.raises(StartupValidationError, match="model endpoint is not configured"):
-        build_llm_client(config)
-
-
-def test_unresolved_placeholder_counts_as_unconfigured() -> None:
-    """A triple still holding a ``${...}`` placeholder is treated as unconfigured.
-
-    An unexpanded ``.env`` interpolation is non-empty but invalid; it must fail the
-    startup gate rather than slip through and fail only once a job calls the model.
-    """
-    config = ContextualizationConfig(
-        llm_base_url="${_OPENROUTER_BASE_URL}",
-        llm_api_key="${_OPENROUTER_API_KEY}",
+def _configured_config(**overrides: object) -> ContextualizationConfig:
+    """Return a contextualization config whose model endpoint triple is complete."""
+    return ContextualizationConfig(
+        _env_file=None,
+        llm_base_url="https://api.example.com/v1",
+        llm_api_key="sk-test-unused",
         llm_model="openai/gpt-4.1-nano",
+        **overrides,
     )
-    assert config.llm_enabled is False
-    with pytest.raises(StartupValidationError, match="model endpoint is not configured"):
-        build_llm_client(config)
 
 
 def test_build_llm_client_builds_a_pydantic_ai_client_when_configured() -> None:
-    """A fully configured triple yields a PydanticAILLMClient (constructed, not called)."""
-    config = ContextualizationConfig(
-        llm_base_url="https://openrouter.ai/api/v1",
-        llm_api_key="sk-test-unused",
-        llm_model="openai/gpt-4.1-nano",
-    )
-    assert config.llm_enabled is True
-
-    client = build_llm_client(config)
+    """A resolved triple yields a PydanticAILLMClient (constructed, not called)."""
+    client = build_llm_client("https://openrouter.ai/api/v1", "sk-test-unused", "openai/gpt-4.1-nano")
 
     assert isinstance(client, PydanticAILLMClient)
 
@@ -92,7 +73,7 @@ def stubbed_worker(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
     monkeypatch.setattr(worker_module, "DatabaseConfig", lambda: SimpleNamespace(database_url="sqlite://"))
     monkeypatch.setattr(worker_module, "get_engine", lambda _url: "fake-engine")
-    monkeypatch.setattr(worker_module, "build_llm_client", lambda _config: object())
+    monkeypatch.setattr(worker_module, "build_llm_client", lambda *_triple: object())
     monkeypatch.setattr(worker_module, "S3Client", lambda _config: object())
     monkeypatch.setattr(worker_module, "S3MarkdownSource", lambda _engine, _client: object())
     monkeypatch.setattr(worker_module, "ContextualizationStageHandler", lambda *_a, **_k: object())
@@ -109,6 +90,39 @@ def stubbed_worker(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return order
 
 
+def test_the_worker_requires_a_configured_endpoint(stubbed_worker: list[str]) -> None:
+    """An unconfigured model endpoint fails startup rather than running headless."""
+    config = ContextualizationConfig(_env_file=None, llm_base_url="", llm_api_key="", llm_model="")
+    assert config.llm_enabled is False
+
+    with pytest.raises(StartupValidationError, match="model endpoint is not configured"):
+        run_graph_worker(SimpleNamespace(), config)
+
+    assert stubbed_worker == []
+    assert _RecordingAdmissionLoop.instances == []
+
+
+def test_the_worker_treats_an_unresolved_placeholder_as_unconfigured(stubbed_worker: list[str]) -> None:
+    """A triple still holding a ``${...}`` placeholder is treated as unconfigured.
+
+    An unexpanded ``.env`` interpolation is non-empty but invalid; it must fail the
+    startup gate rather than slip through and fail only once a job calls the model.
+    """
+    config = ContextualizationConfig(
+        _env_file=None,
+        llm_base_url="${_OPENROUTER_BASE_URL}",
+        llm_api_key="${_OPENROUTER_API_KEY}",
+        llm_model="openai/gpt-4.1-nano",
+    )
+    assert config.llm_enabled is False
+
+    with pytest.raises(StartupValidationError, match="model endpoint is not configured"):
+        run_graph_worker(SimpleNamespace(), config)
+
+    assert stubbed_worker == []
+    assert _RecordingAdmissionLoop.instances == []
+
+
 def test_the_worker_hosts_the_stages_admission_loop(stubbed_worker: list[str]) -> None:
     """The worker runs the contextualization stage's admission alongside its claim loop."""
     admission_config = AdmissionConfig(
@@ -118,7 +132,7 @@ def test_the_worker_hosts_the_stages_admission_loop(stubbed_worker: list[str]) -
         admission_interval_seconds=7.5,
     )
 
-    assert run_graph_worker(SimpleNamespace(), ContextualizationConfig(_env_file=None), admission_config) == 0
+    assert run_graph_worker(SimpleNamespace(), _configured_config(), admission_config) == 0
 
     (loop,) = _RecordingAdmissionLoop.instances
     assert loop.adapter.stage == CONTEXTUALIZATION_STAGE
@@ -129,7 +143,7 @@ def test_the_worker_hosts_the_stages_admission_loop(stubbed_worker: list[str]) -
 
 def test_the_worker_stops_the_admission_loop_after_the_runner_returns(stubbed_worker: list[str]) -> None:
     """Admission starts before the claim loop and is stopped once it returns, leaving nothing running."""
-    run_graph_worker(SimpleNamespace(), ContextualizationConfig(_env_file=None), AdmissionConfig(_env_file=None))
+    run_graph_worker(SimpleNamespace(), _configured_config(), AdmissionConfig(_env_file=None))
 
     (loop,) = _RecordingAdmissionLoop.instances
     assert loop.events == ["start", "stop"]
@@ -138,7 +152,7 @@ def test_the_worker_stops_the_admission_loop_after_the_runner_returns(stubbed_wo
 
 def test_the_worker_reads_admission_settings_when_none_are_supplied(stubbed_worker: list[str]) -> None:
     """A caller that supplies no admission config gets the environment's, defaulting to off."""
-    run_graph_worker(SimpleNamespace(), ContextualizationConfig(_env_file=None))
+    run_graph_worker(SimpleNamespace(), _configured_config())
 
     (loop,) = _RecordingAdmissionLoop.instances
     assert loop.adapter.enabled is False
@@ -150,7 +164,7 @@ def test_the_worker_starts_no_admission_loop_when_the_stage_declares_no_adapter(
     """A stage with no declared adapter runs no admission loop, but the worker still builds and starts."""
     monkeypatch.setattr(worker_module, "admission_adapter_for", lambda _stage, _config: None)
 
-    assert run_graph_worker(SimpleNamespace(), ContextualizationConfig(_env_file=None)) == 0
+    assert run_graph_worker(SimpleNamespace(), _configured_config()) == 0
 
     assert _RecordingAdmissionLoop.instances == []
     assert stubbed_worker == ["runner"]
@@ -170,7 +184,7 @@ def test_the_worker_hands_the_loop_the_adapter_admission_adapter_for_resolves(
     )
     monkeypatch.setattr(worker_module, "admission_adapter_for", lambda _stage, _config: resolved)
 
-    run_graph_worker(SimpleNamespace(), ContextualizationConfig(_env_file=None))
+    run_graph_worker(SimpleNamespace(), _configured_config())
 
     (loop,) = _RecordingAdmissionLoop.instances
     assert loop.adapter is resolved

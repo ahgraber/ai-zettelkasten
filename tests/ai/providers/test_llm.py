@@ -1,4 +1,4 @@
-"""Tests for the model access point (:mod:`aizk.graph.llm`) and its resolved-config fingerprint.
+"""Tests for the model access point (:mod:`aizk.ai.providers.llm`) and its resolved-config fingerprint.
 
 Covers :class:`ModelConfig` — the value object standing in for "which model
 produced this output" in a derivation key — and :func:`model_config_fingerprint`:
@@ -9,8 +9,8 @@ fingerprint.
 
 from __future__ import annotations
 
+from aizk.ai.providers.llm import STUB_MODEL_CONFIG, ModelConfig, model_config_fingerprint
 from aizk.graph.config import ContextualizationConfig
-from aizk.graph.llm import STUB_MODEL_CONFIG, ModelConfig, model_config_fingerprint
 
 
 def test_different_provider_or_model_changes_the_fingerprint() -> None:

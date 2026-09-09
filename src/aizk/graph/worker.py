@@ -10,17 +10,17 @@ import contextlib
 import logging
 from typing import TYPE_CHECKING
 
-from aizk.conversion.storage.s3_client import S3Client
-from aizk.conversion.utilities.startup import StartupValidationError
+from aizk.ai.providers.llm import ModelConfig, build_llm_client
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 from aizk.graph.admission import AdmissionLoop, admission_adapter_for
 from aizk.graph.config import AdmissionConfig
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
 from aizk.graph.handler import ContextualizationStageHandler
-from aizk.graph.llm import ModelConfig, PydanticAILLMClient
 from aizk.graph.markdown_source import ConversionOutputFreshness, S3MarkdownSource
 from aizk.pipeline.runner import StageRunner
+from aizk.storage.s3 import S3Client
+from aizk.utilities.errors import StartupValidationError
 
 if TYPE_CHECKING:
     from aizk.conversion.utilities.config import ConversionConfig
@@ -29,37 +29,28 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def build_llm_client(config: "ContextualizationConfig") -> PydanticAILLMClient:
-    """Build the model client from the configured endpoint.
-
-    Raises:
-        StartupValidationError: If the endpoint is incomplete.
-    """
-    if not config.llm_enabled:
-        raise StartupValidationError(
-            "contextualization model endpoint is not configured; set "
-            "AIZK_GRAPH__CONTEXTUALIZATION__LLM_BASE_URL, _LLM_API_KEY, and _LLM_MODEL"
-        )
-    from pydantic_ai import Agent
-    from pydantic_ai.models.openai import OpenAIChatModel
-    from pydantic_ai.providers.openai import OpenAIProvider
-
-    model = OpenAIChatModel(
-        config.llm_model,
-        provider=OpenAIProvider(base_url=config.llm_base_url, api_key=config.llm_api_key),
-    )
-    return PydanticAILLMClient(Agent(model))
-
-
 def run_graph_worker(
     conversion_config: "ConversionConfig",
     contextualization_config: "ContextualizationConfig",
     admission_config: "AdmissionConfig | None" = None,
 ) -> int:
-    """Run the contextualization worker and its admission loop until shutdown."""
+    """Run the contextualization worker and its admission loop until shutdown.
+
+    Raises:
+        StartupValidationError: If the stage's model endpoint is incomplete.
+    """
+    if not contextualization_config.llm_enabled:
+        raise StartupValidationError(
+            "contextualization model endpoint is not configured; set "
+            "AIZK_GRAPH__CONTEXTUALIZATION__LLM_BASE_URL, _LLM_API_KEY, and _LLM_MODEL"
+        )
     admission_config = admission_config if admission_config is not None else AdmissionConfig()
     engine = get_engine(DatabaseConfig().database_url)
-    llm_client = build_llm_client(contextualization_config)
+    llm_client = build_llm_client(
+        contextualization_config.llm_base_url,
+        contextualization_config.llm_api_key,
+        contextualization_config.llm_model,
+    )
     markdown_source = S3MarkdownSource(engine, S3Client(conversion_config))
     model_config = ModelConfig.from_contextualization_config(contextualization_config)
 

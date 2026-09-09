@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import os
 import re
-from typing import TYPE_CHECKING, ClassVar, Literal
+from typing import TYPE_CHECKING
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from aizk.conversion.core.errors import ConfigurationError
+# The deployment trust mode is a service-wide concern; it is re-exported here
+# beside the conversion settings classes.
+from aizk.service.auth import AuthSettings
+from aizk.storage.settings import ObjectStorageSettings
 
 if TYPE_CHECKING:
     from aizk.conversion.utilities.html_prefetch import PrefetchPolicy
@@ -53,47 +56,6 @@ class DoclingConverterConfig(BaseSettings):
     def is_picture_description_enabled(self) -> bool:
         """Return whether upstream picture-description chat calls are enabled."""
         return bool(self.picture_description_base_url.rstrip("/") and self.picture_description_api_key)
-
-
-class AuthSettings(BaseSettings):
-    """Deployment trust-mode configuration for the conversion API.
-
-    The `auth_mode` field reserves names for future modes (`token`,
-    `proxy_headers`, `oidc`) at the type level so that exhaustive `match`
-    statements in the principal resolver can be type-checked against the full
-    eventual surface, while a runtime validator rejects any value that lacks
-    an implemented resolver branch.
-    """
-
-    model_config = SettingsConfigDict(env_prefix="AIZK_", env_file=None, extra="ignore")
-
-    auth_mode: Literal["trust_network", "token", "proxy_headers", "oidc"] = "trust_network"
-    default_principal: str = "self"
-
-    _IMPLEMENTED_MODES: ClassVar[frozenset[str]] = frozenset({"trust_network"})
-
-    @field_validator("auth_mode")
-    @classmethod
-    def _reject_unimplemented_modes(cls, value: str) -> str:
-        """Reject auth modes whose resolver branch is not implemented in this build."""
-        if value not in cls._IMPLEMENTED_MODES:
-            raise ConfigurationError(
-                f"auth mode '{value}' is reserved for a future build but not implemented at this cutover"
-            )
-        return value
-
-    @field_validator("default_principal")
-    @classmethod
-    def _reject_blank_default_principal(cls, value: str) -> str:
-        """Reject empty/whitespace `default_principal`.
-
-        The value lands in `owner_id` for every backfilled and newly-minted row;
-        a blank value would silently orphan rows from any non-blank principal
-        and pass the migration's `WHERE owner_id IS NULL` post-check.
-        """
-        if not value or not value.strip():
-            raise ConfigurationError("AIZK_DEFAULT_PRINCIPAL must be a non-empty, non-whitespace string")
-        return value
 
 
 class KarakeepFetcherConfig(BaseSettings):
@@ -172,6 +134,24 @@ class ConversionConfig(BaseSettings):
         default=4,
         description="Thread-pool size for the async-egress validation executor.",
     )
+
+    @property
+    def storage(self) -> ObjectStorageSettings:
+        """Present this instance's object-storage fields as the storage settings class.
+
+        Built from the fields already read on this instance rather than from a
+        fresh read, so a process that holds one of these has exactly one reading
+        of ``AIZK_S3_*``. The bridge exists while both classes declare those
+        fields; once the composition roots build the storage settings themselves,
+        the fields and this property go together.
+        """
+        return ObjectStorageSettings(
+            s3_endpoint_url=self.s3_endpoint_url,
+            s3_bucket_name=self.s3_bucket_name,
+            s3_access_key_id=self.s3_access_key_id,
+            s3_secret_access_key=self.s3_secret_access_key,
+            s3_region=self.s3_region,
+        )
 
     def prefetch_policy(self) -> "PrefetchPolicy":
         """Build a :class:`PrefetchPolicy` from the four ``PREFETCH_*`` config fields."""

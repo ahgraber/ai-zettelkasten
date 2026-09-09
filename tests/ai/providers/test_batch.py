@@ -9,8 +9,8 @@ import pytest
 
 import openai
 
-import aizk.utilities.batch_utils as batch_utils_module
-from aizk.utilities.batch_utils import (
+import aizk.ai.providers.batch as batch_module
+from aizk.ai.providers.batch import (
     BatchHandler,
     BatchProcessingError,
     BatchValidationError,
@@ -270,7 +270,7 @@ class TestBatchHandlerProcessing:
             captured_calls.append((name, span_type, attributes or {}))
             yield None
 
-        monkeypatch.setattr(batch_utils_module, "trace_model_call", _capture_trace_model_call)
+        monkeypatch.setattr(batch_module, "trace_model_call", _capture_trace_model_call)
         self._mock_successful_workflow(embeddings_handler, "batch_123")
         mock_output_file = MagicMock()
         mock_output_file.text = '{"custom_id": "0", "response": {"body": {"data": [{"embedding": [0.1]}]}}}'
@@ -296,7 +296,7 @@ class TestBatchHandlerProcessing:
             captured_calls.append((name, span_type, attributes or {}))
             yield None
 
-        monkeypatch.setattr(batch_utils_module, "trace_model_call", _capture_trace_model_call)
+        monkeypatch.setattr(batch_module, "trace_model_call", _capture_trace_model_call)
         self._mock_successful_workflow(chat_handler, "batch_123")
         mock_output_file = MagicMock()
         mock_output_file.text = (

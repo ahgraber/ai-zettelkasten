@@ -8,7 +8,6 @@ import logging
 import sys
 
 import httpx
-from setproctitle import setproctitle
 import uvicorn
 
 from aizk.conversion.backfill import (
@@ -18,12 +17,13 @@ from aizk.conversion.backfill import (
     run_conversion_backfill,
 )
 from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
-from aizk.conversion.utilities.dotenv import load_process_dotenv_once
-from aizk.conversion.utilities.logging import configure_logging
-from aizk.conversion.utilities.startup import StartupValidationError, log_feature_summary
+from aizk.conversion.wiring.probes import log_feature_summary
 from aizk.db.backends.sqlite import LitestreamManager, SqliteDurabilityConfig
-from aizk.utilities.cli_gates import positive_int, refuse_unconfirmed
-from aizk.utilities.mlflow_tracing import configure_mlflow_tracing
+from aizk.service.bootstrap import set_process_title
+from aizk.service.cli import positive_int, prepare_process, refuse_unconfirmed
+from aizk.service.settings import ServiceSettings
+from aizk.storage.settings import ObjectStorageSettings
+from aizk.utilities.errors import StartupValidationError
 from karakeep_client.karakeep import KarakeepClient
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ _BACKFILL_TIMEOUT_SECONDS = 30.0
 
 def _cmd_db_init(_args: argparse.Namespace) -> int:
     """Initialize database tables via Alembic migrations."""
-    setproctitle("docling-db-init")
+    set_process_title("docling-db-init")
     from aizk.db.migrations import run_migrations
 
     run_migrations()
@@ -42,16 +42,15 @@ def _cmd_db_init(_args: argparse.Namespace) -> int:
 
 def _cmd_serve(_args: argparse.Namespace) -> int:
     """Run the FastAPI server."""
-    setproctitle("docling-api")
+    set_process_title("docling-api")
     config = ConversionConfig()
     docling_cfg = DoclingConverterConfig()
-    log_feature_summary(config, docling_cfg, "api")
-    configure_mlflow_tracing(
-        enabled=config.mlflow_tracing_enabled,
-        tracking_uri=config.mlflow_tracking_uri,
-        experiment_name=config.mlflow_experiment_name,
-    )
-    LitestreamManager(SqliteDurabilityConfig(), role="api").start()
+    log_feature_summary(ServiceSettings(), docling_cfg, "api")
+    LitestreamManager(
+        SqliteDurabilityConfig(),
+        role="api",
+        object_storage=ObjectStorageSettings(),
+    ).start()
     uvicorn.run(
         "aizk.conversion.api.main:app",
         host=config.api_host,
@@ -63,16 +62,15 @@ def _cmd_serve(_args: argparse.Namespace) -> int:
 
 def _cmd_worker(_args: argparse.Namespace) -> int:
     """Run the background worker."""
-    setproctitle("docling-worker")
+    set_process_title("docling-worker")
     config = ConversionConfig()
     docling_cfg = DoclingConverterConfig()
-    log_feature_summary(config, docling_cfg, "worker")
-    configure_mlflow_tracing(
-        enabled=config.mlflow_tracing_enabled,
-        tracking_uri=config.mlflow_tracking_uri,
-        experiment_name=config.mlflow_experiment_name,
-    )
-    LitestreamManager(SqliteDurabilityConfig(), role="worker").start()
+    log_feature_summary(ServiceSettings(), docling_cfg, "worker")
+    LitestreamManager(
+        SqliteDurabilityConfig(),
+        role="worker",
+        object_storage=ObjectStorageSettings(),
+    ).start()
     from aizk.db.migrations import run_migrations
 
     run_migrations()
@@ -119,7 +117,7 @@ def _cmd_backfill(args: argparse.Namespace) -> int:
     same sweep re-converts the entire corpus. A dry run submits nothing and so
     needs no confirmation.
     """
-    setproctitle("docling-backfill")
+    set_process_title("docling-backfill")
     if not args.yes and not args.dry_run:
         return refuse_unconfirmed("corpus-wide conversion backfill", explicit_flag=None)
     try:
@@ -142,14 +140,7 @@ def _cmd_backfill(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     """Run the conversion service CLI."""
-    load_process_dotenv_once()
-    # Configure logging once, before any command runs, so every subsequent
-    # emission — including the egress-enforcement WARNING records that carry
-    # forensic ``extra`` keys (url, host, ip, error_class, hop_index) — uses the
-    # structured formatter. Without this a command would emit via Python's
-    # lastResort handler (stderr-only, default format), silently dropping the
-    # audit trail the network-egress-policy design depends on.
-    configure_logging(ConversionConfig())
+    prepare_process()
     parser = argparse.ArgumentParser(prog="aizk-conversion")
     subparsers = parser.add_subparsers(dest="command", required=True)
 

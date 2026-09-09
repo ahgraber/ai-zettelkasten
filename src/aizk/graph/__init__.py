@@ -24,6 +24,7 @@ their own boundary, mirroring :mod:`aizk.conversion`.
 
 from __future__ import annotations
 
+from aizk.ai.providers.llm import LLMClient, PydanticAILLMClient, StubLLMClient
 from aizk.graph._version import CONTEXT_VERSION, SUMMARY_VERSION
 from aizk.graph.contextualization import (
     SUMMARY_STAGE,
@@ -43,7 +44,6 @@ from aizk.graph.datamodel import (
     DocumentSummary,
 )
 from aizk.graph.handler import ContextualizationStageHandler
-from aizk.graph.llm import LLMClient, PydanticAILLMClient, StubLLMClient
 from aizk.graph.persistence import (
     CHUNKING_STAGE,
     active_chunking_run,

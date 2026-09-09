@@ -13,9 +13,9 @@ from fastapi import APIRouter, Request, Response, status
 
 from aizk.conversion.api.dependencies import get_config
 from aizk.conversion.api.schemas import CheckResult, HealthResponse
-from aizk.conversion.storage.s3_client import S3Client
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
+from aizk.storage.s3 import S3Client
 
 logger = logging.getLogger(__name__)
 

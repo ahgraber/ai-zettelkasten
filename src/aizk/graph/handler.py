@@ -38,7 +38,7 @@ from aizk.utilities.clock import utcnow
 if TYPE_CHECKING:
     from sqlalchemy import Engine
 
-    from aizk.graph.llm import LLMClient, ModelConfig
+    from aizk.ai.providers.llm import LLMClient, ModelConfig
     from aizk.graph.workunit import MarkdownSource, OutputFreshness
 
 logger = logging.getLogger(__name__)

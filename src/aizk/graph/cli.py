@@ -14,14 +14,10 @@ import logging
 import sys
 from uuid import UUID
 
-from setproctitle import setproctitle
 from sqlmodel import Session
 import uvicorn
 
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.utilities.dotenv import load_process_dotenv_once
-from aizk.conversion.utilities.logging import configure_logging
-from aizk.conversion.utilities.startup import StartupValidationError
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 from aizk.db.migrations import run_migrations
@@ -34,7 +30,9 @@ from aizk.graph.extraction import GLINER2_REPO_ID
 from aizk.graph.extraction_worker import build_extractor, run_extraction_worker
 from aizk.graph.worker import run_graph_worker
 from aizk.pipeline.invalidation import ReprocessingConfirmationError
-from aizk.utilities.cli_gates import positive_int, refuse_unconfirmed
+from aizk.service.bootstrap import set_process_title
+from aizk.service.cli import positive_int, prepare_process, refuse_unconfirmed
+from aizk.utilities.errors import StartupValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +52,7 @@ def _report_backfill(result: BackfillResult, *, stage: str, worker_command: str,
 
 def _cmd_serve(_args: argparse.Namespace) -> int:
     """Run the graph operator API (jobs monitor + content explorer) over uvicorn."""
-    setproctitle("graph-operator-api")
+    set_process_title("graph-operator-api")
     contextualization_config = ContextualizationConfig()
     # Factory import string: the app reads the shared config on its own listener,
     # distinct from the conversion API (hence a distinct default port).
@@ -74,7 +72,7 @@ def _cmd_fetch_gliner2_weights(_args: argparse.Namespace) -> int:
     The command downloads the revision in :class:`~aizk.graph.config.NerConfig`;
     workers load the weights from disk.
     """
-    setproctitle("graph-fetch-gliner2-weights")
+    set_process_title("graph-fetch-gliner2-weights")
     ner_config = NerConfig()
     try:
         from huggingface_hub import snapshot_download
@@ -97,7 +95,7 @@ def _cmd_fetch_gliner2_weights(_args: argparse.Namespace) -> int:
 
 def _cmd_worker(_args: argparse.Namespace) -> int:
     """Run the contextualization worker until shutdown; return its exit code."""
-    setproctitle("graph-contextualization-worker")
+    set_process_title("graph-contextualization-worker")
     conversion_config = ConversionConfig()
     contextualization_config = ContextualizationConfig()
     run_migrations()
@@ -113,7 +111,7 @@ def _cmd_extraction_worker(_args: argparse.Namespace) -> int:
 
     Return 1 when extractor setup raises ``ImportError``.
     """
-    setproctitle("graph-extraction-worker")
+    set_process_title("graph-extraction-worker")
     extraction_config = ExtractionConfig()
     run_migrations()
     try:
@@ -130,7 +128,7 @@ def _cmd_backfill(args: argparse.Namespace) -> int:
     corpus scan requires ``--yes``; invalid output ids and capacity refusals exit
     with a usage error.
     """
-    setproctitle("graph-backfill")
+    set_process_title("graph-backfill")
     run_migrations()
     engine = get_engine(DatabaseConfig().database_url)
     try:
@@ -158,7 +156,7 @@ def _cmd_extraction_backfill(args: argparse.Namespace) -> int:
     The command runs migrations first and leaves created units ``QUEUED``. A
     corpus scan requires ``--yes``; capacity refusals exit with a usage error.
     """
-    setproctitle("graph-extraction-backfill")
+    set_process_title("graph-extraction-backfill")
     run_migrations()
     engine = get_engine(DatabaseConfig().database_url)
     try:
@@ -186,7 +184,7 @@ def _cmd_extract_dataset(args: argparse.Namespace) -> int:
     ``--yes`` and may use ``--limit``. Statistics cover all active extraction runs,
     not only sources selected for this invocation.
     """
-    setproctitle("graph-extract-dataset")
+    set_process_title("graph-extract-dataset")
     extraction_config = ExtractionConfig()
     run_migrations()
     try:
@@ -220,8 +218,7 @@ def _cmd_extract_dataset(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     """Parse arguments and dispatch the contextualization CLI command."""
-    load_process_dotenv_once()
-    configure_logging(ConversionConfig())
+    prepare_process()
     parser = argparse.ArgumentParser(prog="aizk-graph")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("serve", help="Run the operator API (jobs monitor + content explorer).").set_defaults(

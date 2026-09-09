@@ -1,15 +1,16 @@
-"""Unit tests for S3Client.get_object_bytes."""
+"""Unit tests for S3Client construction and ``get_object_bytes``."""
 
 from __future__ import annotations
 
 from io import BytesIO
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from botocore.exceptions import ClientError
 import pytest
 
-from aizk.conversion.storage.s3_client import S3Client, S3Error, S3NotFoundError
 from aizk.conversion.utilities.config import ConversionConfig
+from aizk.storage.s3 import S3Client, S3Error, S3NotFoundError
+from aizk.storage.settings import ObjectStorageSettings
 
 
 def _make_client_error(code: str) -> ClientError:
@@ -17,19 +18,47 @@ def _make_client_error(code: str) -> ClientError:
 
 
 @pytest.fixture()
-def s3_client(monkeypatch: pytest.MonkeyPatch) -> S3Client:
-    """Return an S3Client with a mocked boto3 client."""
+def _object_storage_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Set the object-storage environment every settings class over it reads."""
     monkeypatch.setenv("AIZK_S3_ACCESS_KEY_ID", "test")
     monkeypatch.setenv("AIZK_S3_SECRET_ACCESS_KEY", "test")
     monkeypatch.setenv("AIZK_S3_REGION", "us-east-1")
     monkeypatch.setenv("AIZK_S3_BUCKET_NAME", "test-bucket")
     monkeypatch.setenv("AIZK_S3_ENDPOINT_URL", "http://localhost:9000")
-    config = ConversionConfig(_env_file=None)
+
+
+@pytest.fixture()
+def s3_client(_object_storage_env: None) -> S3Client:
+    """Return an S3Client with a mocked boto3 client."""
+    config = ObjectStorageSettings(_env_file=None)
     client = S3Client.__new__(S3Client)
     client.config = config
     client.bucket = config.s3_bucket_name
     client.client = MagicMock()
     return client
+
+
+def test_client_reads_its_endpoint_and_bucket_from_object_storage_settings(_object_storage_env: None) -> None:
+    """The settings the client is built from decide its boto3 connection and its bucket."""
+    settings = ObjectStorageSettings(_env_file=None)
+
+    with patch("aizk.storage.s3.boto3.client") as mock_boto3:
+        client = S3Client(settings)
+
+    assert client.config is settings
+    assert client.bucket == "test-bucket"
+    assert mock_boto3.call_args.kwargs["endpoint_url"] == "http://localhost:9000"
+    assert mock_boto3.call_args.kwargs["region_name"] == "us-east-1"
+
+
+def test_a_settings_object_carrying_the_storage_fields_is_accepted(_object_storage_env: None) -> None:
+    """A caller holding one combined settings object gets a client over the same values."""
+    with patch("aizk.storage.s3.boto3.client") as mock_boto3:
+        client = S3Client(ConversionConfig(_env_file=None))
+
+    assert isinstance(client.config, ObjectStorageSettings)
+    assert client.bucket == "test-bucket"
+    assert mock_boto3.call_args.kwargs["endpoint_url"] == "http://localhost:9000"
 
 
 def test_get_object_bytes_returns_content(s3_client: S3Client) -> None:

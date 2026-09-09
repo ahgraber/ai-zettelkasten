@@ -21,7 +21,6 @@ from aizk.conversion.processing.errors import ConversionCancelledError
 from aizk.conversion.processing.supervision import _supervise_conversion_process
 from aizk.conversion.processing.types import SubprocessMetadata, SupervisionResult, select_source_title
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.utilities.dotenv import load_process_dotenv_once
 from aizk.conversion.utilities.hashing import compute_markdown_hash
 from aizk.conversion.utilities.paths import (
     OUTPUT_MARKDOWN_FILENAME,
@@ -30,6 +29,7 @@ from aizk.conversion.utilities.paths import (
 from aizk.conversion.utilities.whitespace import normalize_whitespace
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
+from aizk.service.bootstrap import load_process_dotenv_once
 
 if TYPE_CHECKING:
     import threading

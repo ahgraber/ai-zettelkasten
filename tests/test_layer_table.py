@@ -129,43 +129,71 @@ class Edge(NamedTuple):
 #: to equal the scan exactly, so neither a new violation nor a resolved one can
 #: pass unnoticed.
 RECORDED_EXCEPTIONS: dict[Edge, str] = {
-    Edge("aizk.graph.api.dependencies", "aizk.conversion.storage.s3_client"): (
-        "removed when the S3 client moves to aizk.storage"
+    Edge("aizk.graph", "aizk.ai.providers.llm"): (
+        "removed when the contextualization stage moves to aizk.contextualization"
     ),
-    Edge("aizk.graph.api.dependencies", "aizk.conversion.utilities.config"): (
-        "removed when the shared service settings move to aizk.service"
+    Edge("aizk.graph.api.dependencies", "aizk.service.api.dependencies"): (
+        "removed when the graph API dependencies move into the stage packages"
     ),
-    Edge("aizk.graph.api.routes", "aizk.conversion.api.dependencies"): (
-        "removed when the shared request dependencies move to aizk.service.api"
+    Edge("aizk.graph.api.dependencies", "aizk.storage.s3"): (
+        "removed when the graph API dependencies move into the stage packages"
     ),
-    Edge("aizk.graph.api.routes", "aizk.conversion.api.schemas"): (
-        "removed when the shared HTTP responses move to aizk.service.api"
+    Edge("aizk.graph.api.routes", "aizk.service.api.responses"): (
+        "removed when the contextualization routes move to aizk.contextualization"
     ),
-    Edge("aizk.graph.api.routes", "aizk.conversion.auth.principal"): (
-        "removed when the auth principal moves to aizk.service.auth"
+    Edge("aizk.graph.api.routes", "aizk.service.auth"): (
+        "removed when the contextualization routes move to aizk.contextualization"
     ),
-    Edge("aizk.graph.api.routes.extraction", "aizk.conversion.api.dependencies"): (
-        "removed when the shared request dependencies move to aizk.service.api"
+    Edge("aizk.graph.api.routes.extraction", "aizk.service.api.responses"): (
+        "removed when the extraction routes move to aizk.extraction"
     ),
-    Edge("aizk.graph.api.routes.extraction", "aizk.conversion.auth.principal"): (
-        "removed when the auth principal moves to aizk.service.auth"
+    Edge("aizk.graph.api.routes.extraction", "aizk.service.auth"): (
+        "removed when the extraction routes move to aizk.extraction"
     ),
-    Edge("aizk.graph.api.routes.ui", "aizk.conversion.api.dependencies"): (
-        "removed when the shared request dependencies move to aizk.service.api"
+    Edge("aizk.graph.api.routes.ui", "aizk.service.auth"): "removed when the content explorer moves to aizk.console",
+    Edge("aizk.graph.contextualization", "aizk.ai.providers.llm"): (
+        "removed when the contextualization stage moves to aizk.contextualization"
     ),
-    Edge("aizk.graph.api.routes.ui", "aizk.conversion.auth"): (
-        "removed when the auth principal moves to aizk.service.auth"
+    Edge("aizk.graph.handler", "aizk.ai.providers.llm"): (
+        "removed when the contextualization stage moves to aizk.contextualization"
     ),
-    Edge("aizk.graph.worker", "aizk.conversion.storage.s3_client"): (
-        "removed when the S3 client moves to aizk.storage"
+    Edge("aizk.graph.llm", "aizk.ai.providers.llm"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.markdown_source", "aizk.storage"): (
+        "removed when the Markdown source moves to aizk.contextualization"
+    ),
+    Edge("aizk.graph.worker", "aizk.ai.providers.llm"): (
+        "removed when the contextualization worker moves to aizk.contextualization"
     ),
     Edge("aizk.graph.worker", "aizk.conversion.utilities.config"): (
-        "removed when the shared service settings move to aizk.service"
+        "removed when the worker stops taking a conversion config and is handed object-storage settings"
     ),
-    Edge("aizk.graph.worker", "aizk.conversion.utilities.startup"): (
-        "removed when the startup probes move to aizk.db and aizk.conversion.wiring"
+    Edge("aizk.graph.worker", "aizk.storage.s3"): (
+        "removed when the contextualization worker moves to aizk.contextualization"
+    ),
+    Edge("aizk.graph.workunit", "aizk.ai.providers.llm"): (
+        "removed when the contextualization stage moves to aizk.contextualization"
+    ),
+    Edge("aizk.utilities.batch_utils", "aizk.ai.providers.batch"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.utilities.cli_gates", "aizk.service.cli"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
     ),
 }
+
+#: Import directions the table refuses outright: a layer reaching a package above
+#: it. None may appear in the scan, ledger or not, because recording one would
+#: invert the dependency the layout exists to establish.
+FORBIDDEN_DIRECTIONS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("db", "service"),
+        ("db", "storage"),
+        ("ai.providers", "service"),
+        ("ai.providers", "graph"),
+    }
+)
 
 
 def _module_name(path: Path) -> str:
@@ -296,6 +324,24 @@ def test_every_recorded_exception_is_still_a_violation() -> None:
 def test_every_recorded_exception_names_the_change_that_removes_it() -> None:
     """Each entry says what makes it go away, so the ledger is actionable on its own."""
     assert all(reason.startswith("removed when ") for reason in RECORDED_EXCEPTIONS.values())
+
+
+def test_the_shared_infrastructure_rows_hold_modules() -> None:
+    """The bootstrap, object-storage, and provider rows describe code, not intentions."""
+    populated = {_package_of(_module_name(path)) for path in (_SRC / _ROOT_PACKAGE).rglob("*.py")}
+
+    assert {"service", "storage", "ai.providers"} <= populated
+
+
+def test_no_layer_imports_a_package_above_it() -> None:
+    """The engine, the object store, and the provider clients sit below what they serve.
+
+    These directions are refused rather than recorded: an entry in the ledger would
+    let a cycle live in the tree for as long as the ledger carries it.
+    """
+    directions = {(_package_of(edge.importer), _package_of(edge.imported)) for edge in _scan()}
+
+    assert directions & FORBIDDEN_DIRECTIONS == set()
 
 
 def test_console_reads_of_the_graph_stage_are_permitted_not_exceptions() -> None:

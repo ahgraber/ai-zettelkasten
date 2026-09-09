@@ -9,6 +9,8 @@ runs, config construction) stubbed so the suite stays hermetic and never reads
 
 from __future__ import annotations
 
+import ast
+import inspect
 import sys
 from types import SimpleNamespace
 
@@ -16,15 +18,41 @@ import pytest
 
 from aizk.graph import cli
 from aizk.graph.config import ContextualizationConfig
+from aizk.service import cli as service_cli
 
 
 @pytest.fixture(autouse=True)
 def _stub_process_setup(monkeypatch: pytest.MonkeyPatch) -> None:
     """Neutralize process-global side effects shared by every command."""
-    monkeypatch.setattr(cli, "load_process_dotenv_once", lambda: None)
-    monkeypatch.setattr(cli, "setproctitle", lambda _title: None)
-    monkeypatch.setattr(cli, "configure_logging", lambda _config: None)
+    monkeypatch.setattr(service_cli, "load_process_dotenv_once", lambda: None)
+    monkeypatch.setattr(service_cli, "configure_logging", lambda _settings: None)
+    monkeypatch.setattr(service_cli, "configure_mlflow_tracing", lambda _settings: None)
+    monkeypatch.setattr(cli, "set_process_title", lambda _title: None)
     monkeypatch.setattr(cli, "ConversionConfig", lambda: SimpleNamespace())
+
+
+def test_every_command_titles_its_process() -> None:
+    """The titles a host sees for this CLI's processes are exactly these seven."""
+    tree = ast.parse(inspect.getsource(cli))
+
+    titles = {
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "set_process_title"
+        and isinstance(node.args[0], ast.Constant)
+    }
+
+    assert titles == {
+        "graph-operator-api",
+        "graph-fetch-gliner2-weights",
+        "graph-contextualization-worker",
+        "graph-extraction-worker",
+        "graph-backfill",
+        "graph-extraction-backfill",
+        "graph-extract-dataset",
+    }
 
 
 def test_operator_api_port_defaults_off_the_conversion_port() -> None:

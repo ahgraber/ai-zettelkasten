@@ -3,8 +3,9 @@
 Litestream is the SQLite backend's durability mechanism. A non-SQLite backend is
 rejected at backend selection (:class:`~aizk.db.config.DatabaseConfig`) and never
 reaches this manager. The durability configuration reads the ``AIZK_LITESTREAM_*``
-settings plus the shared ``AIZK_S3_*`` object-storage settings from the same
-environment, independent of any application stage.
+settings; the object store it replicates to is handed in by the process that
+starts the manager, so the object-storage environment is read once per process
+and by one class.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
-from typing import Literal
+from typing import Literal, Protocol
 import yaml
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -29,13 +30,25 @@ from aizk.utilities.process import terminate_process_group
 logger = logging.getLogger(__name__)
 
 
+class ReplicaObjectStore(Protocol):
+    """The object store a Litestream replica writes to.
+
+    Structural, so the manager reads the object-storage settings its caller
+    already holds without this layer importing the class that declares them.
+    """
+
+    s3_endpoint_url: str
+    s3_bucket_name: str
+    s3_access_key_id: str
+    s3_secret_access_key: str
+    s3_region: str
+
+
 class SqliteDurabilityConfig(BaseSettings):
     """Durability configuration for the SQLite backend's Litestream manager.
 
-    Owns the ``AIZK_LITESTREAM_*`` settings and reads the shared ``AIZK_S3_*``
-    object-storage settings from the same environment so the manager needs no
-    application-stage configuration. The S3 fields are duplicated here pending a
-    shared object-storage foundation that will own them for every reader.
+    Owns the ``AIZK_LITESTREAM_*`` settings. The object store the replica writes
+    to is passed to the manager, not read here.
     """
 
     model_config = SettingsConfigDict(env_prefix="AIZK_", env_file=None, extra="ignore")
@@ -50,12 +63,6 @@ class SqliteDurabilityConfig(BaseSettings):
     litestream_s3_sign_payload: bool = True
     litestream_restore_on_startup: bool = True
     litestream_allow_empty_restore: bool = True
-
-    s3_endpoint_url: str = ""
-    s3_bucket_name: str = "aizk"
-    s3_access_key_id: str = ""
-    s3_secret_access_key: str = ""
-    s3_region: str = "us-east-1"
 
 
 class LitestreamReplicaS3(BaseModel):
@@ -103,11 +110,13 @@ class LitestreamManager:
     """Manage Litestream restore/replication for the SQLite backend.
 
     Args:
-        config: Durability settings (``AIZK_LITESTREAM_*`` plus shared S3).
+        config: Durability settings (``AIZK_LITESTREAM_*``).
         role: This process's role, matched against ``litestream_start_role``.
         database_config: Database configuration; defaults to a fresh
             :class:`~aizk.db.config.DatabaseConfig`, which fails closed on any
             non-SQLite backend before the manager is reached.
+        object_storage: The object store the replica writes to, supplying the
+            region, endpoint, fallback bucket, and credentials.
     """
 
     def __init__(
@@ -115,9 +124,12 @@ class LitestreamManager:
         config: SqliteDurabilityConfig,
         role: str,
         database_config: DatabaseConfig | None = None,
+        *,
+        object_storage: ReplicaObjectStore,
     ) -> None:
         self._config = config
         self._role = role
+        self._object_storage = object_storage
         self._process: subprocess.Popen[str] | None = None
         db_config = database_config or DatabaseConfig()
         self._backend = db_config.backend
@@ -146,8 +158,8 @@ class LitestreamManager:
             bucket=bucket,
             config_path=Path(self._config.litestream_config_path),
             s3_prefix=self._config.litestream_s3_prefix,
-            s3_region=self._config.s3_region,
-            s3_endpoint_url=self._config.s3_endpoint_url,
+            s3_region=self._object_storage.s3_region,
+            s3_endpoint_url=self._object_storage.s3_endpoint_url,
             s3_force_path_style=self._config.litestream_s3_force_path_style,
             s3_sign_payload=self._config.litestream_s3_sign_payload,
         )
@@ -185,7 +197,7 @@ class LitestreamManager:
         terminate_process_group(_terminate, _kill, lambda: process.poll() is None)
 
     def _restore(self, binary: str, config_path: Path) -> None:
-        env = _litestream_env(self._config)
+        env = _litestream_env(self._object_storage)
         command = [binary, "restore", "-config", str(config_path), str(self._db_path)]
         logger.info("Running Litestream restore for %s.", self._db_path)
         result = subprocess.run(  # NOQA: S603
@@ -207,7 +219,7 @@ class LitestreamManager:
         raise RuntimeError(f"Litestream restore failed: {result.stdout.strip()} {result.stderr.strip()}".strip())
 
     def _start_replicate(self, binary: str, config_path: Path) -> subprocess.Popen[str]:
-        env = _litestream_env(self._config)
+        env = _litestream_env(self._object_storage)
         command = [binary, "replicate", "-config", str(config_path)]
         logger.info("Starting Litestream replication for %s.", self._db_path)
         return subprocess.Popen(  # NOQA: S603
@@ -220,7 +232,7 @@ class LitestreamManager:
         """Use Litestream-specific S3 bucket if configured, else the default s3 bucket name."""
         if self._config.litestream_s3_bucket_name:
             return self._config.litestream_s3_bucket_name
-        return self._config.s3_bucket_name
+        return self._object_storage.s3_bucket_name
 
 
 def _resolve_sqlite_path(database_url: str) -> Path | None:
@@ -276,12 +288,12 @@ def _write_config_file(
     return config_path
 
 
-def _litestream_env(config: SqliteDurabilityConfig) -> dict[str, str]:
+def _litestream_env(object_storage: ReplicaObjectStore) -> dict[str, str]:
     env = os.environ.copy()
-    if config.s3_access_key_id:
-        env.setdefault("AWS_ACCESS_KEY_ID", config.s3_access_key_id)
-    if config.s3_secret_access_key:
-        env.setdefault("AWS_SECRET_ACCESS_KEY", config.s3_secret_access_key)
-    if config.s3_region:
-        env.setdefault("AWS_REGION", config.s3_region)
+    if object_storage.s3_access_key_id:
+        env.setdefault("AWS_ACCESS_KEY_ID", object_storage.s3_access_key_id)
+    if object_storage.s3_secret_access_key:
+        env.setdefault("AWS_SECRET_ACCESS_KEY", object_storage.s3_secret_access_key)
+    if object_storage.s3_region:
+        env.setdefault("AWS_REGION", object_storage.s3_region)
     return env

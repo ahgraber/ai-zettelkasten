@@ -134,13 +134,13 @@ def test_plain_text_format_includes_arbitrary_extra_keys(
 
     Without this, a non-JSON deployment loses the egress audit trail entirely.
     """
-    from aizk.conversion.utilities.config import ConversionConfig
+    from aizk.service.settings import ServiceSettings
 
     monkeypatch.setenv("AIZK_LOG_FORMAT", "text")
     monkeypatch.setenv("AIZK_LOG_LEVEL", "WARNING")
 
     # Re-configure the root logger using the production code path.
-    configure_logging(ConversionConfig(_env_file=None))
+    configure_logging(ServiceSettings(_env_file=None))
 
     logger = logging.getLogger("aizk.test_plain")
     # Capture the rendered output the handler produces.
@@ -234,16 +234,18 @@ def test_worker_command_configures_logging_before_running(monkeypatch: pytest.Mo
     H1 audit-log contract.
     """
     from aizk.conversion import cli as cli_module
+    from aizk.service import cli as service_cli
 
     order: list[str] = []
 
-    # ``main`` loads dotenv then configures logging before dispatching; stub the
-    # dotenv read (it would touch ``.env``) and record the logging call.
-    monkeypatch.setattr(cli_module, "load_process_dotenv_once", lambda: None)
-    monkeypatch.setattr(cli_module, "configure_logging", lambda _config: order.append("configure_logging"))
+    # ``main`` runs the shared preamble — dotenv, logging, tracing — before it
+    # dispatches; stub the dotenv read (it would touch ``.env``) and record the
+    # logging call.
+    monkeypatch.setattr(service_cli, "load_process_dotenv_once", lambda: None)
+    monkeypatch.setattr(service_cli, "configure_logging", lambda _settings: order.append("configure_logging"))
+    monkeypatch.setattr(service_cli, "configure_mlflow_tracing", lambda _settings: None)
     monkeypatch.setattr(cli_module, "log_feature_summary", lambda *_a, **_kw: None)
-    monkeypatch.setattr(cli_module, "configure_mlflow_tracing", lambda **_kw: None)
-    monkeypatch.setattr(cli_module, "setproctitle", lambda _t: None)
+    monkeypatch.setattr(cli_module, "set_process_title", lambda _t: None)
 
     # ``run_migrations`` is imported lazily inside ``_cmd_worker``; patch the
     # source module so the lazy import resolves to a no-op.
