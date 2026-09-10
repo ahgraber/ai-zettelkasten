@@ -51,7 +51,7 @@
   },
   "requeued": {
     "payload_class": "RequeuedPayload",
-    "inputs": { "requeue_reason": "operator retry" },
-    "model_dump_json": "{\"kind\":\"requeued\",\"requeue_reason\":\"operator retry\"}"
+    "inputs": { "requeue_reason": "operator retry", "principal": "operator" },
+    "model_dump_json": "{\"kind\":\"requeued\",\"requeue_reason\":\"operator retry\",\"principal\":\"operator\"}"
   }
 }

@@ -11,9 +11,9 @@ from dataclasses import dataclass
 import logging
 from typing import TYPE_CHECKING
 
-from sqlalchemy import text
 from sqlmodel import Session, func, select
 
+from aizk.db.engine import begin_immediate_on
 from aizk.graph.datamodel import ContextualizationJob, ExtractionJob
 from aizk.graph.enqueue import enqueue_backfill_outputs, enqueue_output, latest_output_ids_per_source
 from aizk.graph.extraction_workunit import enqueue_extraction, enqueue_extraction_backfill
@@ -86,7 +86,7 @@ def run_contextualization_backfill(
         # between the two, and the insert either overshoots the limit or fails on a
         # snapshot conflict. Holding the lock across the pair makes the bound exact
         # here, as it already is on the intake and admission paths.
-        session.exec(text("BEGIN IMMEDIATE"))
+        begin_immediate_on(session)
         targets = list(output_ids) if output_ids is not None else latest_output_ids_per_source(session, limit=limit)
         before = _unit_count(session, ContextualizationJob)
 
@@ -154,7 +154,7 @@ def run_extraction_backfill(
     """
     with Session(engine) as session:
         # Hold the writer lock while counting and inserting so the capacity bound stays exact.
-        session.exec(text("BEGIN IMMEDIATE"))
+        begin_immediate_on(session)
         before = _unit_count(session, ExtractionJob)
 
         if source_ids is not None:

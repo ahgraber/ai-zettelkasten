@@ -26,7 +26,7 @@ from aizk.graph.contextualization import VARIANT_STAGE, ContextSource, resolve_c
 from aizk.graph.datamodel import Chunk, ContextualizedChunk, DocumentSummary
 from aizk.graph.persistence import active_chunking_run, document_order_chunks, run_input
 from aizk.graph.search import SearchKind
-from aizk.pipeline.run import PipelineRun, RunStatus
+from aizk.pipeline.run import PipelineRun, active_run
 from aizk.service.auth import Principal, get_principal
 
 if TYPE_CHECKING:
@@ -67,13 +67,7 @@ def _active_variant_run(session: Session, source_id: UUID) -> PipelineRun | None
 
     Without an active variant run, callers use raw chunks.
     """
-    return session.exec(
-        select(PipelineRun).where(
-            PipelineRun.stage == VARIANT_STAGE,
-            PipelineRun.scope_id == source_id,
-            PipelineRun.status == RunStatus.ACTIVE,
-        )
-    ).one_or_none()
+    return active_run(session, VARIANT_STAGE, source_id)
 
 
 def _active_variants_by_chunk(session: Session, variant_run: PipelineRun | None) -> dict[UUID, ContextualizedChunk]:

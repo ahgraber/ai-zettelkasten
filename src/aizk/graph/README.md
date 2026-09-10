@@ -246,7 +246,7 @@ Migrations run on worker startup or via `aizk-conversion db-init` over the share
 The graph stage resolves the shared database URL from `DatabaseConfig` (the stage-independent `aizk.db` foundation) and reuses the conversion service's `ConversionConfig` for shared S3/application settings.
 Its own settings ([`config.py`](config.py)):
 
-- `AIZK_GRAPH__CONTEXTUALIZATION__*` — the OpenAI-compatible model endpoint triple (`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`), the worker's lease/retry knobs, and the operator listener (`OPERATOR_API_HOST` / `OPERATOR_API_PORT` / `OPERATOR_API_RELOAD`).
+- `AIZK_GRAPH__CONTEXTUALIZATION__*` — the OpenAI-compatible model endpoint triple (`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`) and the worker's lease/retry knobs; the operator listener is service-wide, `AIZK_SERVICE__OPERATOR_API_HOST` / `AIZK_SERVICE__OPERATOR_API_PORT` / `AIZK_SERVICE__OPERATOR_API_RELOAD`.
 - `AIZK_GRAPH__EXTRACTION__*` — the extractor choice and `input_policy` for `extraction-worker`.
 - `AIZK_GRAPH__NER__*` — the local GLiNER2 weights directory.
 - `AIZK_GRAPH__*` (admission and capacity, spanning both stages) — `ADMISSION_CONTEXTUALIZATION_ENABLED` / `ADMISSION_EXTRACTION_ENABLED` (both off by default) and `ADMISSION_INTERVAL_SECONDS`; `CONTEXTUALIZATION_QUEUE_MAX_DEPTH` / `EXTRACTION_QUEUE_MAX_DEPTH` (`0` = no limit) and `QUEUE_RETRY_AFTER_SECONDS`.

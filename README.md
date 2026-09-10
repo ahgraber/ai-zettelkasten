@@ -172,7 +172,7 @@ just extract-dataset --limit 10 --yes
 The contextualization worker needs the model endpoint triple — `AIZK_GRAPH__CONTEXTUALIZATION__LLM_BASE_URL`, `..._LLM_API_KEY`, and `..._LLM_MODEL` (for example `openai/gpt-5.6-luna`) — and refuses to start without it.
 `just fetch-gliner2-weights` needs `HF_TOKEN`.
 
-`aizk-graph serve` listens on its own port (default `0.0.0.0:8001`, set via `AIZK_GRAPH__CONTEXTUALIZATION__OPERATOR_API_PORT`) so it can run alongside the conversion API.
+`aizk-graph serve` listens on its own port (default `0.0.0.0:8001`, set via `AIZK_SERVICE__OPERATOR_API_PORT`; the listener is service-wide, with `AIZK_SERVICE__OPERATOR_API_HOST` and `AIZK_SERVICE__OPERATOR_API_RELOAD` beside it) so it can run alongside the conversion API.
 The operator console is at `http://<host>:8001/ui` (dashboard), `http://<host>:8001/ui/tasks` (task monitor across all stages), and `http://<host>:8001/ui/explore/chunks` (content explorer).
 The graph stage reuses the conversion database, so point both stages at the same `AIZK_DATABASE_URL`; Litestream replication of that database is owned by the conversion service (see `docs/Litestream.md`).
 

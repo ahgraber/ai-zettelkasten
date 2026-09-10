@@ -56,7 +56,9 @@ def _currentness(session: "Session") -> dict[UUID, str]:
 _READMISSION = StageAction(
     key="re-extract",
     applied_label="re-extracted",
-    apply=lambda session, unit, _principal: apply_extraction_readmission(session, unit, resolved=_resolved_config()),
+    apply=lambda session, unit, principal: apply_extraction_readmission(
+        session, unit, resolved=_resolved_config(), principal=principal.subject
+    ),
 )
 
 DESCRIPTOR = build_graph_descriptor(

@@ -29,7 +29,7 @@ from aizk.db.engine import get_engine
 from aizk.graph.api.main import create_app
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.enqueue import enqueue_output
-from aizk.graph.events import QueuedPayload
+from aizk.graph.events import QueuedPayload, RequeuedPayload
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
@@ -302,7 +302,7 @@ def test_detail_and_404(client: TestClient, engine) -> None:
 
 
 def test_retry_requeues_a_terminal_unit(client: TestClient, engine) -> None:
-    """Retry moves a FAILED unit back to QUEUED, clears error/wait, and records the event."""
+    """Retry moves a FAILED unit back to QUEUED, clears error/wait, keeps attempts, and records the event naming the principal."""
     job_id = _seed(engine, conversion_output_id=1, status=WorkUnitStatus.FAILED, attempts=2)
 
     resp = client.post(f"/v1/contextualizations/{job_id}/retry")
@@ -312,12 +312,14 @@ def test_retry_requeues_a_terminal_unit(client: TestClient, engine) -> None:
     with Session(engine) as session:
         job = session.get(ContextualizationJob, job_id)
         assert job.status is WorkUnitStatus.QUEUED
+        assert job.attempts == 2
         assert job.earliest_next_attempt_at is None
         assert job.finished_at is None
         events = session.exec(select(PipelineEvent).where(PipelineEvent.work_unit_ref == str(job_id))).all()
         assert [e.kind for e in events] == ["requeued"]
         assert events[0].to_status == "queued"
         assert events[0].source_id == _AIZK_UUID
+        assert RequeuedPayload.model_validate_json(events[0].payload_json).principal == "self"
 
 
 def test_retry_rejects_non_terminal_unit(client: TestClient, engine) -> None:

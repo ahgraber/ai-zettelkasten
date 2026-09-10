@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING
 from sqlmodel import func, select
 
 from aizk.conversion.datamodel.output import ConversionOutput
-from aizk.graph.capacity import within_headroom
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
 from aizk.graph.workunit import enqueue_document, enqueued_outputs
+from aizk.pipeline.capacity import require_positive_limit, within_headroom
 from aizk.pipeline.invalidation import require_reprocessing_confirmation
 
 if TYPE_CHECKING:
@@ -29,14 +29,8 @@ if TYPE_CHECKING:
     from aizk.pipeline.events import CreationOrigin
 
 
-def _require_bounding_limit(limit: int | None) -> None:
-    """Reject a non-positive scan limit.
-
-    Raises:
-        ValueError: If ``limit`` is supplied and is less than one.
-    """
-    if limit is not None and limit < 1:
-        raise ValueError(f"limit must be a positive integer, got {limit}")
+#: The scan-limit check every pending query shares.
+_require_bounding_limit = require_positive_limit
 
 
 def latest_output_id(session: "Session", source_id: "UUID") -> int | None:

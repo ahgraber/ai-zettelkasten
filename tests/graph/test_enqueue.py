@@ -234,6 +234,7 @@ def test_enqueue_output_records_one_creation_event_carrying_origin_and_principal
         (event,) = events
         assert event.from_status is None
         assert event.to_status == "queued"
+        assert event.attempt == 0, "a creation event precedes every claim"
         payload = QueuedPayload.model_validate_json(event.payload_json)
         assert payload.origin == "backfill"
         assert payload.principal == "operator-1"

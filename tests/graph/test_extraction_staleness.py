@@ -440,7 +440,7 @@ def _seed_unit(engine: Engine, source_id: UUID, status: WorkUnitStatus) -> int:
 
 
 def test_re_admission_requeues_a_stale_finished_unit_and_fresh_extraction_supersedes(tmp_path: Path) -> None:
-    """Re-extracting a stale source queues its existing unit; the next execution supersedes the prior run."""
+    """Re-extracting a stale source queues its unit, keeping its attempt count; the next execution supersedes the prior run."""
     engine = _make_engine(tmp_path)
     _seed_chunking_run(engine, source_id=_SOURCE_A, derivation_key="chunking-v1")
     first_run_id = _extract(engine, _SOURCE_A)
@@ -450,13 +450,13 @@ def test_re_admission_requeues_a_stale_finished_unit_and_fresh_extraction_supers
     with Session(engine) as session:
         job = session.get(ExtractionJob, job_id)
         job.attempts = 3
-        apply_extraction_readmission(session, job, resolved=_RESOLVED_RAW)
+        apply_extraction_readmission(session, job, resolved=_RESOLVED_RAW, principal="operator")
         session.commit()
 
     with Session(engine) as session:
         job = session.get(ExtractionJob, job_id)
         assert job.status is WorkUnitStatus.QUEUED
-        assert job.attempts == 0
+        assert job.attempts == 3
         events = session.exec(select(PipelineEvent).where(PipelineEvent.work_unit_ref == str(job_id))).all()
         assert [event.kind for event in events] == ["requeued"]
 
@@ -479,7 +479,7 @@ def test_re_admission_requeues_a_needs_reconciliation_unit_and_processing_record
 
     with Session(engine) as session:
         job = session.get(ExtractionJob, job_id)
-        apply_extraction_readmission(session, job, resolved=_RESOLVED_RAW)
+        apply_extraction_readmission(session, job, resolved=_RESOLVED_RAW, principal="operator")
         session.commit()
 
     with Session(engine) as session:
@@ -504,7 +504,7 @@ def test_re_admission_skips_a_unit_whose_source_is_current(tmp_path: Path) -> No
     with Session(engine) as session:
         job = session.get(ExtractionJob, job_id)
         try:
-            apply_extraction_readmission(session, job, resolved=_RESOLVED_RAW)
+            apply_extraction_readmission(session, job, resolved=_RESOLVED_RAW, principal="operator")
         except ValueError as exc:
             assert "current" in str(exc)
         else:
@@ -526,7 +526,7 @@ def test_re_admission_skips_an_unfinished_unit(tmp_path: Path) -> None:
     with Session(engine) as session:
         job = session.get(ExtractionJob, job_id)
         try:
-            apply_extraction_readmission(session, job, resolved=_RESOLVED_RAW)
+            apply_extraction_readmission(session, job, resolved=_RESOLVED_RAW, principal="operator")
         except ValueError as exc:
             assert "status" in str(exc)
         else:

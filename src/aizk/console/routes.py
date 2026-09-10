@@ -16,7 +16,6 @@ import logging
 from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import urlparse
 
-from sqlalchemy import text
 from sqlmodel import Session, select
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
@@ -25,9 +24,10 @@ from aizk.console.descriptors import StageDescriptor, get_descriptor, registered
 from aizk.console.monitor import BASE_COLUMN_COUNT, format_bulk_notice, format_dt
 from aizk.console.rendering import TEMPLATES
 import aizk.console.stages  # noqa: F401 -- import registers the stage descriptors
+from aizk.db.engine import begin_immediate_on
 from aizk.graph.api.dependencies import get_db_session
+from aizk.pipeline.admission import MAX_BULK_SELECTION
 from aizk.pipeline.events import PipelineEvent
-from aizk.pipeline.lifecycle import MAX_BULK_SELECTION
 from aizk.service.auth import Principal, get_principal
 
 logger = logging.getLogger(__name__)
@@ -184,7 +184,7 @@ def actions(
     applied = ineligible = not_found = 0
     # Only the mutating path takes the write lock; an empty selection is a no-op.
     if selected_ids:
-        session.exec(text("BEGIN IMMEDIATE"))
+        begin_immediate_on(session)
         for unit_id in selected_ids:
             unit = descriptor.get_unit(session, principal, unit_id)
             if unit is None:

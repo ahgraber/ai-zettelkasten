@@ -7,6 +7,7 @@ The worker also hosts admission when graph configuration enables it.
 from __future__ import annotations
 
 import contextlib
+import datetime
 import logging
 from typing import TYPE_CHECKING
 
@@ -17,7 +18,8 @@ from aizk.graph.config import AdmissionConfig
 from aizk.graph.extraction import EntityExtractor, Gliner2Extractor, SpacyExtractor
 from aizk.graph.extraction_events import EXTRACTION_STAGE
 from aizk.graph.extraction_handler import ExtractionStageHandler
-from aizk.pipeline.runner import StageRunner
+from aizk.pipeline.runner import DEFAULT_CANCEL_GRACE, StageRunner
+from aizk.pipeline.stage import require_stale_threshold
 
 if TYPE_CHECKING:
     from aizk.graph.config import ExtractionConfig
@@ -46,7 +48,17 @@ def run_extraction_worker(
 
     The function builds the configured handler and extractor, then returns the
     shared runner's exit code. Admission stops before the worker returns.
+
+    Raises:
+        StartupValidationError: If the stale threshold does not exceed the
+            timeout plus the drain timeout and the cancellation allowance.
     """
+    require_stale_threshold(
+        stale_after=datetime.timedelta(minutes=extraction_config.worker_stale_minutes),
+        timeout=datetime.timedelta(seconds=extraction_config.worker_timeout_seconds),
+        drain_timeout=extraction_config.worker_drain_timeout_seconds,
+        cancel_grace=DEFAULT_CANCEL_GRACE,
+    )
     admission_config = admission_config if admission_config is not None else AdmissionConfig()
     engine = get_engine(DatabaseConfig().database_url)
     extractor = build_extractor(extraction_config)

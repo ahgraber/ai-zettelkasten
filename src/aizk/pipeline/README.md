@@ -54,6 +54,9 @@ A generic work-unit lifecycle every stage maps onto: `queued → running → {su
 A `failed` outcome is classified `retryable` or `permanent` (`RetryClass`).
 `map_result` returns a `TerminalOutcome` (status + retry class); the runner reasons only over this generic vocabulary, never a stage's private statuses.
 `is_terminal` / `TERMINAL_STATUSES` identify terminal states.
+`WorkUnitColumns` is the shared declaration of the lifecycle columns (`status`, `attempts`, the error fields, the scheduling timestamps, `created_at`/`updated_at`); a stage's work-unit table inherits it and adds its own identity and extension columns.
+
+The exclusive write transaction those tables are claimed and finalized under is `aizk.db.engine.begin_immediate` (and its session form `begin_immediate_on`): the SQLite backend's `BEGIN IMMEDIATE`, and the single seam a Postgres backend replaces with row locking.
 
 ### Stage contract — [`handler.py`](handler.py)
 
@@ -68,12 +71,23 @@ A `failed` outcome is classified `retryable` or `permanent` (`RetryClass`).
 - `cleanup(handle)` / `cancel(handle)` — release transient resources; cooperatively cancel a running unit.
 - `scope_id(handle)`, `timeout`, `concurrency_limit`, `isolation`, `stage` — the stage's configuration.
 
+### Stage kit — [`stage.py`](stage.py), [`repository.py`](repository.py), [`capacity.py`](capacity.py)
+
+A stage publishes one static `StageDefinition` (name, params model, `unit_key`, work-unit model, event kinds, the payload classes of the shared kinds, optional `pending` query); it holds no behavior and resolves without a database or a model client.
+`enqueue(session, definition, params, *, origin, principal, queue_max_depth)` creates or reuses a unit through it.
+`WorkUnitRepository[Model]` owns the lifecycle over any table carrying `WorkUnitColumns`: `claim_next` (queued, or failed with an elapsed wait; the only transition that increments `attempts`), `recover_stale` (running past the stale window becomes `failed` with an immediate wait, or permanent at the attempt cap), `finalize` (backoff and the cap; a no-op when the row is already `succeeded` or `cancelled`, or when the handle's attempt token differs from the row's), `requeue` (operator retry keeps `attempts`), and `cancel` (clears the wait, keeps the error fields); the two refusals raise `IneligibleTransitionError` with `code` in `{job_not_retryable, job_not_cancellable}`.
+`HandlerBase` implements `StageHandler` over the repository; a stage subclasses it and supplies `execute`, `map_result`, `succeeded_event`, `default_error`, and optionally `dependencies`, `cancellable(row)`, `on_claim`, and `on_transition`.
+`require_stale_threshold` is the startup check that a stage's stale window exceeds its timeout plus the drain timeout and the cancellation allowance.
+`check_capacity` / `within_headroom` / `actionable_backlog` bound a stage's actionable backlog (queued, or failed with a wait set); `require_positive_limit` is the shared scan-limit check.
+
 ### Engine — [`runner.py`](runner.py)
 
 `StageRunner(repository, engine, *, shutdown=, metrics=, drain_timeout=, poll_interval=, stale_recovery_interval=, cancel_grace=, clock=, force_exit=)`.
 
 - `run()` — the full supervised loop: install signal handlers, validate dependencies, set the process title, claim/process within the concurrency bound until a shutdown signal, then drain within the bounded timeout.
   Returns an exit code (`0` clean, `1` forced).
+  A unit still running when the drain timeout elapses is finalized `failed` with `error_code="worker_drain_terminated"`: below the attempt cap with an immediate retry wait, so the next runner claims it, and at the cap permanent, the same bound stale recovery applies; `cancelled` is reserved for a decision someone made.
+  A finished unit whose finalize is still being retried is not a drain survivor and keeps its own outcome; a unit still running when the cancel grace elapses is classified the same way before the forced exit, so no row is left `running` by a stuck in-process thread.
 - `run_until_idle()` — a deterministic driver for tests and one-shot batch runs.
 - `cancel_handle(handle)` / `recover_stale()` — operational entry points.
 

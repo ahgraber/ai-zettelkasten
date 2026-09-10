@@ -17,7 +17,6 @@ from types import SimpleNamespace
 import pytest
 
 from aizk.graph import cli
-from aizk.graph.config import ContextualizationConfig
 from aizk.service import cli as service_cli
 
 
@@ -55,20 +54,12 @@ def test_every_command_titles_its_process() -> None:
     }
 
 
-def test_operator_api_port_defaults_off_the_conversion_port() -> None:
-    """The operator API has its own listener default, distinct from conversion's 8000."""
-    config = ContextualizationConfig()
-    assert config.operator_api_port == 8001
-    assert config.operator_api_host == "0.0.0.0"  # noqa: S104 - asserting the documented all-interfaces default
-    assert config.operator_api_reload is False
-
-
 def test_serve_runs_the_operator_app_factory_on_the_operator_port(monkeypatch: pytest.MonkeyPatch) -> None:
     """``serve`` runs the graph operator app via uvicorn's factory at the operator-API listener."""
     monkeypatch.setattr(
         cli,
-        "ContextualizationConfig",
-        lambda: SimpleNamespace(operator_api_host="127.0.0.1", operator_api_port=8001, operator_api_reload=False),
+        "ServiceSettings",
+        lambda: SimpleNamespace(operator_api=SimpleNamespace(host="127.0.0.1", port=8001, reload=False)),
     )
     calls: dict[str, object] = {}
 
@@ -88,8 +79,8 @@ def test_serve_does_not_run_migrations(monkeypatch: pytest.MonkeyPatch) -> None:
     """``serve`` is not a migrator (a worker or ``db-init`` is); it must not migrate on start."""
     monkeypatch.setattr(
         cli,
-        "ContextualizationConfig",
-        lambda: SimpleNamespace(operator_api_host="127.0.0.1", operator_api_port=8001, operator_api_reload=False),
+        "ServiceSettings",
+        lambda: SimpleNamespace(operator_api=SimpleNamespace(host="127.0.0.1", port=8001, reload=False)),
     )
     monkeypatch.setattr(cli.uvicorn, "run", lambda *_a, **_k: None)
 

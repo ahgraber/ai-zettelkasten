@@ -131,7 +131,7 @@ def test_within_headroom_truncates_the_batch_and_reports_what_is_left(
         _add_unit(session, WorkUnitStatus.QUEUED)
         session.commit()
 
-        with caplog.at_level("INFO", logger="aizk.graph.capacity"):
+        with caplog.at_level("INFO", logger="aizk.pipeline.capacity"):
             admitted = within_headroom(session, ExtractionJob, "abcde", stage="extraction", limit=3)
 
         assert admitted == ["a", "b"]

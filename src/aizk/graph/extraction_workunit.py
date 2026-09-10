@@ -12,17 +12,26 @@ import logging
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from pydantic import BaseModel, ConfigDict
 from sqlmodel import func, select
 
-from aizk.graph.capacity import check_capacity, within_headroom
 from aizk.graph.datamodel import ExtractionJob
-from aizk.graph.extraction_events import EXTRACTION_STAGE, ExtractionEventKind, QueuedPayload
+from aizk.graph.extraction_events import (
+    EXTRACTION_STAGE,
+    CancelledPayload,
+    ClaimedPayload,
+    ExtractionEventKind,
+    FailedPayload,
+    QueuedPayload,
+    RecoveredStalePayload,
+    RequeuedPayload,
+    TimedOutPayload,
+)
 from aizk.graph.persistence import CHUNKING_STAGE
-from aizk.pipeline.events import record_transition
+from aizk.pipeline.capacity import require_positive_limit, within_headroom
 from aizk.pipeline.invalidation import require_reprocessing_confirmation
-from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus
-from aizk.utilities.clock import utcnow
+from aizk.pipeline.stage import StageDefinition, enqueue
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -33,6 +42,16 @@ if TYPE_CHECKING:
     from aizk.pipeline.events import CreationOrigin
 
 logger = logging.getLogger(__name__)
+
+
+class ExtractionParams(BaseModel):
+    """The stage-specific input of one extraction unit: the source to extract.
+
+    The field name is the work-unit table's column name.
+    """
+
+    model_config = ConfigDict(frozen=True)
+    source_id: UUID
 
 
 def _idempotency_key(source_id: UUID) -> str:
@@ -70,34 +89,17 @@ def enqueue_extraction(
     Raises:
         StageAtCapacityError: If capacity is reached for a new unit.
     """
-    key = _idempotency_key(source_id)
-    existing = session.exec(select(ExtractionJob).where(ExtractionJob.idempotency_key == key)).one_or_none()
-    if existing is not None:
-        logger.debug("Reusing extraction work-unit id=%s for source_id=%s", existing.id, source_id)
-        return existing, False
-
-    check_capacity(session, ExtractionJob, stage=EXTRACTION_STAGE, limit=queue_max_depth)
-
-    job = ExtractionJob(
-        idempotency_key=key,
-        source_id=source_id,
-        status=WorkUnitStatus.QUEUED,
-        queued_at=utcnow(),
-    )
-    session.add(job)
-    session.flush()
-    record_transition(
+    job, created = enqueue(
         session,
-        job,
-        stage=EXTRACTION_STAGE,
-        work_unit_ref=str(job.id),
-        source_id=job.source_id,
-        to_status=WorkUnitStatus.QUEUED,
-        kind=ExtractionEventKind.QUEUED,
-        attempt=0,
-        payload=QueuedPayload(origin=origin, principal=principal),
-        from_status=None,
+        EXTRACTION_DEFINITION,
+        ExtractionParams(source_id=source_id),
+        origin=origin,
+        principal=principal,
+        queue_max_depth=queue_max_depth,
     )
+    if not created:
+        logger.debug("Reusing extraction work-unit id=%s for source_id=%s", job.id, source_id)
+        return job, False
     logger.debug("Enqueued extraction work-unit id=%s for source_id=%s", job.id, source_id)
     return job, True
 
@@ -152,8 +154,7 @@ def pending_extraction_sources(session: "Session", *, limit: int | None = None) 
     Raises:
         ValueError: If ``limit`` is less than one.
     """
-    if limit is not None and limit < 1:
-        raise ValueError(f"limit must be a positive integer, got {limit}")
+    require_positive_limit(limit)
     query = _pending_extraction_query()
     if limit is not None:
         query = query.limit(limit)
@@ -163,6 +164,29 @@ def pending_extraction_sources(session: "Session", *, limit: int | None = None) 
 def pending_extraction_count(session: "Session") -> int:
     """Return the number of pending extraction sources."""
     return session.exec(select(func.count()).select_from(_pending_extraction_query().subquery())).one()
+
+
+def _pending_extraction_params(session: "Session", limit: int | None) -> list[ExtractionParams]:
+    """Return the parameters of the pending extraction units, up to ``limit``."""
+    return [ExtractionParams(source_id=source_id) for source_id in pending_extraction_sources(session, limit=limit)]
+
+
+#: The extraction stage's static definition.
+EXTRACTION_DEFINITION: StageDefinition[ExtractionJob, ExtractionParams] = StageDefinition(
+    name=EXTRACTION_STAGE,
+    params=ExtractionParams,
+    unit_key=lambda params: _idempotency_key(params.source_id),
+    work_unit_model=ExtractionJob,
+    event_kinds=ExtractionEventKind,
+    queued_payload=QueuedPayload,
+    claimed_payload=ClaimedPayload,
+    recovered_stale_payload=RecoveredStalePayload,
+    failed_payload=FailedPayload,
+    cancelled_payload=CancelledPayload,
+    timed_out_payload=TimedOutPayload,
+    requeued_payload=RequeuedPayload,
+    pending=_pending_extraction_params,
+)
 
 
 def enqueue_extraction_backfill(

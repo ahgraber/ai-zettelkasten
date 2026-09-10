@@ -8,19 +8,20 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated
 
-from sqlalchemy import func, text
+from sqlalchemy import func
 from sqlmodel import select
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import JSONResponse
 
 from aizk.conversion.datamodel.source import Source
+from aizk.db.engine import begin_immediate_on
 from aizk.graph.api.dependencies import get_admission_config, get_db_session
 from aizk.graph.api.schemas import ExtractionJobList, ExtractionJobResponse, ExtractionSubmission
-from aizk.graph.capacity import StageAtCapacityError
 from aizk.graph.datamodel import ExtractionJob
 from aizk.graph.extraction_workunit import enqueue_extraction
 from aizk.graph.job_actions import apply_extraction_cancel as _apply_cancel, apply_extraction_retry as _apply_retry
+from aizk.pipeline.capacity import StageAtCapacityError
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.service.api.responses import INTAKE_RESPONSES, queue_full_response
 from aizk.service.auth import Principal, get_principal
@@ -68,7 +69,7 @@ def submit_job(
     Returns 201 for a new unit, 200 for an existing unit, 404 when the source is
     missing, and 503 when the stage is at capacity.
     """
-    session.exec(text("BEGIN IMMEDIATE"))
+    begin_immediate_on(session)
     # Resolved on the durable ``source_id`` identity, not the table's row surrogate.
     known_source = session.exec(select(Source).where(Source.source_id == submission.source_id)).first()
     if known_source is None:
@@ -131,16 +132,16 @@ def get_job(
 def retry_job(
     job_id: int,
     session: Annotated["Session", Depends(get_db_session)],
-    _principal: _Principal,
+    principal: _Principal,
 ) -> ExtractionJobResponse:
     """Re-queue a terminal work-unit, clear retry state, and record the event.
 
     Returns 409 when the status is not re-queueable.
     """
-    session.exec(text("BEGIN IMMEDIATE"))
+    begin_immediate_on(session)
     job = _get_or_404(session, job_id)
     try:
-        _apply_retry(session, job)
+        _apply_retry(session, job, principal=principal.subject)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     session.commit()
@@ -159,7 +160,7 @@ def cancel_job(
     Returns 409 when the status is not cancellable. Running units stop
     cooperatively.
     """
-    session.exec(text("BEGIN IMMEDIATE"))
+    begin_immediate_on(session)
     job = _get_or_404(session, job_id)
     try:
         _apply_cancel(session, job)

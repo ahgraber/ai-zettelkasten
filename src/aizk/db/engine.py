@@ -9,6 +9,7 @@ the migration tree registers every stage's models in its own ``env.py``.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 
 from sqlalchemy import Engine, event, text
 from sqlmodel import Session, SQLModel, create_engine
@@ -86,6 +87,41 @@ def get_session(engine: Engine) -> Iterator[Session]:
     """Yield a SQLModel session for dependency injection."""
     with Session(engine) as session:
         yield session
+
+
+def begin_immediate_on(session: Session) -> None:
+    """Start the exclusive write transaction on a session the caller owns.
+
+    This is the SQLite backend's exclusive write transaction (``BEGIN
+    IMMEDIATE``) and the single seam a Postgres backend replaces with row
+    locking. Every claim, finalize, requeue, cancel, and stale-recovery
+    transaction in the tree goes through it, either directly or via
+    :func:`begin_immediate`. The caller keeps ownership of ``session``: it
+    commits, rolls back, and closes.
+    """
+    session.exec(text("BEGIN IMMEDIATE"))
+
+
+@contextmanager
+def begin_immediate(engine: Engine) -> Iterator[Session]:
+    """Open a session holding the exclusive write transaction for the block.
+
+    This is the SQLite backend's exclusive write transaction and the single
+    seam a Postgres backend replaces with row locking; every claim, finalize,
+    requeue, cancel, and stale-recovery transaction in the tree goes through
+    it. Commits on success, rolls back on any exception, and closes the
+    session either way. Callers must keep slow work outside the block.
+    """
+    session = Session(engine)
+    try:
+        begin_immediate_on(session)
+        yield session
+        session.commit()
+    except BaseException:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 def create_db_and_tables(engine: Engine) -> None:

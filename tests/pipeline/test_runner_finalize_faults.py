@@ -27,6 +27,7 @@ from sqlalchemy.exc import DBAPIError, OperationalError
 
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.runner import StageRunner
+from aizk.pipeline.shutdown import ShutdownController
 
 from ._stub_handler import StubStageHandler, create_stub_engine, succeed
 
@@ -155,3 +156,55 @@ def test_claim_db_lock_does_not_forget_running_work() -> None:
     assert sorted(handler.recorded.cleaned_up) == sorted([str(first_id), str(second_id)]), (
         "both units cleaned up exactly once"
     )
+
+
+def test_finalize_fault_outlasting_the_drain_keeps_the_completed_outcome() -> None:
+    """A finished unit whose finalize keeps failing through the drain is not a drain survivor.
+
+    The unit's work succeeds, but every finalize attempt errors for longer than
+    the drain timeout plus the cancel grace, so the runner exits forced with the
+    slot retained. The drain must not reclassify that finished future as
+    drain-terminated: once the faults clear and the retained slot is reaped
+    again, the row records the success the future produced.
+    """
+    engine = create_stub_engine()
+    handler = StubStageHandler(engine, concurrency_limit=1)
+    controller = ShutdownController()
+    started = threading.Event()
+
+    def _succeed_and_signal(label: str) -> str:
+        started.set()
+        return f"ok:{label}"
+
+    unit_id = handler.enqueue("completes", behavior=_succeed_and_signal)
+    # Far more faults than the drain window can consume at the reap cadence.
+    handler.inject_finalize_fault(times=100_000, error=_op_lock())
+    runner = StageRunner(
+        handler,
+        engine,
+        shutdown=controller,
+        poll_interval=0.01,
+        drain_timeout=0.2,
+        cancel_grace=0.2,
+        force_exit=lambda _code: None,
+    )
+    exit_code: list[int] = []
+
+    with no_thread_leaks(action="raise"):
+        driver = threading.Thread(target=lambda: exit_code.append(runner.run()))
+        driver.start()
+        assert started.wait(timeout=5.0), "unit began executing"
+        controller.request_shutdown()
+        driver.join(timeout=10.0)
+        assert not driver.is_alive(), "runner exited forced with the finalize still failing"
+
+    assert exit_code == [1]
+    assert handler.get_status(unit_id) == WorkUnitStatus.RUNNING.value, "nothing durable landed while faulting"
+    assert str(unit_id) not in handler.recorded.cancelled, "a finished future is never a drain survivor"
+
+    # The faults clear; the retained slot is reaped once more.
+    handler.inject_finalize_fault(times=0, error=_op_lock())
+    runner._reap()
+
+    assert handler.get_status(unit_id) == WorkUnitStatus.SUCCEEDED.value, "the completed outcome survived the drain"
+    assert handler.recorded.cleaned_up == [str(unit_id)]

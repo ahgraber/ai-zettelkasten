@@ -476,7 +476,7 @@ def test_an_unlimited_stage_admits_a_bounded_batch_per_pass(tmp_path: Path) -> N
 
 def test_repeated_passes_drain_an_unlimited_stage_to_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """With no capacity constraint, repeated bounded passes still empty the pending set."""
-    monkeypatch.setattr("aizk.graph.admission.MAX_BULK_SELECTION", 3)
+    monkeypatch.setattr("aizk.pipeline.admission.MAX_BULK_SELECTION", 3)
     engine = _make_engine(tmp_path)
     _seed_converted_sources(engine, 10)
     adapter = contextualization_adapter(_config(admission_contextualization_enabled=True))
@@ -506,7 +506,7 @@ def test_a_pass_admits_the_smaller_of_ceiling_and_headroom(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, queue_max_depth: int, expected_admitted: int
 ) -> None:
     """A pass is bounded by the per-pass ceiling when headroom exceeds it, and by headroom otherwise."""
-    monkeypatch.setattr("aizk.graph.admission.MAX_BULK_SELECTION", 3)
+    monkeypatch.setattr("aizk.pipeline.admission.MAX_BULK_SELECTION", 3)
     engine = _make_engine(tmp_path)
     _seed_converted_sources(engine, 8)
     adapter = contextualization_adapter(

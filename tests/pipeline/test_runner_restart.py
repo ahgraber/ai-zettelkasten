@@ -54,11 +54,11 @@ def test_durable_state_drives_scheduling_after_restart(tmp_path: Path) -> None:
     """A reconstructed runner reads durable state: no permanent retry, retry-wait honored.
 
     First "process": run a permanent failure and a retryable failure to their
-    terminal states, persisting ``retry_class`` and a future
+    terminal states, persisting no retry-wait for the permanent one and a future
     ``earliest_next_attempt_at`` for the retryable one. Dispose the engine
     (simulated restart). Second "process": a fresh engine + handler + runner
-    over the same file must claim neither — the permanent failure is excluded by
-    retry class, the retryable one is gated by its still-future retry-wait — so
+    over the same file must claim neither — the permanent failure has no
+    retry-wait, the retryable one is gated by its still-future retry-wait — so
     neither unit is executed again.
     """
     db_path = str(tmp_path / "stub-restart.db")
@@ -108,8 +108,8 @@ def test_durable_retry_wait_elapses_after_restart(tmp_path: Path) -> None:
 
     engine_a = create_stub_file_engine(db_path, create_schema=True)
     handler_a = StubStageHandler(engine_a, concurrency_limit=2)
-    # Seed durable terminal state directly: a permanent failure and a
-    # retryable-failed unit whose retry-wait is already in the past.
+    # Seed durable terminal state directly: a permanent failure (failed with no
+    # retry-wait) and a retryable-failed unit whose retry-wait is already in the past.
     perm_id = handler_a.enqueue("perm", status=WorkUnitStatus.FAILED.value)
     ready_id = handler_a.enqueue(
         "ready",
@@ -117,9 +117,6 @@ def test_durable_retry_wait_elapses_after_restart(tmp_path: Path) -> None:
         status=WorkUnitStatus.FAILED.value,
         earliest_next_attempt_at=now - dt.timedelta(minutes=10),
     )
-    # Mark the permanent unit's retry class durably so claim_next excludes it.
-    handler_a.mark_retry_class(perm_id, "permanent")
-    handler_a.mark_retry_class(ready_id, "retryable")
     engine_a.dispose()
 
     engine_b = create_stub_file_engine(db_path, create_schema=False)

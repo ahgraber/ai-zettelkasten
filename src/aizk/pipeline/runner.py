@@ -45,19 +45,19 @@ import time
 from typing import TYPE_CHECKING, Any, Generic, NoReturn, Protocol
 
 from setproctitle import setproctitle
-from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, OperationalError
-from sqlmodel import Session
 
+from aizk.db.engine import begin_immediate
 from aizk.pipeline import shutdown as shutdown_module
 from aizk.pipeline.handler import StageHandler, WorkUnitHandle
-from aizk.pipeline.lifecycle import TerminalOutcome, WorkUnitStatus
+from aizk.pipeline.lifecycle import WORKER_DRAIN_TERMINATED, RetryClass, TerminalOutcome, WorkUnitStatus
 from aizk.pipeline.shutdown import ShutdownController
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from sqlalchemy import Engine
+    from sqlmodel import Session
 
 logger = logging.getLogger(__name__)
 
@@ -106,17 +106,28 @@ class InMemoryMetrics:
 # rely on wall-clock sleeps longer than necessary.
 Clock = Callable[[], float]
 
+#: Seconds the runner waits, on the drain-timeout survivor path, for a
+#: cancelled unit to finish before it forces exit. A stage's stale threshold
+#: must exceed its timeout plus the drain timeout plus this allowance.
+DEFAULT_CANCEL_GRACE = 5.0
+
 
 class _Slot(Generic[WorkUnitHandle]):
-    """Bookkeeping for one in-flight work-unit occupying a concurrency slot."""
+    """Bookkeeping for one in-flight work-unit occupying a concurrency slot.
 
-    __slots__ = ("handle", "future", "deadline", "timed_out", "cancel_requested")
+    ``timed_out`` marks a unit past its wall-clock deadline, ``drained`` a unit
+    still running when the drain timeout elapsed, and ``cancel_requested`` any
+    unit whose cancellation hook has been invoked (both of the former set it).
+    """
+
+    __slots__ = ("handle", "future", "deadline", "timed_out", "drained", "cancel_requested")
 
     def __init__(self, handle: WorkUnitHandle, future: Future, deadline: float | None) -> None:
         self.handle = handle
         self.future = future
         self.deadline = deadline
         self.timed_out = False
+        self.drained = False
         self.cancel_requested = False
 
 
@@ -144,7 +155,7 @@ class StageRunner(Generic[WorkUnitHandle]):
         drain_timeout: float = 30.0,
         poll_interval: float = 2.0,
         stale_recovery_interval: float = 60.0,
-        cancel_grace: float = 5.0,
+        cancel_grace: float = DEFAULT_CANCEL_GRACE,
         clock: Clock = time.monotonic,
         force_exit: Callable[[int], object] = shutdown_module.force_exit,
     ) -> None:
@@ -205,17 +216,11 @@ class StageRunner(Generic[WorkUnitHandle]):
         Mirrors conversion's "caller owns BEGIN IMMEDIATE, helper does not
         commit" convention: the handler's transition writes are staged inside
         this block and committed here, co-committed with the runner bookkeeping.
+        The transaction itself is :func:`aizk.db.engine.begin_immediate`, the
+        shared exclusive-claim primitive.
         """
-        session = Session(self._engine)
-        try:
-            session.exec(text("BEGIN IMMEDIATE"))
+        with begin_immediate(self._engine) as session:
             yield session
-            session.commit()
-        except BaseException:
-            session.rollback()
-            raise
-        finally:
-            session.close()
 
     # --- startup --------------------------------------------------------------
 
@@ -393,10 +398,11 @@ class StageRunner(Generic[WorkUnitHandle]):
         """Finalize completed (and cancel-grace-expired) slots, releasing them.
 
         For each finished future: map its result/exception to a terminal
-        outcome (timed-out / cancelled override the adapter's mapping), finalize
-        the status transition in a ``BEGIN IMMEDIATE`` transaction, and run
-        ``cleanup`` on every outcome. Slots whose cancel grace elapsed without
-        the future finishing are escalated again via ``cancel``.
+        outcome (timed-out / drained / cancelled override the adapter's
+        mapping), finalize the status transition in a ``BEGIN IMMEDIATE``
+        transaction, and run ``cleanup`` on every outcome. Slots whose cancel
+        grace elapsed without the future finishing are escalated again via
+        ``cancel``.
         """
         with self._slots_lock:
             slots = list(self._slots.items())
@@ -446,12 +452,21 @@ class StageRunner(Generic[WorkUnitHandle]):
     def _resolve_outcome(self, future: Future, slot: _Slot[WorkUnitHandle]) -> TerminalOutcome:
         """Determine the terminal outcome for a finished slot.
 
-        Timeout and cancellation are runner-determined and take precedence over
-        the adapter's result mapping; otherwise the adapter maps the result or
-        exception.
+        Timeout, drain termination, and cancellation are runner-determined and
+        take precedence over the adapter's result mapping, in that order;
+        otherwise the adapter maps the result or exception. A unit the drain
+        timeout terminated is a failure carrying
+        :data:`~aizk.pipeline.lifecycle.WORKER_DRAIN_TERMINATED`; below the
+        attempt cap the next runtime claims it without operator action, at the
+        cap it is permanent. ``cancelled`` is reserved for a decision someone
+        made. Only a slot whose future was still running when the drain
+        timeout elapsed is drained; a finished future keeps its own outcome
+        however long its finalize is retried.
         """
         if slot.timed_out:
             return TerminalOutcome(WorkUnitStatus.TIMED_OUT)
+        if slot.drained:
+            return TerminalOutcome(WorkUnitStatus.FAILED, RetryClass.RETRYABLE, error_code=WORKER_DRAIN_TERMINATED)
         if slot.cancel_requested:
             return TerminalOutcome(WorkUnitStatus.CANCELLED)
         # The runner never calls ``future.cancel()``, so ``result()`` below cannot
@@ -583,10 +598,20 @@ class StageRunner(Generic[WorkUnitHandle]):
     def _drain(self) -> bool:
         """Wait for in-flight units to finish within the drain timeout.
 
-        Returns ``True`` if any unit was still running when the timeout elapsed
-        (a forced exit). Finalizes everything that finished; on timeout, leaves
-        no unit *running* by cancelling and terminating survivors via the
-        adapter's cancellation hook before returning.
+        Returns ``True`` (a forced exit) if any unit was still running when the
+        timeout elapsed, or if any slot is still unresolved once the cancel
+        grace has elapsed — a finished unit whose terminal transition never
+        landed. Finalizes everything that finished. On timeout the survivors — the slots whose
+        future is still running, not those whose finished future is waiting on
+        a retried finalize — are terminated via
+        the adapter's cancellation hook and finalized ``failed`` with the drain
+        error code, not ``cancelled``: below the attempt cap with an immediate
+        retry wait so the next runtime picks the unit up, at the cap permanent.
+        A survivor still running when the cancel grace elapses is classified
+        that way durably while its thread runs: the process exits right after
+        and cannot force-terminate an in-process thread, so without the write
+        the row would stay ``running`` until stale recovery. Its slot stays
+        registered (no cleanup of a still-running unit).
         """
         with self._slots_lock:
             futures = list(self._slots.keys())
@@ -603,10 +628,9 @@ class StageRunner(Generic[WorkUnitHandle]):
             time.sleep(min(self._poll_interval, 0.05))
         # Drain timeout elapsed — terminate survivors so none is left running.
         with self._slots_lock:
-            survivors = list(self._slots.values())
-        if not survivors:
-            return False
+            survivors = [slot for slot in self._slots.values() if not slot.future.done()]
         for slot in survivors:
+            slot.drained = True
             slot.cancel_requested = True
             self._request_cancel(slot.handle)
         # Give cancellation a bounded grace, then finalize whatever finished.
@@ -618,11 +642,40 @@ class StageRunner(Generic[WorkUnitHandle]):
                     break
             time.sleep(min(self._poll_interval, 0.05))
         self._reap()
+        for slot in survivors:
+            if not slot.future.done():
+                self._classify_stuck(slot)
+        with self._slots_lock:
+            unresolved = len(self._slots)
         logger.warning(
-            "Drain timeout elapsed; terminated survivors",
-            extra={"stage": self._stage},
+            "Drain timeout elapsed; %d survivor(s) terminated, %d work-unit(s) left unresolved",
+            len(survivors),
+            unresolved,
+            extra={"stage": self._stage, "survivors": len(survivors), "unresolved": unresolved},
         )
-        return True
+        return bool(survivors) or bool(unresolved)
+
+    def _classify_stuck(self, slot: _Slot[WorkUnitHandle]) -> None:
+        """Durably record the drain outcome for a unit still running at forced exit.
+
+        Best effort: a database error is logged and the row is left to stale
+        recovery. The slot is not released; the thread it belongs to is about
+        to die with the process.
+        """
+        outcome = TerminalOutcome(WorkUnitStatus.FAILED, RetryClass.RETRYABLE, error_code=WORKER_DRAIN_TERMINATED)
+        try:
+            with self._begin_immediate() as session:
+                self._handler.finalize(session, slot.handle, outcome)
+        except (OperationalError, DBAPIError):
+            logger.exception(
+                "Could not record the drain outcome for a still-running work-unit; stale recovery will reclaim it",
+                extra={"stage": self._stage, "work_unit_ref": str(slot.handle)},
+            )
+            return
+        logger.warning(
+            "Recorded the drain outcome for a work-unit still running at forced exit",
+            extra={"stage": self._stage, "work_unit_ref": str(slot.handle)},
+        )
 
     # --- internals ------------------------------------------------------------
 
@@ -636,4 +689,4 @@ class StageRunner(Generic[WorkUnitHandle]):
             self.validate_dependencies()
 
 
-__all__ = ["InMemoryMetrics", "StageRunner", "StageMetrics"]
+__all__ = ["DEFAULT_CANCEL_GRACE", "InMemoryMetrics", "StageRunner", "StageMetrics"]

@@ -7,6 +7,7 @@ Admission remains disabled unless the graph configuration enables it.
 from __future__ import annotations
 
 import contextlib
+import datetime
 import logging
 from typing import TYPE_CHECKING
 
@@ -18,7 +19,8 @@ from aizk.graph.config import AdmissionConfig
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
 from aizk.graph.handler import ContextualizationStageHandler
 from aizk.graph.markdown_source import ConversionOutputFreshness, S3MarkdownSource
-from aizk.pipeline.runner import StageRunner
+from aizk.pipeline.runner import DEFAULT_CANCEL_GRACE, StageRunner
+from aizk.pipeline.stage import require_stale_threshold
 from aizk.storage.s3 import S3Client
 from aizk.utilities.errors import StartupValidationError
 
@@ -37,13 +39,21 @@ def run_graph_worker(
     """Run the contextualization worker and its admission loop until shutdown.
 
     Raises:
-        StartupValidationError: If the stage's model endpoint is incomplete.
+        StartupValidationError: If the stage's model endpoint is incomplete, or
+            its stale threshold does not exceed its timeout plus the drain
+            timeout and the cancellation allowance.
     """
     if not contextualization_config.llm_enabled:
         raise StartupValidationError(
             "contextualization model endpoint is not configured; set "
             "AIZK_GRAPH__CONTEXTUALIZATION__LLM_BASE_URL, _LLM_API_KEY, and _LLM_MODEL"
         )
+    require_stale_threshold(
+        stale_after=datetime.timedelta(minutes=contextualization_config.worker_stale_minutes),
+        timeout=datetime.timedelta(seconds=contextualization_config.worker_timeout_seconds),
+        drain_timeout=contextualization_config.worker_drain_timeout_seconds,
+        cancel_grace=DEFAULT_CANCEL_GRACE,
+    )
     admission_config = admission_config if admission_config is not None else AdmissionConfig()
     engine = get_engine(DatabaseConfig().database_url)
     llm_client = build_llm_client(

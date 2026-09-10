@@ -22,16 +22,17 @@ from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 from aizk.db.migrations import run_migrations
 from aizk.graph.backfill import BackfillResult, run_contextualization_backfill, run_extraction_backfill
-from aizk.graph.capacity import StageAtCapacityError
 from aizk.graph.config import AdmissionConfig, ContextualizationConfig, ExtractionConfig, NerConfig
 from aizk.graph.dataset_extraction import run_dataset_extraction
 from aizk.graph.dataset_stats import compute_dataset_statistics
 from aizk.graph.extraction import GLINER2_REPO_ID
 from aizk.graph.extraction_worker import build_extractor, run_extraction_worker
 from aizk.graph.worker import run_graph_worker
+from aizk.pipeline.capacity import StageAtCapacityError
 from aizk.pipeline.invalidation import ReprocessingConfirmationError
 from aizk.service.bootstrap import set_process_title
 from aizk.service.cli import positive_int, prepare_process, refuse_unconfirmed
+from aizk.service.settings import ServiceSettings
 from aizk.utilities.errors import StartupValidationError
 
 logger = logging.getLogger(__name__)
@@ -53,15 +54,15 @@ def _report_backfill(result: BackfillResult, *, stage: str, worker_command: str,
 def _cmd_serve(_args: argparse.Namespace) -> int:
     """Run the graph operator API (jobs monitor + content explorer) over uvicorn."""
     set_process_title("graph-operator-api")
-    contextualization_config = ContextualizationConfig()
+    operator_api = ServiceSettings().operator_api
     # Factory import string: the app reads the shared config on its own listener,
     # distinct from the conversion API (hence a distinct default port).
     uvicorn.run(
         "aizk.graph.api.main:create_app",
         factory=True,
-        host=contextualization_config.operator_api_host,
-        port=contextualization_config.operator_api_port,
-        reload=contextualization_config.operator_api_reload,
+        host=operator_api.host,
+        port=operator_api.port,
+        reload=operator_api.reload,
     )
     return 0
 

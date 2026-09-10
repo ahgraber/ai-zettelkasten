@@ -11,7 +11,7 @@ factory captures those differences and returns a ready :class:`StageDescriptor`.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from sqlalchemy import String, cast, func, or_
 from sqlmodel import select
@@ -43,6 +43,13 @@ if TYPE_CHECKING:
 _DEFAULT_SORT = "created_at"
 
 
+class RetryTransition(Protocol):
+    """A stage's operator-retry helper: re-queues ``unit`` on behalf of ``principal``."""
+
+    def __call__(self, session: "Session", unit: Any, *, principal: str) -> None:
+        """Apply the retry inside the caller's transaction, or raise ``ValueError`` when ineligible."""
+
+
 def _parse_status(value: str | None) -> WorkUnitStatus | None:
     """Parse a status-filter value into a :class:`WorkUnitStatus`, or 400 on a bad value."""
     if not value:
@@ -63,7 +70,7 @@ def build_graph_descriptor(
     model: Any,
     events_stage: str,
     drilldown_stages: list[tuple[str, str]],
-    apply_retry: Callable[["Session", Any], None],
+    apply_retry: RetryTransition,
     apply_cancel: Callable[["Session", Any], None],
     id_search_columns: list[Any],
     extra_actions: list[StageAction] | None = None,
@@ -77,7 +84,8 @@ def build_graph_descriptor(
     ``pipeline_events`` stage; ``drilldown_stages`` are the ``(stage, label)`` runs
     shown in the drill-down in pipeline order; ``apply_retry`` / ``apply_cancel`` are
     the stage's own transition helpers (they raise :class:`ValueError` when the unit
-    is ineligible); ``id_search_columns`` are extra integer columns matched by the
+    is ineligible; ``apply_retry`` receives the acting principal's subject as
+    ``principal``); ``id_search_columns`` are extra integer columns matched by the
     text search (beyond the id, source id, and source title). ``extra_actions`` are
     actions only this stage offers, appended after the shared Retry and Cancel.
 
@@ -269,7 +277,9 @@ def build_graph_descriptor(
         events_stage=events_stage,
         actions=[
             StageAction(
-                key="retry", applied_label="retried", apply=lambda session, unit, _p: apply_retry(session, unit)
+                key="retry",
+                applied_label="retried",
+                apply=lambda session, unit, principal: apply_retry(session, unit, principal=principal.subject),
             ),
             StageAction(
                 key="cancel", applied_label="cancelled", apply=lambda session, unit, _p: apply_cancel(session, unit)

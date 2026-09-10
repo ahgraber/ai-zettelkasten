@@ -40,6 +40,7 @@ from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.job_actions import apply_job_cancel, apply_job_retry
 from aizk.conversion.utilities.hashing import compute_idempotency_key
+from aizk.db.engine import begin_immediate_on
 from aizk.utilities.clock import utcnow
 
 logger = logging.getLogger(__name__)
@@ -173,7 +174,7 @@ def submit_job(
     source = session.exec(select(Source).where(Source.source_ref_hash == source_ref_hash)).one()
 
     # BEGIN IMMEDIATE for the idempotency-check + job-creation sequence
-    session.exec(text("BEGIN IMMEDIATE"))
+    begin_immediate_on(session)
 
     # Compute new-formula idempotency key
     converter_name = request.app.state.converter_name
@@ -339,7 +340,7 @@ def retry_job(
     principal: Annotated[Principal, Depends(get_principal)],
 ) -> JobResponse:
     """Retry a failed or cancelled job."""
-    session.exec(text("BEGIN IMMEDIATE"))
+    begin_immediate_on(session)
     job = session.get(ConversionJob, job_id)
     if not job or job.owner_id != principal.subject:
         raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
@@ -365,7 +366,7 @@ def cancel_job(
     principal: Annotated[Principal, Depends(get_principal)],
 ) -> JobResponse:
     """Cancel a queued or running job."""
-    session.exec(text("BEGIN IMMEDIATE"))
+    begin_immediate_on(session)
     job = session.get(ConversionJob, job_id)
     if not job or job.owner_id != principal.subject:
         raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
@@ -391,7 +392,7 @@ def bulk_job_actions(
     principal: Annotated[Principal, Depends(get_principal)],
 ) -> BulkActionResponse:
     """Apply retry or cancel actions across multiple jobs."""
-    session.exec(text("BEGIN IMMEDIATE"))
+    begin_immediate_on(session)
     now = utcnow()
     results: list[BulkActionResult] = []
     success = 0

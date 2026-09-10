@@ -10,6 +10,8 @@ and extraction), retry and cancel, against the lifted
 
 from __future__ import annotations
 
+import json
+
 from sqlmodel import Session, select
 
 from fastapi.testclient import TestClient
@@ -27,6 +29,10 @@ from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
 _EVENT_FIELDS = ("stage", "kind", "from_status", "to_status", "attempt", "payload_json")
+
+#: The subject the app resolves for every request under the trust-network default
+#: (``AIZK_DEFAULT_PRINCIPAL`` unset); the helper pathway names the same one.
+_PRINCIPAL = "self"
 
 
 def _terminal_event(session: Session, stage: str, job_id: int, to_status: WorkUnitStatus) -> PipelineEvent:
@@ -100,10 +106,37 @@ def test_console_retry_equals_the_contextualization_retry_pathway(
     )
     assert response.status_code == 200
 
-    apply_contextualization_retry(db_session, via_helper)
+    apply_contextualization_retry(db_session, via_helper, principal=_PRINCIPAL)
     db_session.commit()
 
     _assert_equivalent(db_session, CONTEXTUALIZATION_STAGE, via_console.id, via_helper.id, WorkUnitStatus.QUEUED)
+
+
+def test_console_retry_records_the_same_requeued_payload_as_the_api_retry(
+    client: TestClient, db_session: Session, seed_source, seed_contextualization_job
+) -> None:
+    """A console retry and a ``POST /v1/contextualizations/{id}/retry`` write the same ``requeued`` event.
+
+    Both name the request's principal on the payload and leave ``attempts`` as it was.
+    """
+    source = seed_source(db_session, karakeep_id="bm_equiv_api_retry", title="API Retry Doc")
+    via_console = seed_contextualization_job(
+        db_session, source_id=source.source_id, conversion_output_id=95, status=WorkUnitStatus.FAILED, attempts=2
+    )
+    via_api = seed_contextualization_job(
+        db_session, source_id=source.source_id, conversion_output_id=96, status=WorkUnitStatus.FAILED, attempts=2
+    )
+
+    console_response = client.post(
+        "/ui/tasks/contextualization/actions", data={"action": "retry", "job_ids": [via_console.id]}
+    )
+    api_response = client.post(f"/v1/contextualizations/{via_api.id}/retry")
+    assert (console_response.status_code, api_response.status_code) == (200, 200)
+
+    _assert_equivalent(db_session, CONTEXTUALIZATION_STAGE, via_console.id, via_api.id, WorkUnitStatus.QUEUED)
+    assert db_session.get(ContextualizationJob, via_console.id).attempts == 2
+    console_event = _terminal_event(db_session, CONTEXTUALIZATION_STAGE, via_console.id, WorkUnitStatus.QUEUED)
+    assert json.loads(console_event.payload_json)["principal"] == _PRINCIPAL
 
 
 # --- extraction ---------------------------------------------------------------
@@ -145,7 +178,7 @@ def test_console_retry_equals_the_extraction_retry_pathway(
     response = client.post("/ui/tasks/extraction/actions", data={"action": "retry", "job_ids": [via_console.id]})
     assert response.status_code == 200
 
-    apply_extraction_retry(db_session, via_helper)
+    apply_extraction_retry(db_session, via_helper, principal=_PRINCIPAL)
     db_session.commit()
 
     _assert_equivalent(db_session, EXTRACTION_STAGE, via_console.id, via_helper.id, WorkUnitStatus.QUEUED)

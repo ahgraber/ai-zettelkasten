@@ -16,15 +16,16 @@ from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.runner import StageRunner
 
-from ._stub_handler import StubStageHandler, create_stub_engine
+from ._stub_handler import StubStageHandler, StubWorkUnit, create_stub_engine
 
 
 def test_stale_unit_recovered_with_cause() -> None:
-    """A stranded running unit is reclaimed and its recovery cause is recorded.
+    """A stranded running unit is reclaimed as a retryable failure and its cause is recorded.
 
     A unit is forced into ``running`` with a backdated ``started_at`` to mimic a
-    crash. After the runner runs a stale-recovery sweep, the unit has left the
-    running state and a transition event records the recovery cause.
+    crash. After the runner runs a stale-recovery sweep, the unit is ``failed``
+    with an immediate retry wait and the stale error code, and a
+    ``recovered_stale`` event records the window and the interrupted start.
     """
     engine = create_stub_engine()
     handler = StubStageHandler(engine, stale_after=dt.timedelta(minutes=5))
@@ -37,19 +38,24 @@ def test_stale_unit_recovered_with_cause() -> None:
     recovered = runner.recover_stale()
 
     assert recovered == 1, "the stranded unit was recovered"
-    assert handler.get_status(unit_id) != WorkUnitStatus.RUNNING.value, "unit left the running state"
-
     with Session(engine) as session:
+        unit = session.get(StubWorkUnit, unit_id)
+        assert unit is not None
+        assert unit.status is WorkUnitStatus.FAILED, "recovery leaves the unit failed"
+        assert unit.earliest_next_attempt_at is not None, "recovery sets an immediate retry wait"
+        assert unit.error_code == "worker_stale_running", "recovery names its cause on the row"
         events = list(
             session.exec(
                 select(PipelineEvent)
                 .where(PipelineEvent.work_unit_ref == str(unit_id))
-                .where(PipelineEvent.to_status == WorkUnitStatus.QUEUED.value)
+                .where(PipelineEvent.kind == "recovered_stale")
                 .order_by(PipelineEvent.event_id)
             )
         )
-    assert events, "a transition event recorded the recovery"
-    recovery = events[-1]
+    assert len(events) == 1, "one transition event recorded the recovery"
+    recovery = events[0]
     assert recovery.from_status == WorkUnitStatus.RUNNING.value, "recovery transitioned out of running"
+    assert recovery.to_status == WorkUnitStatus.FAILED.value
     payload = json.loads(recovery.payload_json)
-    assert payload.get("cause") == "worker_stale_running", "the recovery event records its cause"
+    assert payload["stale_after_minutes"] == 5.0, "the recovery event records the stale window"
+    assert payload["last_started_at"] is not None, "the recovery event records the interrupted start"

@@ -45,6 +45,7 @@ from sqlmodel import select
 
 from aizk.chunking import Chunk as SplitterChunk
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.db.engine import begin_immediate
 from aizk.graph.content_index import index_chunk_content
 from aizk.graph.datamodel import (
     INPUT_KIND_RAW,
@@ -54,10 +55,9 @@ from aizk.graph.datamodel import (
     ChunkRunManifest,
     ContextualizationOutputMemo,
 )
-from aizk.graph.db import begin_immediate
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
 from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, content_fingerprint, derivation_key, fingerprint
-from aizk.pipeline.run import PipelineRun, RunStatus, record_run
+from aizk.pipeline.run import PipelineRun, active_run, record_applicability, record_run, require_active_run
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -340,13 +340,7 @@ def persist_chunks(
 
 def active_chunking_run(session: "Session", source_id: UUID) -> PipelineRun | None:
     """Return the active chunking run for a source (``source_id``), or ``None``."""
-    return session.exec(
-        select(PipelineRun).where(
-            PipelineRun.stage == CHUNKING_STAGE,
-            PipelineRun.scope_id == source_id,
-            PipelineRun.status == RunStatus.ACTIVE,
-        )
-    ).one_or_none()
+    return active_run(session, CHUNKING_STAGE, source_id)
 
 
 def run_input(session: "Session", run_id: int) -> ChunkRunInput | None:
@@ -380,9 +374,7 @@ def record_chunk_run_applicability(
         ValueError: If the run, conversion output, fingerprints, manifest, or
             existing relation is inconsistent.
     """
-    run = session.get(PipelineRun, run_id)
-    if run is None or run.status != RunStatus.ACTIVE or run.stage != CHUNKING_STAGE:
-        raise ValueError(f"chunking run {run_id!r} is missing, not active, or not a chunking run")
+    run = require_active_run(session, run_id, CHUNKING_STAGE, label="chunking run")
 
     output = _conversion_output(session, conversion_output_id)
     if output is None or output.source_id != run.scope_id:
@@ -402,20 +394,12 @@ def record_chunk_run_applicability(
     if len(manifest_of_run(session, run_id)) == 0 and stored_input.chunk_set_fingerprint != payload_fingerprint([]):
         raise ValueError(f"chunking run {run_id!r} has an empty manifest but a non-empty recorded chunk set")
 
-    existing = session.get(ChunkRunApplicability, (run_id, conversion_output_id))
-    if existing is not None:
-        if existing.input_fingerprint != input_fingerprint:
-            raise ValueError(
-                f"chunking run {run_id!r} already has an applicability row for conversion output "
-                f"{conversion_output_id!r} with a different input_fingerprint"
-            )
-        return existing
-
-    row = ChunkRunApplicability(
-        run_id=run_id, conversion_output_id=conversion_output_id, input_fingerprint=input_fingerprint
+    return record_applicability(
+        session,
+        ChunkRunApplicability,
+        {"run_id": run_id, "conversion_output_id": conversion_output_id},
+        input_fingerprint=input_fingerprint,
     )
-    session.add(row)
-    return row
 
 
 def manifest_of_run(session: "Session", run_id: int) -> list[ChunkRunManifest]:

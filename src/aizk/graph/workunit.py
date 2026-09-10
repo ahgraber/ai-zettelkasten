@@ -49,11 +49,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from uuid import UUID
 
+from pydantic import BaseModel, ConfigDict
 from sqlmodel import Session, select
 
 from aizk.chunking import SPLITTER_VERSION, split
-from aizk.graph.capacity import check_capacity, within_headroom
+from aizk.db.engine import begin_immediate
 from aizk.graph.contextualization import (
     consumed_output_memo_keys,
     contextualize_chunks,
@@ -62,19 +64,26 @@ from aizk.graph.contextualization import (
     summarize_document,
 )
 from aizk.graph.datamodel import ContextualizationJob
-from aizk.graph.db import begin_immediate
-from aizk.graph.events import CONTEXTUALIZATION_STAGE, GraphEventKind, QueuedPayload
+from aizk.graph.events import (
+    CONTEXTUALIZATION_STAGE,
+    CancelledPayload,
+    ClaimedPayload,
+    FailedPayload,
+    GraphEventKind,
+    QueuedPayload,
+    RecoveredStalePayload,
+    RequeuedPayload,
+    TimedOutPayload,
+)
 from aizk.graph.persistence import memo_delete_keys, persist_chunks
-from aizk.pipeline.events import record_transition
+from aizk.pipeline.capacity import within_headroom
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.invalidation import require_reprocessing_confirmation
-from aizk.pipeline.lifecycle import WorkUnitStatus
-from aizk.utilities.clock import utcnow
+from aizk.pipeline.stage import StageDefinition, enqueue
 from aizk.utilities.hashing import compute_markdown_hash
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
-    from uuid import UUID
 
     from sqlalchemy import Engine
 
@@ -82,6 +91,17 @@ if TYPE_CHECKING:
     from aizk.pipeline.events import CreationOrigin
 
 logger = logging.getLogger(__name__)
+
+
+class ContextualizationParams(BaseModel):
+    """The stage-specific inputs of one contextualization unit.
+
+    The field names are the work-unit table's column names.
+    """
+
+    model_config = ConfigDict(frozen=True)
+    conversion_output_id: int
+    source_id: UUID
 
 
 @dataclass(frozen=True)
@@ -335,6 +355,24 @@ def _idempotency_key(conversion_output_id: int) -> str:
     return f"conversion_output:{conversion_output_id}"
 
 
+#: The contextualization stage's static definition. ``pending`` is unset: the
+#: pending query lives in :mod:`aizk.graph.enqueue`, which imports this module.
+CONTEXTUALIZATION_DEFINITION: StageDefinition[ContextualizationJob, ContextualizationParams] = StageDefinition(
+    name=CONTEXTUALIZATION_STAGE,
+    params=ContextualizationParams,
+    unit_key=lambda params: _idempotency_key(params.conversion_output_id),
+    work_unit_model=ContextualizationJob,
+    event_kinds=GraphEventKind,
+    queued_payload=QueuedPayload,
+    claimed_payload=ClaimedPayload,
+    recovered_stale_payload=RecoveredStalePayload,
+    failed_payload=FailedPayload,
+    cancelled_payload=CancelledPayload,
+    timed_out_payload=TimedOutPayload,
+    requeued_payload=RequeuedPayload,
+)
+
+
 def enqueue_document(
     session: "Session",
     *,
@@ -356,41 +394,21 @@ def enqueue_document(
     Raises:
         StageAtCapacityError: If a new unit would exceed ``queue_max_depth``.
     """
-    key = _idempotency_key(conversion_output_id)
-    existing = session.exec(
-        select(ContextualizationJob).where(ContextualizationJob.idempotency_key == key)
-    ).one_or_none()
-    if existing is not None:
+    job, created = enqueue(
+        session,
+        CONTEXTUALIZATION_DEFINITION,
+        ContextualizationParams(conversion_output_id=conversion_output_id, source_id=source_id),
+        origin=origin,
+        principal=principal,
+        queue_max_depth=queue_max_depth,
+    )
+    if not created:
         logger.debug(
             "Reusing contextualization work-unit id=%s for conversion_output_id=%s",
-            existing.id,
+            job.id,
             conversion_output_id,
         )
-        return existing, False
-
-    check_capacity(session, ContextualizationJob, stage=CONTEXTUALIZATION_STAGE, limit=queue_max_depth)
-
-    job = ContextualizationJob(
-        idempotency_key=key,
-        conversion_output_id=conversion_output_id,
-        source_id=source_id,
-        status=WorkUnitStatus.QUEUED,
-        queued_at=utcnow(),
-    )
-    session.add(job)
-    session.flush()
-    record_transition(
-        session,
-        job,
-        stage=CONTEXTUALIZATION_STAGE,
-        work_unit_ref=str(job.id),
-        source_id=job.source_id,
-        to_status=WorkUnitStatus.QUEUED,
-        kind=GraphEventKind.QUEUED,
-        attempt=0,
-        payload=QueuedPayload(origin=origin, principal=principal),
-        from_status=None,
-    )
+        return job, False
     logger.debug(
         "Enqueued contextualization work-unit id=%s for conversion_output_id=%s", job.id, conversion_output_id
     )

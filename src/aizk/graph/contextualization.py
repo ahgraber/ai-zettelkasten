@@ -84,7 +84,7 @@ from aizk.graph.persistence import (
     run_input,
 )
 from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, content_fingerprint, derivation_key, fingerprint
-from aizk.pipeline.run import PipelineRun, RunStatus, record_run
+from aizk.pipeline.run import PipelineRun, active_run, record_applicability, record_run, require_active_run
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -416,13 +416,7 @@ def _validate_contextualized_text(working_text: str, contextualized_text: str) -
 
 def _active_run(session: "Session", stage: str, scope_id: UUID) -> PipelineRun | None:
     """Return the active run for ``(stage, scope_id)``, or ``None``."""
-    return session.exec(
-        select(PipelineRun).where(
-            PipelineRun.stage == stage,
-            PipelineRun.scope_id == scope_id,
-            PipelineRun.status == RunStatus.ACTIVE,
-        )
-    ).one_or_none()
+    return active_run(session, stage, scope_id)
 
 
 def _verify_chunking_provenance(
@@ -747,9 +741,7 @@ def record_summary_run_applicability(
         ValueError: If the run, conversion output, derivation key, summary, or
             existing relation is inconsistent.
     """
-    run = session.get(PipelineRun, run_id)
-    if run is None or run.status != RunStatus.ACTIVE or run.stage != SUMMARY_STAGE:
-        raise ValueError(f"summary run {run_id!r} is missing, not active, or not a summary run")
+    run = require_active_run(session, run_id, SUMMARY_STAGE, label="summary run")
 
     output = _conversion_output(session, conversion_output_id)
     if output is None or output.source_id != run.scope_id:
@@ -766,20 +758,12 @@ def record_summary_run_applicability(
     if session.exec(select(DocumentSummary).where(DocumentSummary.run_id == run_id)).first() is None:
         raise ValueError(f"summary run {run_id!r} has no recorded DocumentSummary (a torn run)")
 
-    existing = session.get(SummaryRunApplicability, (run_id, conversion_output_id))
-    if existing is not None:
-        if existing.input_fingerprint != input_fingerprint:
-            raise ValueError(
-                f"summary run {run_id!r} already has an applicability row for conversion output "
-                f"{conversion_output_id!r} with a different input_fingerprint"
-            )
-        return existing
-
-    row = SummaryRunApplicability(
-        run_id=run_id, conversion_output_id=conversion_output_id, input_fingerprint=input_fingerprint
+    return record_applicability(
+        session,
+        SummaryRunApplicability,
+        {"run_id": run_id, "conversion_output_id": conversion_output_id},
+        input_fingerprint=input_fingerprint,
     )
-    session.add(row)
-    return row
 
 
 def assert_variant_matches_run_input(run_input: ContextualizationRunInput, variant: ContextualizedChunk) -> None:
@@ -1026,9 +1010,7 @@ def record_contextualization_run_applicability(
         ValueError: If the variant run, upstream runs, fingerprints, counts, or
             shared conversion provenance is inconsistent.
     """
-    run = session.get(PipelineRun, run_id)
-    if run is None or run.status != RunStatus.ACTIVE or run.stage != VARIANT_STAGE:
-        raise ValueError(f"variant run {run_id!r} is missing, not active, or not a variant run")
+    run = require_active_run(session, run_id, VARIANT_STAGE, label="variant run")
 
     summary_run = session.get(PipelineRun, summary_run_id)
     if summary_run is None or summary_run.stage != SUMMARY_STAGE or summary_run.scope_id != run.scope_id:
@@ -1066,24 +1048,12 @@ def record_contextualization_run_applicability(
             f"summary run {summary_run_id!r} and chunking run {chunking_run_id!r} share no conversion output"
         )
 
-    existing = session.get(ContextualizationRunApplicability, (run_id, summary_run_id, chunking_run_id))
-    if existing is not None:
-        if existing.input_fingerprint != input_fingerprint:
-            raise ValueError(
-                f"variant run {run_id!r} already has an applicability row for "
-                f"(summary_run_id={summary_run_id!r}, chunking_run_id={chunking_run_id!r}) with a different "
-                "input_fingerprint"
-            )
-        return existing
-
-    row = ContextualizationRunApplicability(
-        run_id=run_id,
-        summary_run_id=summary_run_id,
-        chunking_run_id=chunking_run_id,
+    return record_applicability(
+        session,
+        ContextualizationRunApplicability,
+        {"run_id": run_id, "summary_run_id": summary_run_id, "chunking_run_id": chunking_run_id},
         input_fingerprint=input_fingerprint,
     )
-    session.add(row)
-    return row
 
 
 def resolve_chunk_text(

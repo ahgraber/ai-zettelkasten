@@ -1,10 +1,13 @@
-"""In-memory stub :class:`StageHandler` for runner tests.
+"""In-memory stub stage for runner and lifecycle tests.
 
-This is **test support, not shipped code**. It implements a minimal stage-owned
-work-unit table over SQLite and drives its claim/transition through the real
-:func:`aizk.pipeline.events.record_transition` co-commit helper, so runner
-tests exercise the genuine "runner owns the session + ``BEGIN IMMEDIATE``,
-handler never commits" seam rather than a mock.
+This is **test support, not shipped code**. It is a stage built purely by
+supplying an adapter: a work-unit table carrying the shared lifecycle columns,
+a :class:`~aizk.pipeline.stage.StageDefinition`, and a
+:class:`~aizk.pipeline.stage.HandlerBase` subclass that adds only its unit of
+work, its outcome mapping, and its success event. Every claim and transition
+runs through the real repository and :func:`aizk.pipeline.events.record_transition`
+co-commit helper, so runner tests exercise the genuine "runner owns the session
++ ``BEGIN IMMEDIATE``, handler never commits" seam rather than a mock.
 
 The stub is deliberately controllable per test:
 
@@ -14,7 +17,7 @@ The stub is deliberately controllable per test:
 - a subprocess-isolated variant (:class:`SubprocessStubRepository`) spawns a
   real child process so the no-orphan-descendants guarantee is exercised.
 
-The stub work-unit table lives on its own private :class:`MetaData` (not
+The stub work-unit table lives on its own private ``MetaData`` (not
 ``SQLModel.metadata``) so it never pollutes the shared metadata that the
 migration parity tests compare against ``create_all``.
 """
@@ -22,8 +25,9 @@ migration parity tests compare against ``create_all``.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import datetime as dt
+from enum import Enum
 import os
 import signal
 import threading
@@ -32,58 +36,145 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import text
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlmodel import Session, select
+from sqlalchemy import MetaData
+from sqlmodel import Field, Session, SQLModel
 
-from aizk.pipeline.events import record_transition
+from aizk.pipeline.events import CreationOrigin
 from aizk.pipeline.handler import Isolation
-from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
+from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitColumns, WorkUnitStatus
+from aizk.pipeline.stage import HandlerBase, StageDefinition, enqueue
+from aizk.utilities.clock import utcnow
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine
 
 
-def _utcnow() -> dt.datetime:
-    """Return a timezone-aware UTC timestamp."""
-    return dt.datetime.now(dt.timezone.utc)
+class _StubBase(SQLModel):
+    """Private base keeping the stub table off ``SQLModel.metadata``."""
+
+    metadata = MetaData()
 
 
-class _StubBase(DeclarativeBase):
-    """Private declarative base keeping the stub table off ``SQLModel.metadata``."""
+class StubWorkUnit(WorkUnitColumns, _StubBase, table=True):
+    """A stage-owned work-unit row: the shared lifecycle columns plus the stub's own.
 
-
-class StubWorkUnit(_StubBase):
-    """A stage-owned work-unit row with the columns the runner loop needs.
-
-    ``status`` carries the stub stage's own status text (the generic lifecycle
-    values are reused for simplicity, but the runner never reads them — it
-    drives everything through the handler). ``queued_at`` defines submission
-    order; ``earliest_next_attempt_at`` gates retry-wait eligibility;
-    ``started_at`` marks running units for stale recovery.
+    ``label`` is the test's name for the unit; ``source_id`` is the cross-stage
+    source identity every event carries.
     """
 
     __tablename__ = "_stub_work_units"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    status: Mapped[str] = mapped_column()
-    source_id: Mapped[str] = mapped_column()
-    label: Mapped[str] = mapped_column()
-    queued_at: Mapped[dt.datetime] = mapped_column()
-    earliest_next_attempt_at: Mapped[dt.datetime | None] = mapped_column(nullable=True)
-    started_at: Mapped[dt.datetime | None] = mapped_column(nullable=True)
-    attempts: Mapped[int] = mapped_column(default=0)
-    retry_class: Mapped[str | None] = mapped_column(nullable=True, default=None)
+    id: int | None = Field(default=None, primary_key=True)
+    idempotency_key: str = Field(nullable=False)
+    source_id: UUID = Field(nullable=False)
+    label: str = Field(nullable=False)
 
 
-class StubTransitionPayload(BaseModel):
-    """Typed per-kind payload for the stub stage's transition events."""
+class StubParams(BaseModel):
+    """The stub stage's unit parameters; the field names are the table's columns."""
+
+    model_config = ConfigDict(frozen=True)
+    source_id: UUID
+    label: str
+
+
+class StubEventKind(str, Enum):
+    """Event kinds recorded for a stub work-unit's lifecycle."""
+
+    QUEUED = "queued"
+    CLAIMED = "claimed"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    TIMED_OUT = "timed_out"
+    RECOVERED_STALE = "recovered_stale"
+    REQUEUED = "requeued"
+
+
+class StubQueuedPayload(BaseModel):
+    """Payload for the creation event."""
 
     model_config = ConfigDict(extra="forbid")
+    kind: Literal["queued"] = "queued"
+    origin: CreationOrigin
+    principal: str
 
-    kind: Literal["stub_transition"] = "stub_transition"
-    note: str
-    cause: str | None = None
+
+class StubClaimedPayload(BaseModel):
+    """Payload for the claim transition."""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["claimed"] = "claimed"
+    claimed_at: dt.datetime
+    worker_pid: int | None = None
+
+
+class StubSucceededPayload(BaseModel):
+    """Payload for a successful transition."""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["succeeded"] = "succeeded"
+
+
+class StubFailedPayload(BaseModel):
+    """Payload for a failed transition, including retry eligibility."""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["failed"] = "failed"
+    error_code: str
+    error_message: str
+    retryable: bool
+
+
+class StubCancelledPayload(BaseModel):
+    """Payload for a cancelled transition."""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["cancelled"] = "cancelled"
+    cancellation_reason: str
+
+
+class StubTimedOutPayload(BaseModel):
+    """Payload for a timed-out transition."""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["timed_out"] = "timed_out"
+    timeout_seconds: float
+
+
+class StubRecoveredStalePayload(BaseModel):
+    """Payload for a stale ``running`` unit reclaimed by stale recovery."""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["recovered_stale"] = "recovered_stale"
+    stale_after_minutes: float
+    last_started_at: dt.datetime | None = None
+
+
+class StubRequeuedPayload(BaseModel):
+    """Payload for an operator retry, carrying the reason and the acting principal."""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["requeued"] = "requeued"
+    requeue_reason: str
+    principal: str
+
+
+STUB_DEFINITION: StageDefinition[StubWorkUnit, StubParams] = StageDefinition(
+    name="stub",
+    params=StubParams,
+    unit_key=lambda params: f"stub:{params.source_id}",
+    work_unit_model=StubWorkUnit,
+    event_kinds=StubEventKind,
+    queued_payload=StubQueuedPayload,
+    claimed_payload=StubClaimedPayload,
+    recovered_stale_payload=StubRecoveredStalePayload,
+    failed_payload=StubFailedPayload,
+    cancelled_payload=StubCancelledPayload,
+    timed_out_payload=StubTimedOutPayload,
+    requeued_payload=StubRequeuedPayload,
+)
+"""The stub stage's static definition."""
 
 
 # A unit's execute behavior: receives the unit label, returns an opaque result
@@ -108,19 +199,16 @@ class _Recorded:
     finalize_committed: list[str] = field(default_factory=list)
 
 
-_ELIGIBLE_STATUSES = (WorkUnitStatus.QUEUED.value, WorkUnitStatus.FAILED.value)
+class StubStageHandler(HandlerBase[StubWorkUnit]):
+    """The stub stage's handler: the base plus a per-unit test behavior.
 
-
-class StubStageHandler:
-    """An in-memory :class:`~aizk.pipeline.handler.StageHandler` for tests.
-
-    All claim/transition writes run inside the runner-owned transaction via
-    ``record_transition`` and never commit, matching the production contract.
+    All claim/transition writes run inside the runner-owned transaction through
+    the repository and never commit, matching the production contract.
     Execution behavior is per-unit and supplied by the test through
     :meth:`enqueue`.
     """
 
-    stage = "stub"
+    default_error = ("stub_error", "unknown error")
 
     def __init__(
         self,
@@ -129,9 +217,13 @@ class StubStageHandler:
         timeout: dt.timedelta = dt.timedelta(seconds=30),
         concurrency_limit: int = 4,
         stale_after: dt.timedelta = dt.timedelta(minutes=5),
+        retry_base_delay_seconds: float = 60.0,
+        retry_max_attempts: int = 3,
+        clock: Callable[[], dt.datetime] = utcnow,
         dependencies_ok: bool = True,
         isolation: Isolation = Isolation.IN_PROCESS,
         stage_name: str | None = None,
+        cancellable_labels: set[str] | None = None,
     ) -> None:
         """Create a stub handler bound to ``engine``.
 
@@ -140,23 +232,37 @@ class StubStageHandler:
             timeout: Wall-clock timeout the runner enforces per unit.
             concurrency_limit: Maximum simultaneously-executing units.
             stale_after: Age past which a ``running`` unit is treated as stale.
+            retry_base_delay_seconds: Retry backoff base; the wait is
+                ``base * 2**attempts``.
+            retry_max_attempts: Attempt cap after which a retryable failure is
+                permanent.
+            clock: Source of every timestamp the lifecycle writes.
             dependencies_ok: When ``False``, ``validate_dependencies`` raises.
             isolation: In-process or subprocess execution model.
             stage_name: Optional override for the ``stage`` identifier so two
                 stub repositories can share a process with distinct stages.
+            cancellable_labels: When given, only ``running`` units with these
+                labels are cancellable by an operator; the stage's declared
+                narrowing of cancel.
         """
-        self._engine = engine
-        self._timeout = timeout
-        self._concurrency_limit = concurrency_limit
+        definition = STUB_DEFINITION if stage_name is None else replace(STUB_DEFINITION, name=stage_name)
+        super().__init__(
+            engine,
+            definition,
+            timeout_seconds=timeout.total_seconds(),
+            concurrency=concurrency_limit,
+            stale_after_minutes=stale_after.total_seconds() / 60,
+            retry_base_delay_seconds=retry_base_delay_seconds,
+            retry_max_attempts=retry_max_attempts,
+            clock=clock,
+        )
         self._stale_after = stale_after
         self._dependencies_ok = dependencies_ok
         self._isolation = isolation
-        if stage_name is not None:
-            self.stage = stage_name
+        self._cancellable_labels = cancellable_labels
         self._behaviors: dict[int, Behavior] = {}
         self._cancel_events: dict[int, threading.Event] = {}
         self.recorded = _Recorded()
-        self._lock = threading.Lock()
         # Fault-injection counters (test support): how many leading calls to
         # finalize / claim_next should raise a simulated DB fault before the call
         # is allowed to proceed. Default 0 = no injected fault.
@@ -176,22 +282,31 @@ class StubStageHandler:
         earliest_next_attempt_at: dt.datetime | None = None,
         status: str = WorkUnitStatus.QUEUED.value,
         queued_at: dt.datetime | None = None,
+        source_id: UUID | None = None,
     ) -> int:
-        """Seed one work-unit and return its id.
+        """Seed one work-unit through the shared enqueue and return its id.
 
-        ``queued_at`` defaults to a monotonically increasing instant so units
-        enqueued earlier sort first (submission order). ``behavior`` is the
-        callable ``execute`` runs for this unit.
+        ``queued_at`` defaults to the handler's clock; units enqueued at the
+        same instant are claimed in id order, which is submission order.
+        ``status`` and ``earliest_next_attempt_at`` override the created
+        unit's lifecycle fields so a test can seed durable terminal state
+        directly. ``behavior`` is the callable ``execute`` runs for this unit.
         """
-        now = queued_at or _utcnow()
+        params = StubParams(source_id=source_id or uuid4(), label=label)
         with Session(self._engine) as session:
-            unit = StubWorkUnit(
-                status=status,
-                source_id=str(uuid4()),
-                label=label,
-                queued_at=now,
-                earliest_next_attempt_at=earliest_next_attempt_at,
+            unit, _created = enqueue(
+                session,
+                self._definition,
+                params,
+                origin="intake",
+                principal="stub",
+                queue_max_depth=0,
+                clock=self.clock,
             )
+            unit.status = WorkUnitStatus(status)
+            unit.earliest_next_attempt_at = earliest_next_attempt_at
+            if queued_at is not None:
+                unit.queued_at = queued_at
             session.add(unit)
             session.commit()
             unit_id = unit.id
@@ -245,21 +360,7 @@ class StubStageHandler:
         with Session(self._engine) as session:
             unit = session.get(StubWorkUnit, unit_id)
             assert unit is not None
-            return unit.status
-
-    def mark_retry_class(self, unit_id: int, retry_class: str) -> None:
-        """Persist a unit's ``retry_class`` directly (durable scheduling state).
-
-        Lets a test seed durable terminal scheduling state — e.g. a permanent
-        failure that ``claim_next`` must exclude — without routing through a real
-        ``execute`` + ``finalize`` cycle.
-        """
-        with Session(self._engine) as session:
-            unit = session.get(StubWorkUnit, unit_id)
-            assert unit is not None
-            unit.retry_class = retry_class
-            session.add(unit)
-            session.commit()
+            return WorkUnitStatus(unit.status).value
 
     def force_running_stale(self, unit_id: int) -> None:
         """Persist a unit as ``running`` with a backdated ``started_at``.
@@ -270,94 +371,44 @@ class StubStageHandler:
         with Session(self._engine) as session:
             unit = session.get(StubWorkUnit, unit_id)
             assert unit is not None
-            unit.status = WorkUnitStatus.RUNNING.value
-            unit.started_at = _utcnow() - self._stale_after - dt.timedelta(seconds=1)
+            unit.status = WorkUnitStatus.RUNNING
+            unit.started_at = self._clock() - self._stale_after - dt.timedelta(seconds=1)
             session.add(unit)
             session.commit()
 
-    # --- StageHandler protocol --------------------------------------------
+    # --- the stage's own contributions ---------------------------------------
 
-    def validate_dependencies(self) -> None:
+    def dependencies(self) -> None:
         """Raise when configured to simulate a missing dependency."""
         if not self._dependencies_ok:
             raise RuntimeError("stub dependency unavailable")
 
+    def cancellable(self, row: StubWorkUnit) -> bool:
+        """Report whether a ``running`` unit is outside the stage's declared non-cancellable part."""
+        return self._cancellable_labels is None or row.label in self._cancellable_labels
+
     def claim_next(self, session: Session) -> int | None:
-        """Claim the next eligible unit in submission (claim) order, or ``None``.
+        """Claim through the base, after honoring an injected claim fault.
 
-        Runs inside the runner-owned ``BEGIN IMMEDIATE`` transaction: selects
-        the oldest eligible unit (queued or retryable-failed past its
-        retry-wait) by ``queued_at`` — the claim/selection-order guarantee, not a
-        worker-thread start-order one — and transitions it to ``running`` via
-        ``record_transition``. Does not commit.
-
-        Honors an injected claim fault (see :meth:`inject_claim_fault`) by
-        raising the configured DB error, simulating a contended claim lock.
+        The fault (see :meth:`inject_claim_fault`) raises the configured DB
+        error before the claim runs, simulating a contended claim lock.
         """
         self._claim_calls += 1
         if self._claim_calls in self._claim_fault_on:
             assert self._claim_fault_error is not None
             raise self._claim_fault_error
-        now = _utcnow()
-        unit = session.exec(
-            select(StubWorkUnit)
-            .where(StubWorkUnit.status.in_(_ELIGIBLE_STATUSES))
-            # Only retryable-failed is re-eligible; a permanent failure never re-claims.
-            .where((StubWorkUnit.retry_class.is_(None)) | (StubWorkUnit.retry_class != "permanent"))
-            .where((StubWorkUnit.earliest_next_attempt_at.is_(None)) | (StubWorkUnit.earliest_next_attempt_at <= now))
-            .order_by(StubWorkUnit.queued_at, StubWorkUnit.id)
-        ).first()
-        if unit is None:
-            return None
-        unit.started_at = now
-        unit.attempts += 1
-        record_transition(
-            session,
-            unit,
-            stage=self.stage,
-            work_unit_ref=str(unit.id),
-            source_id=UUID(unit.source_id),
-            to_status=WorkUnitStatus.RUNNING.value,
-            kind="stub_transition",
-            attempt=unit.attempts,
-            payload=StubTransitionPayload(note="claimed"),
-        )
-        return unit.id
-
-    def recover_stale(self, session: Session) -> list[int]:
-        """Return ``running`` units older than ``stale_after`` to eligible.
-
-        Records the recovery cause in each unit's transition event. Runs inside
-        the runner-owned transaction; does not commit.
-        """
-        threshold = _utcnow() - self._stale_after
-        units = session.exec(
-            select(StubWorkUnit)
-            .where(StubWorkUnit.status == WorkUnitStatus.RUNNING.value)
-            .where(StubWorkUnit.started_at.is_not(None))
-            .where(StubWorkUnit.started_at < threshold)
-        ).all()
-        recovered: list[int] = []
-        for unit in units:
-            record_transition(
-                session,
-                unit,
-                stage=self.stage,
-                work_unit_ref=str(unit.id),
-                source_id=UUID(unit.source_id),
-                to_status=WorkUnitStatus.QUEUED.value,
-                kind="stub_transition",
-                attempt=unit.attempts,
-                payload=StubTransitionPayload(note="recovered", cause="worker_stale_running"),
-            )
-            recovered.append(unit.id)
-        return recovered
+        return super().claim_next(session)
 
     def execute(self, handle: int) -> Any:
-        """Run the unit's per-test behavior callable."""
+        """Run the unit's per-test behavior callable; stash a failure's code for the event."""
         with self._lock:
             self.recorded.execute_started.append(str(handle))
-        result = self._behaviors[handle](str(handle))
+        try:
+            result = self._behaviors[handle](str(handle))
+        except Exception as exc:
+            with self._lock:
+                self._errors[handle] = (type(exc).__name__, "stub behavior raised")
+            raise
         with self._lock:
             self.recorded.executed.append(str(handle))
         return result
@@ -376,15 +427,16 @@ class StubStageHandler:
             )
         return TerminalOutcome(WorkUnitStatus.SUCCEEDED)
 
+    def succeeded_event(self, handle: int) -> tuple[Any, BaseModel, int | None]:
+        """Return the stub's success event; it carries no run."""
+        return StubEventKind.SUCCEEDED, StubSucceededPayload(), None
+
     def finalize(self, session: Session, handle: int, outcome: TerminalOutcome) -> None:
-        """Transition the unit to its terminal status via ``record_transition``.
+        """Finalize through the base, after honoring an injected finalize fault.
 
-        For a retryable failure, set a retry-wait so the unit is not immediately
-        re-eligible. Runs inside the runner-owned transaction; does not commit.
-
-        Honors an injected finalize fault (see :meth:`inject_finalize_fault`) by
-        raising the configured DB error *before* staging any write, so the
-        runner rolls back, keeps the slot, and retries on the next reap.
+        The fault (see :meth:`inject_finalize_fault`) raises the configured DB
+        error *before* any write is staged, so the runner rolls back, keeps the
+        slot, and retries on the next reap.
         """
         with self._lock:
             self.recorded.finalize_attempts.append(str(handle))
@@ -392,60 +444,24 @@ class StubStageHandler:
             self._finalize_faults_remaining -= 1
             assert self._finalize_fault_error is not None
             raise self._finalize_fault_error
-        unit = session.get(StubWorkUnit, handle)
-        assert unit is not None
-        now = _utcnow()
-        if outcome.status is WorkUnitStatus.FAILED and outcome.is_retryable:
-            unit.earliest_next_attempt_at = now + dt.timedelta(seconds=60)
-            unit.retry_class = "retryable"
-        elif outcome.status is WorkUnitStatus.FAILED:
-            # Permanent failure: cleared retry-wait but marked so claim_next excludes it.
-            unit.earliest_next_attempt_at = None
-            unit.started_at = None
-            unit.retry_class = "permanent"
-        else:
-            unit.earliest_next_attempt_at = None
-            unit.started_at = None
-        record_transition(
-            session,
-            unit,
-            stage=self.stage,
-            work_unit_ref=str(unit.id),
-            source_id=UUID(unit.source_id),
-            to_status=outcome.status.value,
-            kind="stub_transition",
-            attempt=unit.attempts,
-            payload=StubTransitionPayload(note=f"finalize:{outcome.status.value}"),
-        )
+        super().finalize(session, handle, outcome)
         with self._lock:
             self.recorded.finalize_committed.append(str(handle))
 
     def cleanup(self, handle: int) -> None:
         """Record that transient resources were released for ``handle``."""
+        super().cleanup(handle)
         with self._lock:
             self.recorded.cleaned_up.append(str(handle))
 
     def cancel(self, handle: int) -> None:
         """Cooperatively signal the unit to stop; record the request."""
+        super().cancel(handle)
         with self._lock:
             self.recorded.cancelled.append(str(handle))
         event = self._cancel_events.get(handle)
         if event is not None:
             event.set()
-
-    def scope_id(self, handle: int) -> str:
-        """Return a per-unit scope key for ``handle``."""
-        return f"unit:{handle}"
-
-    @property
-    def timeout(self) -> dt.timedelta:
-        """Wall-clock timeout after which a running unit is terminated."""
-        return self._timeout
-
-    @property
-    def concurrency_limit(self) -> int:
-        """Maximum number of work-units executed simultaneously."""
-        return self._concurrency_limit
 
     @property
     def isolation(self) -> Isolation:

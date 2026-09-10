@@ -25,6 +25,8 @@ from aizk.conversion.api.main import create_app as create_conversion_app
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.graph.api.dependencies import get_blob_reader
 from aizk.graph.api.main import create_app as create_graph_app
+from aizk.graph.datamodel import ContextualizationJob, ExtractionJob
+from aizk.pipeline.lifecycle import WorkUnitStatus
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -37,6 +39,12 @@ _ABSENT_ROW_ID = 987654
 
 #: A source identity no test seeds.
 _ABSENT_SOURCE_ID = UUID("44444444-4444-4444-8444-444444444444")
+
+#: The source identity the seeded graph work-units carry.
+_GRAPH_UNIT_SOURCE_ID = UUID("77777777-7777-4777-8777-777777777777")
+
+#: The graph intake route prefixes, keyed by the stage each serves.
+_GRAPH_ROUTE_PREFIXES = {"contextualization": "/v1/contextualizations", "extraction": "/v1/extractions"}
 
 
 class _UnusedBlobReader:
@@ -73,6 +81,26 @@ def succeeded_job(db_session: "Session") -> ConversionJob:
         status=ConversionJobStatus.SUCCEEDED,
         idempotency_key="c" * 64,
     )
+
+
+@pytest.fixture
+def succeeded_graph_unit_ids(db_session: "Session") -> dict[str, int]:
+    """One work-unit per graph stage in the one status that is neither retryable nor cancellable, keyed by stage."""
+    contextualization = ContextualizationJob(
+        idempotency_key="conversion_output:987",
+        conversion_output_id=987,
+        source_id=_GRAPH_UNIT_SOURCE_ID,
+        status=WorkUnitStatus.SUCCEEDED,
+    )
+    extraction = ExtractionJob(
+        idempotency_key=f"source:{_GRAPH_UNIT_SOURCE_ID}",
+        source_id=_GRAPH_UNIT_SOURCE_ID,
+        status=WorkUnitStatus.SUCCEEDED,
+    )
+    db_session.add(contextualization)
+    db_session.add(extraction)
+    db_session.commit()
+    return {"contextualization": contextualization.id, "extraction": extraction.id}
 
 
 def test_explorer_detail_missing_chunk_body(graph_client: TestClient) -> None:
@@ -127,6 +155,28 @@ def test_contextualization_submission_unknown_output_body(graph_client: TestClie
 
     assert response.status_code == 404
     assert response.json() == {"detail": f"conversion output {_ABSENT_ROW_ID} not found"}
+
+
+@pytest.mark.parametrize("stage", sorted(_GRAPH_ROUTE_PREFIXES))
+def test_graph_retry_ineligible_body(
+    graph_client: TestClient, succeeded_graph_unit_ids: dict[str, int], stage: str
+) -> None:
+    """Retrying a succeeded graph work-unit answers 409 with a body naming the status."""
+    response = graph_client.post(f"{_GRAPH_ROUTE_PREFIXES[stage]}/{succeeded_graph_unit_ids[stage]}/retry")
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "cannot retry a work-unit in status 'succeeded'"}
+
+
+@pytest.mark.parametrize("stage", sorted(_GRAPH_ROUTE_PREFIXES))
+def test_graph_cancel_ineligible_body(
+    graph_client: TestClient, succeeded_graph_unit_ids: dict[str, int], stage: str
+) -> None:
+    """Cancelling a succeeded graph work-unit answers 409 with a body naming the status."""
+    response = graph_client.post(f"{_GRAPH_ROUTE_PREFIXES[stage]}/{succeeded_graph_unit_ids[stage]}/cancel")
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "cannot cancel a work-unit in status 'succeeded'"}
 
 
 def test_single_retry_ineligible_body(conversion_client: TestClient, succeeded_job: ConversionJob) -> None:

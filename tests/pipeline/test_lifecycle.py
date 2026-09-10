@@ -1,16 +1,23 @@
 """Tests for the generic work-unit lifecycle and retry classification.
 
 Covers the spec requirements that every work-unit reaches exactly one classified
-terminal outcome and that only retryable terminal failures are retry-eligible.
+terminal outcome and that only retryable terminal failures are retry-eligible,
+and that the shared lifecycle column declaration works on any stage's table.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+from uuid import UUID, uuid4
+
 import pytest
+from sqlalchemy import MetaData, create_engine
+from sqlmodel import Field, Session, SQLModel, select
 
 from aizk.pipeline.lifecycle import (
     RetryClass,
     TerminalOutcome,
+    WorkUnitColumns,
     WorkUnitStatus,
     is_terminal,
 )
@@ -114,3 +121,37 @@ def test_unknown_status_string_is_rejected() -> None:
     """A string that is not a valid lifecycle status is rejected."""
     with pytest.raises(ValueError, match="not a valid WorkUnitStatus"):
         TerminalOutcome("bogus")
+
+
+def test_work_unit_columns_back_a_stage_table_that_round_trips_a_row(tmp_path: Path) -> None:
+    """A table that inherits the lifecycle columns is created and stores a row.
+
+    The table lives on a private ``MetaData`` so it never joins the shared
+    ``SQLModel.metadata`` that the migration parity tests compare against.
+    """
+
+    class _PrivateBase(SQLModel):
+        metadata = MetaData()
+
+    class StubUnit(WorkUnitColumns, _PrivateBase, table=True):
+        __tablename__ = "stub_work_units"
+        id: int | None = Field(default=None, primary_key=True)
+        source_id: UUID = Field(nullable=False)
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'stub.db'}")
+    _PrivateBase.metadata.create_all(engine)
+    source_id = uuid4()
+
+    with Session(engine) as session:
+        session.add(StubUnit(source_id=source_id, error_message="transient"))
+        session.commit()
+    with Session(engine) as session:
+        stored = session.exec(select(StubUnit)).one()
+
+    assert stored.source_id == source_id
+    assert stored.status is WorkUnitStatus.QUEUED
+    assert stored.attempts == 0
+    assert stored.error_message == "transient"
+    assert stored.created_at is not None
+    assert stored.finished_at is None
+    assert "stub_work_units" not in SQLModel.metadata.tables

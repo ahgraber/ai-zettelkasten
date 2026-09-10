@@ -99,8 +99,9 @@ class RecoveredStalePayload(BaseModel):
 
 
 class RequeuedPayload(BaseModel):
-    """Payload for an operator-driven retry that re-queues a terminal unit."""
+    """Payload for an operator-driven retry that re-queues a terminal unit: the reason and the acting principal."""
 
     model_config = ConfigDict(extra="forbid")
     kind: Literal["requeued"] = "requeued"
     requeue_reason: str
+    principal: str

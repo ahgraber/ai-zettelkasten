@@ -84,7 +84,6 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     DateTime,
-    Enum as SAEnum,
     ForeignKey,
     Index,
     Text,
@@ -94,7 +93,7 @@ from sqlalchemy import (
 )
 from sqlmodel import Field, SQLModel
 
-from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.pipeline.lifecycle import WorkUnitColumns
 from aizk.utilities.clock import utcnow
 
 #: The two kinds of contextualization model output the memo retains. The summary
@@ -370,13 +369,12 @@ class ContextualizationOutputMemo(SQLModel, table=True):
     )
 
 
-class ContextualizationJob(SQLModel, table=True):
+class ContextualizationJob(WorkUnitColumns, table=True):
     """Claimable work unit for chunk-persist and contextualization of one document.
 
     ``idempotency_key`` deduplicates enqueue requests. ``conversion_output_id`` is
     a Markdown locator; ``source_id`` scopes the runs and transition events.
-    ``status`` and scheduling fields carry runtime claim, lease, and retry state;
-    the runtime owns lifecycle transitions.
+    The lifecycle columns come from :class:`WorkUnitColumns`.
     """
 
     __tablename__ = "graph_contextualization_jobs"
@@ -396,33 +394,9 @@ class ContextualizationJob(SQLModel, table=True):
     idempotency_key: str = Field(nullable=False)
     conversion_output_id: int = Field(nullable=False)
     source_id: UUID = Field(nullable=False)
-    # values_callable stores enum values ("queued") not names ("QUEUED"), matching RunStatus.
-    status: WorkUnitStatus = Field(
-        default=WorkUnitStatus.QUEUED,
-        sa_column=Column(
-            SAEnum(WorkUnitStatus, values_callable=lambda x: [e.value for e in x]),
-            nullable=False,
-        ),
-    )
-    attempts: int = Field(default=0, nullable=False)
-    error_code: str | None = Field(default=None, nullable=True)
-    error_message: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
-    earliest_next_attempt_at: datetime.datetime | None = Field(default=None, nullable=True)
-    last_error_at: datetime.datetime | None = Field(default=None, nullable=True)
-    queued_at: datetime.datetime | None = Field(default=None, nullable=True)
-    started_at: datetime.datetime | None = Field(default=None, nullable=True)
-    finished_at: datetime.datetime | None = Field(default=None, nullable=True)
-    created_at: datetime.datetime = Field(
-        default_factory=utcnow,
-        sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
-    )
-    updated_at: datetime.datetime = Field(
-        default_factory=utcnow,
-        sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
-    )
 
 
-class ExtractionJob(SQLModel, table=True):
+class ExtractionJob(WorkUnitColumns, table=True):
     """Claimable work unit for extracting one source's mentions and co-occurrence links.
 
     The row is scoped and deduplicated by ``source_id``. It has no upstream artifact
@@ -430,8 +404,7 @@ class ExtractionJob(SQLModel, table=True):
     Enqueue reuses terminal rows, while re-extraction requeues the row or uses the
     direct extraction entry points after configuration changes.
 
-    ``status`` and scheduling fields carry runtime claim, lease, and retry state;
-    the runtime owns lifecycle transitions.
+    The lifecycle columns come from :class:`WorkUnitColumns`.
     """
 
     __tablename__ = "graph_extraction_jobs"
@@ -449,30 +422,6 @@ class ExtractionJob(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True, nullable=False)
     idempotency_key: str = Field(nullable=False)
     source_id: UUID = Field(nullable=False)
-    # values_callable stores enum values ("queued") not names ("QUEUED"), matching RunStatus.
-    status: WorkUnitStatus = Field(
-        default=WorkUnitStatus.QUEUED,
-        sa_column=Column(
-            SAEnum(WorkUnitStatus, values_callable=lambda x: [e.value for e in x]),
-            nullable=False,
-        ),
-    )
-    attempts: int = Field(default=0, nullable=False)
-    error_code: str | None = Field(default=None, nullable=True)
-    error_message: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
-    earliest_next_attempt_at: datetime.datetime | None = Field(default=None, nullable=True)
-    last_error_at: datetime.datetime | None = Field(default=None, nullable=True)
-    queued_at: datetime.datetime | None = Field(default=None, nullable=True)
-    started_at: datetime.datetime | None = Field(default=None, nullable=True)
-    finished_at: datetime.datetime | None = Field(default=None, nullable=True)
-    created_at: datetime.datetime = Field(
-        default_factory=utcnow,
-        sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
-    )
-    updated_at: datetime.datetime = Field(
-        default_factory=utcnow,
-        sa_column=Column(DateTime(), nullable=False, server_default=func.current_timestamp()),
-    )
 
 
 class ExtractionRunInput(SQLModel, table=True):

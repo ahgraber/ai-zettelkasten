@@ -29,7 +29,7 @@ from aizk.graph.datamodel import (
     MentionCooccurrence,
 )
 from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, derivation_key, fingerprint
-from aizk.pipeline.run import PipelineRun, RunStatus, reuse_or_record_run
+from aizk.pipeline.run import PipelineRun, RunStatus, active_run, reuse_or_record_run
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -204,13 +204,7 @@ class MentionDraft(BaseModel):
 
 def active_extraction_run(session: "Session", source_id: UUID) -> PipelineRun | None:
     """Return the active extraction run for a source (``source_id``), or ``None``."""
-    return session.exec(
-        select(PipelineRun).where(
-            PipelineRun.stage == MENTION_EXTRACTION_STAGE,
-            PipelineRun.scope_id == source_id,
-            PipelineRun.status == RunStatus.ACTIVE,
-        )
-    ).one_or_none()
+    return active_run(session, MENTION_EXTRACTION_STAGE, source_id)
 
 
 def open_extraction_run(

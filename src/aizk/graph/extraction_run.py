@@ -16,6 +16,7 @@ from uuid import UUID
 
 from sqlmodel import Session, func, select
 
+from aizk.db.engine import begin_immediate
 from aizk.graph.contextualization import VARIANT_STAGE, StalePlanError
 from aizk.graph.datamodel import (
     INPUT_KIND_RAW,
@@ -25,7 +26,6 @@ from aizk.graph.datamodel import (
     ExtractionRunInput,
     Mention,
 )
-from aizk.graph.db import begin_immediate
 from aizk.graph.extraction import (
     MATERIALIZER_VERSION,
     EntityExtractor,
@@ -48,7 +48,7 @@ from aizk.graph.mention_store import (
 )
 from aizk.graph.persistence import CHUNKING_STAGE, active_chunking_run, document_order_chunks
 from aizk.pipeline.identity import content_fingerprint
-from aizk.pipeline.run import PipelineRun, RunStatus
+from aizk.pipeline.run import PipelineRun, RunStatus, record_applicability, require_active_run
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -324,12 +324,7 @@ def record_extraction_run_applicability(
         ValueError: If either run is invalid, provenance is missing, the
             derivation key does not match, or an existing relation conflicts.
     """
-    run = session.get(PipelineRun, run_id)
-    if run is None or run.status != RunStatus.ACTIVE or run.stage != MENTION_EXTRACTION_STAGE:
-        raise ValueError(
-            f"run {run_id!r} is not an active {MENTION_EXTRACTION_STAGE!r} run; "
-            "applicability may only be recorded against an active extraction run"
-        )
+    run = require_active_run(session, run_id, MENTION_EXTRACTION_STAGE, label="extraction run")
 
     upstream = session.get(PipelineRun, upstream_run_id)
     if upstream is None or upstream.stage not in (CHUNKING_STAGE, VARIANT_STAGE) or upstream.scope_id != run.scope_id:
@@ -352,23 +347,13 @@ def record_extraction_run_applicability(
     if run_input is None:
         raise ValueError(f"run {run_id!r} has no recorded ExtractionRunInput; its persist is not complete")
 
-    existing = session.get(ExtractionRunApplicability, (run_id, upstream_run_id))
-    if existing is not None:
-        if existing.input_policy != input_policy or existing.input_fingerprint != upstream_output_fingerprint:
-            raise ValueError(
-                f"applicability ({run_id!r}, {upstream_run_id!r}) is already recorded with a different "
-                "input_policy or input_fingerprint; there is no update path"
-            )
-        return existing
-
-    applicability = ExtractionRunApplicability(
-        run_id=run_id,
-        upstream_run_id=upstream_run_id,
-        input_policy=input_policy,
+    return record_applicability(
+        session,
+        ExtractionRunApplicability,
+        {"run_id": run_id, "upstream_run_id": upstream_run_id},
         input_fingerprint=upstream_output_fingerprint,
+        input_policy=input_policy,
     )
-    session.add(applicability)
-    return applicability
 
 
 def _resolve_extraction_input(session: "Session", chunk: "Chunk", *, input_policy: InputPolicy) -> ExtractionInput:
