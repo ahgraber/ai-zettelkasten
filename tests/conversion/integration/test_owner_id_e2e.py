@@ -30,7 +30,7 @@ from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.processing import uploader
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.storage.settings import ObjectStorageSettings
 
 
 class _MockS3Client:
@@ -101,8 +101,8 @@ def test_full_pipeline_propagates_default_principal_to_all_three_tables(
     assert job.owner_id == "deployment-owner"
 
     workspace = _write_workspace(tmp_path, bookmark_id=bookmark_id, markdown_hash="e2e0deadbeef0001")
-    config = ConversionConfig(_env_file=None)
-    uploader._upload_converted(job.id, workspace, config)
+    object_storage = ObjectStorageSettings(_env_file=None)
+    uploader._upload_converted(job.id, workspace, object_storage)
 
     db_session.expire_all()
     output = db_session.exec(select(ConversionOutput).where(ConversionOutput.job_id == job.id)).one()

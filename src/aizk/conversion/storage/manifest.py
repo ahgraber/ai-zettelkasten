@@ -255,7 +255,7 @@ def save_manifest(manifest: ManifestV1 | ManifestV2, output_path: Path) -> None:
     ``<workspace>/manifest.json`` before exiting; without ``O_NOFOLLOW``
     the parent's write would clobber the symlink target.
     """
-    from aizk.conversion.utilities.paths import write_text_nofollow
+    from aizk.conversion.storage.paths import write_text_nofollow
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_text_nofollow(output_path, manifest.model_dump_json(indent=2, exclude_none=True))

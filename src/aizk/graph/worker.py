@@ -21,18 +21,17 @@ from aizk.graph.handler import ContextualizationStageHandler
 from aizk.graph.markdown_source import ConversionOutputFreshness, S3MarkdownSource
 from aizk.pipeline.runner import DEFAULT_CANCEL_GRACE, StageRunner
 from aizk.pipeline.stage import require_stale_threshold
-from aizk.storage.s3 import S3Client
+from aizk.storage.s3 import ObjectStorageSettings, S3Client
 from aizk.utilities.errors import StartupValidationError
 
 if TYPE_CHECKING:
-    from aizk.conversion.utilities.config import ConversionConfig
     from aizk.graph.config import ContextualizationConfig
 
 logger = logging.getLogger(__name__)
 
 
 def run_graph_worker(
-    conversion_config: "ConversionConfig",
+    object_storage: ObjectStorageSettings,
     contextualization_config: "ContextualizationConfig",
     admission_config: "AdmissionConfig | None" = None,
 ) -> int:
@@ -61,7 +60,7 @@ def run_graph_worker(
         contextualization_config.llm_api_key,
         contextualization_config.llm_model,
     )
-    markdown_source = S3MarkdownSource(engine, S3Client(conversion_config))
+    markdown_source = S3MarkdownSource(engine, S3Client(object_storage))
     model_config = ModelConfig.from_contextualization_config(contextualization_config)
 
     handler = ContextualizationStageHandler(

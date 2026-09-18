@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from aizk.conversion.core.registry import ConverterRegistry, FetcherRegistry
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.settings import ConversionConfig
 from aizk.conversion.wiring.capabilities import DeploymentCapabilities
 from aizk.conversion.wiring.ingress_policy import IngressPolicy
 

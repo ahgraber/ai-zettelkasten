@@ -20,8 +20,8 @@ from aizk.conversion.core.source_ref import (
     UrlRef,
 )
 from aizk.conversion.core.types import ContentType, SourceMetadata
-from aizk.conversion.utilities.arxiv_utils import get_arxiv_id
-from aizk.conversion.utilities.bookmark_utils import (
+from aizk.conversion.egress.arxiv_utils import get_arxiv_id
+from aizk.conversion.egress.bookmark_utils import (
     detect_source_type,
     fetch_karakeep_bookmark,
     get_bookmark_asset_id,
@@ -31,8 +31,8 @@ from aizk.conversion.utilities.bookmark_utils import (
     is_pdf_asset,
     is_precrawled_archive_asset,
 )
-from aizk.conversion.utilities.config import KarakeepFetcherConfig
-from aizk.conversion.utilities.github_utils import parse_github_owner_repo
+from aizk.conversion.egress.github_utils import parse_github_owner_repo
+from aizk.conversion.settings import KarakeepFetcherConfig
 
 
 class KarakeepBookmarkResolver(RefResolver):

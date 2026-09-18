@@ -189,7 +189,7 @@ def test_egress_denial_log_line_carries_rejected_destination(
     import socket
 
     from aizk.conversion.core.errors import DenyListDestination
-    from aizk.conversion.utilities.egress import assert_egress_allowed
+    from aizk.conversion.egress.policy import assert_egress_allowed
 
     private_ip = "10.0.0.5"
 
@@ -199,7 +199,7 @@ def test_egress_denial_log_line_carries_rejected_destination(
     monkeypatch.setattr(socket, "getaddrinfo", _deny_set_getaddrinfo)
 
     with (
-        caplog.at_level(logging.WARNING, logger="aizk.conversion.utilities.egress"),
+        caplog.at_level(logging.WARNING, logger="aizk.conversion.egress.policy"),
         pytest.raises(DenyListDestination),
     ):
         assert_egress_allowed("http://private.corp.example/page")

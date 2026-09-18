@@ -22,7 +22,7 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.processing import uploader
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.storage.settings import ObjectStorageSettings
 
 
 def _make_workspace_metadata(tmp_path: Path, *, markdown_hash: str, bookmark_id: str) -> Path:
@@ -121,8 +121,8 @@ def test_upload_propagates_owner_id_from_job_to_output(
     _, job = _seed_source_and_job(db_session, bookmark_id=bookmark_id, owner_id="bob")
     workspace = _make_workspace_metadata(tmp_path, markdown_hash="dead0001beef0001", bookmark_id=bookmark_id)
 
-    config = ConversionConfig(_env_file=None)
-    uploader._upload_converted(job.id, workspace, config)
+    object_storage = ObjectStorageSettings(_env_file=None)
+    uploader._upload_converted(job.id, workspace, object_storage)
 
     db_session.expire_all()
     refreshed_job = db_session.get(ConversionJob, job.id)
@@ -146,7 +146,7 @@ def test_upload_raises_missing_owner_when_job_owner_id_is_falsy(
     closest realistic degenerate state is a deployment with
     ``AIZK_DEFAULT_PRINCIPAL=""``; the defensive guard
     (``if not job.owner_id:``) covers both NULL and empty-string. We exercise
-    the empty-string variant by force-UPDATEing the column. The Output row
+    the empty-string variant by force-UPDATE-ing the column. The Output row
     must NOT be created.
     """
     monkeypatch.setattr(uploader, "get_engine", lambda _url=None: db_session.get_bind())
@@ -162,9 +162,9 @@ def test_upload_raises_missing_owner_when_job_owner_id_is_falsy(
 
     workspace = _make_workspace_metadata(tmp_path, markdown_hash="dead0002beef0002", bookmark_id=bookmark_id)
 
-    config = ConversionConfig(_env_file=None)
+    object_storage = ObjectStorageSettings(_env_file=None)
     with pytest.raises(MissingOwnerOnJob, match="no owner_id"):
-        uploader._upload_converted(job_id, workspace, config)
+        uploader._upload_converted(job_id, workspace, object_storage)
 
     outputs = db_session.exec(select(ConversionOutput).where(ConversionOutput.job_id == job_id)).all()
     assert outputs == []

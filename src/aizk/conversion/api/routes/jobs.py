@@ -29,6 +29,7 @@ from aizk.conversion.api.schemas import (
     QueueFullResponse,
 )
 from aizk.conversion.auth import Principal
+from aizk.conversion.core.hashing import compute_idempotency_key
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, SourceRef, compute_source_ref_hash
 from aizk.conversion.datamodel.events import (
     ConversionEventKind,
@@ -39,7 +40,6 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.job_actions import apply_job_cancel, apply_job_retry
-from aizk.conversion.utilities.hashing import compute_idempotency_key
 from aizk.db.engine import begin_immediate_on
 from aizk.utilities.clock import utcnow
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
 import socket
 import time
 from typing import Any
@@ -16,8 +17,8 @@ from aizk.conversion.core.errors import (
     DnsTimeout,
     EgressPolicyError,
 )
-from aizk.conversion.utilities import egress
-from aizk.conversion.utilities.egress import (
+from aizk.conversion.egress import policy as egress
+from aizk.conversion.egress.policy import (
     ValidatedDestination,
     _classify_address,
     assert_egress_allowed,
@@ -238,6 +239,28 @@ class TestAsyncAssertEgressAllowed:
         _stub_getaddrinfo(monkeypatch, "169.254.169.254")
         with pytest.raises(DenyListDestination):
             await async_assert_egress_allowed("http://metadata.local/")
+
+
+class TestResolveExecutorSizes:
+    def test_falls_back_to_defaults_when_config_load_fails(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import aizk.conversion.settings as settings_module
+
+        def _raise(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(settings_module, "ConversionConfig", _raise)
+
+        with caplog.at_level(logging.WARNING, logger="aizk.conversion.egress.policy"):
+            result = egress._resolve_executor_sizes()
+
+        assert result == (egress._DEFAULT_DNS_EXECUTOR_WORKERS, egress._DEFAULT_VALIDATION_EXECUTOR_WORKERS)
+        warning_records = [
+            r for r in caplog.records if r.levelno == logging.WARNING and r.name == "aizk.conversion.egress.policy"
+        ]
+        assert len(warning_records) == 1
+        assert "fell back to defaults" in warning_records[0].getMessage()
 
 
 # ---------------------------------------------------------------------------

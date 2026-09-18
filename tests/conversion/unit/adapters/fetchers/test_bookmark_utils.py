@@ -2,7 +2,7 @@
 
 import pytest
 
-from aizk.conversion.utilities.bookmark_utils import (
+from aizk.conversion.egress.bookmark_utils import (
     BookmarkContentError,
     BookmarkContentKind,
     detect_content_type,

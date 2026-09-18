@@ -20,8 +20,8 @@ import pytest
 
 from aizk.chunking.datamodel import Chunk, derive_chunk_content_key
 from aizk.chunking.splitter import split
+from aizk.conversion.core.hashing import compute_config_hash, compute_idempotency_key
 from aizk.conversion.core.source_ref import InlineHtmlRef, SingleFileRef, compute_source_ref_hash
-from aizk.conversion.utilities.hashing import compute_config_hash, compute_idempotency_key
 from aizk.graph import contextualization as contextualization_module
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
 from aizk.graph.llm import ModelConfig, _default_responder, model_config_fingerprint

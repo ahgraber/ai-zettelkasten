@@ -9,39 +9,38 @@ from pydantic import ValidationError
 import pytest
 
 from aizk.conversion.core.errors import ConfigurationError
-from aizk.conversion.utilities.config import (
-    AuthSettings,
+from aizk.conversion.settings import (
     ConversionConfig,
     DoclingConverterConfig,
     KarakeepFetcherConfig,
 )
 from aizk.conversion.wiring.ingress_policy import IngressPolicy
+from aizk.service.auth import AuthSettings
+from aizk.service.settings import ServiceSettings
+from aizk.storage.settings import ObjectStorageSettings
 
 
 def test_config_reads_env_vars(monkeypatch):
-    s3_bucket_name = "aizk-test"
     worker_concurrency = "8"
-    mlflow_tracing_enabled = "true"
-    mlflow_tracking_uri = "http://mlflow:5000"
-    mlflow_experiment_name = "aizk-conversion"
 
-    monkeypatch.setenv("AIZK_S3_BUCKET_NAME", s3_bucket_name)
     monkeypatch.setenv("AIZK_WORKER_CONCURRENCY", str(worker_concurrency))
-    monkeypatch.setenv("AIZK_MLFLOW_TRACING_ENABLED", mlflow_tracing_enabled)
-    monkeypatch.setenv("AIZK_MLFLOW_TRACKING_URI", mlflow_tracking_uri)
-    monkeypatch.setenv("AIZK_MLFLOW_EXPERIMENT_NAME", mlflow_experiment_name)
     config = ConversionConfig(_env_file=None)
-    assert config.s3_bucket_name == s3_bucket_name
     assert config.worker_concurrency == int(worker_concurrency)
-    assert config.mlflow_tracing_enabled is True
-    assert config.mlflow_tracking_uri == mlflow_tracking_uri
-    assert config.mlflow_experiment_name == mlflow_experiment_name
 
 
-def test_api_reload_defaults_to_false(monkeypatch):
-    monkeypatch.delenv("AIZK_API_RELOAD", raising=False)
-    config = ConversionConfig(_env_file=None)
-    assert config.api_reload is False
+def test_split_settings_classes_each_read_their_own_names(monkeypatch):
+    """One environment snapshot lands its values on the class that now declares each field."""
+    monkeypatch.setenv("AIZK_S3_BUCKET_NAME", "aizk-test")
+    monkeypatch.setenv("AIZK_WORKER_CONCURRENCY", "8")
+    monkeypatch.setenv("AIZK_LOG_LEVEL", "DEBUG")
+
+    conversion = ConversionConfig(_env_file=None)
+    object_storage = ObjectStorageSettings(_env_file=None)
+    service = ServiceSettings(_env_file=None)
+
+    assert conversion.worker_concurrency == 8
+    assert object_storage.s3_bucket_name == "aizk-test"
+    assert service.log_level == "DEBUG"
 
 
 def test_fetch_max_response_bytes_reads_env_var(monkeypatch):
@@ -183,26 +182,6 @@ def test_auth_settings_rejects_blank_default_principal(monkeypatch, blank_value)
         AuthSettings(_env_file=None)
 
 
-# --- ConversionConfig.trusted_hosts ------------------------------------------
-
-
-def test_trusted_hosts_default_includes_loopback(monkeypatch):
-    monkeypatch.delenv("AIZK_TRUSTED_HOSTS", raising=False)
-
-    config = ConversionConfig(_env_file=None)
-
-    assert config.trusted_hosts == ["localhost", "127.0.0.1"]
-
-
-def test_trusted_hosts_parses_json_list_from_env(monkeypatch):
-    """List-shaped env vars use pydantic-settings' default JSON parsing."""
-    monkeypatch.setenv("AIZK_TRUSTED_HOSTS", '["api.example.com", "*.internal"]')
-
-    config = ConversionConfig(_env_file=None)
-
-    assert config.trusted_hosts == ["api.example.com", "*.internal"]
-
-
 # --- Settings hermeticity (H7) -----------------------------------------------
 
 
@@ -292,7 +271,7 @@ def test_docling_converter_config_ignores_env_file_without_session_fixtures(tmp_
     """
     import os
 
-    from aizk.conversion.utilities.config import DoclingConverterConfig
+    from aizk.conversion.settings import DoclingConverterConfig
 
     env_file = tmp_path / ".env"
     env_file.write_text("AIZK_CONVERTER__DOCLING__OCR_ENABLED=false\n")

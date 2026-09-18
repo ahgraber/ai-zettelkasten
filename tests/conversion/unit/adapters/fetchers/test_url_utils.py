@@ -7,7 +7,7 @@ the url-utils spec's declared test location.
 
 import pytest
 
-from aizk.conversion.utilities.bookmark_utils import detect_source_type
+from aizk.conversion.egress.bookmark_utils import detect_source_type
 
 
 @pytest.mark.parametrize(

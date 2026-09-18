@@ -8,12 +8,13 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
 from aizk.conversion.api.routes import bookmarks_router, health_router, jobs_router, outputs_router
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.settings import ConversionConfig
 from aizk.service.api import build_app
 from aizk.service.auth import AuthSettings
 from aizk.service.bootstrap import load_process_dotenv_once
 from aizk.service.logging import configure_logging
 from aizk.service.settings import ServiceSettings
+from aizk.storage.settings import ObjectStorageSettings
 from aizk.utilities.tracing import configure_mlflow_tracing
 
 
@@ -28,11 +29,13 @@ async def lifespan(_app: FastAPI):
     # A uvicorn reload child runs the lifespan without going through the CLI, so
     # the process-level configuration is applied here rather than inherited.
     settings = ServiceSettings()
+    object_storage = ObjectStorageSettings()
     # AuthSettings construction validates `AIZK_AUTH_MODE`; a reserved-but-unimplemented
     # value (token / proxy_headers / oidc) raises ConfigurationError here, before the
     # HTTP listener binds — startup-time refusal per the deployment trust model.
     auth_settings = AuthSettings()
     _app.state.config = config
+    _app.state.object_storage = object_storage
     _app.state.auth_settings = auth_settings
     configure_logging(settings)
     configure_mlflow_tracing(settings.mlflow)

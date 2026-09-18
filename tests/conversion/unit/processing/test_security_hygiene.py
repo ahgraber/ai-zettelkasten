@@ -25,11 +25,11 @@ from aizk.conversion.core.errors import (
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source
+from aizk.conversion.egress.policy import assert_egress_allowed
+from aizk.conversion.egress.prefetch import prefetch_images
 from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.processing.errors import classify_job_error
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.utilities.egress import assert_egress_allowed
-from aizk.conversion.utilities.html_prefetch import prefetch_images
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
 
 # ---------------------------------------------------------------------------
@@ -223,7 +223,7 @@ def test_assert_egress_allowed_logs_warning_with_rejected_destination(
     monkeypatch.setattr(socket, "getaddrinfo", _deny_set_getaddrinfo)
 
     with (
-        caplog.at_level(logging.WARNING, logger="aizk.conversion.utilities.egress"),
+        caplog.at_level(logging.WARNING, logger="aizk.conversion.egress.policy"),
         pytest.raises(DenyListDestination),
     ):
         assert_egress_allowed("http://private.corp.example/page")
@@ -239,6 +239,7 @@ def test_assert_egress_allowed_logs_warning_with_rejected_destination(
     assert deny_record is not None, f"No deny-set WARNING found; records: {[r.getMessage() for r in warning_records]}"
     assert deny_record.__dict__.get("host") == "private.corp.example"
     assert deny_record.__dict__.get("ip") == private_ip
+    assert deny_record.name == "aizk.conversion.egress.policy"
 
 
 # ---------------------------------------------------------------------------
@@ -261,16 +262,16 @@ def test_prefetch_images_logs_warning_for_oversized_image(
 
     with (
         patch(
-            "aizk.conversion.utilities.html_prefetch.egress_fetch_bytes",
+            "aizk.conversion.egress.prefetch.egress_fetch_bytes",
             new=AsyncMock(
                 side_effect=FetchTooLargeError(
                     "Response from 'http://example.com/huge.png' exceeds configured limit of 1024 bytes"
                 )
             ),
         ),
-        caplog.at_level(logging.WARNING, logger="aizk.conversion.utilities.html_prefetch"),
+        caplog.at_level(logging.WARNING, logger="aizk.conversion.egress.prefetch"),
     ):
-        from aizk.conversion.utilities.html_prefetch import PrefetchPolicy
+        from aizk.conversion.egress.prefetch import PrefetchPolicy
 
         asyncio.run(prefetch_images(html, tmp_path, policy=PrefetchPolicy(per_image_max_bytes=cap)))
 
@@ -285,6 +286,7 @@ def test_prefetch_images_logs_warning_for_oversized_image(
     assert size_cap_record.__dict__.get("error_class") == "FetchTooLargeError"
     assert "http://example.com/huge.png" in str(size_cap_record.__dict__.get("img_src", ""))
     assert size_cap_record.__dict__.get("per_image_cap_bytes") == cap
+    assert size_cap_record.name == "aizk.conversion.egress.prefetch"
 
 
 # ---------------------------------------------------------------------------
@@ -328,10 +330,10 @@ def test_prefetch_images_emits_summary_once_with_correct_counts(
 
     with (
         patch(
-            "aizk.conversion.utilities.html_prefetch.egress_fetch_bytes",
+            "aizk.conversion.egress.prefetch.egress_fetch_bytes",
             new=AsyncMock(side_effect=_side_effect),
         ),
-        caplog.at_level(logging.INFO, logger="aizk.conversion.utilities.html_prefetch"),
+        caplog.at_level(logging.INFO, logger="aizk.conversion.egress.prefetch"),
     ):
         asyncio.run(prefetch_images(html, tmp_path))
 

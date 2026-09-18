@@ -3,13 +3,13 @@
 import hashlib
 import json
 
-from aizk.conversion.utilities.config import DoclingConverterConfig
-from aizk.conversion.utilities.hashing import (
+from aizk.conversion.core.hashing import (
     build_output_config_snapshot,
     compute_config_hash,
     compute_idempotency_key,
     compute_markdown_hash,
 )
+from aizk.conversion.utilities.config import DoclingConverterConfig
 
 
 def test_compute_idempotency_key_matches_sha256():

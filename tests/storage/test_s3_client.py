@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 from botocore.exceptions import ClientError
 import pytest
 
-from aizk.conversion.utilities.config import ConversionConfig
 from aizk.storage.s3 import S3Client, S3Error, S3NotFoundError
 from aizk.storage.settings import ObjectStorageSettings
 
@@ -49,16 +48,6 @@ def test_client_reads_its_endpoint_and_bucket_from_object_storage_settings(_obje
     assert client.bucket == "test-bucket"
     assert mock_boto3.call_args.kwargs["endpoint_url"] == "http://localhost:9000"
     assert mock_boto3.call_args.kwargs["region_name"] == "us-east-1"
-
-
-def test_a_settings_object_carrying_the_storage_fields_is_accepted(_object_storage_env: None) -> None:
-    """A caller holding one combined settings object gets a client over the same values."""
-    with patch("aizk.storage.s3.boto3.client") as mock_boto3:
-        client = S3Client(ConversionConfig(_env_file=None))
-
-    assert isinstance(client.config, ObjectStorageSettings)
-    assert client.bucket == "test-bucket"
-    assert mock_boto3.call_args.kwargs["endpoint_url"] == "http://localhost:9000"
 
 
 def test_get_object_bytes_returns_content(s3_client: S3Client) -> None:

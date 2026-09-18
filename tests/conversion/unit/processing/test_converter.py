@@ -561,7 +561,7 @@ def test_convert_html_threads_source_url_and_policy_into_the_admission_step(
     the admission step's own tests stay green because they receive the
     parameters directly.
     """
-    from aizk.conversion.utilities.html_prefetch import PrefetchPolicy
+    from aizk.conversion.egress.prefetch import PrefetchPolicy
 
     captured: dict[str, object] = {}
 
@@ -623,7 +623,7 @@ class TestConverterDereferenceCapability:
 
     def test_base64_ceiling_is_derived_from_the_admission_cap(self) -> None:
         """The converter's per-image ceiling comes from the pre-fetch policy."""
-        from aizk.conversion.utilities.html_prefetch import PrefetchPolicy
+        from aizk.conversion.egress.prefetch import PrefetchPolicy
 
         policy = PrefetchPolicy()
         options = self._html_backend_options(prefetch_policy=policy)
@@ -637,7 +637,7 @@ class TestConverterDereferenceCapability:
         would pass the pipeline's own limit only to be refused by the converter,
         and the refusal surfaces as a warning rather than an error.
         """
-        from aizk.conversion.utilities.html_prefetch import PrefetchPolicy
+        from aizk.conversion.egress.prefetch import PrefetchPolicy
 
         raised = PrefetchPolicy(per_image_max_bytes=64 * 1024 * 1024)
         options = self._html_backend_options(prefetch_policy=raised)
@@ -659,7 +659,7 @@ class TestConverterDereferenceCapability:
         from docling.datamodel.document import InputDocument
         from docling_core.types.doc.document import PictureItem
 
-        from aizk.conversion.utilities.html_prefetch import PrefetchPolicy
+        from aizk.conversion.egress.prefetch import PrefetchPolicy
 
         buf = BytesIO()
         Image.new("RGB", (64, 64), color=(0, 128, 255)).save(buf, format="PNG")

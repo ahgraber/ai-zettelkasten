@@ -9,7 +9,7 @@ import pytest
 
 from aizk.conversion.core.errors import WorkspaceEscape
 from aizk.conversion.processing.uploader import _upload_nofollow
-from aizk.conversion.utilities.paths import (
+from aizk.conversion.storage.paths import (
     METADATA_FILENAME,
     _assert_within,
     figure_paths,
@@ -286,7 +286,7 @@ def test_read_text_nofollow_propagates_filesystem_errors(tmp_path: Path) -> None
 
 def test_write_text_nofollow_writes_new_file(tmp_path: Path) -> None:
     """A regular new-file write succeeds and returns the validated bytes."""
-    from aizk.conversion.utilities.paths import write_text_nofollow
+    from aizk.conversion.storage.paths import write_text_nofollow
 
     target = tmp_path / "manifest.json"
     write_text_nofollow(target, '{"version": "2.0"}')
@@ -304,7 +304,7 @@ def test_write_text_nofollow_rejects_existing_symlink_with_workspace_escape(tmp_
     primitive identical-shape to the H4 fix already shipped for markdown/figures
     /``metadata.json``.
     """
-    from aizk.conversion.utilities.paths import write_text_nofollow
+    from aizk.conversion.storage.paths import write_text_nofollow
 
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -327,7 +327,7 @@ def test_write_text_nofollow_rejects_existing_regular_file_by_default(tmp_path: 
     Refusing the write closes one variant of subprocess-supplied content
     flowing into the manifest path.
     """
-    from aizk.conversion.utilities.paths import write_text_nofollow
+    from aizk.conversion.storage.paths import write_text_nofollow
 
     target = tmp_path / "manifest.json"
     target.write_text("preexisting", encoding="utf-8")
@@ -341,7 +341,7 @@ def test_write_text_nofollow_rejects_existing_regular_file_by_default(tmp_path: 
 
 def test_write_text_nofollow_propagates_filesystem_errors(tmp_path: Path) -> None:
     """Non-ELOOP errors (e.g. ENOENT for parent dir) propagate as plain OSError."""
-    from aizk.conversion.utilities.paths import write_text_nofollow
+    from aizk.conversion.storage.paths import write_text_nofollow
 
     bad = tmp_path / "no-such-dir" / "manifest.json"
     with pytest.raises(FileNotFoundError):

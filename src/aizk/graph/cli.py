@@ -17,7 +17,6 @@ from uuid import UUID
 from sqlmodel import Session
 import uvicorn
 
-from aizk.conversion.utilities.config import ConversionConfig
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 from aizk.db.migrations import run_migrations
@@ -33,6 +32,7 @@ from aizk.pipeline.invalidation import ReprocessingConfirmationError
 from aizk.service.bootstrap import set_process_title
 from aizk.service.cli import positive_int, prepare_process, refuse_unconfirmed
 from aizk.service.settings import ServiceSettings
+from aizk.storage.settings import ObjectStorageSettings
 from aizk.utilities.errors import StartupValidationError
 
 logger = logging.getLogger(__name__)
@@ -97,11 +97,11 @@ def _cmd_fetch_gliner2_weights(_args: argparse.Namespace) -> int:
 def _cmd_worker(_args: argparse.Namespace) -> int:
     """Run the contextualization worker until shutdown; return its exit code."""
     set_process_title("graph-contextualization-worker")
-    conversion_config = ConversionConfig()
+    object_storage = ObjectStorageSettings()
     contextualization_config = ContextualizationConfig()
     run_migrations()
     try:
-        return run_graph_worker(conversion_config, contextualization_config)
+        return run_graph_worker(object_storage, contextualization_config)
     except StartupValidationError:
         logger.exception("startup validation failed", extra={"role": "graph-worker"})
         return 1

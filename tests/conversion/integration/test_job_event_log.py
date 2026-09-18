@@ -39,9 +39,10 @@ from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.processing.errors import classify_job_error
 from aizk.conversion.processing.source import _write_source_enrichment
 from aizk.conversion.processing.types import SourceMetaFields, SubprocessMetadata, SupervisionResult
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.settings import ConversionConfig
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
+from aizk.storage.settings import ObjectStorageSettings
 from tests.conversion._helpers import make_job, make_source
 
 # ---------------------------------------------------------------------------
@@ -408,6 +409,7 @@ def _make_fake_runtime() -> MagicMock:
     runtime.resource_guard = nullcontext()
     runtime.capabilities.converter_requires_gpu.return_value = False
     runtime.coordinator = Mock()
+    runtime.object_storage = ObjectStorageSettings(_env_file=None)
     return runtime
 
 

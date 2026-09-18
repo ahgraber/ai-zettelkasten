@@ -16,7 +16,7 @@ from aizk.conversion.backfill import (
     resolve_conversion_api_base_url,
     run_conversion_backfill,
 )
-from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
+from aizk.conversion.settings import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
 from aizk.conversion.wiring.probes import log_feature_summary
 from aizk.db.backends.sqlite import LitestreamManager, SqliteDurabilityConfig
 from aizk.service.bootstrap import set_process_title
@@ -43,9 +43,9 @@ def _cmd_db_init(_args: argparse.Namespace) -> int:
 def _cmd_serve(_args: argparse.Namespace) -> int:
     """Run the FastAPI server."""
     set_process_title("docling-api")
-    config = ConversionConfig()
     docling_cfg = DoclingConverterConfig()
-    log_feature_summary(ServiceSettings(), docling_cfg, "api")
+    settings = ServiceSettings()
+    log_feature_summary(settings, docling_cfg, "api")
     LitestreamManager(
         SqliteDurabilityConfig(),
         role="api",
@@ -53,9 +53,9 @@ def _cmd_serve(_args: argparse.Namespace) -> int:
     ).start()
     uvicorn.run(
         "aizk.conversion.api.main:app",
-        host=config.api_host,
-        port=config.api_port,
-        reload=config.api_reload,
+        host=settings.api_host,
+        port=settings.api_port,
+        reload=settings.api_reload,
     )
     return 0
 
@@ -65,11 +65,12 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
     set_process_title("docling-worker")
     config = ConversionConfig()
     docling_cfg = DoclingConverterConfig()
+    object_storage = ObjectStorageSettings()
     log_feature_summary(ServiceSettings(), docling_cfg, "worker")
     LitestreamManager(
         SqliteDurabilityConfig(),
         role="worker",
-        object_storage=ObjectStorageSettings(),
+        object_storage=object_storage,
     ).start()
     from aizk.db.migrations import run_migrations
 
@@ -81,7 +82,7 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
     from aizk.conversion.processing.worker import run_worker
 
     try:
-        return run_worker(config)
+        return run_worker(config, object_storage=object_storage)
     except StartupValidationError:
         logger.exception("startup validation failed", extra={"role": "worker"})
         return 1
@@ -89,10 +90,9 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
 
 async def _run_backfill(args: argparse.Namespace) -> ConversionBackfillResult:
     """Build the API and KaraKeep clients for one backfill run and drive it."""
-    config = ConversionConfig()
     karakeep_config = KarakeepFetcherConfig()
     karakeep_client = KarakeepClient(api_key=karakeep_config.api_key, base_url=karakeep_config.base_url)
-    base_url = resolve_conversion_api_base_url(config)
+    base_url = resolve_conversion_api_base_url(ServiceSettings())
     async with httpx.AsyncClient(base_url=base_url, timeout=_BACKFILL_TIMEOUT_SECONDS) as http_client:
         return await run_conversion_backfill(
             http_client=http_client,

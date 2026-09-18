@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import Request
 
 from aizk.conversion.wiring.capabilities import SubmissionCapabilities
-from aizk.service.api.dependencies import get_config, get_db_session
+from aizk.service.api.dependencies import get_config, get_db_session, get_object_storage
 from aizk.service.auth import get_auth_settings, get_principal
 from aizk.storage.s3 import S3Client
 
@@ -18,6 +18,7 @@ __all__ = [
     "get_auth_settings",
     "get_config",
     "get_db_session",
+    "get_object_storage",
     "get_principal",
     "get_s3_client",
     "get_submission_capabilities",
@@ -26,7 +27,7 @@ __all__ = [
 
 def get_s3_client(request: Request) -> S3Client:
     """Provide an S3Client configured from application state."""
-    return S3Client(get_config(request))
+    return S3Client(get_object_storage(request))
 
 
 def get_submission_capabilities(request: Request) -> SubmissionCapabilities:

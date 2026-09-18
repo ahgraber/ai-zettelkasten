@@ -13,10 +13,10 @@ import pytest
 
 from aizk.conversion.adapters.converters import docling as docling_module
 from aizk.conversion.adapters.converters.docling import DoclingConverter
+from aizk.conversion.core.hashing import build_output_config_snapshot
 from aizk.conversion.core.protocols import Converter
 from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput, SourceMetadata
 from aizk.conversion.utilities.config import DoclingConverterConfig
-from aizk.conversion.utilities.hashing import build_output_config_snapshot
 
 
 def _make_disabled_config() -> DoclingConverterConfig:

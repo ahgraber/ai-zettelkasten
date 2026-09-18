@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from aizk.conversion.utilities.paths import write_text_nofollow
+from aizk.conversion.storage.paths import write_text_nofollow
 from aizk.utilities.paths import open_nofollow
 
 if TYPE_CHECKING:

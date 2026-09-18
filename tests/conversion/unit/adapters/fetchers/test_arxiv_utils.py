@@ -4,7 +4,7 @@ from pydantic import ValidationError as PydanticValidationError
 import pytest
 from validators import ValidationError as URLValidatorValidationError
 
-from aizk.conversion.utilities.arxiv_utils import (
+from aizk.conversion.egress.arxiv_utils import (
     arxiv_abs_url,
     arxiv_html_url,
     arxiv_pdf_url,

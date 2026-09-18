@@ -15,7 +15,7 @@ from fastapi import Request
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 from aizk.graph.search import Fts5SearchProvider
-from aizk.service.api.dependencies import get_config, get_db_session
+from aizk.service.api.dependencies import get_db_session, get_object_storage
 from aizk.storage.s3 import S3Client
 
 if TYPE_CHECKING:
@@ -26,8 +26,8 @@ if TYPE_CHECKING:
 __all__ = [
     "get_admission_config",
     "get_blob_reader",
-    "get_config",
     "get_db_session",
+    "get_object_storage",
     "get_search_provider",
 ]
 
@@ -39,7 +39,7 @@ def get_admission_config(request: Request) -> "AdmissionConfig":
 
 def get_blob_reader(request: Request) -> "BlobReader":
     """Return the production blob reader for source Markdown."""
-    return S3Client(get_config(request))
+    return S3Client(get_object_storage(request))
 
 
 def get_search_provider(_request: Request) -> "SearchProvider":

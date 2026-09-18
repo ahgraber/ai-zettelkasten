@@ -15,6 +15,7 @@ from sqlmodel import Session, select
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
+from aizk.conversion.core.hashing import build_output_config_snapshot, compute_idempotency_key
 from aizk.conversion.core.source_ref import ArxivRef, KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
@@ -22,8 +23,7 @@ from aizk.conversion.datamodel.source import Source
 from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.processing import subproc
 from aizk.conversion.processing.errors import ConversionCancelledError
-from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig
-from aizk.conversion.utilities.hashing import build_output_config_snapshot, compute_idempotency_key
+from aizk.conversion.settings import ConversionConfig, DoclingConverterConfig
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 
@@ -102,9 +102,9 @@ def _make_subprocess_stub(markdown: str = "# Test"):
     def _stub(job_id: int, workspace_path: str, source_ref_json: str, status_queue) -> None:
         from pathlib import Path
 
-        from aizk.conversion.utilities.hashing import compute_markdown_hash
-        from aizk.conversion.utilities.paths import OUTPUT_MARKDOWN_FILENAME, metadata_path
-        from aizk.conversion.utilities.whitespace import normalize_whitespace
+        from aizk.conversion.core.hashing import compute_markdown_hash
+        from aizk.conversion.processing.whitespace import normalize_whitespace
+        from aizk.conversion.storage.paths import OUTPUT_MARKDOWN_FILENAME, metadata_path
 
         workspace = Path(workspace_path)
         normalized = normalize_whitespace(markdown)
@@ -155,6 +155,7 @@ def _make_fake_runtime():
     from unittest.mock import MagicMock
 
     from aizk.conversion.wiring.worker import WorkerRuntime
+    from aizk.storage.settings import ObjectStorageSettings
 
     fake_caps = MagicMock()
     fake_caps.converter_requires_gpu.return_value = False
@@ -162,6 +163,7 @@ def _make_fake_runtime():
         coordinator=MagicMock(),
         resource_guard=MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False)),
         capabilities=fake_caps,
+        object_storage=ObjectStorageSettings(_env_file=None),
     )
 
 

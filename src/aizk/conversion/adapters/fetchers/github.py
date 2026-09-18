@@ -16,8 +16,8 @@ from aizk.conversion.core.errors import EgressPolicyError, FetchError, GitHubRea
 from aizk.conversion.core.protocols import ContentFetcher
 from aizk.conversion.core.source_ref import GithubReadmeRef, SourceRef
 from aizk.conversion.core.types import ContentType, ConversionInput, SourceMetadata
-from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.utilities.egress_fetch import egress_fetch_bytes
+from aizk.conversion.egress.fetch import egress_fetch_bytes
+from aizk.conversion.settings import ConversionConfig
 
 _logger = logging.getLogger(__name__)
 

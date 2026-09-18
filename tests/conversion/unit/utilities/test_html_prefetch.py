@@ -12,8 +12,8 @@ import lxml.html
 import pytest
 
 from aizk.conversion.core.errors import DenyListDestination, FetchTooLargeError
-from aizk.conversion.utilities import html_prefetch
-from aizk.conversion.utilities.html_prefetch import (
+from aizk.conversion.egress import prefetch as html_prefetch
+from aizk.conversion.egress.prefetch import (
     PrefetchPolicy,
     _extension_for_content_type,
     _media_type_for_content_type,

@@ -643,7 +643,7 @@ def _write_metadata(workspace, *, markdown_hash: str = "abc123") -> None:
         document_title="Doc",
         source_title="Doc",
     )
-    from aizk.conversion.utilities.paths import metadata_path
+    from aizk.conversion.storage.paths import metadata_path
 
     metadata_path(workspace).write_text(meta.model_dump_json())
 

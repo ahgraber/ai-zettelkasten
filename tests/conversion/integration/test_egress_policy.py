@@ -29,12 +29,13 @@ from aizk.conversion.core.errors import (
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, UrlRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source
+from aizk.conversion.egress.fetch import egress_fetch_bytes
+from aizk.conversion.egress.policy import ValidatedDestination
+from aizk.conversion.egress.prefetch import prefetch_images
 from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.processing import subproc, uploader as uploader_mod
-from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
-from aizk.conversion.utilities.egress import ValidatedDestination
-from aizk.conversion.utilities.egress_fetch import egress_fetch_bytes
-from aizk.conversion.utilities.html_prefetch import prefetch_images
+from aizk.conversion.settings import ConversionConfig, KarakeepFetcherConfig
+from aizk.storage.settings import ObjectStorageSettings
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -117,6 +118,7 @@ def _make_fake_runtime() -> MagicMock:
     runtime.resource_guard = nullcontext()
     runtime.capabilities.converter_requires_gpu.return_value = False
     runtime.coordinator = MagicMock()
+    runtime.object_storage = ObjectStorageSettings(_env_file=None)
     return runtime
 
 
@@ -191,7 +193,7 @@ def test_karakeep_resolver_emits_urlref_then_fetcher_blocks_deny_list(
     from aizk.conversion.adapters.fetchers import karakeep as karakeep_module
     from aizk.conversion.adapters.fetchers.karakeep import KarakeepBookmarkResolver
     from aizk.conversion.adapters.fetchers.url import UrlFetcher
-    from aizk.conversion.utilities.config import ConversionConfig
+    from aizk.conversion.settings import ConversionConfig
 
     monkeypatch.setattr(karakeep_module, "fetch_karakeep_bookmark", lambda _id: fake_bookmark)
 
@@ -291,7 +293,7 @@ def test_prefetch_drops_private_image_and_inlines_public(
         return _png_stub, {"content-type": "image/png"}
 
     monkeypatch.setattr(
-        "aizk.conversion.utilities.html_prefetch.egress_fetch_bytes",
+        "aizk.conversion.egress.prefetch.egress_fetch_bytes",
         _mock_fetch,
     )
 
@@ -365,10 +367,10 @@ def test_malicious_metadata_raises_workspace_escape_before_upload(
     monkeypatch.setattr(uploader_mod, "get_engine", lambda _url=None: db_session.get_bind())
     monkeypatch.setattr(uploader_mod, "S3Client", lambda _cfg: _NeverCalledS3())
 
-    config = ConversionConfig(_env_file=None)
+    object_storage = ObjectStorageSettings(_env_file=None)
 
     with pytest.raises(WorkspaceEscape):
-        uploader_mod._upload_converted(job_id=9999, workspace=workspace, config=config)
+        uploader_mod._upload_converted(job_id=9999, workspace=workspace, object_storage=object_storage)
 
     assert upload_calls == [], (
         f"S3 upload must not be attempted when workspace escape is detected; got upload_calls: {upload_calls}"
@@ -384,9 +386,9 @@ def _make_subprocess_stub(markdown: str = "# Converted output") -> Callable:
     """Return a _process_job_subprocess stub writing pre-built workspace artifacts."""
 
     def _stub(job_id: int, workspace_path: str, source_ref_json: str, status_queue: Any) -> None:
-        from aizk.conversion.utilities.hashing import compute_markdown_hash
-        from aizk.conversion.utilities.paths import OUTPUT_MARKDOWN_FILENAME, metadata_path
-        from aizk.conversion.utilities.whitespace import normalize_whitespace
+        from aizk.conversion.core.hashing import compute_markdown_hash
+        from aizk.conversion.processing.whitespace import normalize_whitespace
+        from aizk.conversion.storage.paths import OUTPUT_MARKDOWN_FILENAME, metadata_path
 
         workspace = Path(workspace_path)
         normalized = normalize_whitespace(markdown)

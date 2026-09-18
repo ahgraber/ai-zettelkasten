@@ -22,7 +22,7 @@ from aizk.conversion.datamodel.events import (
     record_transition,
 )
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.settings import ConversionConfig
 from aizk.utilities.clock import utcnow
 
 logger = logging.getLogger(__name__)

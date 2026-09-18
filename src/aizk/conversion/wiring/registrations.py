@@ -23,11 +23,12 @@ from aizk.conversion.adapters.fetchers.url import UrlFetcher
 from aizk.conversion.core.errors import ChainNotTerminated
 from aizk.conversion.core.protocols import RefResolver
 from aizk.conversion.core.registry import ConverterRegistry, FetcherRegistry
-from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
+from aizk.conversion.settings import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
 from aizk.conversion.wiring.probes import probe_karakeep, probe_picture_description
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import probe_database
 from aizk.storage.probe import probe_s3
+from aizk.storage.settings import ObjectStorageSettings
 
 
 def register_fetchers(
@@ -85,6 +86,8 @@ def build_startup_probes(
     cfg: ConversionConfig,
     docling_cfg: DoclingConverterConfig,
     karakeep_cfg: KarakeepFetcherConfig,
+    *,
+    object_storage: ObjectStorageSettings,
 ) -> list[Callable[[], None]]:
     """Assemble the startup health-check probes implied by the registered adapters.
 
@@ -95,7 +98,7 @@ def build_startup_probes(
     runs each before any work is accepted.
     """
     probes: list[Callable[[], None]] = [
-        partial(probe_s3, cfg.storage),
+        partial(probe_s3, object_storage),
         partial(probe_database, DatabaseConfig().database_url),
     ]
     if "karakeep_bookmark" in fetcher_registry.registered_kinds():

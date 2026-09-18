@@ -61,7 +61,6 @@ def test_every_backfill_leg_accepts_the_forwarded_flags(
     monkeypatch.setattr(service_cli, "load_process_dotenv_once", lambda: None)
     monkeypatch.setattr(service_cli, "configure_logging", lambda _settings: None)
     monkeypatch.setattr(service_cli, "configure_mlflow_tracing", lambda _settings: None)
-    monkeypatch.setattr(module, "ConversionConfig", lambda: None)
     monkeypatch.setattr(module, command_attr, lambda _args: 0)
 
     assert module.main([subcommand, *_FORWARDED_FLAGS]) == 0
@@ -75,7 +74,6 @@ def test_no_backfill_leg_submits_work_without_confirmation(
     monkeypatch.setattr(service_cli, "load_process_dotenv_once", lambda: None)
     monkeypatch.setattr(service_cli, "configure_logging", lambda _settings: None)
     monkeypatch.setattr(service_cli, "configure_mlflow_tracing", lambda _settings: None)
-    monkeypatch.setattr(module, "ConversionConfig", lambda: None)
 
     captured: dict[str, object] = {}
     monkeypatch.setattr(module, command_attr, lambda args: captured.update(yes=args.yes) or 0)

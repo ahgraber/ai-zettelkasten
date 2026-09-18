@@ -10,13 +10,13 @@ that the hash stays stable across incidental variation.
 from __future__ import annotations
 
 import hashlib
-import json
 from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 import validators
 
 from aizk.conversion.core.types import ContentType
+from aizk.utilities.hashing import canonical_json
 from aizk.utilities.url_utils import normalize_url
 
 # 64 KiB enforced on RAW body bytes (not serialized JSON length).
@@ -177,5 +177,5 @@ SourceRef = Annotated[
 def compute_source_ref_hash(ref: "SourceRef") -> str:
     """Compute the canonical SHA-256 hash of a SourceRef's dedup payload."""
     payload = ref.to_dedup_payload()
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    encoded = canonical_json(payload, ensure_ascii=True).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()

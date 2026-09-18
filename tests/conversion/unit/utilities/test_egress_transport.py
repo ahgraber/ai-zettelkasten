@@ -8,8 +8,8 @@ from typing import Any
 import httpx
 import pytest
 
-from aizk.conversion.utilities.egress import ValidatedDestination
-from aizk.conversion.utilities.egress_transport import (
+from aizk.conversion.egress.policy import ValidatedDestination
+from aizk.conversion.egress.transport import (
     EgressPinnedTransport,
     _build_default_ssl_context,
 )

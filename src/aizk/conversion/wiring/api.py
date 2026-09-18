@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from aizk.conversion.adapters.converters.docling import DoclingConverter
 from aizk.conversion.core.errors import ConfigurationError
 from aizk.conversion.core.registry import FetcherRegistry
-from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
+from aizk.conversion.settings import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
 from aizk.conversion.wiring.capabilities import SubmissionCapabilities
 from aizk.conversion.wiring.ingress_policy import IngressPolicy
 from aizk.conversion.wiring.registrations import register_fetchers

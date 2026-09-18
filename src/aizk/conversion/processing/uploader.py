@@ -28,8 +28,7 @@ from aizk.conversion.storage.manifest import (
     generate_manifest_v2,
     save_manifest,
 )
-from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.utilities.paths import (
+from aizk.conversion.storage.paths import (
     figure_paths,
     markdown_path,
     metadata_path,
@@ -38,6 +37,7 @@ from aizk.conversion.utilities.paths import (
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 from aizk.storage.s3 import S3Client, S3Error
+from aizk.storage.settings import ObjectStorageSettings
 from aizk.utilities.clock import utcnow
 from aizk.utilities.paths import open_nofollow
 
@@ -54,7 +54,7 @@ def _upload_nofollow(path: Path, s3_key: str, s3_client: S3Client) -> str:
 
     Args:
         path: Validated workspace-local path (must already pass
-            :func:`~aizk.conversion.utilities.paths._assert_within`).
+            :func:`~aizk.conversion.storage.paths._assert_within`).
         s3_key: Destination S3 object key.
         s3_client: Configured :class:`~aizk.storage.s3.S3Client`.
 
@@ -127,7 +127,7 @@ def _load_subprocess_metadata(workspace: Path, job_id: int) -> SubprocessMetadat
         ) from exc
 
 
-def _prepare_upload(job_id: int, workspace: Path, config: ConversionConfig) -> _UploadPlan | None:
+def _prepare_upload(job_id: int, workspace: Path, object_storage: ObjectStorageSettings) -> _UploadPlan | None:
     """Build the upload plan; runs exactly once per job, before the retry loop.
 
     Returns ``None`` when the job is already finalized (content-hash shortcut
@@ -143,7 +143,7 @@ def _prepare_upload(job_id: int, workspace: Path, config: ConversionConfig) -> _
     if not markdown_file.exists():
         raise ConversionArtifactsMissingError(f"Missing markdown for job {job_id}")
 
-    if not config.s3_bucket_name:
+    if not object_storage.s3_bucket_name:
         raise S3Error("S3 bucket is not configured", "s3_upload_failed")
 
     from pydantic import TypeAdapter, ValidationError
@@ -178,7 +178,7 @@ def _prepare_upload(job_id: int, workspace: Path, config: ConversionConfig) -> _
 
         output_title = subprocess_meta.source_title or job.title
 
-        bucket = config.s3_bucket_name
+        bucket = object_storage.s3_bucket_name
         prefix = str(source.source_id)
         manifest_local_path = workspace / "manifest.json"
 
@@ -304,7 +304,7 @@ def _prepare_upload(job_id: int, workspace: Path, config: ConversionConfig) -> _
         )
 
 
-def _execute_upload(plan: _UploadPlan, job_id: int, config: ConversionConfig) -> None:
+def _execute_upload(plan: _UploadPlan, job_id: int, object_storage: ObjectStorageSettings) -> None:
     """Run the S3 PUTs and finalize the job. Safe to retry: PUTs are key-idempotent.
 
     On the content-hash dedup shortcut, ``plan.markdown_local`` is ``None`` and
@@ -312,7 +312,7 @@ def _execute_upload(plan: _UploadPlan, job_id: int, config: ConversionConfig) ->
     prior conversion. Only the manifest is uploaded.
     """
     engine = get_engine(DatabaseConfig().database_url)
-    s3_client = S3Client(config)
+    s3_client = S3Client(object_storage)
 
     if plan.markdown_local is not None:
         _upload_nofollow(plan.markdown_local, plan.markdown_key, s3_client)
@@ -367,7 +367,7 @@ def _execute_upload(plan: _UploadPlan, job_id: int, config: ConversionConfig) ->
         session.commit()
 
 
-def _upload_converted(job_id: int, workspace: Path, config: ConversionConfig) -> None:
+def _upload_converted(job_id: int, workspace: Path, object_storage: ObjectStorageSettings) -> None:
     """Run the full upload phase (prepare + execute) in one shot.
 
     Convenience wrapper for direct callers (tests, CLI). The production
@@ -375,7 +375,7 @@ def _upload_converted(job_id: int, workspace: Path, config: ConversionConfig) ->
     ``_execute_upload`` inside the loop, so a transient S3 failure on the
     first attempt does not poison the second attempt's local manifest write.
     """
-    plan = _prepare_upload(job_id, workspace, config)
+    plan = _prepare_upload(job_id, workspace, object_storage)
     if plan is None:
         return
-    _execute_upload(plan, job_id, config)
+    _execute_upload(plan, job_id, object_storage)

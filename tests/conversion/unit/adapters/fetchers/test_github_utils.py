@@ -4,7 +4,7 @@ from pydantic import ValidationError as PydanticValidationError
 import pytest
 from validators import ValidationError as URLValidatorValidationError
 
-from aizk.conversion.utilities.github_utils import (
+from aizk.conversion.egress.github_utils import (
     is_github_pages_url,
     is_github_repo_root,
     is_github_url,

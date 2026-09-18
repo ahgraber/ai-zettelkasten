@@ -36,8 +36,9 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.processing import subproc, worker
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.settings import ConversionConfig
 from aizk.pipeline.shutdown import ShutdownController
+from aizk.storage.settings import ObjectStorageSettings
 from tests.conversion.integration import _subprocess_helpers
 
 pytestmark = [
@@ -90,6 +91,7 @@ def _make_fake_runtime():
     from unittest.mock import MagicMock
 
     from aizk.conversion.wiring.worker import WorkerRuntime
+    from aizk.storage.settings import ObjectStorageSettings
 
     fake_caps = MagicMock()
     fake_caps.converter_requires_gpu.return_value = False
@@ -97,6 +99,7 @@ def _make_fake_runtime():
         coordinator=MagicMock(),
         resource_guard=MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False)),
         capabilities=fake_caps,
+        object_storage=ObjectStorageSettings(_env_file=None),
     )
 
 
@@ -147,7 +150,9 @@ def _patch_worker_infra(monkeypatch) -> tuple[dict[str, bytes], list[int]]:
     storage = _install_memory_s3(monkeypatch)
     monkeypatch.setattr(subproc, "_process_job_subprocess", _success_target)
     monkeypatch.setattr(subproc, "_is_job_cancelled", lambda _job_id, _engine: False)
-    monkeypatch.setattr("aizk.conversion.wiring.worker.build_worker_runtime", lambda _cfg: _make_fake_runtime())
+    monkeypatch.setattr(
+        "aizk.conversion.wiring.worker.build_worker_runtime", lambda _cfg, **_kwargs: _make_fake_runtime()
+    )
     exit_calls: list[int] = []
     monkeypatch.setattr("aizk.pipeline.shutdown.force_exit", lambda code: exit_calls.append(code))
     return storage, exit_calls
@@ -179,7 +184,9 @@ def test_worker_drives_job_to_succeeded(monkeypatch, db_session: Session) -> Non
     exit_code: dict[str, int | None] = {"value": None}
 
     def _drive() -> None:
-        exit_code["value"] = worker.run_worker(config, shutdown=shutdown)
+        exit_code["value"] = worker.run_worker(
+            config, object_storage=ObjectStorageSettings(_env_file=None), shutdown=shutdown
+        )
 
     with no_thread_leaks(action="raise", grace_period=1.0):
         driver = threading.Thread(target=_drive, name="runner-worker-driver")
@@ -242,7 +249,9 @@ def test_worker_drains_inflight_on_shutdown(monkeypatch, db_session: Session) ->
     exit_code: dict[str, int | None] = {"value": None}
 
     def _drive() -> None:
-        exit_code["value"] = worker.run_worker(config, shutdown=shutdown)
+        exit_code["value"] = worker.run_worker(
+            config, object_storage=ObjectStorageSettings(_env_file=None), shutdown=shutdown
+        )
 
     with no_thread_leaks(action="raise", grace_period=1.0):
         driver = threading.Thread(target=_drive, name="runner-worker-driver")

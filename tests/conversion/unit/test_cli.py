@@ -56,7 +56,7 @@ def test_every_command_titles_its_process() -> None:
 def _stub_backfill_clients(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub the config and client construction the backfill command performs."""
     monkeypatch.setattr(service_cli, "configure_logging", lambda _settings: None)
-    monkeypatch.setattr(cli, "ConversionConfig", lambda: SimpleNamespace(api_host="127.0.0.1", api_port=8000))
+    monkeypatch.setattr(cli, "ServiceSettings", lambda: SimpleNamespace(api_host="127.0.0.1", api_port=8000))
     monkeypatch.setattr(cli, "KarakeepFetcherConfig", lambda: SimpleNamespace(base_url="http://kk", api_key="k"))
     monkeypatch.setattr(cli, "KarakeepClient", lambda **_kwargs: SimpleNamespace())
 
@@ -159,7 +159,7 @@ def test_backfill_reports_an_unconfigured_karakeep_client_as_a_usage_error(
 ) -> None:
     """Missing KaraKeep credentials are a configuration error, reported without a traceback."""
     monkeypatch.setattr(service_cli, "configure_logging", lambda _settings: None)
-    monkeypatch.setattr(cli, "ConversionConfig", lambda: SimpleNamespace(api_host="127.0.0.1", api_port=8000))
+    monkeypatch.setattr(cli, "ServiceSettings", lambda: SimpleNamespace(api_host="127.0.0.1", api_port=8000))
     monkeypatch.setattr(cli, "KarakeepFetcherConfig", lambda: SimpleNamespace(base_url=None, api_key=None))
 
     def raise_unconfigured(**_kwargs: object) -> object:

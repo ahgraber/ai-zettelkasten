@@ -18,9 +18,10 @@ from __future__ import annotations
 import logging
 
 from aizk.conversion.handler import ConversionStageHandler
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.settings import ConversionConfig
 from aizk.pipeline.runner import StageRunner
 from aizk.pipeline.shutdown import ShutdownController
+from aizk.storage.settings import ObjectStorageSettings
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ _SUBPROCESS_TERMINATION_BUDGET_SECONDS = 10.0
 def run_worker(
     config: ConversionConfig,
     *,
+    object_storage: ObjectStorageSettings,
     shutdown: ShutdownController | None = None,
 ) -> int:
     """Run the conversion worker via the pipeline :class:`StageRunner`.
@@ -54,6 +56,7 @@ def run_worker(
     Args:
         config: The conversion service configuration, supplying the loop timings
             and the handler's concurrency/timeout.
+        object_storage: Object-storage settings forwarded to the worker runtime.
         shutdown: Optional shutdown controller. The CLI omits it (the runner
             creates one and installs OS signal handlers in ``run``); a
             programmatic driver (tests, embedding) may pass its own so it can
@@ -65,7 +68,7 @@ def run_worker(
     """
     from aizk.conversion.wiring.worker import build_worker_runtime
 
-    runtime = build_worker_runtime(config)
+    runtime = build_worker_runtime(config, object_storage=object_storage)
     handler = ConversionStageHandler(config, runtime=runtime)
     runner = StageRunner(
         handler,

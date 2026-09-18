@@ -79,12 +79,13 @@ from aizk.conversion.processing.subproc import _is_job_cancelled, _spawn_and_sup
 from aizk.conversion.processing.types import SubprocessMetadata
 from aizk.conversion.processing.uploader import _execute_upload, _prepare_upload
 from aizk.conversion.queries import claim_next_in_session, recover_stale_in_session
-from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.utilities.paths import metadata_path, read_text_nofollow
+from aizk.conversion.settings import ConversionConfig
+from aizk.conversion.storage.paths import metadata_path, read_text_nofollow
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 from aizk.pipeline.handler import Isolation, StageResult
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
+from aizk.storage.settings import ObjectStorageSettings
 from aizk.utilities.clock import utcnow
 
 if TYPE_CHECKING:
@@ -263,7 +264,7 @@ class ConversionStageHandler:
                 if self._runtime is None:
                     from aizk.conversion.wiring.worker import build_worker_runtime
 
-                    self._runtime = build_worker_runtime(self._config)
+                    self._runtime = build_worker_runtime(self._config, object_storage=ObjectStorageSettings())
         return self._runtime
 
     def execute(self, handle: int) -> StageResult:
@@ -504,7 +505,7 @@ class ConversionStageHandler:
             # attempt 1. The retry loop only wraps the S3 PUTs, which are
             # idempotent on their key. A failure here raises so ``map_result``
             # classifies it.
-            upload_plan = _prepare_upload(handle, workspace, config)
+            upload_plan = _prepare_upload(handle, workspace, runtime.object_storage)
             if upload_plan is None:
                 # Job already finalized (content-hash shortcut, missing, or
                 # cancelled): nothing to upload.
@@ -524,7 +525,7 @@ class ConversionStageHandler:
                 if upload_deadline is not None and time.monotonic() >= upload_deadline:
                     raise ConversionTimeoutError(f"Job {handle} exceeded its runtime during uploading", "uploading")
                 try:
-                    _execute_upload(upload_plan, handle, config)
+                    _execute_upload(upload_plan, handle, runtime.object_storage)
                     last_exc = None
                     break
                 except Exception as exc:

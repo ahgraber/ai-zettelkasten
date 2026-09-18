@@ -36,7 +36,7 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.processing import subproc
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.settings import ConversionConfig
 from aizk.pipeline.runner import StageRunner
 from tests.conversion.integration import _subprocess_helpers
 from tests.conversion.integration._zombie_checks import ZombieInspectionError, descendant_zombies
@@ -85,6 +85,7 @@ def _make_fake_runtime():
     from unittest.mock import MagicMock
 
     from aizk.conversion.wiring.worker import WorkerRuntime
+    from aizk.storage.settings import ObjectStorageSettings
 
     fake_caps = MagicMock()
     fake_caps.converter_requires_gpu.return_value = False
@@ -92,6 +93,7 @@ def _make_fake_runtime():
         coordinator=MagicMock(),
         resource_guard=MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False)),
         capabilities=fake_caps,
+        object_storage=ObjectStorageSettings(_env_file=None),
     )
 
 

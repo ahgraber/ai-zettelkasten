@@ -166,9 +166,6 @@ RECORDED_EXCEPTIONS: dict[Edge, str] = {
     Edge("aizk.graph.worker", "aizk.ai.providers.llm"): (
         "removed when the contextualization worker moves to aizk.contextualization"
     ),
-    Edge("aizk.graph.worker", "aizk.conversion.utilities.config"): (
-        "removed when the worker stops taking a conversion config and is handed object-storage settings"
-    ),
     Edge("aizk.graph.worker", "aizk.storage.s3"): (
         "removed when the contextualization worker moves to aizk.contextualization"
     ),

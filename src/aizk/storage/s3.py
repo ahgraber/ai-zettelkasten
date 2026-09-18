@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from pathlib import Path
-from typing import IO, Any, ClassVar, Optional
+from typing import IO, ClassVar, Optional
 
 import boto3
 from botocore.exceptions import ClientError
@@ -49,25 +49,21 @@ class S3UploadError(S3Error):
 class S3Client:
     """S3 storage client for uploading conversion artifacts."""
 
-    def __init__(self, config: Any):
+    def __init__(self, config: ObjectStorageSettings):
         """Initialize S3 client.
 
         Args:
-            config: The object-storage settings, or a settings object that
-                carries them on a ``storage`` attribute. The second form is a
-                bridge for callers that still hold one combined settings object;
-                it is resolved here so every client stores the same shape.
+            config: The object-storage settings.
         """
-        settings = config if isinstance(config, ObjectStorageSettings) else config.storage
-        self.config = settings
+        self.config = config
         self.client = boto3.client(
             "s3",
-            endpoint_url=settings.s3_endpoint_url or None,
-            aws_access_key_id=settings.s3_access_key_id,
-            aws_secret_access_key=settings.s3_secret_access_key,
-            region_name=settings.s3_region,
+            endpoint_url=config.s3_endpoint_url or None,
+            aws_access_key_id=config.s3_access_key_id,
+            aws_secret_access_key=config.s3_secret_access_key,
+            region_name=config.s3_region,
         )
-        self.bucket = settings.s3_bucket_name
+        self.bucket = config.s3_bucket_name
 
     def get_object_bytes(self, s3_key: str) -> bytes:
         """Fetch object bytes from S3.

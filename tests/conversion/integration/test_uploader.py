@@ -13,7 +13,7 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.processing import uploader
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.storage.settings import ObjectStorageSettings
 
 
 def _make_workspace_metadata(tmp_path: Path, *, markdown_hash: str) -> Path:
@@ -125,8 +125,8 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
 
     monkeypatch.setattr(uploader, "S3Client", lambda _config: _MockS3Client())
 
-    config = ConversionConfig(_env_file=None)
-    uploader._upload_converted(new_job.id, workspace, config)
+    object_storage = ObjectStorageSettings(_env_file=None)
+    uploader._upload_converted(new_job.id, workspace, object_storage)
 
     # Markdown + figures are content-addressed and reused, but the manifest is
     # always rewritten so the source block reflects THIS job's SubprocessMetadata.
@@ -268,8 +268,8 @@ def test_upload_converted_shortcut_writes_fresh_manifest_with_current_source_met
 
     monkeypatch.setattr(uploader, "S3Client", lambda _config: _CapturingS3Client())
 
-    config = ConversionConfig(_env_file=None)
-    uploader._upload_converted(new_job.id, tmp_path, config)
+    object_storage = ObjectStorageSettings(_env_file=None)
+    uploader._upload_converted(new_job.id, tmp_path, object_storage)
 
     # The manifest at the shared S3 key must reflect the NEW job's source values.
     assert prior_output.manifest_key in captured, "shortcut path must upload a fresh manifest"
@@ -386,10 +386,10 @@ def test_upload_converted_shortcut_manifest_upload_is_retryable(
 
     monkeypatch.setattr(uploader, "S3Client", lambda _config: _FlakeyS3Client())
 
-    config = ConversionConfig(_env_file=None)
+    object_storage = ObjectStorageSettings(_env_file=None)
 
     # Step 1: prepare must NOT touch S3 (retry contract: prep is one-shot).
-    plan = uploader._prepare_upload(new_job.id, workspace, config)
+    plan = uploader._prepare_upload(new_job.id, workspace, object_storage)
     assert plan is not None, "shortcut should still return a plan so retry loop can run"
     assert plan.markdown_local is None, "shortcut plan must skip markdown upload"
     assert plan.figure_uploads == (), "shortcut plan must skip figure uploads"
@@ -399,11 +399,11 @@ def test_upload_converted_shortcut_manifest_upload_is_retryable(
     from aizk.conversion.storage.s3_client import S3UploadError
 
     with pytest.raises(S3UploadError):
-        uploader._execute_upload(plan, new_job.id, config)
+        uploader._execute_upload(plan, new_job.id, object_storage)
     assert upload_attempts == [prior_output.manifest_key]
 
     # Step 3: retry succeeds — same plan, idempotent on the manifest key.
-    uploader._execute_upload(plan, new_job.id, config)
+    uploader._execute_upload(plan, new_job.id, object_storage)
     assert upload_attempts == [prior_output.manifest_key, prior_output.manifest_key]
 
     db_session.refresh(new_job)
@@ -465,8 +465,8 @@ def test_upload_converted_uploads_when_hash_differs(monkeypatch, db_session: Ses
 
     monkeypatch.setattr(uploader, "S3Client", lambda _config: _MockS3Client())
 
-    config = ConversionConfig(_env_file=None)
-    uploader._upload_converted(new_job.id, workspace, config)
+    object_storage = ObjectStorageSettings(_env_file=None)
+    uploader._upload_converted(new_job.id, workspace, object_storage)
 
     assert any("output.md" in key for key in upload_calls), "Markdown should be uploaded when no hash match"
 

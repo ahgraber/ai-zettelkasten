@@ -18,13 +18,14 @@ from sqlmodel import Session
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source
+from aizk.conversion.egress.bookmark_utils import BookmarkContentError
 from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.processing import converter, errors as errors_mod, fetcher
 from aizk.conversion.processing.errors import ReportedChildError, SubprocessMetadataInvalid
 from aizk.conversion.processing.subproc import _report_status
+from aizk.conversion.settings import ConversionConfig
 from aizk.conversion.storage.s3_client import S3Error, S3UploadError
-from aizk.conversion.utilities.bookmark_utils import BookmarkContentError
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.storage.settings import ObjectStorageSettings
 
 
 def _finalize_failure(db_session: Session, job_id: int, error: Exception, config: ConversionConfig) -> None:
@@ -537,7 +538,7 @@ def test_prepare_upload_invalid_metadata_flows_to_failed_perm(
     (ws / "metadata.json").write_text(json.dumps({"unexpected_only": "oops"}))
 
     try:
-        _prepare_upload(job.id, ws, config)
+        _prepare_upload(job.id, ws, ObjectStorageSettings(_env_file=None))
     except Exception as exc:
         _finalize_failure(db_session, job.id, exc, config)
 

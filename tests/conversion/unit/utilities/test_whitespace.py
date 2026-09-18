@@ -16,7 +16,7 @@ import re
 
 import pytest
 
-from aizk.conversion.utilities.whitespace import normalize_whitespace
+from aizk.conversion.processing.whitespace import normalize_whitespace
 
 
 class TestBasicNormalization:

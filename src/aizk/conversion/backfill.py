@@ -63,7 +63,7 @@ class ConversionBackfillResult:
     failed: int
 
 
-def resolve_conversion_api_base_url(config: Any) -> str:  # noqa: ANN401 - ConversionConfig, kept loose for testability
+def resolve_conversion_api_base_url(config: Any) -> str:  # noqa: ANN401 - ServiceSettings, kept loose for testability
     """Return the base URL a client should dial for the conversion API.
 
     ``api_host`` is a bind address. ``0.0.0.0`` and ``::`` mean "listen on every

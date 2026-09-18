@@ -19,19 +19,21 @@ import pytest
 from aizk.conversion.core.errors import ConfigurationError
 from aizk.conversion.core.registry import FetcherRegistry
 from aizk.conversion.core.types import ContentType, ConversionInput
-from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
+from aizk.conversion.settings import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
 from aizk.conversion.wiring.api import ApiRuntime, build_api_runtime
 from aizk.conversion.wiring.capabilities import DeploymentCapabilities, SubmissionCapabilities
 from aizk.conversion.wiring.ingress_policy import IngressPolicy
 from aizk.conversion.wiring.registrations import build_startup_probes, register_fetchers
 from aizk.conversion.wiring.testing import TestRuntime, build_test_runtime
 from aizk.conversion.wiring.worker import WorkerRuntime, build_worker_runtime
+from aizk.storage.settings import ObjectStorageSettings
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 _CFG = ConversionConfig(_env_file=None)
+_OBJECT_STORAGE = ObjectStorageSettings(_env_file=None)
 
 # Expected kinds that register_ready_adapters wires:
 # 1 resolver:  karakeep_bookmark
@@ -48,7 +50,7 @@ _EXPECTED_CONVERTER_FORMATS = frozenset({ContentType.PDF, ContentType.HTML})
 
 
 def test_build_worker_runtime_returns_worker_runtime_dataclass():
-    rt = build_worker_runtime(_CFG)
+    rt = build_worker_runtime(_CFG, object_storage=_OBJECT_STORAGE)
     assert isinstance(rt, WorkerRuntime)
 
 
@@ -57,45 +59,45 @@ def test_build_worker_runtime_coordinator_is_present():
     # builder used.  The test_coordinator import-graph test deletes coordinator
     # from sys.modules, which would cause isinstance() to fail if we import the
     # class before calling build_worker_runtime.
-    rt = build_worker_runtime(_CFG)
+    rt = build_worker_runtime(_CFG, object_storage=_OBJECT_STORAGE)
     assert type(rt.coordinator).__name__ == "ConversionCoordinator"
 
 
 def test_build_worker_runtime_resource_guard_is_present():
     from aizk.conversion.core.protocols import ResourceGuard
 
-    rt = build_worker_runtime(_CFG)
+    rt = build_worker_runtime(_CFG, object_storage=_OBJECT_STORAGE)
     assert isinstance(rt.resource_guard, ResourceGuard)
 
 
 def test_build_worker_runtime_capabilities_registered_kinds_equals_expected():
-    rt = build_worker_runtime(_CFG)
+    rt = build_worker_runtime(_CFG, object_storage=_OBJECT_STORAGE)
     assert rt.capabilities.registered_kinds == _EXPECTED_REGISTERED_KINDS
 
 
 def test_build_worker_runtime_all_expected_kinds_in_registered_kinds():
-    rt = build_worker_runtime(_CFG)
+    rt = build_worker_runtime(_CFG, object_storage=_OBJECT_STORAGE)
     for kind in _EXPECTED_REGISTERED_KINDS:
         assert kind in rt.capabilities.registered_kinds, f"Expected {kind!r} in registered_kinds"
 
 
 def test_build_worker_runtime_singlefile_absent_from_registered_kinds():
-    rt = build_worker_runtime(_CFG)
+    rt = build_worker_runtime(_CFG, object_storage=_OBJECT_STORAGE)
     assert "singlefile" not in rt.capabilities.registered_kinds
 
 
 def test_build_worker_runtime_deployment_capabilities_converter_available_for_pdf():
-    rt = build_worker_runtime(_CFG)
+    rt = build_worker_runtime(_CFG, object_storage=_OBJECT_STORAGE)
     assert rt.capabilities.converter_available(ContentType.PDF)
 
 
 def test_build_worker_runtime_deployment_capabilities_converter_available_for_html():
-    rt = build_worker_runtime(_CFG)
+    rt = build_worker_runtime(_CFG, object_storage=_OBJECT_STORAGE)
     assert rt.capabilities.converter_available(ContentType.HTML)
 
 
 def test_build_worker_runtime_deployment_capabilities_no_converter_for_csv():
-    rt = build_worker_runtime(_CFG)
+    rt = build_worker_runtime(_CFG, object_storage=_OBJECT_STORAGE)
     assert not rt.capabilities.converter_available(ContentType.CSV)
 
 
@@ -149,7 +151,7 @@ def test_build_api_runtime_exposes_submission_config_snapshot():
 
 def test_worker_and_api_capabilities_differ_for_default_wiring():
     """Worker registered_kinds is the full 5-kind set; API accepted is only karakeep_bookmark."""
-    worker_rt = build_worker_runtime(_CFG)
+    worker_rt = build_worker_runtime(_CFG, object_storage=_OBJECT_STORAGE)
     policy = IngressPolicy(_env_file=None, accepted_submission_kinds=frozenset({"karakeep_bookmark"}))
     api_rt = build_api_runtime(_CFG, ingress_policy=policy)
 
@@ -162,7 +164,7 @@ def test_worker_and_api_capabilities_differ_for_default_wiring():
 
 
 def test_api_accepted_kinds_is_strict_subset_of_worker_registered_kinds():
-    worker_rt = build_worker_runtime(_CFG)
+    worker_rt = build_worker_runtime(_CFG, object_storage=_OBJECT_STORAGE)
     policy = IngressPolicy(_env_file=None, accepted_submission_kinds=frozenset({"karakeep_bookmark"}))
     api_rt = build_api_runtime(_CFG, ingress_policy=policy)
 
@@ -284,33 +286,51 @@ def _registry_with_karakeep() -> FetcherRegistry:
 
 
 def test_build_startup_probes_always_includes_s3_and_database():
-    names = _probe_names(build_startup_probes(_registry_with_karakeep(), _CFG, _DOCLING_OFF, _KK))
+    names = _probe_names(
+        build_startup_probes(_registry_with_karakeep(), _CFG, _DOCLING_OFF, _KK, object_storage=_OBJECT_STORAGE)
+    )
     assert names[:2] == ["probe_s3", "probe_database"]
 
 
 def test_build_startup_probes_includes_karakeep_when_registered():
-    names = _probe_names(build_startup_probes(_registry_with_karakeep(), _CFG, _DOCLING_OFF, _KK))
+    names = _probe_names(
+        build_startup_probes(_registry_with_karakeep(), _CFG, _DOCLING_OFF, _KK, object_storage=_OBJECT_STORAGE)
+    )
     assert "probe_karakeep" in names
 
 
 def test_build_startup_probes_skips_karakeep_when_not_registered():
     # Unused adapter probe skipped: no KaraKeep resolver registered -> no KaraKeep probe.
-    names = _probe_names(build_startup_probes(FetcherRegistry(), _CFG, _DOCLING_OFF, _KK))
+    names = _probe_names(
+        build_startup_probes(FetcherRegistry(), _CFG, _DOCLING_OFF, _KK, object_storage=_OBJECT_STORAGE)
+    )
     assert "probe_karakeep" not in names
 
 
 def test_build_startup_probes_includes_picture_description_when_enabled():
-    names = _probe_names(build_startup_probes(_registry_with_karakeep(), _CFG, _DOCLING_ON, _KK))
+    names = _probe_names(
+        build_startup_probes(_registry_with_karakeep(), _CFG, _DOCLING_ON, _KK, object_storage=_OBJECT_STORAGE)
+    )
     assert "probe_picture_description" in names
 
 
 def test_build_startup_probes_skips_picture_description_when_disabled():
-    names = _probe_names(build_startup_probes(_registry_with_karakeep(), _CFG, _DOCLING_OFF, _KK))
+    names = _probe_names(
+        build_startup_probes(_registry_with_karakeep(), _CFG, _DOCLING_OFF, _KK, object_storage=_OBJECT_STORAGE)
+    )
     assert "probe_picture_description" not in names
 
 
 def test_build_worker_runtime_capabilities_expose_startup_probes():
-    rt = build_worker_runtime(_CFG)
+    rt = build_worker_runtime(_CFG, object_storage=_OBJECT_STORAGE)
     names = _probe_names(rt.capabilities.startup_probes)
     assert "probe_s3" in names
     assert "probe_database" in names
+
+
+def test_build_worker_runtime_carries_the_same_object_storage_the_caller_supplied():
+    rt = build_worker_runtime(_CFG, object_storage=_OBJECT_STORAGE)
+
+    assert rt.object_storage is _OBJECT_STORAGE
+    s3_probe = next(p for p in rt.capabilities.startup_probes if p.func.__name__ == "probe_s3")
+    assert s3_probe.args[0] is _OBJECT_STORAGE

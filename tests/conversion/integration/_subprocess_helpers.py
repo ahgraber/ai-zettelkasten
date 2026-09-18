@@ -56,9 +56,9 @@ def process_job_subprocess_success(
     delays completion (after artifacts are written) so the runner can observe the
     unit in flight — used by the graceful-drain proof.
     """
-    from aizk.conversion.utilities.hashing import compute_markdown_hash
-    from aizk.conversion.utilities.paths import OUTPUT_MARKDOWN_FILENAME, metadata_path
-    from aizk.conversion.utilities.whitespace import normalize_whitespace
+    from aizk.conversion.core.hashing import compute_markdown_hash
+    from aizk.conversion.processing.whitespace import normalize_whitespace
+    from aizk.conversion.storage.paths import OUTPUT_MARKDOWN_FILENAME, metadata_path
 
     try:
         os.setpgrp()

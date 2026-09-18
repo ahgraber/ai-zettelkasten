@@ -17,9 +17,9 @@ from aizk.conversion.core.errors import EgressPolicyError, FetchError
 from aizk.conversion.core.protocols import ContentFetcher
 from aizk.conversion.core.source_ref import SourceRef, UrlRef
 from aizk.conversion.core.types import ContentType, ConversionInput, SourceMetadata
-from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
-from aizk.conversion.utilities.egress_fetch import egress_fetch_bytes
-from aizk.conversion.utilities.fetch_helpers import fetch_karakeep_asset, is_karakeep_trusted_asset_url
+from aizk.conversion.egress.fetch import egress_fetch_bytes
+from aizk.conversion.egress.fetch_helpers import fetch_karakeep_asset, is_karakeep_trusted_asset_url
+from aizk.conversion.settings import ConversionConfig, KarakeepFetcherConfig
 
 _logger = logging.getLogger(__name__)
 

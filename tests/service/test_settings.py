@@ -1,8 +1,6 @@
-"""Tests for the service-wide settings and their overlap with the conversion settings.
+"""Tests for the service-wide settings.
 
-Two classes read the same six ``AIZK_*`` names while the settings split is in
-progress, so these tests pin that they agree — both under one environment
-snapshot and across a change to the environment.
+``ServiceSettings`` is the one reader of these six ``AIZK_*`` names.
 """
 
 from __future__ import annotations
@@ -10,11 +8,10 @@ from __future__ import annotations
 from dotenv import load_dotenv
 import pytest
 
-from aizk.conversion.utilities.config import ConversionConfig
 from aizk.service.settings import ServiceSettings
 
-#: The names both ``ConversionConfig`` and ``ServiceSettings`` read, paired with
-#: the field each lands on and a value distinct from the shipped default.
+#: The names ``ServiceSettings`` reads, paired with the field each lands on
+#: and a value distinct from the shipped default.
 SHARED_VARIABLES: list[tuple[str, str, str]] = [
     ("AIZK_LOG_LEVEL", "log_level", "DEBUG"),
     ("AIZK_LOG_FORMAT", "log_format", "text"),
@@ -33,16 +30,13 @@ def _shared_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.usefixtures("_shared_environment")
-def test_service_settings_and_conversion_config_read_the_shared_names_alike() -> None:
-    """A process holding both classes sees one value per shared name, never two."""
-    conversion = ConversionConfig()
+def test_service_settings_reads_the_shared_names() -> None:
+    """The service settings read every environment name this environment sets."""
     service = ServiceSettings()
 
-    assert [getattr(service, field) for _name, field, _value in SHARED_VARIABLES] == [
-        getattr(conversion, field) for _name, field, _value in SHARED_VARIABLES
-    ]
     assert service.trusted_hosts == ["a.internal"]
     assert service.api_port == 8123
+    assert service.api_reload is True
 
 
 def test_mlflow_section_reads_its_own_environment_names(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -91,48 +85,49 @@ def test_operator_api_defaults_off_the_conversion_port(monkeypatch: pytest.Monke
     assert service.operator_api.port != service.api_port
 
 
-def test_shipped_defaults_match_the_classes_the_sections_replace(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An unconfigured process gets the same MLflow values from the new section as from the conversion fields."""
+def test_shipped_defaults_for_mlflow_and_trusted_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unconfigured process gets the documented MLflow and trusted-hosts defaults."""
     for name in (
         "AIZK_MLFLOW__ENABLED",
         "AIZK_MLFLOW__TRACKING_URI",
         "AIZK_MLFLOW__EXPERIMENT_NAME",
-        "AIZK_MLFLOW_TRACING_ENABLED",
-        "AIZK_MLFLOW_TRACKING_URI",
-        "AIZK_MLFLOW_EXPERIMENT_NAME",
         "AIZK_TRUSTED_HOSTS",
     ):
         monkeypatch.delenv(name, raising=False)
 
     service = ServiceSettings()
-    conversion = ConversionConfig()
 
     assert (service.mlflow.enabled, service.mlflow.tracking_uri, service.mlflow.experiment_name) == (
-        conversion.mlflow_tracing_enabled,
-        conversion.mlflow_tracking_uri,
-        conversion.mlflow_experiment_name,
+        False,
+        "",
+        "",
     )
-    assert service.trusted_hosts == conversion.trusted_hosts == ["localhost", "127.0.0.1"]
+    assert service.trusted_hosts == ["localhost", "127.0.0.1"]
 
 
-def test_both_classes_follow_a_change_to_the_environment(
+def test_api_reload_defaults_to_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AIZK_API_RELOAD", raising=False)
+
+    assert ServiceSettings().api_reload is False
+
+
+def test_service_settings_follows_a_change_to_the_environment(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
-    """A dotenv file read after both classes were constructed moves both to the new value.
+    """A dotenv file read after construction moves a later construction to the new value.
 
     Settings are read at several points in a process, some of them before and
-    some after the environment is populated from a dotenv file. The two classes
-    must never disagree about a shared name at either point.
+    some after the environment is populated from a dotenv file.
     """
     env_file = tmp_path / ".env"
     env_file.write_text("AIZK_LOG_LEVEL=DEBUG\n", encoding="utf-8")
     # Registers the name for restoration, so the load below is undone at teardown.
     monkeypatch.delenv("AIZK_LOG_LEVEL", raising=False)
 
-    before = (ConversionConfig().log_level, ServiceSettings().log_level)
+    before = ServiceSettings().log_level
     load_dotenv(dotenv_path=env_file, override=True)
-    after = (ConversionConfig().log_level, ServiceSettings().log_level)
+    after = ServiceSettings().log_level
 
-    assert before == ("INFO", "INFO")
-    assert after == ("DEBUG", "DEBUG")
+    assert before == "INFO"
+    assert after == "DEBUG"

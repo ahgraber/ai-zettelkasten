@@ -12,11 +12,11 @@ from pathlib import Path
 import tempfile
 from typing import Any, ClassVar, Optional
 
+from aizk.conversion.core.hashing import build_output_config_snapshot
 from aizk.conversion.core.protocols import Converter
 from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput
 from aizk.conversion.processing.converter import convert_html, convert_pdf
-from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig
-from aizk.conversion.utilities.hashing import build_output_config_snapshot
+from aizk.conversion.settings import ConversionConfig, DoclingConverterConfig
 
 
 def _get_docling_version() -> str:

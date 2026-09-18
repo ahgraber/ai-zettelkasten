@@ -46,9 +46,9 @@ from docling_core.types.doc.document import (
 from docling_core.types.io import DocumentStream
 
 from aizk.conversion.core.errors import EgressPolicyError
-from aizk.conversion.utilities.config import DoclingConverterConfig
-from aizk.conversion.utilities.html_prefetch import PrefetchPolicy, prefetch_images
-from aizk.conversion.utilities.paths import figure_dir
+from aizk.conversion.egress.prefetch import PrefetchPolicy, prefetch_images
+from aizk.conversion.settings import DoclingConverterConfig
+from aizk.conversion.storage.paths import figure_dir
 from aizk.utilities.tracing import trace_model_call
 
 logger = logging.getLogger(__name__)

@@ -15,6 +15,8 @@ from collections.abc import Iterator
 import contextlib
 import datetime as dt
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 from uuid import UUID
 
 import pytest
@@ -26,12 +28,14 @@ from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.db.engine import get_engine
+from aizk.graph.api.dependencies import get_blob_reader
 from aizk.graph.api.main import create_app
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.enqueue import enqueue_output
 from aizk.graph.events import QueuedPayload, RequeuedPayload
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.storage.settings import ObjectStorageSettings
 
 _AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")
 _EPOCH = dt.datetime(2026, 3, 1, tzinfo=dt.timezone.utc)
@@ -362,3 +366,14 @@ def test_rejects_request_with_untrusted_host(engine) -> None:
     with TestClient(create_app(), base_url="http://evil.example.com") as foreign_client:
         resp = foreign_client.get("/v1/contextualizations")
     assert resp.status_code == 400
+
+
+def test_lifespan_sets_object_storage_and_get_blob_reader_builds_from_it(client: TestClient) -> None:
+    """The lifespan puts an ``ObjectStorageSettings`` on ``app.state``; ``get_blob_reader`` builds from it."""
+    app = client.app
+    assert isinstance(app.state.object_storage, ObjectStorageSettings)
+
+    with patch("aizk.graph.api.dependencies.S3Client") as mock_s3_client:
+        get_blob_reader(SimpleNamespace(app=app))
+
+    mock_s3_client.assert_called_once_with(app.state.object_storage)

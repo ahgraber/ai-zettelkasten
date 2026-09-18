@@ -16,20 +16,21 @@ from typing import TYPE_CHECKING, Literal
 from sqlalchemy.engine import Engine
 from sqlmodel import Session
 
+from aizk.conversion.core.hashing import compute_markdown_hash
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.processing.errors import ConversionCancelledError
 from aizk.conversion.processing.supervision import _supervise_conversion_process
 from aizk.conversion.processing.types import SubprocessMetadata, SupervisionResult, select_source_title
-from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.utilities.hashing import compute_markdown_hash
-from aizk.conversion.utilities.paths import (
+from aizk.conversion.processing.whitespace import normalize_whitespace
+from aizk.conversion.settings import ConversionConfig
+from aizk.conversion.storage.paths import (
     OUTPUT_MARKDOWN_FILENAME,
     metadata_path,
 )
-from aizk.conversion.utilities.whitespace import normalize_whitespace
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 from aizk.service.bootstrap import load_process_dotenv_once
+from aizk.storage.settings import ObjectStorageSettings
 
 if TYPE_CHECKING:
     import threading
@@ -103,12 +104,13 @@ def _process_job_subprocess(
     def _do_convert():
         load_process_dotenv_once()
         config = ConversionConfig()
+        object_storage = ObjectStorageSettings()
         engine = get_engine(DatabaseConfig().database_url)
 
         source_ref = TypeAdapter(_SourceRef).validate_python(json.loads(source_ref_json))
         _raise_if_cancelled(job_id, engine)
 
-        runtime = build_worker_runtime(config)
+        runtime = build_worker_runtime(config, object_storage=object_storage)
         converter_name = config.worker_converter_name
 
         _report_status(status_queue, event="phase", message="preparing_input")

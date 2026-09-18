@@ -20,22 +20,22 @@ from aizk.conversion.core.errors import (
     FetchError,
     GitHubReadmeNotFoundError,
 )
-from aizk.conversion.utilities.arxiv_utils import get_arxiv_id, is_arxiv_url
-from aizk.conversion.utilities.bookmark_utils import (
+from aizk.conversion.egress.arxiv_utils import get_arxiv_id, is_arxiv_url
+from aizk.conversion.egress.bookmark_utils import (
     get_bookmark_asset_id,
     get_bookmark_html_content,
     get_bookmark_source_url,
     is_pdf_asset,
 )
-from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.utilities.fetch_helpers import fetch_arxiv_pdf, fetch_karakeep_asset
-from aizk.conversion.utilities.github_utils import (
+from aizk.conversion.egress.fetch_helpers import fetch_arxiv_pdf, fetch_karakeep_asset
+from aizk.conversion.egress.github_utils import (
     is_github_pages_url,
     is_github_repo_root,
     is_github_url,
     parse_github_owner_repo,
     source_mentions_readme,
 )
+from aizk.conversion.settings import ConversionConfig
 from karakeep_client.models import Bookmark
 
 logger = logging.getLogger(__name__)

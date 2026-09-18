@@ -58,9 +58,9 @@ def test_cross_owner_same_key_creates_distinct_jobs_sharing_a_source(db_session)
     """
     from sqlmodel import select
 
+    from aizk.conversion.core.hashing import compute_idempotency_key
     from aizk.conversion.datamodel.job import ConversionJob
     from aizk.conversion.datamodel.source import Source
-    from aizk.conversion.utilities.hashing import compute_idempotency_key
     from tests.conversion._helpers import make_job, make_source
 
     bookmark_id = "bm_xowner_idem"

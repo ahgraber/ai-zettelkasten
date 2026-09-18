@@ -14,11 +14,11 @@ from aizk.conversion.core.errors import (
     FetchTooLargeError,
     RedirectEgressViolation,
 )
-from aizk.conversion.utilities.egress import ValidatedDestination
-from aizk.conversion.utilities.egress_fetch import (
+from aizk.conversion.egress.fetch import (
     _strip_auth_headers,
     egress_fetch_bytes,
 )
+from aizk.conversion.egress.policy import ValidatedDestination
 
 
 def _stub_dns_returning(monkeypatch: pytest.MonkeyPatch, host_to_ip: dict[str, str]) -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from aizk.conversion.utilities.fetch_helpers import is_karakeep_trusted_asset_url
+from aizk.conversion.egress.fetch_helpers import is_karakeep_trusted_asset_url
 
 
 @pytest.mark.parametrize(

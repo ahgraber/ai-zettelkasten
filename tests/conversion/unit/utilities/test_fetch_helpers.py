@@ -18,8 +18,8 @@ from aizk.conversion.core.errors import (
     EgressPolicyError,
     FetchTooLargeError,
 )
+from aizk.conversion.egress.fetch_helpers import fetch_arxiv_pdf
 from aizk.conversion.utilities.config import ConversionConfig
-from aizk.conversion.utilities.fetch_helpers import fetch_arxiv_pdf
 
 
 def _run(coro):
@@ -38,12 +38,12 @@ def test_fetch_arxiv_pdf_propagates_fetch_too_large_error_unwrapped(monkeypatch)
         raise FetchTooLargeError("exceeds configured limit of 5 bytes")
 
     monkeypatch.setattr(
-        "aizk.conversion.utilities.fetch_helpers.egress_fetch_bytes",
+        "aizk.conversion.egress.fetch_helpers.egress_fetch_bytes",
         _fake,
     )
     # Bypass the rate limiter so this test does not sleep.
     monkeypatch.setattr(
-        "aizk.conversion.utilities.fetch_helpers._arxiv_rate_limiter.acquire",
+        "aizk.conversion.egress.fetch_helpers._arxiv_rate_limiter.acquire",
         lambda: asyncio.sleep(0),
     )
 
@@ -59,11 +59,11 @@ def test_fetch_arxiv_pdf_propagates_egress_policy_error_unwrapped(monkeypatch):
         raise DenyListDestination("denied")
 
     monkeypatch.setattr(
-        "aizk.conversion.utilities.fetch_helpers.egress_fetch_bytes",
+        "aizk.conversion.egress.fetch_helpers.egress_fetch_bytes",
         _fake,
     )
     monkeypatch.setattr(
-        "aizk.conversion.utilities.fetch_helpers._arxiv_rate_limiter.acquire",
+        "aizk.conversion.egress.fetch_helpers._arxiv_rate_limiter.acquire",
         lambda: asyncio.sleep(0),
     )
 
@@ -79,11 +79,11 @@ def test_fetch_arxiv_pdf_wraps_generic_transient_exception_as_retryable(monkeypa
         raise RuntimeError("connection reset")
 
     monkeypatch.setattr(
-        "aizk.conversion.utilities.fetch_helpers.egress_fetch_bytes",
+        "aizk.conversion.egress.fetch_helpers.egress_fetch_bytes",
         _fake,
     )
     monkeypatch.setattr(
-        "aizk.conversion.utilities.fetch_helpers._arxiv_rate_limiter.acquire",
+        "aizk.conversion.egress.fetch_helpers._arxiv_rate_limiter.acquire",
         lambda: asyncio.sleep(0),
     )
 

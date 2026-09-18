@@ -19,7 +19,7 @@ from sqlmodel import Session
 # (`socket.gethostbyname`) resolve any host to a public IP without leaving
 # the test sandbox. Per-test overrides via `monkeypatch.setattr` still work
 # because both functions are read from the `socket` module at call time.
-# See `aizk.conversion.utilities.egress._resolve_with_deadline` and
+# See `aizk.conversion.egress.policy._resolve_with_deadline` and
 # `docling.backend.html_backend._validate_url_safety`.
 _REAL_GETADDRINFO = socket.getaddrinfo
 _REAL_GETHOSTBYNAME = socket.gethostbyname
@@ -36,7 +36,7 @@ def _public_hostbyname_stub(_host: str) -> str:
 socket.getaddrinfo = _public_addr_stub  # type: ignore[assignment]
 socket.gethostbyname = _public_hostbyname_stub  # type: ignore[assignment]
 
-from aizk.conversion.utilities.config import (  # noqa: E402
+from aizk.conversion.settings import (  # noqa: E402
     ConversionConfig,
     DoclingConverterConfig,
     KarakeepFetcherConfig,
@@ -44,6 +44,8 @@ from aizk.conversion.utilities.config import (  # noqa: E402
 from aizk.db.backends.sqlite import SqliteDurabilityConfig  # noqa: E402
 from aizk.db.config import DatabaseConfig  # noqa: E402
 from aizk.db.engine import get_engine  # noqa: E402
+from aizk.service.settings import ServiceSettings  # noqa: E402
+from aizk.storage.settings import ObjectStorageSettings  # noqa: E402
 from karakeep_client.models import Bookmark  # noqa: E402
 
 # Env-var aliases the harness intentionally owns — kept in sync with `set_test_env` below.
@@ -75,6 +77,8 @@ def _conversion_config_aliases() -> frozenset[str]:
         KarakeepFetcherConfig,
         DatabaseConfig,
         SqliteDurabilityConfig,
+        ObjectStorageSettings,
+        ServiceSettings,
     ):
         prefix = cls.model_config.get("env_prefix", "")
         for field_name in cls.model_fields:

@@ -10,7 +10,7 @@ import logging
 
 import httpx
 
-from aizk.conversion.utilities.config import DoclingConverterConfig, KarakeepFetcherConfig
+from aizk.conversion.settings import DoclingConverterConfig, KarakeepFetcherConfig
 from aizk.db.backends.sqlite import SqliteDurabilityConfig
 from aizk.service.settings import ServiceSettings
 from aizk.utilities.errors import StartupValidationError

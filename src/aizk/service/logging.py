@@ -2,10 +2,10 @@
 
 The conversion code attaches forensic context to WARNING records via
 ``logger.warning(..., extra={...})`` — most notably at the egress enforcement
-sites in :mod:`aizk.conversion.utilities.egress`,
-:mod:`aizk.conversion.utilities.egress_fetch`,
-:mod:`aizk.conversion.utilities.html_prefetch`, and
-:mod:`aizk.conversion.utilities.paths`. Those ``extra`` keys (``url``, ``host``,
+sites in :mod:`aizk.conversion.egress.policy`,
+:mod:`aizk.conversion.egress.fetch`,
+:mod:`aizk.conversion.egress.prefetch`, and
+:mod:`aizk.conversion.storage.paths`. Those ``extra`` keys (``url``, ``host``,
 ``ip``, ``error_class``, ``hop_index``, etc.) are the only operator-visible
 record of which destination was rejected and why; the persisted
 ``error_message`` is intentionally sanitized to avoid echoing the rejected

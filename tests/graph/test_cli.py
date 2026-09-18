@@ -27,7 +27,7 @@ def _stub_process_setup(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(service_cli, "configure_logging", lambda _settings: None)
     monkeypatch.setattr(service_cli, "configure_mlflow_tracing", lambda _settings: None)
     monkeypatch.setattr(cli, "set_process_title", lambda _title: None)
-    monkeypatch.setattr(cli, "ConversionConfig", lambda: SimpleNamespace())
+    monkeypatch.setattr(cli, "ObjectStorageSettings", lambda: SimpleNamespace())
 
 
 def test_every_command_titles_its_process() -> None:

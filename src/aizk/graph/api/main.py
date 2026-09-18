@@ -1,6 +1,6 @@
 """Build the graph operator FastAPI application.
 
-The lifespan loads shared configuration and admission settings into
+The lifespan loads object-storage, auth, and admission settings into
 ``app.state`` for route dependencies.
 """
 
@@ -13,7 +13,6 @@ from fastapi import FastAPI
 
 from aizk.console.dashboard import router as console_dashboard_router
 from aizk.console.routes import router as console_router
-from aizk.conversion.utilities.config import ConversionConfig
 from aizk.graph.api.routes import router
 from aizk.graph.api.routes.extraction import router as extraction_router
 from aizk.graph.api.routes.ui import router as explorer_router
@@ -21,6 +20,7 @@ from aizk.graph.config import AdmissionConfig
 from aizk.service.api import build_app
 from aizk.service.auth import AuthSettings
 from aizk.service.settings import ServiceSettings
+from aizk.storage.settings import ObjectStorageSettings
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -28,8 +28,8 @@ if TYPE_CHECKING:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> "AsyncIterator[None]":
-    """Load the shared configuration, auth settings, and admission settings onto application state."""
-    app.state.config = ConversionConfig()
+    """Load the object-storage, auth, and admission settings onto application state."""
+    app.state.object_storage = ObjectStorageSettings()
     app.state.auth_settings = AuthSettings()
     app.state.admission_config = AdmissionConfig()
     yield

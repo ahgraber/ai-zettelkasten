@@ -27,8 +27,8 @@ from docling.datamodel.base_models import InputFormat
 from docling.datamodel.document import InputDocument
 from docling_core.types.doc.document import PictureItem
 
-from aizk.conversion.utilities import html_prefetch
-from aizk.conversion.utilities.html_prefetch import prefetch_images
+from aizk.conversion.egress import prefetch as html_prefetch
+from aizk.conversion.egress.prefetch import prefetch_images
 
 # ---------------------------------------------------------------------------
 # Helpers

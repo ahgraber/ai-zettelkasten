@@ -11,7 +11,7 @@ from sqlalchemy.engine import Engine
 
 from fastapi import APIRouter, Request, Response, status
 
-from aizk.conversion.api.dependencies import get_config
+from aizk.conversion.api.dependencies import get_object_storage
 from aizk.conversion.api.schemas import CheckResult, HealthResponse
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
@@ -90,9 +90,8 @@ async def liveness() -> HealthResponse:
 @router.get("/ready")
 async def readiness(request: Request, response: Response) -> HealthResponse:
     """Readiness probe — validates DB connectivity and S3 reachability."""
-    config = get_config(request)
     engine = get_engine(DatabaseConfig().database_url)
-    s3_client = S3Client(config)
+    s3_client = S3Client(get_object_storage(request))
 
     docling_cfg = request.app.state.docling_config
     check_coros = [_check_db(engine), _check_s3(s3_client)]

@@ -9,9 +9,10 @@ from aizk.conversion.core.coordinator import ConversionCoordinator
 from aizk.conversion.core.protocols import ResourceGuard
 from aizk.conversion.core.registry import ConverterRegistry, FetcherRegistry
 from aizk.conversion.core.types import ContentType
-from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
+from aizk.conversion.settings import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
 from aizk.conversion.wiring.capabilities import DeploymentCapabilities
 from aizk.conversion.wiring.registrations import build_startup_probes, register_ready_adapters
+from aizk.storage.settings import ObjectStorageSettings
 
 
 class _SemaphoreGuard:
@@ -30,14 +31,15 @@ class _SemaphoreGuard:
 
 @dataclass
 class WorkerRuntime:
-    """Assembled worker-side runtime: coordinator, resource guard, and capabilities."""
+    """Assembled worker-side runtime: coordinator, resource guard, capabilities, and object storage."""
 
     coordinator: ConversionCoordinator
     resource_guard: ResourceGuard
     capabilities: DeploymentCapabilities
+    object_storage: ObjectStorageSettings
 
 
-def build_worker_runtime(cfg: ConversionConfig) -> WorkerRuntime:
+def build_worker_runtime(cfg: ConversionConfig, *, object_storage: ObjectStorageSettings) -> WorkerRuntime:
     """Build and return a fully wired ``WorkerRuntime``.
 
     Populates fresh registries, registers all production-ready adapters,
@@ -45,6 +47,8 @@ def build_worker_runtime(cfg: ConversionConfig) -> WorkerRuntime:
 
     Args:
         cfg: Conversion configuration forwarded to adapters that require it.
+        object_storage: Object-storage settings for the S3 startup probe and
+            the assembled runtime.
 
     Returns:
         A ``WorkerRuntime`` ready for use in a worker process.
@@ -70,13 +74,16 @@ def build_worker_runtime(cfg: ConversionConfig) -> WorkerRuntime:
         resolve_fetcher=resolve_fetcher,
         resolve_converter=resolve_converter,
     )
-    startup_probes = build_startup_probes(fetcher_registry, cfg, docling_cfg, karakeep_cfg)
+    startup_probes = build_startup_probes(
+        fetcher_registry, cfg, docling_cfg, karakeep_cfg, object_storage=object_storage
+    )
     capabilities = DeploymentCapabilities(fetcher_registry, converter_registry, startup_probes=startup_probes)
 
     return WorkerRuntime(
         coordinator=coordinator,
         resource_guard=resource_guard,
         capabilities=capabilities,
+        object_storage=object_storage,
     )
 
 
