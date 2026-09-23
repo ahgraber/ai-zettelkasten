@@ -17,7 +17,6 @@ The engine has no implicit-BEGIN listener: the runner and the handler each emit
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import datetime
 import json
 from pathlib import Path
@@ -42,7 +41,7 @@ from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus
 from aizk.pipeline.runner import StageRunner
-from aizk.utilities.hashing import compute_markdown_hash
+from tests.fakes.markdown import StubMarkdownSource
 
 _AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")
 _OUTPUT_ID = 42
@@ -59,17 +58,6 @@ Content for the first section that the splitter carves into a chunk.
 
 Content for the second section, distinct from the first.
 """
-
-
-@dataclass
-class _StubMarkdownSource:
-    """A deterministic Markdown source returning fixed text with its true hash."""
-
-    text: str
-
-    def load(self, conversion_output_id: int) -> LoadedMarkdown:
-        """Return the stub Markdown and its computed hash for any locator."""
-        return LoadedMarkdown(text=self.text, markdown_hash_xx64=compute_markdown_hash(self.text))
 
 
 class _AlwaysCurrent:
@@ -94,7 +82,7 @@ def _make_engine(tmp_path: Path):
 def _make_runner(engine, client: StubLLMClient) -> StageRunner:
     """Build a StageRunner over the contextualization handler with test-fast timing."""
     handler = ContextualizationStageHandler(
-        engine, client, _StubMarkdownSource(_MARKDOWN), _AlwaysCurrent(), model_config=STUB_MODEL_CONFIG
+        engine, client, StubMarkdownSource(_MARKDOWN), _AlwaysCurrent(), model_config=STUB_MODEL_CONFIG
     )
     return StageRunner(
         handler,
@@ -109,7 +97,7 @@ def _make_runner(engine, client: StubLLMClient) -> StageRunner:
 def _make_handler(engine) -> ContextualizationStageHandler:
     """Build a handler over the test engine with deterministic dependencies."""
     return ContextualizationStageHandler(
-        engine, StubLLMClient(), _StubMarkdownSource(_MARKDOWN), _AlwaysCurrent(), model_config=STUB_MODEL_CONFIG
+        engine, StubLLMClient(), StubMarkdownSource(_MARKDOWN), _AlwaysCurrent(), model_config=STUB_MODEL_CONFIG
     )
 
 
@@ -336,7 +324,7 @@ def test_execute_honors_a_durable_cancel_committed_mid_run(tmp_path: Path) -> No
             return super().generate(prompt)
 
     handler = ContextualizationStageHandler(
-        engine, _CancellingClient(), _StubMarkdownSource(_MARKDOWN), _AlwaysCurrent(), model_config=STUB_MODEL_CONFIG
+        engine, _CancellingClient(), StubMarkdownSource(_MARKDOWN), _AlwaysCurrent(), model_config=STUB_MODEL_CONFIG
     )
     result = handler.execute(job_id)
 

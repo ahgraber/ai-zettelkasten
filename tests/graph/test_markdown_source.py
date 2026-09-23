@@ -16,19 +16,10 @@ from sqlmodel import Session, create_engine
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.graph.markdown_source import S3MarkdownSource
 from aizk.utilities.hashing import compute_markdown_hash
+from tests.fakes.storage import MemoryS3
 
 _MARKDOWN = "# Title\n\nSome body text for the source document.\n"
 _AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")
-
-
-class _FakeBlobReader:
-    """In-memory blob reader keyed by storage key."""
-
-    def __init__(self, blobs: dict[str, bytes]) -> None:
-        self._blobs = blobs
-
-    def get_object_bytes(self, s3_key: str) -> bytes:
-        return self._blobs[s3_key]
 
 
 def _engine_with_output(tmp_path: Path, *, markdown_hash: str):
@@ -59,7 +50,7 @@ def test_load_returns_markdown_text_and_recorded_hash(tmp_path: Path) -> None:
     """The source reads the blob at the output's markdown_key and returns its recorded hash."""
     markdown_hash = compute_markdown_hash(_MARKDOWN)
     engine, output_id = _engine_with_output(tmp_path, markdown_hash=markdown_hash)
-    reader = _FakeBlobReader({"prefix/output.md": _MARKDOWN.encode("utf-8")})
+    reader = MemoryS3({"prefix/output.md": _MARKDOWN.encode("utf-8")})
 
     loaded = S3MarkdownSource(engine, reader).load(output_id)
 
@@ -70,7 +61,7 @@ def test_load_returns_markdown_text_and_recorded_hash(tmp_path: Path) -> None:
 def test_load_rejects_unknown_output(tmp_path: Path) -> None:
     """A locator with no conversion output row is rejected before any blob read."""
     engine, _ = _engine_with_output(tmp_path, markdown_hash="0011223344556677")
-    source = S3MarkdownSource(engine, _FakeBlobReader({}))
+    source = S3MarkdownSource(engine, MemoryS3({}))
 
     with pytest.raises(ValueError, match="conversion output 999 not found"):
         source.load(999)

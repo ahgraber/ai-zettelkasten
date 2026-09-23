@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+import multiprocessing as mp
 import threading
 
 from aizk.conversion.core.coordinator import ConversionCoordinator
@@ -12,6 +14,7 @@ from aizk.conversion.core.types import ContentType
 from aizk.conversion.settings import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
 from aizk.conversion.wiring.capabilities import DeploymentCapabilities
 from aizk.conversion.wiring.registrations import build_startup_probes, register_ready_adapters
+from aizk.conversion.wiring.subprocess import _spawn_conversion_subprocess
 from aizk.storage.settings import ObjectStorageSettings
 
 
@@ -31,12 +34,13 @@ class _SemaphoreGuard:
 
 @dataclass
 class WorkerRuntime:
-    """Assembled worker-side runtime: coordinator, resource guard, capabilities, and object storage."""
+    """Assembled worker-side runtime: coordinator, resource guard, capabilities, object storage, and subprocess spawn function."""
 
     coordinator: ConversionCoordinator
     resource_guard: ResourceGuard
     capabilities: DeploymentCapabilities
     object_storage: ObjectStorageSettings
+    spawn_subprocess: Callable[..., tuple[mp.Process, mp.Queue]]
 
 
 def build_worker_runtime(cfg: ConversionConfig, *, object_storage: ObjectStorageSettings) -> WorkerRuntime:
@@ -84,6 +88,7 @@ def build_worker_runtime(cfg: ConversionConfig, *, object_storage: ObjectStorage
         resource_guard=resource_guard,
         capabilities=capabilities,
         object_storage=object_storage,
+        spawn_subprocess=_spawn_conversion_subprocess,
     )
 
 

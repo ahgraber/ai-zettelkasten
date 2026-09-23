@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
-import queue as queue_module
 from uuid import uuid4
 
-import boto3
-from botocore.stub import ANY, Stubber
 import pytest
 from sqlmodel import Session, select
 
@@ -21,11 +17,14 @@ from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.handler import ConversionStageHandler
-from aizk.conversion.processing import subproc
 from aizk.conversion.processing.errors import ConversionCancelledError
 from aizk.conversion.settings import ConversionConfig, DoclingConverterConfig
+from aizk.conversion.wiring import subprocess as wiring_subprocess
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
+from tests.fakes.process import InlineContext
+from tests.fakes.runtime import fake_worker_runtime
+from tests.fakes.storage import install_memory_s3
 
 
 def _run_conversion(job_id: int, config: ConversionConfig, runtime) -> None:
@@ -54,46 +53,6 @@ def _run_conversion(job_id: int, config: ConversionConfig, runtime) -> None:
         # is observed as a clean return. The terminal CANCELLED write is owned by
         # the job's API-driven cancel, not by execute.
         pass
-
-
-class _InlineProcess:
-    """Process that executes target immediately in the same process for testing."""
-
-    pid = None
-
-    def __init__(self, target, args) -> None:
-        self._target = target
-        self._args = args
-        self.exitcode = None
-
-    def start(self) -> None:
-        try:
-            self._target(*self._args)
-            self.exitcode = 0
-        except Exception:
-            self.exitcode = 1
-
-    def is_alive(self) -> bool:
-        return False
-
-    def join(self, timeout: float | None = None) -> None:
-        return
-
-    def terminate(self) -> None:
-        return
-
-    def kill(self) -> None:
-        return
-
-
-class _InlineContext:
-    """Context that provides Queue and inline-executing Process for testing."""
-
-    def Queue(self):  # noqa: N802
-        return queue_module.Queue()
-
-    def Process(self, target, args, daemon: bool):  # noqa: N802
-        return _InlineProcess(target, args)
 
 
 def _make_subprocess_stub(markdown: str = "# Test"):
@@ -151,48 +110,6 @@ def _make_cancelling_subprocess_stub():
     return _stub
 
 
-def _make_fake_runtime():
-    from unittest.mock import MagicMock
-
-    from aizk.conversion.wiring.worker import WorkerRuntime
-    from aizk.storage.settings import ObjectStorageSettings
-
-    fake_caps = MagicMock()
-    fake_caps.converter_requires_gpu.return_value = False
-    return WorkerRuntime(
-        coordinator=MagicMock(),
-        resource_guard=MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False)),
-        capabilities=fake_caps,
-        object_storage=ObjectStorageSettings(_env_file=None),
-    )
-
-
-def _install_memory_s3(monkeypatch) -> dict[str, bytes]:
-    storage: dict[str, bytes] = {}
-
-    def _init_s3_client(self, config):
-        self.config = config
-        self.bucket = config.s3_bucket_name
-        self.client = None
-
-    def _upload_file(self, local_path, s3_key: str) -> str:
-        storage[s3_key] = local_path.read_bytes()
-        return f"s3://{self.bucket}/{s3_key}"
-
-    def _upload_fileobj(self, file_obj, s3_key: str) -> str:
-        storage[s3_key] = file_obj.read()
-        return f"s3://{self.bucket}/{s3_key}"
-
-    def _get_object_bytes(self, s3_key: str) -> bytes:
-        return storage[s3_key]
-
-    monkeypatch.setattr("aizk.storage.s3.S3Client.__init__", _init_s3_client)
-    monkeypatch.setattr("aizk.storage.s3.S3Client.upload_file", _upload_file)
-    monkeypatch.setattr("aizk.storage.s3.S3Client.upload_fileobj", _upload_fileobj)
-    monkeypatch.setattr("aizk.storage.s3.S3Client.get_object_bytes", _get_object_bytes)
-    return storage
-
-
 def _fake_convert_pdf(content: bytes, temp_dir, config):
     return f"# {content.decode('ascii')}\n", [], None
 
@@ -227,13 +144,13 @@ def _create_job_for_ref(db_session, ref, *, idempotency_key: str) -> int:
 
 
 def _process_and_get_markdown(db_session, monkeypatch, *, ref, idempotency_key: str) -> str:
-    monkeypatch.setattr(subproc.mp, "get_context", lambda _ctx: _InlineContext())
+    monkeypatch.setattr(wiring_subprocess.mp, "get_context", lambda _ctx: InlineContext())
     monkeypatch.setattr("aizk.conversion.adapters.converters.docling.convert_pdf", _fake_convert_pdf)
-    storage = _install_memory_s3(monkeypatch)
+    storage = install_memory_s3(monkeypatch)
 
     job_id = _create_job_for_ref(db_session, ref, idempotency_key=idempotency_key)
     config = ConversionConfig(_env_file=None)
-    _run_conversion(job_id, config, _make_fake_runtime())
+    _run_conversion(job_id, config, fake_worker_runtime())
 
     engine = get_engine(DatabaseConfig().database_url)
     with Session(engine) as session:
@@ -245,42 +162,11 @@ def _process_and_get_markdown(db_session, monkeypatch, *, ref, idempotency_key: 
 
 def test_conversion_flow_end_to_end(monkeypatch):
     """Exercise API submit + worker processing with stubbed external services."""
-    monkeypatch.setattr(subproc.mp, "get_context", lambda _ctx: _InlineContext())
-    monkeypatch.setattr(subproc, "_process_job_subprocess", _make_subprocess_stub())
+    monkeypatch.setattr(wiring_subprocess.mp, "get_context", lambda _ctx: InlineContext())
+    monkeypatch.setattr(wiring_subprocess, "_process_job_subprocess", _make_subprocess_stub())
     app = create_app()
 
-    s3_client = boto3.client("s3", region_name="us-east-1")
-    stubber = Stubber(s3_client)
-    stubber.activate()
-
-    def _init_s3_client(self, config):
-        self.config = config
-        self.client = s3_client
-        self.bucket = config.s3_bucket_name
-
-    def _upload_file(self, local_path, s3_key: str) -> str:
-        body = local_path.read_bytes()
-        return _stub_put_and_head(self, s3_key, body)
-
-    def _upload_fileobj(self, file_obj, s3_key: str) -> str:
-        body = file_obj.read()
-        return _stub_put_and_head(self, s3_key, body)
-
-    def _stub_put_and_head(s3, s3_key: str, body: bytes) -> str:
-        stubber.add_response("put_object", {}, {"Bucket": s3.bucket, "Key": s3_key, "Body": ANY})
-        s3.client.put_object(Bucket=s3.bucket, Key=s3_key, Body=body)
-        md5_hash = hashlib.md5(body).hexdigest()  # noqa: S324
-        stubber.add_response(
-            "head_object",
-            {"ETag": f'"{md5_hash}"', "ContentLength": len(body)},
-            {"Bucket": s3.bucket, "Key": s3_key},
-        )
-        s3.client.head_object(Bucket=s3.bucket, Key=s3_key)
-        return f"s3://{s3.bucket}/{s3_key}"
-
-    monkeypatch.setattr("aizk.conversion.processing.uploader.S3Client.__init__", _init_s3_client)
-    monkeypatch.setattr("aizk.conversion.processing.uploader.S3Client.upload_file", _upload_file)
-    monkeypatch.setattr("aizk.conversion.processing.uploader.S3Client.upload_fileobj", _upload_fileobj)
+    install_memory_s3(monkeypatch)
 
     with TestClient(app) as client:
         response = client.post(
@@ -291,7 +177,7 @@ def test_conversion_flow_end_to_end(monkeypatch):
         job_id = response.json()["id"]
 
         config = ConversionConfig(_env_file=None)
-        _run_conversion(job_id, config, _make_fake_runtime())
+        _run_conversion(job_id, config, fake_worker_runtime())
 
         job_response = client.get(f"/v1/jobs/{job_id}")
         assert job_response.status_code == 200
@@ -300,8 +186,8 @@ def test_conversion_flow_end_to_end(monkeypatch):
 
 def test_conversion_flow_cancelled_job_skips_upload(monkeypatch):
     """Stop processing when a running job is cancelled mid-execution."""
-    monkeypatch.setattr(subproc.mp, "get_context", lambda _ctx: _InlineContext())
-    monkeypatch.setattr(subproc, "_process_job_subprocess", _make_cancelling_subprocess_stub())
+    monkeypatch.setattr(wiring_subprocess.mp, "get_context", lambda _ctx: InlineContext())
+    monkeypatch.setattr(wiring_subprocess, "_process_job_subprocess", _make_cancelling_subprocess_stub())
 
     upload_called = []
     monkeypatch.setattr(
@@ -323,7 +209,7 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch):
         job_id = response.json()["id"]
 
         config = ConversionConfig(_env_file=None)
-        _run_conversion(job_id, config, _make_fake_runtime())
+        _run_conversion(job_id, config, fake_worker_runtime())
 
     assert not upload_called, "Upload should not run for cancelled jobs"
 
@@ -362,9 +248,9 @@ def test_submit_job_idempotency_key_disables_picture_description_without_api_key
 
 
 def test_conversion_flow_proceeds_when_source_enrichment_fails(monkeypatch, db_session) -> None:
-    monkeypatch.setattr(subproc.mp, "get_context", lambda _ctx: _InlineContext())
+    monkeypatch.setattr(wiring_subprocess.mp, "get_context", lambda _ctx: InlineContext())
     monkeypatch.setattr("aizk.conversion.adapters.converters.docling.convert_pdf", _fake_convert_pdf)
-    storage = _install_memory_s3(monkeypatch)
+    storage = install_memory_s3(monkeypatch)
 
     async def _fake_fetch_url(url: str, timeout: int) -> bytes:
         assert url == "https://arxiv.org/pdf/2301.12345"
@@ -380,7 +266,7 @@ def test_conversion_flow_proceeds_when_source_enrichment_fails(monkeypatch, db_s
     job_id = _create_job_for_ref(db_session, ref, idempotency_key="4" * 64)
     config = ConversionConfig(_env_file=None)
 
-    _run_conversion(job_id, config, _make_fake_runtime())
+    _run_conversion(job_id, config, fake_worker_runtime())
 
     engine = get_engine(DatabaseConfig().database_url)
     with Session(engine) as session:
@@ -456,8 +342,8 @@ def test_conversion_flow_enriches_source_and_manifest_end_to_end(monkeypatch, db
     """Karakeep HTML bookmark flows resolver-observed metadata into Source row, manifest, and ConversionOutput."""
     from aizk.utilities.url_utils import normalize_url
 
-    monkeypatch.setattr(subproc.mp, "get_context", lambda _ctx: _InlineContext())
-    storage = _install_memory_s3(monkeypatch)
+    monkeypatch.setattr(wiring_subprocess.mp, "get_context", lambda _ctx: InlineContext())
+    storage = install_memory_s3(monkeypatch)
 
     bookmark = _make_html_link_bookmark(
         bookmark_id="bm_enrich_e2e",
@@ -471,7 +357,7 @@ def test_conversion_flow_enriches_source_and_manifest_end_to_end(monkeypatch, db
     job_id = _create_job_for_ref(db_session, ref, idempotency_key="e" * 64)
     config = ConversionConfig(_env_file=None)
 
-    _run_conversion(job_id, config, _make_fake_runtime())
+    _run_conversion(job_id, config, fake_worker_runtime())
 
     engine = get_engine(DatabaseConfig().database_url)
     with Session(engine) as session:
@@ -505,8 +391,8 @@ def test_conversion_flow_source_title_branches_end_to_end(
     monkeypatch, db_session, document_title, bookmark_title, expected_source_title
 ) -> None:
     """Subprocess select_source_title runs through the IPC bridge to produce the manifest title for each branch."""
-    monkeypatch.setattr(subproc.mp, "get_context", lambda _ctx: _InlineContext())
-    storage = _install_memory_s3(monkeypatch)
+    monkeypatch.setattr(wiring_subprocess.mp, "get_context", lambda _ctx: InlineContext())
+    storage = install_memory_s3(monkeypatch)
 
     bookmark_id = f"bm_title_branch_{abs(hash((document_title, bookmark_title))) % 10_000}"
     bookmark = _make_html_link_bookmark(bookmark_id=bookmark_id, title=bookmark_title, url=_ENRICH_BOOKMARK_URL)
@@ -520,7 +406,7 @@ def test_conversion_flow_source_title_branches_end_to_end(
     )
     config = ConversionConfig(_env_file=None)
 
-    _run_conversion(job_id, config, _make_fake_runtime())
+    _run_conversion(job_id, config, fake_worker_runtime())
 
     engine = get_engine(DatabaseConfig().database_url)
     with Session(engine) as session:

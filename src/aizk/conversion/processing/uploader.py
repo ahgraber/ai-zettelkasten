@@ -14,6 +14,8 @@ from uuid import UUID
 from sqlmodel import Session, select
 
 from aizk.conversion.core.errors import MissingOwnerOnJob, WorkspaceEscape
+from aizk.conversion.core.source_ref import SourceRef
+from aizk.conversion.core.types import SOURCE_TYPE_BY_KIND
 from aizk.conversion.datamodel.events import (
     ConversionEventKind,
     SucceededPayload,
@@ -148,11 +150,8 @@ def _prepare_upload(job_id: int, workspace: Path, object_storage: ObjectStorageS
 
     from pydantic import TypeAdapter, ValidationError
 
-    from aizk.conversion.core.source_ref import SourceRef as _SourceRef
-    from aizk.conversion.core.types import SOURCE_TYPE_BY_KIND
-
     try:
-        terminal_ref: _SourceRef = TypeAdapter(_SourceRef).validate_python(subprocess_meta.terminal_ref)
+        terminal_ref: SourceRef = TypeAdapter(SourceRef).validate_python(subprocess_meta.terminal_ref)
     except ValidationError as exc:
         raise SubprocessMetadataInvalid(f"Invalid terminal_ref in metadata.json for job {job_id}: {exc}") from exc
     source_type = SOURCE_TYPE_BY_KIND.get(terminal_ref.kind, "other")
@@ -184,7 +183,7 @@ def _prepare_upload(job_id: int, workspace: Path, object_storage: ObjectStorageS
 
         submitted_ref_raw = json.loads(job.source_ref) if job.source_ref else None
         submitted_ref = (
-            TypeAdapter(_SourceRef).validate_python(submitted_ref_raw) if submitted_ref_raw else terminal_ref
+            TypeAdapter(SourceRef).validate_python(submitted_ref_raw) if submitted_ref_raw else terminal_ref
         )
         converter_name = subprocess_meta.config_snapshot.get("converter_name", "docling")
         adapter_snapshot = {k: v for k, v in subprocess_meta.config_snapshot.items() if k != "converter_name"}

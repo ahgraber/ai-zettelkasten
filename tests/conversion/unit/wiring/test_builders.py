@@ -24,6 +24,7 @@ from aizk.conversion.wiring.api import ApiRuntime, build_api_runtime
 from aizk.conversion.wiring.capabilities import DeploymentCapabilities, SubmissionCapabilities
 from aizk.conversion.wiring.ingress_policy import IngressPolicy
 from aizk.conversion.wiring.registrations import build_startup_probes, register_fetchers
+from aizk.conversion.wiring.subprocess import _spawn_conversion_subprocess
 from aizk.conversion.wiring.testing import TestRuntime, build_test_runtime
 from aizk.conversion.wiring.worker import WorkerRuntime, build_worker_runtime
 from aizk.storage.settings import ObjectStorageSettings
@@ -332,5 +333,6 @@ def test_build_worker_runtime_carries_the_same_object_storage_the_caller_supplie
     rt = build_worker_runtime(_CFG, object_storage=_OBJECT_STORAGE)
 
     assert rt.object_storage is _OBJECT_STORAGE
+    assert rt.spawn_subprocess is _spawn_conversion_subprocess
     s3_probe = next(p for p in rt.capabilities.startup_probes if p.func.__name__ == "probe_s3")
     assert s3_probe.args[0] is _OBJECT_STORAGE

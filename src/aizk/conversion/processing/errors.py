@@ -47,6 +47,13 @@ class JobDataIntegrityError(RuntimeError):
     retryable: ClassVar[bool] = False
 
 
+class ConversionRuntimeMissingError(RuntimeError):
+    """Raised when a conversion job is executed without an injected runtime."""
+
+    error_code = "conversion_runtime_missing"
+    retryable: ClassVar[bool] = False
+
+
 class ReportedChildError(RuntimeError):
     """Raised when a child process reports a failure."""
 

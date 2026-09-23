@@ -245,12 +245,10 @@ class TestResolveExecutorSizes:
     def test_falls_back_to_defaults_when_config_load_fails(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        import aizk.conversion.settings as settings_module
-
         def _raise(*_args: Any, **_kwargs: Any) -> None:
             raise RuntimeError("boom")
 
-        monkeypatch.setattr(settings_module, "ConversionConfig", _raise)
+        monkeypatch.setattr(egress, "ConversionConfig", _raise)
 
         with caplog.at_level(logging.WARNING, logger="aizk.conversion.egress.policy"):
             result = egress._resolve_executor_sizes()

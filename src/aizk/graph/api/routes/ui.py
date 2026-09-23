@@ -24,6 +24,7 @@ from aizk.conversion.datamodel.source import Source
 from aizk.graph.api.dependencies import get_blob_reader, get_db_session, get_search_provider
 from aizk.graph.contextualization import VARIANT_STAGE, ContextSource, resolve_chunk_text
 from aizk.graph.datamodel import Chunk, ContextualizedChunk, DocumentSummary
+from aizk.graph.markdown_source import S3MarkdownSource
 from aizk.graph.persistence import active_chunking_run, document_order_chunks, run_input
 from aizk.graph.search import SearchKind
 from aizk.pipeline.run import PipelineRun, active_run
@@ -212,8 +213,6 @@ def _load_source_markdown(session: Session, blob_reader: "BlobReader", chunking_
     Missing run input and reader ``ValueError``/``OSError`` produce
     ``available=False`` instead of an exception.
     """
-    from aizk.graph.markdown_source import S3MarkdownSource
-
     inp = run_input(session, chunking_run_id)
     if inp is None:
         return {"available": False, "conversion_output_id": None}

@@ -8,12 +8,8 @@ by the whitespace-normalization change.
 
 from __future__ import annotations
 
-import hashlib
 import json
-import queue as queue_module
 
-import boto3
-from botocore.stub import ANY, Stubber
 from sqlmodel import Session, select
 
 from fastapi.testclient import TestClient
@@ -22,10 +18,13 @@ from aizk.conversion.api.main import create_app
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.handler import ConversionStageHandler
-from aizk.conversion.processing import subproc
 from aizk.conversion.settings import ConversionConfig
+from aizk.conversion.wiring import subprocess as wiring_subprocess
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
+from tests.fakes.process import InlineContext
+from tests.fakes.runtime import fake_worker_runtime
+from tests.fakes.storage import install_memory_s3
 
 
 def _run_conversion(job_id: int, config: ConversionConfig, runtime) -> None:
@@ -44,46 +43,6 @@ def _run_conversion(job_id: int, config: ConversionConfig, runtime) -> None:
             session.add(job)
             session.commit()
     ConversionStageHandler(config, runtime=runtime).execute(job_id)
-
-
-class _InlineProcess:
-    """Execute target immediately in same process (no subprocess)."""
-
-    pid = None
-
-    def __init__(self, target, args) -> None:
-        self._target = target
-        self._args = args
-        self.exitcode = None
-
-    def start(self) -> None:
-        try:
-            self._target(*self._args)
-            self.exitcode = 0
-        except Exception:
-            self.exitcode = 1
-
-    def is_alive(self) -> bool:
-        return False
-
-    def join(self, timeout: float | None = None) -> None:
-        return
-
-    def terminate(self) -> None:
-        return
-
-    def kill(self) -> None:
-        return
-
-
-class _InlineContext:
-    """Provide Queue and inline Process for testing."""
-
-    def Queue(self):  # noqa: N802
-        return queue_module.Queue()
-
-    def Process(self, target, args, daemon: bool):  # noqa: N802
-        return _InlineProcess(target, args)
 
 
 # Two markdown outputs for the same content with different whitespace artifacts.
@@ -135,70 +94,17 @@ def _make_subprocess_stub(markdowns_iter):
     return _stub
 
 
-def _make_fake_runtime():
-    from unittest.mock import MagicMock
-
-    from aizk.conversion.wiring.worker import WorkerRuntime
-    from aizk.storage.settings import ObjectStorageSettings
-
-    fake_caps = MagicMock()
-    fake_caps.converter_requires_gpu.return_value = False
-    return WorkerRuntime(
-        coordinator=MagicMock(),
-        resource_guard=MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False)),
-        capabilities=fake_caps,
-        object_storage=ObjectStorageSettings(_env_file=None),
-    )
-
-
 def test_whitespace_normalization_produces_stable_output(monkeypatch) -> None:
     """Two conversions with different whitespace artifacts produce identical output.md and hash."""
-    monkeypatch.setattr(subproc.mp, "get_context", lambda _ctx: _InlineContext())
+    monkeypatch.setattr(wiring_subprocess.mp, "get_context", lambda _ctx: InlineContext())
     app = create_app()
 
     markdowns = iter([_MARKDOWN_WITH_ARTIFACTS, _MARKDOWN_CLEAN])
-    monkeypatch.setattr(subproc, "_process_job_subprocess", _make_subprocess_stub(markdowns))
+    monkeypatch.setattr(wiring_subprocess, "_process_job_subprocess", _make_subprocess_stub(markdowns))
 
-    s3_client = boto3.client("s3", region_name="us-east-1")
-    stubber = Stubber(s3_client)
-    stubber.activate()
+    storage = install_memory_s3(monkeypatch)
 
-    captured_markdown_bodies: list[bytes] = []
-
-    def _init_s3_client(self, config) -> None:
-        self.config = config
-        self.client = s3_client
-        self.bucket = config.s3_bucket_name
-
-    def _stub_put_and_head(s3, s3_key: str, body: bytes) -> str:
-        stubber.add_response("put_object", {}, {"Bucket": s3.bucket, "Key": s3_key, "Body": ANY})
-        s3.client.put_object(Bucket=s3.bucket, Key=s3_key, Body=body)
-        md5_hash = hashlib.md5(body).hexdigest()  # noqa: S324
-        stubber.add_response(
-            "head_object",
-            {"ETag": f'"{md5_hash}"', "ContentLength": len(body)},
-            {"Bucket": s3.bucket, "Key": s3_key},
-        )
-        s3.client.head_object(Bucket=s3.bucket, Key=s3_key)
-        return f"s3://{s3.bucket}/{s3_key}"
-
-    def _upload_file(self, local_path, s3_key: str) -> str:
-        body = local_path.read_bytes()
-        if local_path.name == "output.md":
-            captured_markdown_bodies.append(body)
-        return _stub_put_and_head(self, s3_key, body)
-
-    def _upload_fileobj(self, file_obj, s3_key: str) -> str:
-        body = file_obj.read()
-        if s3_key.endswith("/output.md"):
-            captured_markdown_bodies.append(body)
-        return _stub_put_and_head(self, s3_key, body)
-
-    monkeypatch.setattr("aizk.conversion.processing.uploader.S3Client.__init__", _init_s3_client)
-    monkeypatch.setattr("aizk.conversion.processing.uploader.S3Client.upload_file", _upload_file)
-    monkeypatch.setattr("aizk.conversion.processing.uploader.S3Client.upload_fileobj", _upload_fileobj)
-
-    runtime = _make_fake_runtime()
+    runtime = fake_worker_runtime()
 
     with TestClient(app) as client:
         config = ConversionConfig(_env_file=None)
@@ -215,6 +121,7 @@ def test_whitespace_normalization_produces_stable_output(monkeypatch) -> None:
         assert resp2.status_code == 201
         _run_conversion(resp2.json()["id"], config, runtime)
 
+    captured_markdown_bodies = [body for s3_key, body in storage.items() if s3_key.endswith("/output.md")]
     assert len(captured_markdown_bodies) == 2, "output.md should be uploaded for both jobs"
     assert captured_markdown_bodies[0] == captured_markdown_bodies[1], (
         "output.md is not byte-identical across two conversions with different whitespace artifacts"

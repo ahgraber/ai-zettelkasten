@@ -34,6 +34,7 @@ from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.processing.errors import (
     ConversionArtifactsMissingError,
     ConversionCancelledError,
+    ConversionRuntimeMissingError,
     ConversionSubprocessError,
     ConversionTimeoutError,
     JobDataIntegrityError,
@@ -117,6 +118,22 @@ def test_validate_dependencies_propagates_probe_failure() -> None:
 
     with pytest.raises(StartupValidationError, match="S3 bucket unreachable"):
         handler.validate_dependencies()
+
+
+def test_validate_dependencies_without_a_runtime_fails_startup_validation(handler: ConversionStageHandler) -> None:
+    """A handler built without a runtime refuses work at the startup gate."""
+    from aizk.utilities.errors import StartupValidationError
+
+    with pytest.raises(StartupValidationError):
+        handler.validate_dependencies()
+
+
+def test_execute_without_a_runtime_maps_to_a_permanent_failure(handler: ConversionStageHandler) -> None:
+    """Executing a job on a handler built without a runtime fails the job permanently."""
+    with pytest.raises(ConversionRuntimeMissingError) as excinfo:
+        handler.execute(1)
+
+    assert handler.map_result(excinfo.value) == TerminalOutcome(WorkUnitStatus.FAILED, RetryClass.PERMANENT)
 
 
 def test_scope_id_is_per_job_string(handler: ConversionStageHandler) -> None:

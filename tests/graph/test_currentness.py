@@ -28,19 +28,12 @@ from aizk.graph.persistence import run_input
 from aizk.graph.workunit import LoadedMarkdown, ProcessResult, SkippedSuperseded, process_document
 from aizk.pipeline.run import PipelineRun, RunStatus
 from aizk.utilities.hashing import compute_markdown_hash
+from tests.fakes.storage import MemoryS3
 
 _AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")
 
 _MARKDOWN_OLD = "# Old\n\nThe first conversion's body text, long enough to chunk.\n"
 _MARKDOWN_NEW = "# New\n\nThe second conversion's body text, also long enough to chunk.\n"
-
-
-class _FakeBlobReader:
-    def __init__(self, blobs: dict[str, bytes]) -> None:
-        self._blobs = blobs
-
-    def get_object_bytes(self, s3_key: str) -> bytes:
-        return self._blobs[s3_key]
 
 
 def _make_engine(tmp_path: Path):
@@ -93,7 +86,7 @@ def test_stale_output_cannot_supersede_newer(tmp_path: Path) -> None:
 
     markdown_source = S3MarkdownSource(
         engine,
-        _FakeBlobReader(
+        MemoryS3(
             {"prefix-1/output.md": _MARKDOWN_OLD.encode("utf-8"), "prefix-2/output.md": _MARKDOWN_NEW.encode("utf-8")}
         ),
     )
@@ -251,7 +244,7 @@ def test_output_from_another_source_is_not_persisted_under_the_wrong_source(tmp_
 
     markdown_source = S3MarkdownSource(
         engine,
-        _FakeBlobReader(
+        MemoryS3(
             {"prefix-1/output.md": _MARKDOWN_OLD.encode("utf-8"), "prefix-2/output.md": _MARKDOWN_NEW.encode("utf-8")}
         ),
     )

@@ -19,6 +19,7 @@ from aizk.conversion.backfill import (
     resolve_conversion_api_base_url,
     run_conversion_backfill,
 )
+from tests.fakes.http import mock_async_client
 
 
 class _StubKarakeep:
@@ -37,11 +38,6 @@ class _StubKarakeep:
             bookmarks=[SimpleNamespace(id=bookmark_id) for bookmark_id in bookmark_ids],
             next_cursor=next_cursor,
         )
-
-
-def _client(handler) -> httpx.AsyncClient:
-    """Build an AsyncClient whose requests are served by ``handler`` in-process."""
-    return httpx.AsyncClient(base_url="http://api.test", transport=httpx.MockTransport(handler))
 
 
 # --- base URL resolution ----------------------------------------------------
@@ -87,7 +83,7 @@ async def test_preflight_api_accepts_a_reachable_api() -> None:
         assert request.url.path == "/health/ready"
         return httpx.Response(200, json={"status": "ok"})
 
-    async with _client(handler) as client:
+    async with mock_async_client(handler) as client:
         await preflight_api(client)
 
 
@@ -98,7 +94,7 @@ async def test_preflight_api_reports_an_unreachable_api_with_the_command_to_star
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused", request=request)
 
-    async with _client(handler) as client:
+    async with mock_async_client(handler) as client:
         with pytest.raises(ConversionApiUnreachableError, match="aizk-conversion serve"):
             await preflight_api(client)
 
@@ -115,7 +111,7 @@ async def test_preflight_api_rejects_an_api_that_is_not_ready() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503, json={"status": "unavailable", "checks": [{"name": "db", "status": "error"}]})
 
-    async with _client(handler) as client:
+    async with mock_async_client(handler) as client:
         with pytest.raises(ConversionApiUnreachableError, match="not ready"):
             await preflight_api(client)
 
@@ -127,7 +123,7 @@ async def test_preflight_api_rejects_a_missing_readiness_endpoint() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404, text="Not Found")
 
-    async with _client(handler) as client:
+    async with mock_async_client(handler) as client:
         with pytest.raises(ConversionApiUnreachableError):
             await preflight_api(client)
 
@@ -142,7 +138,7 @@ async def test_preflight_api_surfaces_the_failing_readiness_check() -> None:
             json={"status": "unavailable", "checks": [{"name": "s3", "status": "error", "detail": "timeout"}]},
         )
 
-    async with _client(handler) as client:
+    async with mock_async_client(handler) as client:
         with pytest.raises(ConversionApiUnreachableError, match="s3"):
             await preflight_api(client)
 
@@ -162,7 +158,7 @@ async def test_backfill_pages_through_karakeep_and_submits_every_bookmark() -> N
         submitted.append(request.url.path)
         return httpx.Response(201, json={"id": len(submitted)})
 
-    async with _client(handler) as client:
+    async with mock_async_client(handler) as client:
         result = await run_conversion_backfill(
             http_client=client, karakeep_client=karakeep, page_size=100, limit=None, dry_run=False
         )
@@ -183,7 +179,7 @@ async def test_backfill_counts_a_deduped_submission_separately_from_a_new_one() 
             return httpx.Response(200, json={})
         return httpx.Response(next(statuses), json={"id": 1})
 
-    async with _client(handler) as client:
+    async with mock_async_client(handler) as client:
         result = await run_conversion_backfill(
             http_client=client, karakeep_client=karakeep, page_size=100, limit=None, dry_run=False
         )
@@ -209,7 +205,7 @@ async def test_backfill_honors_retry_after_when_the_queue_is_full() -> None:
     async def fake_sleep(seconds: float) -> None:
         slept.append(seconds)
 
-    async with _client(handler) as client:
+    async with mock_async_client(handler) as client:
         result = await run_conversion_backfill(
             http_client=client,
             karakeep_client=karakeep,
@@ -243,7 +239,7 @@ async def test_backfill_does_not_sleep_after_its_final_attempt() -> None:
     async def fake_sleep(seconds: float) -> None:
         slept.append(seconds)
 
-    async with _client(handler) as client:
+    async with mock_async_client(handler) as client:
         result = await run_conversion_backfill(
             http_client=client,
             karakeep_client=karakeep,
@@ -269,7 +265,7 @@ async def test_backfill_counts_a_rejected_bookmark_without_aborting_the_run() ->
             return httpx.Response(422, json={"detail": {"error": "kind_not_accepted"}})
         return httpx.Response(201, json={"id": 1})
 
-    async with _client(handler) as client:
+    async with mock_async_client(handler) as client:
         result = await run_conversion_backfill(
             http_client=client, karakeep_client=karakeep, page_size=100, limit=None, dry_run=False
         )
@@ -289,7 +285,7 @@ async def test_backfill_limit_stops_after_the_requested_bookmark_count() -> None
         submitted.append(request.url.path)
         return httpx.Response(201, json={"id": len(submitted)})
 
-    async with _client(handler) as client:
+    async with mock_async_client(handler) as client:
         result = await run_conversion_backfill(
             http_client=client, karakeep_client=karakeep, page_size=100, limit=2, dry_run=False
         )
@@ -311,7 +307,7 @@ async def test_backfill_dry_run_submits_nothing() -> None:
         submitted.append(request.url.path)
         return httpx.Response(201, json={"id": 1})
 
-    async with _client(handler) as client:
+    async with mock_async_client(handler) as client:
         result = await run_conversion_backfill(
             http_client=client, karakeep_client=karakeep, page_size=100, limit=None, dry_run=True
         )
@@ -328,7 +324,7 @@ async def test_backfill_preflights_before_paging_karakeep() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused", request=request)
 
-    async with _client(handler) as client:
+    async with mock_async_client(handler) as client:
         with pytest.raises(ConversionApiUnreachableError):
             await run_conversion_backfill(
                 http_client=client, karakeep_client=karakeep, page_size=100, limit=None, dry_run=False

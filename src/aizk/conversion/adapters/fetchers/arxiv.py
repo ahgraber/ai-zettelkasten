@@ -23,6 +23,7 @@ from aizk.conversion.egress.fetch_helpers import (
     is_karakeep_trusted_asset_url,
 )
 from aizk.conversion.settings import ConversionConfig, KarakeepFetcherConfig
+from aizk.utilities import url_utils
 
 _logger = logging.getLogger(__name__)
 
@@ -60,8 +61,6 @@ class ArxivFetcher(ContentFetcher):
             ArxivPdfFetchError: If PDF cannot be fetched from arXiv.
             FetchError: If the KaraKeep asset fetch fails.
         """
-        from aizk.utilities.url_utils import normalize_url
-
         if not isinstance(ref, ArxivRef):
             raise TypeError(f"Expected ArxivRef, got {type(ref).__name__}")
 
@@ -76,7 +75,7 @@ class ArxivFetcher(ContentFetcher):
             arxiv_source_url = f"https://arxiv.org/abs/{ref.arxiv_id}"
             observed_normalized: str | None = None
             try:
-                observed_normalized = normalize_url(arxiv_source_url)
+                observed_normalized = url_utils.normalize_url(arxiv_source_url)
             except Exception:
                 _logger.debug(
                     "normalize_url failed for ArxivFetcher source_url=%r; normalized_url=None",

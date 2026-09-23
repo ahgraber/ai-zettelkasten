@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-if TYPE_CHECKING:
-    from aizk.conversion.core.types import SourceMetadata
+from aizk.conversion.core.types import SourceMetadata
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,8 +34,6 @@ class SourceMetaFields(BaseModel):
 
     def to_source_metadata(self) -> SourceMetadata:
         """Convert to the in-process SourceMetadata dataclass."""
-        from aizk.conversion.core.types import SourceMetadata
-
         return SourceMetadata(
             source_url=self.source_url,
             normalized_url=self.normalized_url,

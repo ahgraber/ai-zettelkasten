@@ -58,6 +58,7 @@ from typing import TYPE_CHECKING
 from sqlmodel import Session
 
 from aizk.conversion.datamodel.events import (
+    CancelledPayload,
     ConversionEventKind,
     FailedPayload,
     UploadPendingPayload,
@@ -66,6 +67,7 @@ from aizk.conversion.datamodel.events import (
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.processing.errors import (
     ConversionCancelledError,
+    ConversionRuntimeMissingError,
     ConversionSubprocessError,
     ConversionTimeoutError,
     JobDataIntegrityError,
@@ -85,8 +87,8 @@ from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 from aizk.pipeline.handler import Isolation, StageResult
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
-from aizk.storage.settings import ObjectStorageSettings
 from aizk.utilities.clock import utcnow
+from aizk.utilities.errors import StartupValidationError
 
 if TYPE_CHECKING:
     import multiprocessing as mp
@@ -112,8 +114,7 @@ class ConversionStageHandler:
                 wall-clock timeout (``worker_job_timeout_seconds``) and the
                 execution concurrency bound (``worker_concurrency``).
             runtime: The assembled worker runtime (coordinator, resource guard,
-                capabilities). Built lazily on first ``execute`` when omitted so
-                construction stays cheap for the trivial runner surface.
+                capabilities).
         """
         self._config = config
         self._runtime = runtime
@@ -140,9 +141,6 @@ class ConversionStageHandler:
         # race here).
         self._error_details: dict[int, JobErrorDetails] = {}
         self._processes_lock = threading.Lock()
-        # Guards the lazy ``_runtime`` build so the N worker threads racing into
-        # the first ``execute`` do not each call ``build_worker_runtime``.
-        self._runtime_lock = threading.Lock()
 
     @property
     def stage(self) -> str:
@@ -158,7 +156,9 @@ class ConversionStageHandler:
         that raises ``StartupValidationError`` propagates so the runner refuses
         to accept work.
         """
-        for probe in self._ensure_runtime().capabilities.startup_probes:
+        if self._runtime is None:
+            raise StartupValidationError("conversion runtime was not injected")
+        for probe in self._runtime.capabilities.startup_probes:
             probe()
 
     def scope_id(self, handle: int) -> str:
@@ -251,22 +251,6 @@ class ConversionStageHandler:
         """
         return recover_stale_in_session(session, self._config)
 
-    def _ensure_runtime(self) -> "WorkerRuntime":
-        """Build the worker runtime lazily on first use and cache it.
-
-        Thread-safe (S3): ``execute`` runs on N worker threads, so the lazy
-        build is guarded by ``_runtime_lock`` (double-checked) to prevent
-        redundant ``build_worker_runtime`` calls and last-writer-wins races. The
-        common case (runtime already built) takes no lock.
-        """
-        if self._runtime is None:
-            with self._runtime_lock:
-                if self._runtime is None:
-                    from aizk.conversion.wiring.worker import build_worker_runtime
-
-                    self._runtime = build_worker_runtime(self._config, object_storage=ObjectStorageSettings())
-        return self._runtime
-
     def execute(self, handle: int) -> StageResult:
         """Run the conversion unit-of-work for ``handle``, bridging failure details.
 
@@ -331,7 +315,9 @@ class ConversionStageHandler:
                 ``SubprocessMetadataInvalid``, ``S3Error``).
         """
         config = self._config
-        runtime = self._ensure_runtime()
+        runtime = self._runtime
+        if runtime is None:
+            raise ConversionRuntimeMissingError("conversion runtime was not injected")
         engine = get_engine(DatabaseConfig().database_url)
 
         # The in-process upload phase cannot be interrupted by ``cancel`` (the
@@ -365,6 +351,7 @@ class ConversionStageHandler:
 
         def _on_phase_event(phase: str, reported_at: datetime.datetime) -> None:
             """Persist one phase event per subprocess report; best-effort."""
+            # Imported here: tests patch aizk.conversion.datamodel.events.record_phase_event at its definition.
             from aizk.conversion.datamodel.events import record_phase_event
 
             try:
@@ -589,6 +576,7 @@ class ConversionStageHandler:
                 config=self._config,
                 resource_guard=runtime.resource_guard,
                 requires_gpu=requires_gpu,
+                spawn_subprocess=runtime.spawn_subprocess,
                 on_phase_event=on_phase_event,
                 on_spawn=_register,
                 terminate_event=terminate_event,
@@ -686,8 +674,6 @@ class ConversionStageHandler:
         cooperative cancellation as a ``cancelled`` event. The event ``attempt``
         is re-read from the row in ``session``. Does not commit.
         """
-        from aizk.conversion.datamodel.events import CancelledPayload
-
         job = session.get(ConversionJob, handle)
         if job is None or job.status == ConversionJobStatus.CANCELLED:
             return

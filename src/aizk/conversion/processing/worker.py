@@ -19,6 +19,8 @@ import logging
 
 from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.settings import ConversionConfig
+from aizk.db.config import DatabaseConfig
+from aizk.db.engine import get_engine
 from aizk.pipeline.runner import StageRunner
 from aizk.pipeline.shutdown import ShutdownController
 from aizk.storage.settings import ObjectStorageSettings
@@ -66,6 +68,7 @@ def run_worker(
     Returns:
         The runner exit code: ``0`` for a clean drain, ``1`` for a forced exit.
     """
+    # Imported here: keeps docling and torch off the CLI's import path.
     from aizk.conversion.wiring.worker import build_worker_runtime
 
     runtime = build_worker_runtime(config, object_storage=object_storage)
@@ -97,9 +100,6 @@ def _engine_for(_config: ConversionConfig):
     inside the handler) because the runner constructor requires the engine up
     front.
     """
-    from aizk.db.config import DatabaseConfig
-    from aizk.db.engine import get_engine
-
     return get_engine(DatabaseConfig().database_url)
 
 

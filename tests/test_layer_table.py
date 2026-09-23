@@ -192,6 +192,20 @@ FORBIDDEN_DIRECTIONS: frozenset[tuple[str, str]] = frozenset(
     }
 )
 
+#: Stage packages whose composition roots live in their ``wiring`` sub-package.
+STAGE_PACKAGES: tuple[str, ...] = ("aizk.conversion",)
+
+#: Every module-level import of a stage's ``wiring`` from outside its composition
+#: roots, with the change that removes it. Asserted to equal the scan exactly.
+WIRING_IMPORT_EXCEPTIONS: dict[Edge, str] = {
+    Edge("aizk.conversion.api.dependencies", "aizk.conversion.wiring.capabilities"): (
+        "removed when conversion adopts the kit's API surface"
+    ),
+    Edge("aizk.conversion.utilities.startup", "aizk.conversion.wiring.probes"): (
+        "removed with the compatibility shims"
+    ),
+}
+
 
 def _module_name(path: Path) -> str:
     """Return the dotted module name for a file under ``src``."""
@@ -285,6 +299,33 @@ def _scan() -> set[Edge]:
     return edges
 
 
+def _is_type_checking(test: ast.expr) -> bool:
+    """Report whether an ``if`` test is ``TYPE_CHECKING`` or ``typing.TYPE_CHECKING``."""
+    return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+        isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+    )
+
+
+def _module_level_imports(tree: ast.Module) -> list[ast.Import | ast.ImportFrom]:
+    """Return the import statements that run when the module loads, outside ``if TYPE_CHECKING:``."""
+    imports: list[ast.Import | ast.ImportFrom] = []
+    pending: list[ast.stmt] = list(tree.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            imports.append(node)
+        elif isinstance(node, ast.If):
+            if not _is_type_checking(node.test):
+                pending.extend(node.body)
+            pending.extend(node.orelse)
+        elif isinstance(node, ast.Try):
+            pending.extend([*node.body, *node.orelse, *node.finalbody])
+            pending.extend(stmt for handler in node.handlers for stmt in handler.body)
+        elif isinstance(node, ast.With):
+            pending.extend(node.body)
+    return imports
+
+
 def _is_permitted(edge: Edge) -> bool:
     """Report whether the table admits ``edge``."""
     source = _package_of(edge.importer)
@@ -339,6 +380,27 @@ def test_no_layer_imports_a_package_above_it() -> None:
     directions = {(_package_of(edge.importer), _package_of(edge.imported)) for edge in _scan()}
 
     assert directions & FORBIDDEN_DIRECTIONS == set()
+
+
+def test_only_a_stage_roots_import_its_wiring_when_they_load() -> None:
+    """Outside its composition roots, no stage module imports the stage's wiring at load time, save the recorded exceptions."""
+    offenders: set[Edge] = set()
+    for stage in STAGE_PACKAGES:
+        wiring = f"{stage}.wiring"
+        for path in sorted(_SRC.joinpath(*stage.split(".")).rglob("*.py")):
+            module = _module_name(path)
+            if _is_root(module):
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in _module_level_imports(tree):
+                for target in _absolute_targets(node, module, path.name == "__init__.py"):
+                    if target == wiring or target.startswith(wiring + "."):
+                        offenders.add(Edge(module, target))
+
+    assert offenders == set(WIRING_IMPORT_EXCEPTIONS), (
+        "only a stage's composition roots may import its wiring at module level: "
+        f"{sorted(offenders ^ set(WIRING_IMPORT_EXCEPTIONS))}"
+    )
 
 
 def test_console_reads_of_the_graph_stage_are_permitted_not_exceptions() -> None:

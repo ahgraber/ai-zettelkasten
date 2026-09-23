@@ -8,6 +8,8 @@ import logging
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
+from aizk.conversion.core.source_ref import SourceRef
+from aizk.conversion.core.types import SOURCE_TYPE_BY_KIND
 from aizk.conversion.datamodel.events import record_source_event
 from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.source import Source as SourceRecord
@@ -21,8 +23,6 @@ logger = logging.getLogger(__name__)
 def _get_source_ref(job_id: int, engine: Engine):
     """Read and deserialize source_ref from the job record."""
     from pydantic import TypeAdapter
-
-    from aizk.conversion.core.source_ref import SourceRef
 
     with Session(engine) as session:
         job = session.get(ConversionJob, job_id)
@@ -56,9 +56,6 @@ def _write_source_enrichment(
 
     from pydantic import TypeAdapter
 
-    from aizk.conversion.core.source_ref import SourceRef as _SourceRef
-    from aizk.conversion.core.types import SOURCE_TYPE_BY_KIND
-
     uuid_obj = source_id if isinstance(source_id, _UUID) else _UUID(source_id)
 
     columns_attempted: list[str] = ["url", "normalized_url", "title", "source_type"]
@@ -69,7 +66,7 @@ def _write_source_enrichment(
     failure_reason: str | None = None
 
     try:
-        terminal_ref: _SourceRef = TypeAdapter(_SourceRef).validate_python(subprocess_meta.terminal_ref)
+        terminal_ref: SourceRef = TypeAdapter(SourceRef).validate_python(subprocess_meta.terminal_ref)
         source_type = SOURCE_TYPE_BY_KIND.get(terminal_ref.kind, "other")
         source_meta = subprocess_meta.source_meta.to_source_metadata()
 

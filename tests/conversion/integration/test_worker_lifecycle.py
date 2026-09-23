@@ -34,10 +34,12 @@ from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.handler import ConversionStageHandler
-from aizk.conversion.processing import errors as errors_mod, subproc
+from aizk.conversion.processing import errors as errors_mod
 from aizk.conversion.settings import ConversionConfig
+from aizk.conversion.wiring import subprocess as wiring_subprocess
 from tests.conversion.integration import _subprocess_helpers
 from tests.conversion.integration._zombie_checks import ZombieInspectionError, descendant_zombies
+from tests.fakes.runtime import fake_worker_runtime
 
 # Mark all tests in this module to run in isolated process.
 # Incompatible with xdist — use -m "not integration_lifecycle" when running with -n auto.
@@ -96,22 +98,6 @@ def _wait_for_path(path: Path, *, timeout_seconds: float, interval_seconds: floa
     pytest.fail(f"Expected {path} to exist within {timeout_seconds} seconds")
 
 
-def _make_fake_runtime():
-    from unittest.mock import MagicMock
-
-    from aizk.conversion.wiring.worker import WorkerRuntime
-    from aizk.storage.settings import ObjectStorageSettings
-
-    fake_caps = MagicMock()
-    fake_caps.converter_requires_gpu.return_value = False
-    return WorkerRuntime(
-        coordinator=MagicMock(),
-        resource_guard=MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False)),
-        capabilities=fake_caps,
-        object_storage=ObjectStorageSettings(_env_file=None),
-    )
-
-
 def _create_test_bookmark(db_session: Session) -> Bookmark:
     """Helper to create a test bookmark."""
     _ref = KarakeepBookmarkRef(kind="karakeep_bookmark", bookmark_id="bm_lifecycle_test")
@@ -158,20 +144,20 @@ def _create_running_job(db_session: Session, bookmark: Bookmark) -> ConversionJo
 def _track_spawn(monkeypatch, target) -> list:
     """Patch the subprocess target + track the spawned ``mp.Process`` instances.
 
-    ``subproc._spawn_conversion_subprocess`` calls ``ctx.Process`` with the
+    ``wiring_subprocess._spawn_conversion_subprocess`` calls ``ctx.Process`` with the
     ``target``/``args``/``daemon`` keyword arguments, so the tracking wrapper must
     accept them by keyword.
     """
     spawned: list = []
-    original_process_class = subproc.mp.get_context("spawn").Process
+    original_process_class = wiring_subprocess.mp.get_context("spawn").Process
 
     def _track_process(*, target, args, daemon):
         proc = original_process_class(target=target, args=args, daemon=daemon)
         spawned.append(proc)
         return proc
 
-    monkeypatch.setattr(subproc, "_process_job_subprocess", target)
-    ctx = subproc.mp.get_context("spawn")
+    monkeypatch.setattr(wiring_subprocess, "_process_job_subprocess", target)
+    ctx = wiring_subprocess.mp.get_context("spawn")
     monkeypatch.setattr(ctx, "Process", _track_process)
     return spawned
 
@@ -207,7 +193,7 @@ def test_real_subprocess_spawned_and_terminated(monkeypatch, db_session: Session
     monkeypatch.setattr(repository_mod, "_is_job_cancelled", _mock_is_cancelled)
 
     config = ConversionConfig(_env_file=None)
-    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    handler = ConversionStageHandler(config, runtime=fake_worker_runtime())
     with pytest.raises(errors_mod.ConversionCancelledError):
         handler.execute(job.id)
 
@@ -230,7 +216,7 @@ def test_cancelled_job_terminates_subprocess_with_no_zombies(monkeypatch, db_ses
     monkeypatch.setattr(repository_mod, "_is_job_cancelled", lambda _job_id, _engine: True)
 
     config = ConversionConfig(_env_file=None)
-    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    handler = ConversionStageHandler(config, runtime=fake_worker_runtime())
     with pytest.raises(errors_mod.ConversionCancelledError):
         handler.execute(job.id)
 
@@ -257,7 +243,7 @@ def test_subprocess_completes_normally_no_zombies(
     monkeypatch.setattr(repository_mod, "_prepare_upload", lambda *_a, **_k: None)
 
     config = ConversionConfig(_env_file=None)
-    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    handler = ConversionStageHandler(config, runtime=fake_worker_runtime())
     handler.execute(job.id)
 
     spawned_pid = _get_spawned_pid(spawned)
@@ -288,7 +274,7 @@ def test_process_group_terminates_grandchild(
     monkeypatch.setattr(repository_mod, "_is_job_cancelled", _cancel_when_ready)
 
     config = ConversionConfig(_env_file=None)
-    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    handler = ConversionStageHandler(config, runtime=fake_worker_runtime())
     with pytest.raises(errors_mod.ConversionCancelledError):
         handler.execute(job.id)
 
@@ -335,7 +321,7 @@ def test_sigterm_graceful_shutdown_within_grace_period(
     monkeypatch.setattr(repository_mod, "_is_job_cancelled", _mock_is_cancelled)
 
     config = ConversionConfig(_env_file=None)
-    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    handler = ConversionStageHandler(config, runtime=fake_worker_runtime())
     with pytest.raises(errors_mod.ConversionCancelledError):
         handler.execute(job.id)
 
@@ -374,7 +360,7 @@ def test_sigkill_after_sigterm_when_subprocess_ignores_sigterm(monkeypatch, db_s
     monkeypatch.setattr(repository_mod, "_is_job_cancelled", _mock_is_cancelled)
 
     config = ConversionConfig(_env_file=None)
-    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    handler = ConversionStageHandler(config, runtime=fake_worker_runtime())
     with pytest.raises(errors_mod.ConversionCancelledError):
         handler.execute(
             job.id,
@@ -416,7 +402,7 @@ def test_cancel_mid_execution_terminates_within_poll_interval(
     # The adapter hardcodes the supervision poll interval at 2.0s; bound the
     # elapsed-cancel assertion to that plus margin.
     config = ConversionConfig(_env_file=None)
-    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    handler = ConversionStageHandler(config, runtime=fake_worker_runtime())
     with pytest.raises(errors_mod.ConversionCancelledError):
         handler.execute(job.id)
 

@@ -33,6 +33,7 @@ from aizk.conversion.egress.bookmark_utils import (
 )
 from aizk.conversion.egress.github_utils import parse_github_owner_repo
 from aizk.conversion.settings import KarakeepFetcherConfig
+from aizk.utilities import url_utils
 
 
 class KarakeepBookmarkResolver(RefResolver):
@@ -63,8 +64,6 @@ class KarakeepBookmarkResolver(RefResolver):
         """
         import logging
 
-        from aizk.utilities.url_utils import normalize_url
-
         _logger = logging.getLogger(__name__)
 
         if not isinstance(ref, KarakeepBookmarkRef):
@@ -92,7 +91,7 @@ class KarakeepBookmarkResolver(RefResolver):
         normalized_url: str | None = None
         if source_url:
             try:
-                normalized_url = normalize_url(source_url)
+                normalized_url = url_utils.normalize_url(source_url)
             except Exception:
                 _logger.debug(
                     "normalize_url failed for KaraKeep bookmark source_url=%r; normalized_url=None",

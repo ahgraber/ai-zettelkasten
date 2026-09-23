@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 import contextlib
-from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
@@ -50,11 +49,12 @@ from aizk.graph.handler import ContextualizationStageHandler
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 import aizk.graph.persistence as persistence_mod
 from aizk.graph.persistence import memo_get, persist_chunks
-from aizk.graph.workunit import LoadedMarkdown, ProcessResult, process_document
+from aizk.graph.workunit import ProcessResult, process_document
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.lifecycle import RetryClass
 from aizk.pipeline.run import PipelineRun, RunStatus
 from aizk.utilities.hashing import compute_markdown_hash
+from tests.fakes.markdown import StubMarkdownSource
 
 _AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")
 _OTHER_AIZK_UUID = UUID("22222222-2222-2222-2222-222222222222")
@@ -98,17 +98,6 @@ def engine(tmp_path: Path) -> Iterator[Engine]:
         conn.execute(text(CONTENT_FTS_DDL))
     yield eng
     eng.dispose()
-
-
-@dataclass
-class _StubMarkdownSource:
-    """A deterministic Markdown source returning fixed text with its true hash."""
-
-    text: str
-
-    def load(self, conversion_output_id: int) -> LoadedMarkdown:
-        """Return the stub Markdown and its computed hash for any locator."""
-        return LoadedMarkdown(text=self.text, markdown_hash_xx64=compute_markdown_hash(self.text))
 
 
 class _AlwaysCurrent:
@@ -213,7 +202,7 @@ def _process(
         client,
         source_id=source_id,
         conversion_output_id=conversion_output_id,
-        markdown_source=_StubMarkdownSource(markdown),
+        markdown_source=StubMarkdownSource(markdown),
         freshness=_AlwaysCurrent(),
         model_config=STUB_MODEL_CONFIG,
     )
@@ -518,7 +507,7 @@ def test_retry_resumes_and_matches_an_uninterrupted_run(tmp_path: Path) -> None:
             failing,
             source_id=_AIZK_UUID,
             conversion_output_id=_OUTPUT_ID,
-            markdown_source=_StubMarkdownSource(_MARKDOWN),
+            markdown_source=StubMarkdownSource(_MARKDOWN),
             freshness=_AlwaysCurrent(),
             model_config=STUB_MODEL_CONFIG,
         )
@@ -566,7 +555,7 @@ def test_retained_work_for_one_source_is_not_reused_for_another(engine: Engine) 
             failing,
             source_id=_AIZK_UUID,
             conversion_output_id=_OUTPUT_ID,
-            markdown_source=_StubMarkdownSource(_MARKDOWN),
+            markdown_source=StubMarkdownSource(_MARKDOWN),
             freshness=_AlwaysCurrent(),
             model_config=STUB_MODEL_CONFIG,
         )
@@ -587,7 +576,7 @@ def test_partial_failure_leaves_no_readable_generation(engine: Engine) -> None:
             failing,
             source_id=_AIZK_UUID,
             conversion_output_id=_OUTPUT_ID,
-            markdown_source=_StubMarkdownSource(_MARKDOWN),
+            markdown_source=StubMarkdownSource(_MARKDOWN),
             freshness=_AlwaysCurrent(),
             model_config=STUB_MODEL_CONFIG,
         )
@@ -612,7 +601,7 @@ def test_partial_failure_under_changed_inputs_leaves_prior_generation_unchanged(
             failing,
             source_id=_AIZK_UUID,
             conversion_output_id=43,
-            markdown_source=_StubMarkdownSource(changed_markdown),
+            markdown_source=StubMarkdownSource(changed_markdown),
             freshness=_AlwaysCurrent(),
             model_config=STUB_MODEL_CONFIG,
         )

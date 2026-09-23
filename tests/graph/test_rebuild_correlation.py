@@ -35,9 +35,9 @@ from aizk.graph.contextualization import SUMMARY_STAGE
 from aizk.graph.datamodel import ChunkRunInput, DocumentSummary
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.graph.persistence import CHUNKING_STAGE
-from aizk.graph.workunit import LoadedMarkdown, ProcessResult, process_document
+from aizk.graph.workunit import ProcessResult, process_document
 from aizk.pipeline.run import PipelineRun, RunStatus
-from aizk.utilities.hashing import compute_markdown_hash
+from tests.fakes.markdown import StubMarkdownSource
 
 _KARAKEEP_ID = "bm-rebuild-fixture"
 _TITLE = "Rebuild Fixture"
@@ -51,17 +51,6 @@ A paragraph under the title with enough text to be a real chunk.
 
 Content for the first section that the splitter carves into a chunk.
 """
-
-
-class _StubMarkdownSource:
-    """A deterministic markdown source returning fixed text for any locator."""
-
-    def __init__(self, text_: str) -> None:
-        self._text = text_
-
-    def load(self, conversion_output_id: int) -> LoadedMarkdown:
-        """Return the fixed Markdown and its computed hash for any locator."""
-        return LoadedMarkdown(text=self._text, markdown_hash_xx64=compute_markdown_hash(self._text))
 
 
 class _AlwaysCurrent:
@@ -104,7 +93,7 @@ def _seed_and_ingest(engine: Engine, source_id: UUID) -> None:
         StubLLMClient(),
         source_id=source_id,
         conversion_output_id=1,
-        markdown_source=_StubMarkdownSource(_MARKDOWN),
+        markdown_source=StubMarkdownSource(_MARKDOWN),
         freshness=_AlwaysCurrent(),
         model_config=STUB_MODEL_CONFIG,
     )

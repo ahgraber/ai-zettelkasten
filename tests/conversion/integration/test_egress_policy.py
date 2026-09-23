@@ -10,7 +10,6 @@ import asyncio
 import base64
 import json
 from pathlib import Path
-import queue as queue_module
 import socket
 from typing import Any, Callable
 from unittest.mock import MagicMock
@@ -30,12 +29,16 @@ from aizk.conversion.core.source_ref import KarakeepBookmarkRef, UrlRef, compute
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.egress.fetch import egress_fetch_bytes
-from aizk.conversion.egress.policy import ValidatedDestination
 from aizk.conversion.egress.prefetch import prefetch_images
 from aizk.conversion.handler import ConversionStageHandler
-from aizk.conversion.processing import subproc, uploader as uploader_mod
+from aizk.conversion.processing import uploader as uploader_mod
 from aizk.conversion.settings import ConversionConfig, KarakeepFetcherConfig
+from aizk.conversion.wiring import subprocess as wiring_subprocess
 from aizk.storage.settings import ObjectStorageSettings
+from tests.fakes.http import mock_transport_factory
+from tests.fakes.process import InlineContext
+from tests.fakes.runtime import fake_worker_runtime
+from tests.fakes.storage import install_memory_s3
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -50,103 +53,6 @@ def _stub_dns(monkeypatch: pytest.MonkeyPatch, host_to_ip: dict[str, str]) -> No
         return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", (ip, port))]
 
     monkeypatch.setattr(socket, "getaddrinfo", _fake)
-
-
-def _mock_transport_factory(
-    handler: Callable[[httpx.Request], httpx.Response],
-    connected_to: list[str] | None = None,
-) -> Callable[[ValidatedDestination], httpx.AsyncBaseTransport]:
-    """Return a transport factory backed by an httpx.MockTransport.
-
-    If ``connected_to`` is provided, each ValidatedDestination.ip is appended so
-    callers can assert which IPs the transport actually connected to.
-    """
-
-    def factory(destination: ValidatedDestination) -> httpx.AsyncBaseTransport:
-        if connected_to is not None:
-            connected_to.append(destination.ip)
-        return httpx.MockTransport(handler)
-
-    return factory
-
-
-class _InlineProcess:
-    """Executes subprocess target inline (same process) for integration testing."""
-
-    pid = None
-
-    def __init__(self, target: Callable, args: tuple) -> None:
-        self._target = target
-        self._args = args
-        self.exitcode: int | None = None
-
-    def start(self) -> None:
-        try:
-            self._target(*self._args)
-            self.exitcode = 0
-        except Exception:
-            self.exitcode = 1
-
-    def is_alive(self) -> bool:
-        return False
-
-    def join(self, timeout: float | None = None) -> None:
-        return
-
-    def terminate(self) -> None:
-        return
-
-    def kill(self) -> None:
-        return
-
-
-class _InlineContext:
-    """Multiprocessing context that runs the subprocess inline."""
-
-    def Queue(self):  # noqa: N802
-        return queue_module.Queue()
-
-    def Process(self, target: Callable, args: tuple, daemon: bool) -> _InlineProcess:  # noqa: N802
-        return _InlineProcess(target, args)
-
-
-def _make_fake_runtime() -> MagicMock:
-    """Return a WorkerRuntime mock with nullcontext resource_guard."""
-    from contextlib import nullcontext
-
-    runtime = MagicMock()
-    runtime.resource_guard = nullcontext()
-    runtime.capabilities.converter_requires_gpu.return_value = False
-    runtime.coordinator = MagicMock()
-    runtime.object_storage = ObjectStorageSettings(_env_file=None)
-    return runtime
-
-
-def _install_memory_s3(monkeypatch: pytest.MonkeyPatch) -> dict[str, bytes]:
-    """Patch S3Client to write to an in-memory dict instead of real S3."""
-    storage: dict[str, bytes] = {}
-
-    def _init(self, config: Any) -> None:
-        self.config = config
-        self.bucket = config.s3_bucket_name
-        self.client = None
-
-    def _upload_file(self, local_path: Path, s3_key: str) -> str:
-        storage[s3_key] = local_path.read_bytes()
-        return f"s3://{self.bucket}/{s3_key}"
-
-    def _upload_fileobj(self, file_obj: Any, s3_key: str) -> str:
-        storage[s3_key] = file_obj.read()
-        return f"s3://{self.bucket}/{s3_key}"
-
-    def _get_object_bytes(self, s3_key: str) -> bytes:
-        return storage[s3_key]
-
-    monkeypatch.setattr("aizk.storage.s3.S3Client.__init__", _init)
-    monkeypatch.setattr("aizk.storage.s3.S3Client.upload_file", _upload_file)
-    monkeypatch.setattr("aizk.storage.s3.S3Client.upload_fileobj", _upload_fileobj)
-    monkeypatch.setattr("aizk.storage.s3.S3Client.get_object_bytes", _get_object_bytes)
-    return storage
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +145,7 @@ def test_redirect_to_private_ip_rejected(monkeypatch: pytest.MonkeyPatch) -> Non
         # First hop returns redirect to private IP
         return httpx.Response(302, headers={"location": "http://10.0.0.5/admin"})
 
-    factory = _mock_transport_factory(_handler, connected_to=connected_ips)
+    factory = mock_transport_factory(_handler, connected_to=connected_ips)
 
     with pytest.raises(RedirectEgressViolation):
         asyncio.run(
@@ -456,17 +362,17 @@ def test_happy_path_public_url_succeeds(monkeypatch: pytest.MonkeyPatch, db_sess
     db_session.commit()
     db_session.refresh(job)
 
-    storage = _install_memory_s3(monkeypatch)
-    monkeypatch.setattr(subproc.mp, "get_context", lambda _ctx: _InlineContext())
-    monkeypatch.setattr(subproc, "_process_job_subprocess", _make_subprocess_stub())
-    monkeypatch.setattr(subproc, "get_engine", lambda _url=None: db_session.get_bind())
+    storage = install_memory_s3(monkeypatch)
+    monkeypatch.setattr(wiring_subprocess.mp, "get_context", lambda _ctx: InlineContext())
+    monkeypatch.setattr(wiring_subprocess, "_process_job_subprocess", _make_subprocess_stub())
+    monkeypatch.setattr(wiring_subprocess, "get_engine", lambda _url=None: db_session.get_bind())
     monkeypatch.setattr(repository_mod, "get_engine", lambda _url=None: db_session.get_bind())
     monkeypatch.setattr(repository_mod, "_is_job_cancelled", lambda *_a, **_k: False)
     monkeypatch.setattr(uploader_mod, "get_engine", lambda _url=None: db_session.get_bind())
 
     config = ConversionConfig(_env_file=None)
     assert job.id is not None
-    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    handler = ConversionStageHandler(config, runtime=fake_worker_runtime())
     handler.execute(job.id)
 
     db_session.expire_all()

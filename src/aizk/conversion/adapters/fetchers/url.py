@@ -20,6 +20,7 @@ from aizk.conversion.core.types import ContentType, ConversionInput, SourceMetad
 from aizk.conversion.egress.fetch import egress_fetch_bytes
 from aizk.conversion.egress.fetch_helpers import fetch_karakeep_asset, is_karakeep_trusted_asset_url
 from aizk.conversion.settings import ConversionConfig, KarakeepFetcherConfig
+from aizk.utilities import url_utils
 
 _logger = logging.getLogger(__name__)
 
@@ -56,8 +57,6 @@ class UrlFetcher(ContentFetcher):
         Raises:
             FetchError: On network or fetch failure.
         """
-        from aizk.utilities.url_utils import normalize_url
-
         if not isinstance(ref, UrlRef):
             raise TypeError(f"Expected UrlRef, got {type(ref).__name__}")
 
@@ -72,7 +71,7 @@ class UrlFetcher(ContentFetcher):
         if source_meta.source_url is None:
             observed_normalized: str | None = None
             try:
-                observed_normalized = normalize_url(url)
+                observed_normalized = url_utils.normalize_url(url)
             except Exception:
                 _logger.debug("normalize_url failed for UrlFetcher url=%r; normalized_url=None", url)
             observed = SourceMetadata(

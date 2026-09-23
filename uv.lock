@@ -365,10 +365,8 @@ test = [
     { name = "pytest-cov" },
     { name = "pytest-dependency" },
     { name = "pytest-isolate" },
-    { name = "pytest-responses" },
     { name = "pytest-subprocess" },
     { name = "pytest-xdist" },
-    { name = "responses" },
 ]
 type = [
     { name = "boto3-stubs" },
@@ -507,10 +505,8 @@ test = [
     { name = "pytest-cov", specifier = ">=6" },
     { name = "pytest-dependency", specifier = "~=0.6" },
     { name = "pytest-isolate", specifier = ">=0.0.13" },
-    { name = "pytest-responses", specifier = ">=0.5.1" },
     { name = "pytest-subprocess", specifier = ">=1.5.3" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
-    { name = "responses", specifier = ">=0.25.3" },
 ]
 type = [
     { name = "boto3-stubs", specifier = "~=1.37" },
@@ -7017,18 +7013,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pytest-responses"
-version = "0.6.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pytest" },
-    { name = "responses" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ba/e7/b4712a52ac5a4a87186a57bc974b3eadd5b7253a413edd41ff3f966dc2ce/pytest_responses-0.6.0-py3-none-any.whl", hash = "sha256:e94717b5235a2e1f66b27bcfc895dfa6705e79678e5c05eae9bb06fcf95a0182", size = 6782, upload-time = "2026-06-29T19:45:23.604Z" },
-]
-
-[[package]]
 name = "pytest-subprocess"
 version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -7681,20 +7665,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f3/61/d7545dafb7ac2230c70d38d31cbfe4cc64f7144dc41f6e4e4b78ecd9f5bb/requests-toolbelt-1.0.0.tar.gz", hash = "sha256:7681a0a3d047012b5bdc0ee37d7f8f07ebe76ab08caeccfc3921ce23c88d5bc6", size = 206888, upload-time = "2023-05-01T04:11:33.229Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl", hash = "sha256:cccfdd665f0a24fcf4726e690f65639d272bb0637b9b92dfd91a5568ccf6bd06", size = 54481, upload-time = "2023-05-01T04:11:28.427Z" },
-]
-
-[[package]]
-name = "responses"
-version = "0.26.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pyyaml" },
-    { name = "requests" },
-    { name = "urllib3" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/9f/47/f216a33221db8eff328987661cf18371afee89c62a62b434b963d6b509c9/responses-0.26.3.tar.gz", hash = "sha256:b0c11ca8131b8b227b8d5108e6ed39772222bd5aab030ed430e8f99057c4c409", size = 86335, upload-time = "2026-08-26T19:17:24.373Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6d/86/ca7958de70cb0752350575e98229368a3a2f746a2942034b3364e17312bb/responses-0.26.3-py3-none-any.whl", hash = "sha256:74474f799334ac4f37d93b6437ecc3bb1bb5c77a8d31780a338643be2dce0af8", size = 36289, upload-time = "2026-08-26T19:17:23.176Z" },
 ]
 
 [[package]]

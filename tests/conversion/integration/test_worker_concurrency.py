@@ -56,6 +56,7 @@ class TestGpuSemaphoreGuard:
         import queue as queue_module
 
         from aizk.conversion.processing import subproc as subproc_mod
+        from aizk.conversion.wiring import subprocess as wiring_subprocess
 
         acquire_calls: list[str] = []
 
@@ -93,7 +94,7 @@ class TestGpuSemaphoreGuard:
             def Process(self, target, args, daemon):  # noqa: N802
                 return _StubProcess()
 
-        monkeypatch.setattr(subproc_mod.mp, "get_context", lambda _: _InlineCtx())
+        monkeypatch.setattr(wiring_subprocess.mp, "get_context", lambda _: _InlineCtx())
 
         subproc_mod._spawn_and_supervise(
             job_id=1,
@@ -105,6 +106,7 @@ class TestGpuSemaphoreGuard:
             config=ConversionConfig(_env_file=None),
             resource_guard=_TrackingGuard(),
             requires_gpu=False,
+            spawn_subprocess=wiring_subprocess._spawn_conversion_subprocess,
         )
 
         assert acquire_calls == [], "Guard must not be acquired when requires_gpu is False"
@@ -115,6 +117,7 @@ class TestGpuSemaphoreGuard:
         import queue as queue_module
 
         from aizk.conversion.processing import subproc as subproc_mod
+        from aizk.conversion.wiring import subprocess as wiring_subprocess
         from aizk.conversion.wiring.worker import _SemaphoreGuard
 
         class _CrashedProcess:
@@ -143,7 +146,7 @@ class TestGpuSemaphoreGuard:
             def Process(self, target, args, daemon):  # noqa: N802
                 return _CrashedProcess()
 
-        monkeypatch.setattr(subproc_mod.mp, "get_context", lambda _: _InlineCtx())
+        monkeypatch.setattr(wiring_subprocess.mp, "get_context", lambda _: _InlineCtx())
 
         sem = threading.BoundedSemaphore(1)
         guard = _SemaphoreGuard(sem)
@@ -158,6 +161,7 @@ class TestGpuSemaphoreGuard:
             config=ConversionConfig(_env_file=None),
             resource_guard=guard,
             requires_gpu=True,
+            spawn_subprocess=wiring_subprocess._spawn_conversion_subprocess,
         )
 
         assert sem.acquire(blocking=False), "Guard must be released after subprocess crash"
@@ -169,6 +173,7 @@ class TestGpuSemaphoreGuard:
         import queue as queue_module
 
         from aizk.conversion.processing import subproc as subproc_mod, supervision as supervision_mod
+        from aizk.conversion.wiring import subprocess as wiring_subprocess
         from aizk.conversion.wiring.worker import _SemaphoreGuard
 
         class _LingeringProcess:
@@ -205,7 +210,7 @@ class TestGpuSemaphoreGuard:
             def Process(self, target, args, daemon):  # noqa: N802
                 return _LingeringProcess()
 
-        monkeypatch.setattr(subproc_mod.mp, "get_context", lambda _: _InlineCtx())
+        monkeypatch.setattr(wiring_subprocess.mp, "get_context", lambda _: _InlineCtx())
 
         # Deterministic clock: deadline = 0 + 1 = 1; supervisor's first check sees t=2 ≥ 1.
         clock = iter([0.0, 2.0, 2.0, 2.0, 2.0])
@@ -225,6 +230,7 @@ class TestGpuSemaphoreGuard:
             config=ConversionConfig(_env_file=None),
             resource_guard=guard,
             requires_gpu=True,
+            spawn_subprocess=wiring_subprocess._spawn_conversion_subprocess,
         )
 
         assert result.timed_out is True

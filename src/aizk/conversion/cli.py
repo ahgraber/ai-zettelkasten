@@ -34,6 +34,7 @@ _BACKFILL_TIMEOUT_SECONDS = 30.0
 def _cmd_db_init(_args: argparse.Namespace) -> int:
     """Initialize database tables via Alembic migrations."""
     set_process_title("docling-db-init")
+    # Imported here: tests patch aizk.db.migrations.run_migrations at its definition.
     from aizk.db.migrations import run_migrations
 
     run_migrations()
@@ -72,6 +73,7 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
         role="worker",
         object_storage=object_storage,
     ).start()
+    # Imported here: tests patch aizk.db.migrations.run_migrations at its definition.
     from aizk.db.migrations import run_migrations
 
     run_migrations()
@@ -79,6 +81,7 @@ def _cmd_worker(_args: argparse.Namespace) -> int:
     # (StageRunner + ConversionStageHandler). The runner's startup gate runs the
     # adapter-declared probes before claiming any work; a probe failure raises
     # StartupValidationError, which we map to a non-zero exit.
+    # Imported here: keeps docling and torch off the CLI's import path.
     from aizk.conversion.processing.worker import run_worker
 
     try:

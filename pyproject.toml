@@ -135,10 +135,8 @@ test = [
     "pytest-cov>=6",
     "pytest-dependency~=0.6",
     "pytest-isolate>=0.0.13",
-    "pytest-responses>=0.5.1",
     "pytest-subprocess>=1.5.3",
     "pytest-xdist>=3.8.0",
-    "responses>=0.25.3",
 ]
 type = [
     "pandas-stubs~=2.1",

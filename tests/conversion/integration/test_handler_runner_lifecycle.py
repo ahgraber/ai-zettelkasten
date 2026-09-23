@@ -37,9 +37,11 @@ from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.processing import subproc
 from aizk.conversion.settings import ConversionConfig
+from aizk.conversion.wiring import subprocess as wiring_subprocess
 from aizk.pipeline.runner import StageRunner
 from tests.conversion.integration import _subprocess_helpers
 from tests.conversion.integration._zombie_checks import ZombieInspectionError, descendant_zombies
+from tests.fakes.runtime import fake_worker_runtime
 
 pytestmark = [
     pytest.mark.isolate,  # Requires pytest-isolate: pip install pytest-isolate
@@ -78,23 +80,6 @@ def _assert_no_zombie_processes() -> None:
         pytest.skip(f"cannot verify subprocess reaping on this host: {exc}")
     if zombies:
         pytest.fail("Left zombie processes: " + "; ".join(zombies))
-
-
-def _make_fake_runtime():
-    """A runtime whose converter never requires the GPU guard."""
-    from unittest.mock import MagicMock
-
-    from aizk.conversion.wiring.worker import WorkerRuntime
-    from aizk.storage.settings import ObjectStorageSettings
-
-    fake_caps = MagicMock()
-    fake_caps.converter_requires_gpu.return_value = False
-    return WorkerRuntime(
-        coordinator=MagicMock(),
-        resource_guard=MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False)),
-        capabilities=fake_caps,
-        object_storage=ObjectStorageSettings(_env_file=None),
-    )
 
 
 def _seed_queued_job(session: Session) -> int:
@@ -156,15 +141,15 @@ def test_runner_timeout_terminates_subprocess_via_single_owner(
     # Use the stdlib-only subprocess target (sleeps + spawns a grandchild) and
     # track the spawned mp.Process so we can probe its PID and liveness.
     spawned: list = []
-    original_process_class = subproc.mp.get_context("spawn").Process
+    original_process_class = wiring_subprocess.mp.get_context("spawn").Process
 
     def _track_process(target, args, daemon):
         proc = original_process_class(target=target, args=args, daemon=daemon)
         spawned.append(proc)
         return proc
 
-    monkeypatch.setattr(subproc, "_process_job_subprocess", _spawn_child_target)
-    ctx = subproc.mp.get_context("spawn")
+    monkeypatch.setattr(wiring_subprocess, "_process_job_subprocess", _spawn_child_target)
+    ctx = wiring_subprocess.mp.get_context("spawn")
     monkeypatch.setattr(ctx, "Process", _track_process)
 
     # The DB-status cancel poll stays inert; termination is driven solely by the
@@ -175,7 +160,7 @@ def test_runner_timeout_terminates_subprocess_via_single_owner(
     # under test runs entirely before finalize.
     monkeypatch.setattr(ConversionStageHandler, "finalize", lambda self, session, handle, outcome: None)
 
-    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    handler = ConversionStageHandler(config, runtime=fake_worker_runtime())
 
     # Prove cancel does not join: wrap it to snapshot the tracked process's
     # liveness at the instant cancel returns and to time how long cancel took.

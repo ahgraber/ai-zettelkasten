@@ -22,9 +22,9 @@ from aizk.conversion.egress.bookmark_utils import BookmarkContentError
 from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.processing import converter, errors as errors_mod, fetcher
 from aizk.conversion.processing.errors import ReportedChildError, SubprocessMetadataInvalid
-from aizk.conversion.processing.subproc import _report_status
 from aizk.conversion.settings import ConversionConfig
 from aizk.conversion.storage.s3_client import S3Error, S3UploadError
+from aizk.conversion.wiring.subprocess import _report_status
 from aizk.storage.settings import ObjectStorageSettings
 
 
@@ -59,6 +59,7 @@ class TestErrorTaxonomy:
         "exc_cls, expected_code, expected_retryable",
         [
             (errors_mod.JobDataIntegrityError, "job_data_integrity", False),
+            (errors_mod.ConversionRuntimeMissingError, "conversion_runtime_missing", False),
             (errors_mod.ConversionArtifactsMissingError, "conversion_artifacts_missing", False),
             (errors_mod.ConversionCancelledError, "conversion_cancelled", False),
             (errors_mod.ConversionSubprocessError, "conversion_subprocess_failed", True),

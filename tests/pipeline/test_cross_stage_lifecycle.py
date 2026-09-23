@@ -26,11 +26,11 @@ from aizk.graph.extraction_handler import ExtractionStageHandler
 from aizk.graph.extraction_workunit import enqueue_extraction
 from aizk.graph.handler import ContextualizationStageHandler
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
-from aizk.graph.workunit import LoadedMarkdown, enqueue_document
+from aizk.graph.workunit import enqueue_document
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
 from aizk.pipeline.stage import HandlerBase
-from aizk.utilities.hashing import compute_markdown_hash
+from tests.fakes.markdown import StubMarkdownSource
 
 from ._stub_handler import StubStageHandler, StubWorkUnit, create_stub_file_engine
 
@@ -53,13 +53,6 @@ def _clock() -> dt.datetime:
 
 def _naive(moment: dt.datetime) -> dt.datetime:
     return moment.replace(tzinfo=None)
-
-
-class _StubMarkdownSource:
-    """A Markdown source returning fixed text; never called here."""
-
-    def load(self, conversion_output_id: int) -> LoadedMarkdown:
-        return LoadedMarkdown(text="# doc", markdown_hash_xx64=compute_markdown_hash("# doc"))
 
 
 class _AlwaysCurrent:
@@ -109,7 +102,7 @@ def _contextualization(tmp_path: Path) -> _Stage:
     handler = ContextualizationStageHandler(
         engine,
         StubLLMClient(),
-        _StubMarkdownSource(),
+        StubMarkdownSource(),
         _AlwaysCurrent(),
         model_config=STUB_MODEL_CONFIG,
         clock=_clock,

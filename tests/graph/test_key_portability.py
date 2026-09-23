@@ -29,9 +29,9 @@ from aizk.graph.extraction_run import extract_document
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.graph.mention_store import INPUT_POLICY_RAW, MENTION_EXTRACTION_STAGE
 from aizk.graph.persistence import CHUNKING_STAGE
-from aizk.graph.workunit import LoadedMarkdown, ProcessResult, process_document
+from aizk.graph.workunit import ProcessResult, process_document
 from aizk.pipeline.run import PipelineRun, RunStatus
-from aizk.utilities.hashing import compute_markdown_hash
+from tests.fakes.markdown import StubMarkdownSource
 
 _SOURCE_ID = UUID("11111111-1111-1111-1111-111111111111")
 
@@ -47,17 +47,6 @@ Content for the first section that the splitter carves into a chunk.
 
 Content for the second section, distinct from the first.
 """
-
-
-class _StubMarkdownSource:
-    """A deterministic markdown source returning fixed text for any locator."""
-
-    def __init__(self, text_: str) -> None:
-        self._text = text_
-
-    def load(self, conversion_output_id: int) -> LoadedMarkdown:
-        """Return the fixed Markdown and its computed hash for any locator."""
-        return LoadedMarkdown(text=self._text, markdown_hash_xx64=compute_markdown_hash(self._text))
 
 
 class _AlwaysCurrent:
@@ -95,7 +84,7 @@ def _ingest(engine: Engine, source_id: UUID) -> None:
         StubLLMClient(),
         source_id=source_id,
         conversion_output_id=1,
-        markdown_source=_StubMarkdownSource(_MARKDOWN),
+        markdown_source=StubMarkdownSource(_MARKDOWN),
         freshness=_AlwaysCurrent(),
         model_config=STUB_MODEL_CONFIG,
     )

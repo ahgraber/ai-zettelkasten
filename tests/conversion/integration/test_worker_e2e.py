@@ -37,9 +37,12 @@ from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.processing import subproc, worker
 from aizk.conversion.settings import ConversionConfig
+from aizk.conversion.wiring import subprocess as wiring_subprocess
 from aizk.pipeline.shutdown import ShutdownController
 from aizk.storage.settings import ObjectStorageSettings
 from tests.conversion.integration import _subprocess_helpers
+from tests.fakes.runtime import fake_worker_runtime
+from tests.fakes.storage import install_memory_s3
 
 pytestmark = [
     pytest.mark.isolate,  # Requires pytest-isolate: pip install pytest-isolate
@@ -86,50 +89,6 @@ def _seed_queued_job(session: Session, *, bookmark_id: str, idempotency_key: str
     return job.id
 
 
-def _make_fake_runtime():
-    """A runtime whose converter never requires the GPU guard."""
-    from unittest.mock import MagicMock
-
-    from aizk.conversion.wiring.worker import WorkerRuntime
-    from aizk.storage.settings import ObjectStorageSettings
-
-    fake_caps = MagicMock()
-    fake_caps.converter_requires_gpu.return_value = False
-    return WorkerRuntime(
-        coordinator=MagicMock(),
-        resource_guard=MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False)),
-        capabilities=fake_caps,
-        object_storage=ObjectStorageSettings(_env_file=None),
-    )
-
-
-def _install_memory_s3(monkeypatch) -> dict[str, bytes]:
-    """Replace S3Client with an in-memory store; the in-process upload phase uses it."""
-    storage: dict[str, bytes] = {}
-
-    def _init_s3_client(self, config):
-        self.config = config
-        self.bucket = config.s3_bucket_name
-        self.client = None
-
-    def _upload_file(self, local_path, s3_key: str) -> str:
-        storage[s3_key] = local_path.read_bytes()
-        return f"s3://{self.bucket}/{s3_key}"
-
-    def _upload_fileobj(self, file_obj, s3_key: str) -> str:
-        storage[s3_key] = file_obj.read()
-        return f"s3://{self.bucket}/{s3_key}"
-
-    def _get_object_bytes(self, s3_key: str) -> bytes:
-        return storage[s3_key]
-
-    monkeypatch.setattr("aizk.storage.s3.S3Client.__init__", _init_s3_client)
-    monkeypatch.setattr("aizk.storage.s3.S3Client.upload_file", _upload_file)
-    monkeypatch.setattr("aizk.storage.s3.S3Client.upload_fileobj", _upload_fileobj)
-    monkeypatch.setattr("aizk.storage.s3.S3Client.get_object_bytes", _get_object_bytes)
-    return storage
-
-
 def _wait_for(predicate, *, timeout_seconds: float, interval_seconds: float = 0.05) -> bool:
     """Poll ``predicate`` until it is truthy or the timeout elapses."""
     deadline = time.monotonic() + timeout_seconds
@@ -147,11 +106,11 @@ def _patch_worker_infra(monkeypatch) -> tuple[dict[str, bytes], list[int]]:
     the cancellation check, the runtime builder, and the forced-exit seam.
     Returns ``(storage, exit_calls)`` so per-test assertions can inspect them.
     """
-    storage = _install_memory_s3(monkeypatch)
-    monkeypatch.setattr(subproc, "_process_job_subprocess", _success_target)
+    storage = install_memory_s3(monkeypatch)
+    monkeypatch.setattr(wiring_subprocess, "_process_job_subprocess", _success_target)
     monkeypatch.setattr(subproc, "_is_job_cancelled", lambda _job_id, _engine: False)
     monkeypatch.setattr(
-        "aizk.conversion.wiring.worker.build_worker_runtime", lambda _cfg, **_kwargs: _make_fake_runtime()
+        "aizk.conversion.wiring.worker.build_worker_runtime", lambda _cfg, **_kwargs: fake_worker_runtime()
     )
     exit_calls: list[int] = []
     monkeypatch.setattr("aizk.pipeline.shutdown.force_exit", lambda code: exit_calls.append(code))

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-from unittest.mock import MagicMock, Mock
+from unittest.mock import Mock
 from uuid import uuid4
 
 from sqlmodel import Session, select
@@ -42,8 +42,8 @@ from aizk.conversion.processing.types import SourceMetaFields, SubprocessMetadat
 from aizk.conversion.settings import ConversionConfig
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
-from aizk.storage.settings import ObjectStorageSettings
 from tests.conversion._helpers import make_job, make_source
+from tests.fakes.runtime import fake_worker_runtime
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -402,17 +402,6 @@ def test_direct_source_mutation_emits_no_event(db_session: Session) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_fake_runtime() -> MagicMock:
-    from contextlib import nullcontext
-
-    runtime = MagicMock()
-    runtime.resource_guard = nullcontext()
-    runtime.capabilities.converter_requires_gpu.return_value = False
-    runtime.coordinator = Mock()
-    runtime.object_storage = ObjectStorageSettings(_env_file=None)
-    return runtime
-
-
 def test_successful_job_emits_full_event_sequence(monkeypatch, db_session: Session) -> None:
     """R1+R2: end-to-end happy path emits claimed → phase × 2 → upload_pending → succeeded."""
     source = make_source(
@@ -503,7 +492,7 @@ def test_successful_job_emits_full_event_sequence(monkeypatch, db_session: Sessi
     monkeypatch.setattr(repository_mod, "_prepare_upload", _fake_prepare_upload)
     monkeypatch.setattr(repository_mod, "_execute_upload", _fake_execute_upload)
 
-    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    handler = ConversionStageHandler(config, runtime=fake_worker_runtime())
     handler.execute(job.id)
 
     db_session.expire_all()
@@ -568,7 +557,7 @@ def test_subprocess_terminal_events_not_persisted_via_subprocess_channel(monkeyp
 
     from aizk.conversion.processing.errors import ReportedChildError
 
-    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    handler = ConversionStageHandler(config, runtime=fake_worker_runtime())
     # execute raises; finalize then writes the single terminal failed event.
     try:
         handler.execute(job.id)
@@ -680,7 +669,7 @@ def test_phase_event_persistence_failure_does_not_halt_job(monkeypatch, db_sessi
     monkeypatch.setattr(repository_mod, "_prepare_upload", lambda *a, **k: None)
     monkeypatch.setattr(repository_mod, "_execute_upload", lambda *a, **k: None)
 
-    handler = ConversionStageHandler(config, runtime=_make_fake_runtime())
+    handler = ConversionStageHandler(config, runtime=fake_worker_runtime())
     # Must NOT raise — the wrapper swallows the second phase-event failure and continues.
     handler.execute(job.id)
 

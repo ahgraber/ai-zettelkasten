@@ -46,10 +46,10 @@ from aizk.graph.persistence import (
     chunking_derivation_key,
     chunking_input_fingerprint,
 )
-from aizk.graph.workunit import LoadedMarkdown, ProcessResult, process_document
+from aizk.graph.workunit import ProcessResult, process_document
 from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, content_fingerprint, derivation_key
 from aizk.pipeline.run import PipelineRun, RunStatus
-from aizk.utilities.hashing import compute_markdown_hash
+from tests.fakes.markdown import StubMarkdownSource
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -163,17 +163,6 @@ def test_extraction_derivation_key_matches_the_shared_helper() -> None:
     assert _is_sha256_hex(key)
 
 
-class _StubMarkdownSource:
-    """A deterministic markdown source returning fixed text for any locator."""
-
-    def __init__(self, text_: str) -> None:
-        self._text = text_
-
-    def load(self, conversion_output_id: int) -> LoadedMarkdown:
-        """Return the fixed Markdown and its computed hash for any locator."""
-        return LoadedMarkdown(text=self._text, markdown_hash_xx64=compute_markdown_hash(self._text))
-
-
 class _AlwaysCurrent:
     """A freshness stub treating every output as the source's latest."""
 
@@ -218,7 +207,7 @@ def test_every_stage_producer_stamps_the_derivation_key_format(tmp_path: Path) -
         StubLLMClient(),
         source_id=source_id,
         conversion_output_id=1,
-        markdown_source=_StubMarkdownSource(_MARKDOWN),
+        markdown_source=StubMarkdownSource(_MARKDOWN),
         freshness=_AlwaysCurrent(),
         model_config=STUB_MODEL_CONFIG,
     )

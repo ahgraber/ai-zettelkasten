@@ -16,7 +16,6 @@ records reproducible.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
@@ -38,6 +37,7 @@ from aizk.graph.workunit import (
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus
 from aizk.utilities.hashing import compute_markdown_hash
+from tests.fakes.markdown import StubMarkdownSource
 
 _AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")
 _OUTPUT_ID = 42
@@ -56,17 +56,6 @@ Content for the first section that the splitter carves into a chunk.
 
 Content for the second section, distinct from the first.
 """
-
-
-@dataclass
-class _StubMarkdownSource:
-    """A deterministic :class:`~aizk.graph.workunit.MarkdownSource` for tests."""
-
-    text: str
-
-    def load(self, conversion_output_id: int) -> LoadedMarkdown:
-        """Return the stub Markdown and its computed hash for any locator."""
-        return LoadedMarkdown(text=self.text, markdown_hash_xx64=compute_markdown_hash(self.text))
 
 
 class _AlwaysCurrent:
@@ -92,7 +81,7 @@ def _run(engine, *, conversion_output_id: int = _OUTPUT_ID, source_id: UUID = _A
         StubLLMClient(),
         source_id=source_id,
         conversion_output_id=conversion_output_id,
-        markdown_source=_StubMarkdownSource(_MARKDOWN),
+        markdown_source=StubMarkdownSource(_MARKDOWN),
         freshness=_AlwaysCurrent(),
         model_config=STUB_MODEL_CONFIG,
     )
@@ -270,7 +259,7 @@ def test_process_document_reuses_summary_text_on_rerun(tmp_path: Path) -> None:
     """
     engine = _make_engine(tmp_path, "summary_reuse.db")
     client = StubLLMClient()  # accumulates prompts across both runs
-    source = _StubMarkdownSource(_MARKDOWN)
+    source = StubMarkdownSource(_MARKDOWN)
 
     process_document(
         engine,
@@ -336,7 +325,7 @@ def test_variants_regenerate_under_reused_summary_use_persisted_summary(
         rerun_client,
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT_ID,
-        markdown_source=_StubMarkdownSource(_MARKDOWN),
+        markdown_source=StubMarkdownSource(_MARKDOWN),
         freshness=_AlwaysCurrent(),
         model_config=STUB_MODEL_CONFIG,
     )
@@ -371,7 +360,7 @@ def test_process_document_skips_writes_when_cancelled(tmp_path: Path) -> None:
         StubLLMClient(),
         source_id=_AIZK_UUID,
         conversion_output_id=_OUTPUT_ID,
-        markdown_source=_StubMarkdownSource(_MARKDOWN),
+        markdown_source=StubMarkdownSource(_MARKDOWN),
         freshness=_AlwaysCurrent(),
         model_config=STUB_MODEL_CONFIG,
         is_cancelled=lambda: True,

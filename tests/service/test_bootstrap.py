@@ -24,7 +24,7 @@ _COMPOSITION_ROOTS = [
     "aizk.conversion.cli",
     "aizk.graph.cli",
     "aizk.conversion.api.main",
-    "aizk.conversion.processing.subproc",
+    "aizk.conversion.wiring.subprocess",
 ]
 
 #: Modules that build an application or a runtime and are reached with the

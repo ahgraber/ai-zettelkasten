@@ -49,6 +49,7 @@ from aizk.conversion.core.errors import (
     DisallowedScheme,
     DnsTimeout,
 )
+from aizk.conversion.settings import ConversionConfig
 from aizk.utilities.url_utils import sanitize_url_for_log
 
 logger = logging.getLogger(__name__)
@@ -121,10 +122,6 @@ def _resolve_executor_sizes() -> tuple[int, int]:
     deployment cannot make the egress validator unimportable.
     """
     try:
-        # Local import: avoids paying config-construction cost at module
-        # import time and keeps the dependency edge one-directional.
-        from aizk.conversion.settings import ConversionConfig
-
         cfg = ConversionConfig()
         return int(cfg.egress_dns_workers), int(cfg.egress_validation_workers)
     except Exception:  # noqa: BLE001 — defensive; init must not crash

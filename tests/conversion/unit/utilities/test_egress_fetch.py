@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import socket
-from typing import Any, Callable
+from typing import Any
 
 import httpx
 import pytest
@@ -19,6 +19,7 @@ from aizk.conversion.egress.fetch import (
     egress_fetch_bytes,
 )
 from aizk.conversion.egress.policy import ValidatedDestination
+from tests.fakes.http import mock_transport_factory
 
 
 def _stub_dns_returning(monkeypatch: pytest.MonkeyPatch, host_to_ip: dict[str, str]) -> None:
@@ -29,21 +30,6 @@ def _stub_dns_returning(monkeypatch: pytest.MonkeyPatch, host_to_ip: dict[str, s
         return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", (ip, port))]
 
     monkeypatch.setattr(socket, "getaddrinfo", fake)
-
-
-def _mock_factory(
-    handler: Callable[[httpx.Request], httpx.Response],
-) -> Callable[[ValidatedDestination], httpx.AsyncBaseTransport]:
-    """Return a transport factory that delegates to `httpx.MockTransport`.
-
-    Captures the request the helper would have sent so tests can assert
-    against URLs, headers, etc., without any real network.
-    """
-
-    def factory(_destination: ValidatedDestination) -> httpx.AsyncBaseTransport:
-        return httpx.MockTransport(handler)
-
-    return factory
 
 
 # --- Header stripping --------------------------------------------------------
@@ -106,7 +92,7 @@ async def test_egress_fetch_returns_body_and_headers(monkeypatch: pytest.MonkeyP
     body, response_headers = await egress_fetch_bytes(
         "https://example.com/page",
         max_response_bytes=10_000,
-        transport_factory=_mock_factory(handler),
+        transport_factory=mock_transport_factory(handler),
     )
     assert body == payload
     assert response_headers["content-type"] == "text/html"
@@ -128,7 +114,7 @@ async def test_initial_url_in_deny_set_raises_deny_list(monkeypatch: pytest.Monk
         await egress_fetch_bytes(
             "http://metadata.local/latest/meta-data/",
             max_response_bytes=10_000,
-            transport_factory=_mock_factory(handler),
+            transport_factory=mock_transport_factory(handler),
         )
     # Initial validation rejected — no transport call.
     assert fired["calls"] == 0
@@ -160,7 +146,7 @@ async def test_redirect_to_deny_set_raises_violation_and_does_not_fetch_target(
         await egress_fetch_bytes(
             "https://public.example.com/start",
             max_response_bytes=10_000,
-            transport_factory=_mock_factory(handler),
+            transport_factory=mock_transport_factory(handler),
         )
     assert excinfo.value.reason == "deny_list"
     # Only the first hop was issued; the redirect target was never fetched.
@@ -184,7 +170,7 @@ async def test_https_to_http_redirect_rejected_as_scheme_downgrade(
         await egress_fetch_bytes(
             "https://a.example/start",
             max_response_bytes=10_000,
-            transport_factory=_mock_factory(handler),
+            transport_factory=mock_transport_factory(handler),
         )
     assert excinfo.value.reason == "scheme_downgrade"
 
@@ -206,7 +192,7 @@ async def test_sixth_redirect_hop_raises(monkeypatch: pytest.MonkeyPatch) -> Non
         await egress_fetch_bytes(
             "https://a.example/start",
             max_response_bytes=10_000,
-            transport_factory=_mock_factory(handler),
+            transport_factory=mock_transport_factory(handler),
         )
     # max_redirects=5 → 6 GETs total (initial + 5 redirects), then the helper
     # rejects the 7th before issuing it.
@@ -251,7 +237,7 @@ async def test_https_https_http_three_hop_downgrade_rejected_at_third_hop(
         await egress_fetch_bytes(
             "https://a.example/start",
             max_response_bytes=10_000,
-            transport_factory=_mock_factory(handler),
+            transport_factory=mock_transport_factory(handler),
         )
     assert excinfo.value.reason == "scheme_downgrade"
     # Hops issued: A (https) and B (https). C (http) was never connected to.
@@ -278,7 +264,7 @@ async def test_relative_location_resolves_against_previous_url(
     body, _ = await egress_fetch_bytes(
         "https://a.example/start",
         max_response_bytes=10_000,
-        transport_factory=_mock_factory(handler),
+        transport_factory=mock_transport_factory(handler),
     )
     assert body == b"FINAL"
     assert seen[0].endswith("/start")
@@ -307,7 +293,7 @@ async def test_cross_host_redirect_strips_authorization(monkeypatch: pytest.Monk
         "https://a.example/start",
         max_response_bytes=10_000,
         headers={"Authorization": "Bearer secret-token", "User-Agent": "aizk-test"},
-        transport_factory=_mock_factory(handler),
+        transport_factory=mock_transport_factory(handler),
     )
     # Hop 1 (same host as request) carries the auth.
     assert "Bearer secret-token" in captured[0].get("authorization", "")
@@ -333,7 +319,7 @@ async def test_same_host_redirect_preserves_authorization(
         "https://a.example/start",
         max_response_bytes=10_000,
         headers={"Authorization": "Bearer secret"},
-        transport_factory=_mock_factory(handler),
+        transport_factory=mock_transport_factory(handler),
     )
     assert "Bearer secret" in captured[0]["authorization"]
     assert "Bearer secret" in captured[1]["authorization"]
@@ -353,7 +339,7 @@ async def test_response_exceeding_cap_raises(monkeypatch: pytest.MonkeyPatch) ->
         await egress_fetch_bytes(
             "https://a.example/big",
             max_response_bytes=10,
-            transport_factory=_mock_factory(handler),
+            transport_factory=mock_transport_factory(handler),
         )
 
 
@@ -370,7 +356,7 @@ async def test_declared_content_length_over_cap_raises(monkeypatch: pytest.Monke
         await egress_fetch_bytes(
             "https://a.example/x",
             max_response_bytes=100,
-            transport_factory=_mock_factory(handler),
+            transport_factory=mock_transport_factory(handler),
         )
 
 
@@ -388,7 +374,7 @@ async def test_3xx_without_location_raises_fetch_error(monkeypatch: pytest.Monke
         await egress_fetch_bytes(
             "https://a.example/x",
             max_response_bytes=100,
-            transport_factory=_mock_factory(handler),
+            transport_factory=mock_transport_factory(handler),
         )
 
 
@@ -403,7 +389,7 @@ async def test_non_2xx_terminal_raises_fetch_error(monkeypatch: pytest.MonkeyPat
         await egress_fetch_bytes(
             "https://a.example/x",
             max_response_bytes=100,
-            transport_factory=_mock_factory(handler),
+            transport_factory=mock_transport_factory(handler),
         )
 
 

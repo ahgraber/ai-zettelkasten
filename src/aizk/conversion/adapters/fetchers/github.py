@@ -18,6 +18,7 @@ from aizk.conversion.core.source_ref import GithubReadmeRef, SourceRef
 from aizk.conversion.core.types import ContentType, ConversionInput, SourceMetadata
 from aizk.conversion.egress.fetch import egress_fetch_bytes
 from aizk.conversion.settings import ConversionConfig
+from aizk.utilities import url_utils
 
 _logger = logging.getLogger(__name__)
 
@@ -54,8 +55,6 @@ class GithubReadmeFetcher(ContentFetcher):
             EgressPolicyError: If the egress policy rejects the destination
                 (non-retryable; propagated unchanged).
         """
-        from aizk.utilities.url_utils import normalize_url
-
         if not isinstance(ref, GithubReadmeRef):
             raise TypeError(f"Expected GithubReadmeRef, got {type(ref).__name__}")
 
@@ -69,7 +68,7 @@ class GithubReadmeFetcher(ContentFetcher):
         if source_meta.source_url is None:
             observed_normalized: str | None = None
             try:
-                observed_normalized = normalize_url(readme_url)
+                observed_normalized = url_utils.normalize_url(readme_url)
             except Exception:
                 _logger.debug(
                     "normalize_url failed for GithubReadmeFetcher source_url=%r; normalized_url=None",

@@ -65,13 +65,12 @@ from aizk.graph.job_actions import (
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.graph.mention_store import ResolvedExtractionConfig
 from aizk.graph.persistence import CHUNKING_STAGE
-from aizk.graph.workunit import LoadedMarkdown
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, record_run
 from aizk.pipeline.stage import HandlerBase
-from aizk.utilities.hashing import compute_markdown_hash
+from tests.fakes.markdown import StubMarkdownSource
 
 #: The extraction configuration the re-admission test resolves against.
 _RESOLVED_CONFIG = ResolvedExtractionConfig(
@@ -119,14 +118,6 @@ class _SilentExtractor:
         return []
 
 
-class _StubMarkdownSource:
-    """A Markdown source returning fixed text; the claim and finalize paths under test never load it."""
-
-    def load(self, conversion_output_id: int) -> LoadedMarkdown:
-        """Return the fixed document."""
-        return LoadedMarkdown(text="# doc", markdown_hash_xx64=compute_markdown_hash("# doc"))
-
-
 class _AlwaysCurrent:
     """A freshness stub treating every output as current; never consulted here."""
 
@@ -138,7 +129,7 @@ class _AlwaysCurrent:
 def _contextualization_handler(engine: Engine) -> HandlerBase:
     """Build the contextualization handler under its default retry policy."""
     return ContextualizationStageHandler(
-        engine, StubLLMClient(), _StubMarkdownSource(), _AlwaysCurrent(), model_config=STUB_MODEL_CONFIG
+        engine, StubLLMClient(), StubMarkdownSource(), _AlwaysCurrent(), model_config=STUB_MODEL_CONFIG
     )
 
 
