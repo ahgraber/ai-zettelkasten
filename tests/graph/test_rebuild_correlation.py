@@ -30,11 +30,11 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.source import Source
+from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.contextualization import SUMMARY_STAGE
 from aizk.graph.datamodel import ChunkRunInput, DocumentSummary
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
-from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.graph.workunit import ProcessResult, process_document
 from aizk.pipeline.run import PipelineRun, RunStatus
 from tests.fakes.markdown import StubMarkdownSource

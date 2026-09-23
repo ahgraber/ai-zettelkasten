@@ -30,8 +30,8 @@ from aizk.conversion.datamodel.job import ConversionJobStatus
 from aizk.graph.admission import contextualization_adapter, run_admission_pass
 from aizk.graph.api.main import create_app
 from aizk.graph.backfill import run_contextualization_backfill, run_extraction_backfill
+from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.config import AdmissionConfig
-from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline import capacity
 from aizk.pipeline.run import PipelineRun, RunStatus
 

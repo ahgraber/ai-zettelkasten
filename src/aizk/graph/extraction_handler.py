@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from sqlalchemy import Engine
 
     from aizk.graph.extraction import EntityExtractor
-    from aizk.graph.mention_store import InputPolicy
+    from aizk.graph.mentions import InputPolicy
 
 logger = logging.getLogger(__name__)
 

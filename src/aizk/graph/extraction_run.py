@@ -17,7 +17,7 @@ from uuid import UUID
 from sqlmodel import Session, func, select
 
 from aizk.db.engine import begin_immediate
-from aizk.graph.contextualization import VARIANT_STAGE, StalePlanError
+from aizk.graph.chunks import CHUNKING_STAGE, active_chunking_run, document_order_chunks
 from aizk.graph.datamodel import (
     INPUT_KIND_RAW,
     ChunkRunInput,
@@ -34,7 +34,7 @@ from aizk.graph.extraction import (
     select_extraction_input,
 )
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
-from aizk.graph.mention_store import (
+from aizk.graph.mentions import (
     INPUT_POLICY_CONTEXTUALIZED,
     INPUT_POLICY_RAW,
     MENTION_EXTRACTION_STAGE,
@@ -46,7 +46,7 @@ from aizk.graph.mention_store import (
     open_extraction_run,
     persist_mentions,
 )
-from aizk.graph.persistence import CHUNKING_STAGE, active_chunking_run, document_order_chunks
+from aizk.graph.variants import VARIANT_STAGE, StalePlanError
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus, record_applicability, require_active_run
 

@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from aizk.graph.mention_store import MENTION_EXTRACTION_STAGE
+from aizk.graph.mentions import MENTION_EXTRACTION_STAGE
 from aizk.pipeline.events import CreationOrigin
 
 #: Stage identifier stamped on the work-unit's transition events. Extraction's

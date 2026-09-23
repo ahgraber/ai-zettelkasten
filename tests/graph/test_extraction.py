@@ -4,9 +4,9 @@ Exercises :func:`~aizk.graph.extraction.select_extraction_input` and
 :func:`~aizk.graph.extraction.extract_chunk_mentions` against a real (file-based)
 SQLite schema carrying the chunk, contextualized-chunk, mention, co-occurrence,
 and shared ``pipeline_runs`` tables — the same tables
-``tests/graph/test_mention_store.py`` builds, plus the write path
-(:func:`~aizk.graph.mention_store.open_extraction_run` /
-:func:`~aizk.graph.mention_store.persist_mentions`) they feed. Extraction is
+``tests/graph/test_mentions.py`` builds, plus the write path
+(:func:`~aizk.graph.mentions.open_extraction_run` /
+:func:`~aizk.graph.mentions.persist_mentions`) they feed. Extraction is
 wired end-to-end through a deterministic stub :class:`~aizk.graph.extraction.EntityExtractor`
 (design decision ``DeterministicStubExtractorForTests``): uniform run versions,
 the source/revision/expansion occurrence-classification partition, intra-chunk
@@ -36,7 +36,7 @@ from aizk.graph.extraction import (
     extract_chunk_mentions,
     select_extraction_input,
 )
-from aizk.graph.mention_store import ResolvedExtractionConfig, open_extraction_run, persist_mentions
+from aizk.graph.mentions import ResolvedExtractionConfig, open_extraction_run, persist_mentions
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 
 if TYPE_CHECKING:
@@ -105,7 +105,7 @@ class RecordingExtractor:
 
 
 # --------------------------------------------------------------------------- #
-# Fixtures (mirrors tests/graph/test_mention_store.py's engine/chunk seeding)
+# Fixtures (mirrors tests/graph/test_mentions.py's engine/chunk seeding)
 # --------------------------------------------------------------------------- #
 
 
@@ -489,7 +489,7 @@ def test_falls_back_to_raw(session: Session) -> None:
 def test_present_empty_variant_consumed_as_raw(session: Session) -> None:
     """A present-but-empty active variant is consumed as raw text and persists cleanly end-to-end.
 
-    :func:`~aizk.graph.mention_store.persist_mentions` rejects a contextualized
+    :func:`~aizk.graph.mentions.persist_mentions` rejects a contextualized
     draft whose variant is present-empty (the already-self-contained case), so a
     conformant extractor pipeline must never build one — this proves the full
     ``select_extraction_input`` -> ``extract_chunk_mentions`` -> ``persist_mentions``

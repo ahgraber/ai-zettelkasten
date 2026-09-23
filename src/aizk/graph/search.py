@@ -15,8 +15,8 @@ from uuid import UUID
 
 from sqlalchemy import Uuid, text
 
-from aizk.graph.contextualization import VARIANT_STAGE
-from aizk.graph.persistence import CHUNKING_STAGE
+from aizk.graph.chunks import CHUNKING_STAGE
+from aizk.graph.variants import VARIANT_STAGE
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine

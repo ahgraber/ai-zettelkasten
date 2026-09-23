@@ -19,6 +19,7 @@ from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from aizk.graph.capacity import StageAtCapacityError
+from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.datamodel import ExtractionJob
 from aizk.graph.extraction_events import QueuedPayload
 from aizk.graph.extraction_workunit import (
@@ -27,7 +28,6 @@ from aizk.graph.extraction_workunit import (
     pending_extraction_count,
     pending_extraction_sources,
 )
-from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.invalidation import ReprocessingConfirmationError
 from aizk.pipeline.lifecycle import WorkUnitStatus

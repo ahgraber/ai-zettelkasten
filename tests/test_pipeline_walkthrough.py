@@ -33,6 +33,7 @@ from aizk.conversion.wiring.registrations import register_fetchers
 from aizk.conversion.wiring.worker import WorkerRuntime
 from aizk.db.engine import _ENGINE_CACHE, get_engine
 from aizk.db.migrations import run_migrations
+from aizk.graph.chunks import active_chunking_run
 from aizk.graph.contextualization import VARIANT_STAGE
 from aizk.graph.datamodel import Chunk, ChunkRunInput, ContextualizationJob, ContextualizedChunk, Mention
 from aizk.graph.enqueue import enqueue_output
@@ -40,8 +41,7 @@ from aizk.graph.extraction_handler import ExtractionStageHandler
 from aizk.graph.extraction_workunit import enqueue_extraction
 from aizk.graph.handler import ContextualizationStageHandler
 from aizk.graph.markdown_source import ConversionOutputFreshness, S3MarkdownSource
-from aizk.graph.mention_store import INPUT_POLICY_RAW
-from aizk.graph.persistence import active_chunking_run
+from aizk.graph.mentions import INPUT_POLICY_RAW
 from aizk.pipeline.run import active_run
 from aizk.storage.settings import ObjectStorageSettings
 from aizk.utilities.hashing import compute_markdown_hash

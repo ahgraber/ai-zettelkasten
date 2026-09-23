@@ -1,6 +1,6 @@
 """Validation-clause tests for the chunk, summary, and contextualization applicability writers.
 
-Exercises :func:`~aizk.graph.persistence.record_chunk_run_applicability`,
+Exercises :func:`~aizk.graph.chunks.record_chunk_run_applicability`,
 :func:`~aizk.graph.contextualization.record_summary_run_applicability`, and
 :func:`~aizk.graph.contextualization.record_contextualization_run_applicability`
 against the six validation clauses shared design describes: the run exists and is
@@ -14,7 +14,7 @@ already present is idempotent, while one sharing a primary key with a different
 
 The chunk and summary writers share clauses 1–4 and 6 (they have no counterpart to
 clause 5, which is contextualization-only). A mismatched-config clause-3 rejection
-for the chunk writer is covered in ``test_chunk_persistence.py`` alongside its
+for the chunk writer is covered in ``test_chunks.py`` alongside its
 other write-time guards; it is not repeated here.
 """
 
@@ -29,6 +29,13 @@ import xxhash
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.graph._version import CONTEXT_VERSION
+from aizk.graph.chunks import (
+    CHUNKING_STAGE,
+    chunking_input_fingerprint,
+    manifest_of_run,
+    persist_chunks,
+    record_chunk_run_applicability,
+)
 from aizk.graph.contextualization import (
     SUMMARY_STAGE,
     VARIANT_STAGE,
@@ -45,13 +52,6 @@ from aizk.graph.datamodel import (
     SummaryRunApplicability,
 )
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
-from aizk.graph.persistence import (
-    CHUNKING_STAGE,
-    chunking_input_fingerprint,
-    manifest_of_run,
-    persist_chunks,
-    record_chunk_run_applicability,
-)
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus
 
@@ -69,7 +69,7 @@ def _make_chunk(
     """Build a splitter chunk (no chunk_id — identity is assigned at persistence).
 
     ``span_start`` increases with ``ordinal`` so a document-order read
-    (``span_start`` ascending, as :func:`~aizk.graph.persistence.document_order_chunks`
+    (``span_start`` ascending, as :func:`~aizk.graph.chunks.document_order_chunks`
     reads it) agrees with the ordinal order the chunk was built and contextualized in.
     """
     content_hash = xxhash.xxh64(text.encode("utf-8")).hexdigest()
@@ -141,7 +141,7 @@ def _summarize(session: Session, *, output_id: str = _OUTPUT_ID, document_text: 
 
 # --------------------------------------------------------------------------- #
 # Chunk-run applicability writer (clauses 1, 2, 4, 6; clause 3 lives in
-# test_chunk_persistence.py alongside the writer's other call site)
+# test_chunks.py alongside the writer's other call site)
 # --------------------------------------------------------------------------- #
 
 

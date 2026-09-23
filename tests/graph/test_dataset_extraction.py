@@ -20,6 +20,7 @@ from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
+from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.datamodel import (
     INPUT_KIND_RAW,
     Chunk,
@@ -33,8 +34,7 @@ from aizk.graph.datamodel import (
 from aizk.graph.dataset_extraction import resolve_target_source_ids, run_dataset_extraction
 from aizk.graph.extraction import Detection
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
-from aizk.graph.mention_store import active_extraction_run
-from aizk.graph.persistence import CHUNKING_STAGE
+from aizk.graph.mentions import active_extraction_run
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.invalidation import ReprocessingConfirmationError
 from aizk.pipeline.run import PipelineRun, record_run

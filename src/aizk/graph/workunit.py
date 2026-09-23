@@ -6,7 +6,7 @@ enqueue patterns that feed it. Chunk persistence and contextualization are **one
 required pipeline**, not separately-gated steps: :func:`process_document` always
 runs the whole path, and the contextualization toggle is an enqueue/eval lever
 (which documents to enqueue, and the downstream raw-vs-contextualized comparison
-via :func:`aizk.graph.contextualization.resolve_chunk_text`), never a per-unit
+via :func:`aizk.graph.variants.resolve_chunk_text`), never a per-unit
 branch.
 
 Both run modes are **enqueue patterns over one write path**, so the produced run
@@ -56,6 +56,7 @@ from sqlmodel import Session, select
 
 from aizk.chunking import SPLITTER_VERSION, split
 from aizk.db.engine import begin_immediate
+from aizk.graph.chunks import memo_delete_keys, persist_chunks
 from aizk.graph.contextualization import (
     consumed_output_memo_keys,
     contextualize_chunks,
@@ -75,7 +76,6 @@ from aizk.graph.events import (
     RequeuedPayload,
     TimedOutPayload,
 )
-from aizk.graph.persistence import memo_delete_keys, persist_chunks
 from aizk.pipeline.capacity import within_headroom
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.invalidation import require_reprocessing_confirmation

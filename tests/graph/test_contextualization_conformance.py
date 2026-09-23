@@ -24,10 +24,10 @@ import xxhash
 
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
 from aizk.graph._version import CONTEXT_VERSION
+from aizk.graph.chunks import persist_chunks
 from aizk.graph.contextualization import VARIANT_STAGE, contextualize_chunks, summarize_document
 from aizk.graph.datamodel import ContextualizedChunk
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
-from aizk.graph.persistence import persist_chunks
 from aizk.graph.workunit import enqueue_backfill
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.invalidation import ReprocessingConfirmationError, generation_is_stale

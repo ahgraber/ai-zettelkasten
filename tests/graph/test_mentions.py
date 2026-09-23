@@ -1,4 +1,4 @@
-"""Behavioral tests for the mention store's write path (``aizk.graph.mention_store``).
+"""Behavioral tests for the mention store's write path (``aizk.graph.mentions``).
 
 Exercises :func:`persist_mentions` and its run helpers against a real (file-based)
 SQLite schema carrying the chunk, contextualized-chunk, mention, co-occurrence, and
@@ -28,6 +28,7 @@ from sqlalchemy import Engine, inspect
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
+from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.datamodel import (
     Chunk,
     ChunkRunInput,
@@ -40,7 +41,7 @@ from aizk.graph.datamodel import (
 from aizk.graph.extraction import Detection
 from aizk.graph.extraction_run import extract_document
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
-from aizk.graph.mention_store import (
+from aizk.graph.mentions import (
     MentionDraft,
     ResolvedExtractionConfig,
     active_extraction_run,
@@ -48,7 +49,6 @@ from aizk.graph.mention_store import (
     open_extraction_run,
     persist_mentions,
 )
-from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, content_fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 
@@ -932,11 +932,11 @@ def _seed_chunking_run(
 
     Bypasses ``persist_chunks`` (whose Markdown/content-index machinery this
     module does not exercise), building only what
-    :func:`~aizk.graph.persistence.document_order_chunks` and
+    :func:`~aizk.graph.chunks.document_order_chunks` and
     ``extract_document``'s upstream-output revalidation need: Chunk rows,
     manifest entries carrying document order via ``span_start``, and a
     :class:`~aizk.graph.datamodel.ChunkRunInput` whose ``chunk_set_fingerprint``
-    is computed the same way :func:`~aizk.graph.persistence.persist_chunks`
+    is computed the same way :func:`~aizk.graph.chunks.persist_chunks`
     would. Each ``chunk_texts`` entry names a readable label, mapped to a
     deterministic surrogate ``chunk_id`` via :func:`_cid`.
     """
@@ -1015,7 +1015,7 @@ def test_partial_failure_exposes_no_active_run(
     def _always_fail(session: Session, *, run_id: int, chunk_id: UUID) -> None:
         raise RuntimeError("forced failure mid-persist")
 
-    monkeypatch.setattr("aizk.graph.mention_store._link_chunk_cooccurrences", _always_fail)
+    monkeypatch.setattr("aizk.graph.mentions._link_chunk_cooccurrences", _always_fail)
 
     with pytest.raises(RuntimeError, match="forced failure mid-persist"):
         extract_document(

@@ -24,6 +24,7 @@ from sqlalchemy import Engine, event
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
+from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.contextualization import VARIANT_STAGE
 from aizk.graph.datamodel import (
     INPUT_KIND_CONTEXTUALIZED,
@@ -50,8 +51,7 @@ from aizk.graph.extraction_run import (
 from aizk.graph.extraction_workunit import pending_extraction_sources
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
 from aizk.graph.job_actions import apply_extraction_readmission
-from aizk.graph.mention_store import ResolvedExtractionConfig
-from aizk.graph.persistence import CHUNKING_STAGE
+from aizk.graph.mentions import ResolvedExtractionConfig
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.lifecycle import WorkUnitStatus

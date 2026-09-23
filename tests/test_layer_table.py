@@ -129,9 +129,6 @@ class Edge(NamedTuple):
 #: to equal the scan exactly, so neither a new violation nor a resolved one can
 #: pass unnoticed.
 RECORDED_EXCEPTIONS: dict[Edge, str] = {
-    Edge("aizk.graph", "aizk.ai.providers.llm"): (
-        "removed when the contextualization stage moves to aizk.contextualization"
-    ),
     Edge("aizk.graph.api.dependencies", "aizk.service.api.dependencies"): (
         "removed when the graph API dependencies move into the stage packages"
     ),

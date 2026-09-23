@@ -27,11 +27,11 @@ from aizk.console import descriptors as descriptors_module
 from aizk.console.descriptors import StageDescriptor
 from aizk.console.stages._graph import build_graph_descriptor
 from aizk.conversion.datamodel.job import ConversionJobStatus
+from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
 from aizk.graph.extraction_run import Currentness
 from aizk.graph.job_actions import apply_contextualization_cancel, apply_contextualization_retry
-from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
 

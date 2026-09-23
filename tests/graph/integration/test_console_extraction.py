@@ -21,10 +21,10 @@ from sqlmodel import Session
 
 from fastapi.testclient import TestClient
 
+from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.datamodel import ExtractionJob
 from aizk.graph.extraction_events import EXTRACTION_STAGE
 from aizk.graph.extraction_run import Currentness
-from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus

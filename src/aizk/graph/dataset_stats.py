@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import select
 
 from aizk.graph.datamodel import ANCHOR_KIND_SOURCE, Mention, MentionCooccurrence
-from aizk.graph.mention_store import MENTION_EXTRACTION_STAGE
+from aizk.graph.mentions import MENTION_EXTRACTION_STAGE
 from aizk.pipeline.run import PipelineRun, RunStatus
 
 if TYPE_CHECKING:

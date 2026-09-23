@@ -37,6 +37,7 @@ import xxhash
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.graph._version import CONTEXT_VERSION, SUMMARY_VERSION
+from aizk.graph.chunks import manifest_of_run, persist_chunks, run_input
 from aizk.graph.content_index import CONTENT_FTS_DDL
 import aizk.graph.contextualization as ctx_mod
 from aizk.graph.contextualization import (
@@ -61,7 +62,6 @@ from aizk.graph.datamodel import (
 )
 from aizk.graph.fingerprints import payload_fingerprint
 from aizk.graph.llm import STUB_MODEL_CONFIG, ModelConfig, StubLLMClient
-from aizk.graph.persistence import manifest_of_run, persist_chunks, run_input
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus
 
@@ -1199,28 +1199,6 @@ def test_overlong_summary_is_rejected(session: Session) -> None:
             model_config=STUB_MODEL_CONFIG,
         )
     assert _runs(session, SUMMARY_STAGE) == []
-
-
-# --------------------------------------------------------------------------- #
-# Resolve-at-use + contextualization toggle
-# --------------------------------------------------------------------------- #
-
-
-def test_resolve_chunk_text_honors_toggle() -> None:
-    """The toggle selects raw vs revised text and records which input was used."""
-    revision = "The Transformer architecture builds on the prior result."
-
-    raw = resolve_chunk_text("working text", contextualized_text=revision, contextualization_enabled=False)
-    assert raw.source is ContextSource.RAW
-    assert raw.text == "working text"
-
-    ctx = resolve_chunk_text("working text", contextualized_text=revision, contextualization_enabled=True)
-    assert ctx.source is ContextSource.CONTEXTUALIZED
-    assert ctx.text == revision
-
-    # With contextualization on but no variant available, the raw text is used.
-    missing = resolve_chunk_text("working text", contextualized_text=None, contextualization_enabled=True)
-    assert missing.source is ContextSource.RAW
 
 
 # --------------------------------------------------------------------------- #

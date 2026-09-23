@@ -26,9 +26,9 @@ from sqlmodel import Session
 import xxhash
 
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
+from aizk.graph.chunks import persist_chunks
 from aizk.graph.contextualization import contextualize_chunks, summarize_document
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
-from aizk.graph.persistence import persist_chunks
 from aizk.graph.search import (
     MAX_QUERY_LENGTH,
     Fts5SearchProvider,

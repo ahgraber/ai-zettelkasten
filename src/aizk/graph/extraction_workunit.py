@@ -15,6 +15,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 from sqlmodel import func, select
 
+from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.datamodel import ExtractionJob
 from aizk.graph.extraction_events import (
     EXTRACTION_STAGE,
@@ -27,7 +28,6 @@ from aizk.graph.extraction_events import (
     RequeuedPayload,
     TimedOutPayload,
 )
-from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.capacity import require_positive_limit, within_headroom
 from aizk.pipeline.invalidation import require_reprocessing_confirmation
 from aizk.pipeline.run import PipelineRun, RunStatus

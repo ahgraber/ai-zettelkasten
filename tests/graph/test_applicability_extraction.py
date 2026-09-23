@@ -19,6 +19,7 @@ import pytest
 from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.contextualization import VARIANT_STAGE
 from aizk.graph.datamodel import (
     ChunkRunInput,
@@ -27,8 +28,7 @@ from aizk.graph.datamodel import (
     ExtractionRunInput,
 )
 from aizk.graph.extraction_run import extraction_derivation_key, record_extraction_run_applicability
-from aizk.graph.mention_store import MENTION_EXTRACTION_STAGE, ResolvedExtractionConfig
-from aizk.graph.persistence import CHUNKING_STAGE
+from aizk.graph.mentions import MENTION_EXTRACTION_STAGE, ResolvedExtractionConfig
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 
 _SOURCE_A = UUID("11111111-1111-1111-1111-111111111111")

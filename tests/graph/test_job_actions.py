@@ -31,6 +31,7 @@ import xxhash
 
 from aizk.conversion.datamodel.source import Source
 from aizk.graph.capacity import StageAtCapacityError, check_capacity
+from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.datamodel import (
     INPUT_KIND_RAW,
     Chunk,
@@ -63,8 +64,7 @@ from aizk.graph.job_actions import (
     apply_extraction_retry,
 )
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
-from aizk.graph.mention_store import ResolvedExtractionConfig
-from aizk.graph.persistence import CHUNKING_STAGE
+from aizk.graph.mentions import ResolvedExtractionConfig
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus

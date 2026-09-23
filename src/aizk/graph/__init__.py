@@ -24,27 +24,10 @@ their own boundary, mirroring :mod:`aizk.conversion`.
 
 from __future__ import annotations
 
-from aizk.ai.providers.llm import LLMClient, PydanticAILLMClient, StubLLMClient
+import importlib
+
 from aizk.graph._version import CONTEXT_VERSION, SUMMARY_VERSION
-from aizk.graph.contextualization import (
-    SUMMARY_STAGE,
-    VARIANT_STAGE,
-    ContextSource,
-    ResolvedChunkText,
-    contextualize_chunks,
-    resolve_chunk_text,
-    summarize_document,
-)
-from aizk.graph.datamodel import (
-    Chunk,
-    ChunkRunInput,
-    ChunkRunManifest,
-    ContextualizationJob,
-    ContextualizedChunk,
-    DocumentSummary,
-)
-from aizk.graph.handler import ContextualizationStageHandler
-from aizk.graph.persistence import (
+from aizk.graph.chunks import (
     CHUNKING_STAGE,
     active_chunking_run,
     chunks_of_run,
@@ -55,14 +38,45 @@ from aizk.graph.persistence import (
     reconstruct_chunk,
     run_input,
 )
-from aizk.graph.workunit import (
-    LoadedMarkdown,
-    MarkdownSource,
-    ProcessResult,
-    enqueue_backfill,
-    enqueue_document,
-    process_document,
+from aizk.graph.datamodel import (
+    Chunk,
+    ChunkRunInput,
+    ChunkRunManifest,
+    ContextualizationJob,
+    ContextualizedChunk,
+    DocumentSummary,
 )
+from aizk.graph.variants import (
+    SUMMARY_STAGE,
+    VARIANT_STAGE,
+    ContextSource,
+    ResolvedChunkText,
+    resolve_chunk_text,
+)
+
+_LAZY_NAMES = {
+    "LLMClient": "aizk.ai.providers.llm",
+    "PydanticAILLMClient": "aizk.ai.providers.llm",
+    "StubLLMClient": "aizk.ai.providers.llm",
+    "contextualize_chunks": "aizk.graph.contextualization",
+    "summarize_document": "aizk.graph.contextualization",
+    "ContextualizationStageHandler": "aizk.graph.handler",
+    "LoadedMarkdown": "aizk.graph.workunit",
+    "MarkdownSource": "aizk.graph.workunit",
+    "ProcessResult": "aizk.graph.workunit",
+    "enqueue_backfill": "aizk.graph.workunit",
+    "enqueue_document": "aizk.graph.workunit",
+    "process_document": "aizk.graph.workunit",
+}
+
+
+def __getattr__(name: str) -> object:
+    """Import the stage module that defines ``name`` on first access and return the attribute."""
+    module_path = _LAZY_NAMES.get(name)
+    if module_path is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return getattr(importlib.import_module(module_path), name)
+
 
 __all__ = [
     "CHUNKING_STAGE",

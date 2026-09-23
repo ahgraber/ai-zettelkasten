@@ -48,8 +48,6 @@ the persist phase prunes once they are redundant with the committed records.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import Enum
 import hashlib
 import json
 import logging
@@ -61,6 +59,14 @@ from sqlmodel import Session, select
 from aizk.ai.providers.llm import ModelConfig, model_config_fingerprint
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.graph._version import CONTEXT_VERSION, SUMMARY_VERSION
+from aizk.graph.chunks import (
+    CHUNKING_STAGE,
+    document_order_chunks,
+    manifest_of_run,
+    memo_get,
+    memo_upsert_and_read,
+    run_input,
+)
 from aizk.graph.content_index import index_contextualized_content
 from aizk.graph.datamodel import (
     INPUT_KIND_CONTEXTUALIZED,
@@ -75,16 +81,18 @@ from aizk.graph.datamodel import (
     SummaryRunApplicability,
 )
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
-from aizk.graph.persistence import (
-    CHUNKING_STAGE,
-    document_order_chunks,
-    manifest_of_run,
-    memo_get,
-    memo_upsert_and_read,
-    run_input,
+from aizk.graph.variants import (
+    SUMMARY_STAGE,
+    VARIANT_STAGE,
+    ContextSource,
+    ResolvedChunkText,
+    StalePlanError,
+    _active_run,
+    resolve_chunk_text,
 )
 from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, content_fingerprint, derivation_key, fingerprint
-from aizk.pipeline.run import PipelineRun, active_run, record_applicability, record_run, require_active_run
+from aizk.pipeline.run import PipelineRun, record_applicability, record_run, require_active_run
+from aizk.utilities.hashing import canonical_json
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -96,20 +104,6 @@ if TYPE_CHECKING:
     from aizk.graph.datamodel import MemoKind
 
 logger = logging.getLogger(__name__)
-
-#: Stage identifier for per-document summary runs in ``pipeline_runs``.
-SUMMARY_STAGE = "document_summary"
-#: Stage identifier for per-document contextualized-variant runs in ``pipeline_runs``.
-VARIANT_STAGE = "chunk_contextualization"
-
-
-class StalePlanError(RuntimeError):
-    """Raised when a planned active run changes before persistence.
-
-    The handler should retry the unit so it can resolve current state and regenerate
-    outside the write transaction.
-    """
-
 
 # Hard validation ceiling for a document summary, in characters. At ~4 characters
 # per token this is ~1500 tokens. It is a fail-closed *validation* ceiling, not a
@@ -173,7 +167,7 @@ def _stable_hash(text: str) -> str:
 
 def _stable_payload_hash(payload: dict[str, object]) -> str:
     """Return a stable hash of a prompt-template payload."""
-    return _stable_hash(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+    return _stable_hash(canonical_json(payload, ensure_ascii=True))
 
 
 SUMMARY_PROMPT_HASH = _stable_payload_hash(
@@ -203,24 +197,6 @@ CONTEXT_PROMPT_HASH = _stable_payload_hash(
         "kind": CONTEXT_PROMPT_KIND,
     }
 )
-
-
-class ContextSource(str, Enum):
-    """Which representation of a chunk was used at the point of consumption."""
-
-    RAW = "raw"
-    CONTEXTUALIZED = "contextualized"
-
-
-@dataclass(frozen=True)
-class ResolvedChunkText:
-    """A chunk's downstream text and the representation used to produce it.
-
-    ``source`` identifies raw or contextualized input for downstream provenance.
-    """
-
-    text: str
-    source: ContextSource
 
 
 def summary_input_fingerprint(document_text: str) -> str:
@@ -412,11 +388,6 @@ def _validate_contextualized_text(working_text: str, contextualized_text: str) -
     if len(normalized) > limit:
         raise ValueError(f"contextualized text is too long: {len(normalized)} chars exceeds {limit} char limit")
     return normalized
-
-
-def _active_run(session: "Session", stage: str, scope_id: UUID) -> PipelineRun | None:
-    """Return the active run for ``(stage, scope_id)``, or ``None``."""
-    return active_run(session, stage, scope_id)
 
 
 def _verify_chunking_provenance(
@@ -1054,23 +1025,3 @@ def record_contextualization_run_applicability(
         {"run_id": run_id, "summary_run_id": summary_run_id, "chunking_run_id": chunking_run_id},
         input_fingerprint=input_fingerprint,
     )
-
-
-def resolve_chunk_text(
-    working_text: str,
-    *,
-    contextualized_text: str | None,
-    contextualization_enabled: bool,
-) -> ResolvedChunkText:
-    """Select raw or contextualized text for downstream consumption.
-
-    Disabled contextualization or a missing variant returns raw text tagged
-    :attr:`ContextSource.RAW`. An available variant returns contextualized text,
-    including raw text tagged :attr:`ContextSource.CONTEXTUALIZED` when its
-    revision is empty. Inspect revision content to detect whether text changed.
-    """
-    if not contextualization_enabled or contextualized_text is None:
-        return ResolvedChunkText(working_text, ContextSource.RAW)
-    if contextualized_text == "":
-        return ResolvedChunkText(working_text, ContextSource.CONTEXTUALIZED)
-    return ResolvedChunkText(contextualized_text, ContextSource.CONTEXTUALIZED)

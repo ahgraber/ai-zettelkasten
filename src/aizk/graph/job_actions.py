@@ -33,7 +33,7 @@ from aizk.pipeline.repository import CANCELLABLE_FROM, RETRYABLE_FROM, WorkUnitR
 if TYPE_CHECKING:
     from sqlmodel import Session
 
-    from aizk.graph.mention_store import ResolvedExtractionConfig
+    from aizk.graph.mentions import ResolvedExtractionConfig
 
 __all__ = [
     "CANCELLABLE_FROM",

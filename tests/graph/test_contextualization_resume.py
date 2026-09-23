@@ -27,6 +27,8 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk, split
+import aizk.graph.chunks as persistence_mod
+from aizk.graph.chunks import memo_get, persist_chunks
 from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.contextualization import (
     MAX_SUMMARY_CHARS,
@@ -47,8 +49,6 @@ from aizk.graph.datamodel import (
 )
 from aizk.graph.handler import ContextualizationStageHandler
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
-import aizk.graph.persistence as persistence_mod
-from aizk.graph.persistence import memo_get, persist_chunks
 from aizk.graph.workunit import ProcessResult, process_document
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.lifecycle import RetryClass
@@ -459,7 +459,7 @@ def test_no_memo_write_transaction_spans_a_model_call(engine: Engine, monkeypatc
 def test_success_prune_removes_consumed_keys_but_spares_unrelated(engine: Engine) -> None:
     """A successful generation deletes the keys it consumed, leaving an unrelated same-source key."""
     # Seed an unrelated memo row under the same source but a different derivation key.
-    from aizk.graph.persistence import memo_upsert_and_read
+    from aizk.graph.chunks import memo_upsert_and_read
 
     memo_upsert_and_read(engine, MEMO_KIND_REVISION, _SCOPE, "unrelated-key", "keep me")
 

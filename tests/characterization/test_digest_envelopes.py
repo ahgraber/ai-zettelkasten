@@ -23,17 +23,17 @@ from aizk.chunking.splitter import split
 from aizk.conversion.core.hashing import compute_config_hash, compute_idempotency_key
 from aizk.conversion.core.source_ref import InlineHtmlRef, SingleFileRef, compute_source_ref_hash
 from aizk.graph import contextualization as contextualization_module
-from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
-from aizk.graph.llm import ModelConfig, _default_responder, model_config_fingerprint
-from aizk.graph.mention_store import (
-    ResolvedExtractionConfig,
-    derive_source_occurrence_key,
-    extraction_derivation_key,
-)
-from aizk.graph.persistence import (
+from aizk.graph.chunks import (
     chunking_config_fingerprint,
     chunking_derivation_key,
     chunking_input_fingerprint,
+)
+from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
+from aizk.graph.llm import ModelConfig, _default_responder, model_config_fingerprint
+from aizk.graph.mentions import (
+    ResolvedExtractionConfig,
+    derive_source_occurrence_key,
+    extraction_derivation_key,
 )
 from aizk.pipeline.identity import content_fingerprint, derivation_key, fingerprint
 from aizk.utilities.hashing import compute_markdown_hash

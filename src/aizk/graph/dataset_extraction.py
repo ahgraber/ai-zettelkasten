@@ -11,8 +11,8 @@ from uuid import UUID
 
 from sqlmodel import Session, select
 
+from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.extraction_run import extract_corpus
-from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.invalidation import require_reprocessing_confirmation
 from aizk.pipeline.run import PipelineRun, RunStatus
 
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
     from aizk.graph.extraction import EntityExtractor
     from aizk.graph.extraction_run import DocumentExtractionResult
-    from aizk.graph.mention_store import InputPolicy
+    from aizk.graph.mentions import InputPolicy
 
 
 def resolve_target_source_ids(

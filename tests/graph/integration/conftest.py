@@ -28,11 +28,11 @@ from aizk.db.engine import _ENGINE_CACHE, get_engine
 from aizk.db.migrations import run_migrations
 from aizk.graph.api.dependencies import get_blob_reader
 from aizk.graph.api.main import create_app
+from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.datamodel import ChunkRunInput, ExtractionRunInput
 from aizk.graph.extraction_events import EXTRACTION_STAGE
 from aizk.graph.extraction_run import Currentness
-from aizk.graph.mention_store import ResolvedExtractionConfig, extraction_derivation_key
-from aizk.graph.persistence import CHUNKING_STAGE
+from aizk.graph.mentions import ResolvedExtractionConfig, extraction_derivation_key
 from aizk.pipeline.identity import fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus
 

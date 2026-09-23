@@ -34,13 +34,13 @@ from aizk.graph.admission import (
     extraction_adapter,
     run_admission_pass,
 )
+from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.config import AdmissionConfig
 from aizk.graph.datamodel import ContextualizationJob, ExtractionJob
 from aizk.graph.enqueue import enqueue_output
 from aizk.graph.events import CONTEXTUALIZATION_STAGE, QueuedPayload as ContextualizationQueuedPayload
 from aizk.graph.extraction_events import EXTRACTION_STAGE, QueuedPayload as ExtractionQueuedPayload
 from aizk.graph.extraction_workunit import enqueue_extraction
-from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import MAX_BULK_SELECTION, WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, record_run

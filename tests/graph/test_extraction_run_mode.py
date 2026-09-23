@@ -11,7 +11,7 @@ the ``raw`` policy's unconditional raw-text reading, and retry idempotency.
 Builds Chunk rows and chunking/contextualization runs directly (bypassing
 ``persist_chunks``/``contextualize_chunks``, whose Markdown/LLM machinery this
 module does not exercise) so each test only seeds what
-:func:`~aizk.graph.persistence.document_order_chunks` and
+:func:`~aizk.graph.chunks.document_order_chunks` and
 :func:`~aizk.graph.extraction.select_extraction_input` read. A deterministic stub
 :class:`~aizk.graph.extraction.EntityExtractor` keeps mentions reproducible,
 mirroring ``tests/graph/test_extraction.py``'s conventions.
@@ -28,6 +28,7 @@ from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
+from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.contextualization import VARIANT_STAGE, StalePlanError
 from aizk.graph.datamodel import (
     INPUT_KIND_CONTEXTUALIZED,
@@ -46,8 +47,7 @@ from aizk.graph.extraction import Detection
 import aizk.graph.extraction_run as extraction_run_module
 from aizk.graph.extraction_run import extract_corpus, extract_document, extract_source
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
-from aizk.graph.mention_store import active_extraction_run
-from aizk.graph.persistence import CHUNKING_STAGE
+from aizk.graph.mentions import active_extraction_run
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 
@@ -113,7 +113,7 @@ def _seed_chunking_run(
 
     Bypasses ``persist_chunks`` (whose Markdown/content-index machinery this
     module does not exercise), building only what
-    :func:`~aizk.graph.persistence.document_order_chunks` and
+    :func:`~aizk.graph.chunks.document_order_chunks` and
     ``extract_document``'s upstream-output revalidation need. Mirrors
     ``persist_chunks``'s surrogate-reuse rule: a chunk whose sameness-key
     ``(source_id, heading_path, ordinal, content_hash)`` is already present in
@@ -122,7 +122,7 @@ def _seed_chunking_run(
     call — two independent engines each still mint their own surrogate for the
     same logical content, as in the bulk-vs-incremental comparison below).
     ``chunk_set_fingerprint`` is computed the same way
-    :func:`~aizk.graph.persistence.persist_chunks` would.
+    :func:`~aizk.graph.chunks.persist_chunks` would.
     """
     run = record_run(session, stage=CHUNKING_STAGE, scope_id=source_id, derivation_key=derivation_key)
     chunks: list[Chunk] = []

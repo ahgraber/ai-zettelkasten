@@ -19,7 +19,7 @@ from aizk.graph.job_actions import (
     apply_extraction_readmission,
     apply_extraction_retry,
 )
-from aizk.graph.mention_store import ResolvedExtractionConfig
+from aizk.graph.mentions import ResolvedExtractionConfig
 
 if TYPE_CHECKING:
     from sqlmodel import Session

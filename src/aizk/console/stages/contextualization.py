@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from aizk.console.stages._graph import build_graph_descriptor
-from aizk.graph.contextualization import SUMMARY_STAGE, VARIANT_STAGE
+from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.enqueue import pending_contextualization_count, pending_contextualization_sources
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
 from aizk.graph.job_actions import apply_contextualization_cancel, apply_contextualization_retry
-from aizk.graph.persistence import CHUNKING_STAGE
+from aizk.graph.variants import SUMMARY_STAGE, VARIANT_STAGE
 
 #: The contextualization work-unit's drill-down spans three underlying run stages,
 #: in pipeline order.

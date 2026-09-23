@@ -16,7 +16,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import select
 
 from aizk.graph.config import NerConfig
-from aizk.graph.contextualization import VARIANT_STAGE
 from aizk.graph.datamodel import (
     ANCHOR_KIND_REVISION,
     ANCHOR_KIND_SOURCE,
@@ -26,7 +25,8 @@ from aizk.graph.datamodel import (
     ContextualizedChunk,
     InputKind,
 )
-from aizk.graph.mention_store import MentionDraft, ResolvedExtractionConfig
+from aizk.graph.mentions import MentionDraft, ResolvedExtractionConfig
+from aizk.graph.variants import VARIANT_STAGE
 from aizk.pipeline.run import PipelineRun, RunStatus
 
 if TYPE_CHECKING:
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 #: revision-anchored mention when none), the input→raw span mapping, and the
 #: store-side materialization those drafts feed — co-occurrence linking and
 #: surrogate-id / ``source_occurrence_key`` assignment in
-#: :mod:`aizk.graph.mention_store`. A change to any of that logic bumps this
+#: :mod:`aizk.graph.mentions`. A change to any of that logic bumps this
 #: version, independent of ``extractor_version`` (which versions the NER model,
 #: not this logic).
 MATERIALIZER_VERSION = "1"

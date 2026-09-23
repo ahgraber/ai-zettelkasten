@@ -19,10 +19,10 @@ from sqlmodel import Session
 from fastapi.testclient import TestClient
 
 from aizk.conversion.datamodel.job import ConversionJobStatus
+from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.contextualization import SUMMARY_STAGE, VARIANT_STAGE
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
-from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus

@@ -28,10 +28,10 @@ from fastapi.testclient import TestClient
 
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
 from aizk.conversion.datamodel.job import ConversionJob
+from aizk.graph.chunks import memo_get, memo_upsert_and_read, persist_chunks
 from aizk.graph.contextualization import contextualize_chunks, summarize_document
 from aizk.graph.datamodel import MEMO_KIND_REVISION
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
-from aizk.graph.persistence import memo_get, memo_upsert_and_read, persist_chunks
 from aizk.pipeline.identity import content_fingerprint
 
 _HASH = "0011223344556677"

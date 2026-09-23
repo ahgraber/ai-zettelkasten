@@ -23,6 +23,12 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
 from aizk.chunking import Chunk as SplitterChunk
+from aizk.graph.chunks import (
+    CHUNKING_STAGE,
+    chunking_config_fingerprint,
+    chunking_derivation_key,
+    chunking_input_fingerprint,
+)
 from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.contextualization import (
     SUMMARY_STAGE,
@@ -39,13 +45,7 @@ from aizk.graph.contextualization import (
 from aizk.graph.extraction_run import extract_document
 from aizk.graph.fingerprints import chunk_key
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
-from aizk.graph.mention_store import INPUT_POLICY_RAW, MENTION_EXTRACTION_STAGE, extraction_derivation_key
-from aizk.graph.persistence import (
-    CHUNKING_STAGE,
-    chunking_config_fingerprint,
-    chunking_derivation_key,
-    chunking_input_fingerprint,
-)
+from aizk.graph.mentions import INPUT_POLICY_RAW, MENTION_EXTRACTION_STAGE, extraction_derivation_key
 from aizk.graph.workunit import ProcessResult, process_document
 from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, content_fingerprint, derivation_key
 from aizk.pipeline.run import PipelineRun, RunStatus

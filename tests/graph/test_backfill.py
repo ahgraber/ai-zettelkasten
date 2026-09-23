@@ -19,10 +19,10 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.graph.backfill import run_contextualization_backfill, run_extraction_backfill
 from aizk.graph.capacity import StageAtCapacityError
+from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.datamodel import ContextualizationJob, ExtractionJob
 from aizk.graph.events import QueuedPayload as ContextualizationQueuedPayload
 from aizk.graph.extraction_events import QueuedPayload as ExtractionQueuedPayload
-from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.invalidation import ReprocessingConfirmationError
 from aizk.pipeline.run import PipelineRun, record_run

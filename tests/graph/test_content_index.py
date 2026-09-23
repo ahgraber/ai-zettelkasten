@@ -25,10 +25,10 @@ import xxhash
 
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
 from aizk.db.migrations.versions.fc430997788f_baseline import _assert_fts5_available
+from aizk.graph.chunks import persist_chunks
 from aizk.graph.content_index import index_chunk_content, index_contextualized_content, rebuild_content_index
 from aizk.graph.contextualization import contextualize_chunks, summarize_document
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
-from aizk.graph.persistence import persist_chunks
 from aizk.pipeline.identity import content_fingerprint
 
 _AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")

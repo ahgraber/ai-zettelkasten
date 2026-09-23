@@ -19,7 +19,7 @@ import pytest
 
 from aizk.graph.datamodel import INPUT_KIND_CONTEXTUALIZED, INPUT_KIND_RAW
 from aizk.graph.fingerprints import PayloadItem, payload_fingerprint
-from aizk.graph.mention_store import (
+from aizk.graph.mentions import (
     ResolvedExtractionConfig,
     derive_source_occurrence_key,
     extraction_derivation_key,

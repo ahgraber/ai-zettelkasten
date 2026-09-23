@@ -10,7 +10,7 @@ in this tree disagree on it. Three canonical-JSON sites are deliberately not thi
 function:
 
 - ``aizk.chunking.datamodel.derive_chunk_content_key`` and the heading-path
-  serialization in ``aizk.graph.persistence`` serialize JSON *arrays*, where
+  serialization in ``aizk.graph.chunks`` serialize JSON *arrays*, where
   ``sort_keys`` has nothing to sort and the envelope is positional.
 - ``aizk.graph.contextualization._prompt_json`` uses the default separators
   because its output is the prompt string sent to the model; the compact form

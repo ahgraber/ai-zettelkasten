@@ -1,7 +1,7 @@
 """Behavioral tests for chunk persistence and source-scoped run supersession.
 
 Exercises the ``chunking`` delta's persistence contract through
-:mod:`aizk.graph.persistence` on the surrogate-identity model: emitted chunks
+:mod:`aizk.graph.chunks` on the surrogate-identity model: emitted chunks
 round-trip field-for-field (plus their persistence-assigned surrogate ``chunk_id``)
 when reconstructed from ``chunk ⋈ chunk_run_manifest ⋈ chunk_run_input ⋈ chunk_run``,
 the full emitted set is present in the generation's manifest, identities carry only
@@ -25,9 +25,7 @@ import xxhash
 
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk, split
 from aizk.conversion.datamodel.output import ConversionOutput
-from aizk.graph.datamodel import INPUT_KIND_RAW, Chunk, ChunkRunApplicability, ChunkRunManifest
-from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
-from aizk.graph.persistence import (
+from aizk.graph.chunks import (
     active_chunking_run,
     chunking_input_fingerprint,
     chunks_of_run,
@@ -37,6 +35,8 @@ from aizk.graph.persistence import (
     record_chunk_run_applicability,
     run_input,
 )
+from aizk.graph.datamodel import INPUT_KIND_RAW, Chunk, ChunkRunApplicability, ChunkRunManifest
+from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus
 

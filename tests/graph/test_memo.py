@@ -1,8 +1,8 @@
 """Behavioral tests for the contextualization output-memo repository helpers.
 
-Exercises :func:`aizk.graph.persistence.memo_get`,
-:func:`~aizk.graph.persistence.memo_upsert_and_read`, and
-:func:`~aizk.graph.persistence.memo_delete_keys` directly against a seeded SQLite
+Exercises :func:`aizk.graph.chunks.memo_get`,
+:func:`~aizk.graph.chunks.memo_upsert_and_read`, and
+:func:`~aizk.graph.chunks.memo_delete_keys` directly against a seeded SQLite
 test database. These are the only access path to the
 ``graph_contextualization_output_memo`` scratch table; the contracts under test are
 the three-way present-empty/present-text/absent distinction, the
@@ -20,8 +20,8 @@ import pytest
 from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine
 
+from aizk.graph.chunks import memo_delete_keys, memo_get, memo_upsert_and_read
 from aizk.graph.db import begin_immediate
-from aizk.graph.persistence import memo_delete_keys, memo_get, memo_upsert_and_read
 
 _SUMMARY = "summary"
 _REVISION = "revision"

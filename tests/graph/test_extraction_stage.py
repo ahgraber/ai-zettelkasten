@@ -30,6 +30,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
+from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.contextualization import StalePlanError
 from aizk.graph.datamodel import (
     INPUT_KIND_RAW,
@@ -45,7 +46,6 @@ from aizk.graph.extraction import Detection
 from aizk.graph.extraction_handler import DEFAULT_RETRY_MAX_ATTEMPTS, ExtractionStageHandler
 from aizk.graph.extraction_workunit import enqueue_extraction
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
-from aizk.graph.persistence import CHUNKING_STAGE
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus

@@ -23,10 +23,10 @@ import pytest
 from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from aizk.graph.chunks import manifest_of_run, run_input
 from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.datamodel import ContextualizationJob, ContextualizedChunk, DocumentSummary
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
-from aizk.graph.persistence import manifest_of_run, run_input
 from aizk.graph.workunit import (
     LoadedMarkdown,
     ProcessResult,

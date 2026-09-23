@@ -1,8 +1,8 @@
 """Behavioral tests for the corpus dataset's cold-start statistics (``aizk.graph.dataset_stats``).
 
 Seeds a small mention dataset through the real write path
-(:func:`~aizk.graph.mention_store.open_extraction_run` /
-:func:`~aizk.graph.mention_store.persist_mentions`) across two sources, then
+(:func:`~aizk.graph.mentions.open_extraction_run` /
+:func:`~aizk.graph.mentions.persist_mentions`) across two sources, then
 asserts every reported statistic against hand-computed values: mention counts
 and the singleton-rate definition (fraction of distinct surface forms
 occurring exactly once in the partition, corpus-wide), mentions-per-chunk
@@ -25,7 +25,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from aizk.graph.datamodel import Chunk, ContextualizedChunk, Mention, MentionCooccurrence
 from aizk.graph.dataset_stats import compute_dataset_statistics
-from aizk.graph.mention_store import MentionDraft, ResolvedExtractionConfig, open_extraction_run, persist_mentions
+from aizk.graph.mentions import MentionDraft, ResolvedExtractionConfig, open_extraction_run, persist_mentions
 from aizk.pipeline.run import PipelineRun
 
 _SCHEMA_TABLES = [

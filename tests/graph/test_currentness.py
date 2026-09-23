@@ -21,10 +21,10 @@ from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.graph.chunks import run_input
 from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.graph.markdown_source import ConversionOutputFreshness, S3MarkdownSource
-from aizk.graph.persistence import run_input
 from aizk.graph.workunit import LoadedMarkdown, ProcessResult, SkippedSuperseded, process_document
 from aizk.pipeline.run import PipelineRun, RunStatus
 from aizk.utilities.hashing import compute_markdown_hash
