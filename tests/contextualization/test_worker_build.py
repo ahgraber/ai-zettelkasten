@@ -16,12 +16,13 @@ from typing import Any
 import pytest
 
 from aizk.ai.providers.llm import PydanticAILLMClient, build_llm_client
+from aizk.contextualization.events import CONTEXTUALIZATION_STAGE
+from aizk.contextualization.settings import ContextualizationConfig
+from aizk.contextualization.wiring import worker as worker_module
+from aizk.contextualization.wiring.worker import run_graph_worker
 from aizk.conversion.utilities.startup import StartupValidationError
-from aizk.graph import worker as worker_module
 from aizk.graph.admission import AdmissionAdapter
-from aizk.graph.config import AdmissionConfig, ContextualizationConfig
-from aizk.graph.events import CONTEXTUALIZATION_STAGE
-from aizk.graph.worker import run_graph_worker
+from aizk.graph.config import AdmissionConfig
 
 
 def _configured_config(**overrides: object) -> ContextualizationConfig:

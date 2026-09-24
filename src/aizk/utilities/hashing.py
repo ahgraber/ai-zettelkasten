@@ -12,7 +12,7 @@ function:
 - ``aizk.chunking.datamodel.derive_chunk_content_key`` and the heading-path
   serialization in ``aizk.graph.chunks`` serialize JSON *arrays*, where
   ``sort_keys`` has nothing to sort and the envelope is positional.
-- ``aizk.graph.contextualization._prompt_json`` uses the default separators
+- ``aizk.contextualization.core.keys._prompt_json`` uses the default separators
   because its output is the prompt string sent to the model; the compact form
   would change the prompt and therefore the model's output.
 """

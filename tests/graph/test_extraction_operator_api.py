@@ -185,6 +185,18 @@ def test_submit_refuses_new_work_at_capacity(client_factory, engine) -> None:
         assert len(session.exec(select(ExtractionJob)).all()) == 1
 
 
+def test_an_unknown_source_at_capacity_is_not_found_rather_than_refused(client_factory, engine) -> None:
+    """A submission naming no existing source is a 404 even while the stage is full."""
+    _add_source(engine, _SOURCE_A)
+    with client_factory(AIZK_GRAPH__EXTRACTION_QUEUE_MAX_DEPTH=1) as client:
+        assert client.post("/v1/extractions", json={"source_id": str(_SOURCE_A)}).status_code == 201
+
+        response = client.post("/v1/extractions", json={"source_id": str(_UNKNOWN_SOURCE)})
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": f"source {_UNKNOWN_SOURCE} not found"}
+
+
 def test_a_duplicate_submission_at_capacity_still_succeeds(client_factory, engine) -> None:
     """Resubmitting work that already has a unit adds nothing to the backlog, so it is not refused."""
     _add_source(engine, _SOURCE_A)

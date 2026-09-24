@@ -1,7 +1,7 @@
 """Behavioral tests for the graph unit-of-work and its two enqueue entry points.
 
 Exercises the `chunk-contextualization` run-mode-independence contract through
-:mod:`aizk.graph.workunit`: the same document processed after a bulk/backfill
+:mod:`aizk.contextualization.processing.document`: the same document processed after a bulk/backfill
 enqueue and after an incremental enqueue yields the same run records — identical
 chunking/summary/variant derivation keys, provenance linkage, and consumed-input
 locators — because both modes feed the one :func:`process_document` write path.
@@ -23,17 +23,12 @@ import pytest
 from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from aizk.contextualization.core.intake import enqueue_backfill, enqueue_document
+from aizk.contextualization.processing.document import LoadedMarkdown, ProcessResult, process_document
 from aizk.graph.chunks import manifest_of_run, run_input
 from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.datamodel import ContextualizationJob, ContextualizedChunk, DocumentSummary
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
-from aizk.graph.workunit import (
-    LoadedMarkdown,
-    ProcessResult,
-    enqueue_backfill,
-    enqueue_document,
-    process_document,
-)
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus
 from aizk.utilities.hashing import compute_markdown_hash
@@ -317,7 +312,7 @@ def test_variants_regenerate_under_reused_summary_use_persisted_summary(
     # (the splitter version folds into both derivation keys); the summary does not
     # (its key is markdown hash + summary version + prompt + profile).
     monkeypatch.setattr("aizk.chunking.splitter.SPLITTER_VERSION", SPLITTER_VERSION + 1)
-    monkeypatch.setattr("aizk.graph.workunit.SPLITTER_VERSION", SPLITTER_VERSION + 1)
+    monkeypatch.setattr("aizk.contextualization.processing.document.SPLITTER_VERSION", SPLITTER_VERSION + 1)
 
     rerun_client = StubLLMClient()  # a fresh recorder: only the rerun's prompts
     process_document(
@@ -352,7 +347,7 @@ def test_variants_regenerate_under_reused_summary_use_persisted_summary(
 
 def test_process_document_skips_writes_when_cancelled(tmp_path: Path) -> None:
     """A cancellation probe that fires makes the unit-of-work write nothing."""
-    from aizk.graph.workunit import Cancelled
+    from aizk.contextualization.processing.document import Cancelled
 
     engine = _make_engine(tmp_path, "cancelled.db")
     result = process_document(

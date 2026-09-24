@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from aizk.graph.datamodel import ContextualizationJob, ExtractionJob
-from aizk.graph.enqueue import enqueue_output, pending_contextualization_outputs
+from aizk.contextualization.core.intake import contextualization_adapter
+from aizk.graph.datamodel import ExtractionJob
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
 from aizk.graph.extraction_events import EXTRACTION_STAGE
 from aizk.graph.extraction_workunit import enqueue_extraction, pending_extraction_sources
@@ -32,20 +32,6 @@ __all__ = [
     "extraction_adapter",
     "run_admission_pass",
 ]
-
-
-def contextualization_adapter(config: "AdmissionConfig") -> AdmissionAdapter:
-    """Declare the contextualization stage's admission over conversion outputs."""
-    return AdmissionAdapter(
-        stage=CONTEXTUALIZATION_STAGE,
-        model=ContextualizationJob,
-        pending_work=lambda session, limit: pending_contextualization_outputs(session, limit=limit),
-        enqueue=lambda session, key, queue_max_depth, principal: enqueue_output(
-            session, key, queue_max_depth=queue_max_depth, origin="admission", principal=principal
-        ),
-        queue_max_depth=config.contextualization_queue_max_depth,
-        enabled=config.admission_contextualization_enabled,
-    )
 
 
 def extraction_adapter(config: "AdmissionConfig") -> AdmissionAdapter:

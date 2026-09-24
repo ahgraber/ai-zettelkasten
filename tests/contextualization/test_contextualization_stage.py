@@ -1,6 +1,6 @@
 """Worker-driven tests for the contextualization stage adapter.
 
-Drives :class:`aizk.graph.handler.ContextualizationStageHandler` through the
+Drives :class:`aizk.contextualization.handler.ContextualizationStageHandler` through the
 shared :class:`aizk.pipeline.runner.StageRunner` over a real (file-based) SQLite
 database, exercising the full claim → execute (own transaction) → finalize path
 with a deterministic stub model and Markdown source:
@@ -27,6 +27,9 @@ import pytest
 from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from aizk.contextualization.core.intake import enqueue_document
+from aizk.contextualization.handler import DEFAULT_RETRY_MAX_ATTEMPTS, ContextualizationStageHandler
+from aizk.contextualization.processing.document import Cancelled, LoadedMarkdown
 from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.datamodel import (
     Chunk,
@@ -34,9 +37,7 @@ from aizk.graph.datamodel import (
     ContextualizedChunk,
     DocumentSummary,
 )
-from aizk.graph.handler import DEFAULT_RETRY_MAX_ATTEMPTS, ContextualizationStageHandler
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
-from aizk.graph.workunit import Cancelled, LoadedMarkdown, enqueue_document
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus

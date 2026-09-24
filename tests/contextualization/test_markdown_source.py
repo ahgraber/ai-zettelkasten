@@ -13,8 +13,8 @@ from uuid import UUID
 import pytest
 from sqlmodel import Session, create_engine
 
+from aizk.contextualization.processing.markdown_source import S3MarkdownSource
 from aizk.conversion.datamodel.output import ConversionOutput
-from aizk.graph.markdown_source import S3MarkdownSource
 from aizk.utilities.hashing import compute_markdown_hash
 from tests.fakes.storage import MemoryS3
 

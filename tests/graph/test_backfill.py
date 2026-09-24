@@ -10,6 +10,7 @@ work-unit tables untouched.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 from pathlib import Path
 from uuid import UUID
 
@@ -431,3 +432,58 @@ def test_extraction_backfill_named_sources_refuse_at_capacity(tmp_path: Path) ->
         )
 
     assert _count(engine, ExtractionJob) == 0
+
+
+def test_extraction_backfill_events_carry_the_mention_extraction_stage(tmp_path: Path) -> None:
+    """The persisted creation events name the stage the extraction handler records under."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
+        session.commit()
+
+    run_extraction_backfill(
+        engine, source_ids=None, confirmed=True, dry_run=False, queue_max_depth=0, principal="test"
+    )
+
+    with Session(engine) as session:
+        assert {event.stage for event in session.exec(select(PipelineEvent)).all()} == {"mention_extraction"}
+
+
+def _run_contextualization_dry_run(engine) -> None:
+    with Session(engine) as session:
+        _add_output(session, output_id=1, source_id=_UUID_A)
+        session.commit()
+    run_contextualization_backfill(
+        engine, output_ids=None, limit=None, confirmed=False, dry_run=True, queue_max_depth=0, principal="test"
+    )
+
+
+def _run_extraction_dry_run(engine) -> None:
+    with Session(engine) as session:
+        record_run(session, stage=CHUNKING_STAGE, scope_id=_UUID_A, derivation_key="dk-a")
+        session.commit()
+    run_extraction_backfill(
+        engine, source_ids=None, confirmed=False, dry_run=True, queue_max_depth=0, principal="test"
+    )
+
+
+@pytest.mark.parametrize(
+    ("run", "message", "stage"),
+    [
+        (_run_contextualization_dry_run, "Contextualization backfill complete", "contextualization"),
+        (_run_extraction_dry_run, "Extraction backfill complete", "extraction"),
+    ],
+    ids=["contextualization", "extraction"],
+)
+def test_a_backfill_logs_its_completion_under_its_own_stage(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, run, message: str, stage: str
+) -> None:
+    """Each run's completion line keeps its message and its ``stage`` field."""
+    engine = _make_engine(tmp_path)
+
+    with caplog.at_level(logging.INFO):
+        run(engine)
+
+    (record,) = [record for record in caplog.records if record.getMessage() == message]
+    assert record.stage == stage
+    assert record.dry_run is True

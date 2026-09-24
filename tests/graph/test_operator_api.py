@@ -24,6 +24,7 @@ from sqlmodel import Session, SQLModel, select
 
 from fastapi.testclient import TestClient
 
+from aizk.contextualization.api import routes as contextualization_routes
 from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
@@ -241,6 +242,33 @@ def test_submit_refuses_new_work_at_capacity(client_factory, engine) -> None:
     assert response.json() == {"detail": "Queue is at capacity", "retry_after": 45}
     with Session(engine) as session:
         assert len(session.exec(select(ContextualizationJob)).all()) == 1
+
+
+def test_an_unknown_output_at_capacity_is_not_found_rather_than_refused(client_factory, engine) -> None:
+    """A submission naming no existing output is a 404 even while the stage is full."""
+    _add_output(engine, output_id=1)
+    with client_factory(AIZK_GRAPH__CONTEXTUALIZATION_QUEUE_MAX_DEPTH=1) as client:
+        assert client.post("/v1/contextualizations", json={"conversion_output_id": 1}).status_code == 201
+
+        response = client.post("/v1/contextualizations", json={"conversion_output_id": 404})
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "conversion output 404 not found"}
+
+
+def test_an_enqueue_value_error_is_a_not_found(client: TestClient, engine, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The submit route answers the enqueue's ``ValueError`` with a 404 carrying its message."""
+    _add_output(engine, output_id=1)
+
+    def raise_not_found(*_args: object, **_kwargs: object) -> object:
+        raise ValueError("conversion output 1 not found")
+
+    monkeypatch.setattr(contextualization_routes, "enqueue_output", raise_not_found)
+
+    response = client.post("/v1/contextualizations", json={"conversion_output_id": 1})
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "conversion output 1 not found"}
 
 
 def test_a_duplicate_submission_at_capacity_still_succeeds(client_factory, engine) -> None:

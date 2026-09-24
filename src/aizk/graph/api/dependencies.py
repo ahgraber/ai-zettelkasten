@@ -19,8 +19,8 @@ from aizk.service.api.dependencies import get_db_session, get_object_storage
 from aizk.storage.s3 import S3Client
 
 if TYPE_CHECKING:
+    from aizk.contextualization.processing.markdown_source import BlobReader
     from aizk.graph.config import AdmissionConfig
-    from aizk.graph.markdown_source import BlobReader
     from aizk.graph.search import SearchProvider
 
 __all__ = [

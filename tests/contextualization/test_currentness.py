@@ -5,8 +5,8 @@
 - The summary/revision LLM passes run *before* the persist transaction opens, so
   model latency never holds the single serialized SQLite write lock.
 
-Both use the real :class:`~aizk.graph.markdown_source.S3MarkdownSource` /
-:class:`~aizk.graph.markdown_source.ConversionOutputFreshness` over a fake blob
+Both use the real :class:`~aizk.contextualization.processing.markdown_source.S3MarkdownSource` /
+:class:`~aizk.contextualization.processing.markdown_source.ConversionOutputFreshness` over a fake blob
 reader and ``conversion_outputs`` rows (FK enforcement off, so standalone rows
 suffice).
 """
@@ -20,12 +20,17 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from aizk.contextualization.processing.document import (
+    LoadedMarkdown,
+    ProcessResult,
+    SkippedSuperseded,
+    process_document,
+)
+from aizk.contextualization.processing.markdown_source import ConversionOutputFreshness, S3MarkdownSource
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.graph.chunks import run_input
 from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
-from aizk.graph.markdown_source import ConversionOutputFreshness, S3MarkdownSource
-from aizk.graph.workunit import LoadedMarkdown, ProcessResult, SkippedSuperseded, process_document
 from aizk.pipeline.run import PipelineRun, RunStatus
 from aizk.utilities.hashing import compute_markdown_hash
 from tests.fakes.storage import MemoryS3

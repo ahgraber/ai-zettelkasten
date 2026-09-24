@@ -9,66 +9,14 @@ Keeping the blob reader behind a narrow :class:`BlobReader` protocol keeps the
 graph stage decoupled from boto3/S3 details and deterministically testable.
 """
 
-from __future__ import annotations
+from aizk.contextualization.processing.markdown_source import (
+    BlobReader,
+    ConversionOutputFreshness,
+    S3MarkdownSource,
+)
 
-from typing import TYPE_CHECKING
-
-from sqlmodel import Session
-
-from aizk.conversion.datamodel.output import ConversionOutput
-from aizk.graph.enqueue import latest_output_id
-from aizk.graph.workunit import LoadedMarkdown
-
-# The blob-reader protocol is owned by the object-storage package and re-exported
-# here for importers written against this path.
-from aizk.storage import BlobReader
-
-if TYPE_CHECKING:
-    from uuid import UUID
-
-    from sqlalchemy import Engine
-
-
-class S3MarkdownSource:
-    """Fetches a conversion output's Markdown from blob storage by locator."""
-
-    def __init__(self, engine: "Engine", blob_reader: BlobReader) -> None:
-        """Initialize with the engine and blob reader used to resolve and load output data."""
-        self._engine = engine
-        self._blob_reader = blob_reader
-
-    def load(self, conversion_output_id: int) -> LoadedMarkdown:
-        """Return Markdown text and its recorded hash for a conversion output.
-
-        Raises:
-            ValueError: If no conversion output exists for the locator.
-        """
-        with Session(self._engine) as session:
-            output = session.get(ConversionOutput, conversion_output_id)
-            if output is None:
-                raise ValueError(f"conversion output {conversion_output_id} not found")
-            markdown_key = output.markdown_key
-            markdown_hash = output.markdown_hash_xx64
-        data = self._blob_reader.get_object_bytes(markdown_key)
-        return LoadedMarkdown(text=data.decode("utf-8"), markdown_hash_xx64=markdown_hash)
-
-
-class ConversionOutputFreshness:
-    """Production :class:`~aizk.graph.workunit.OutputFreshness` over conversion outputs.
-
-    An output is current iff it **belongs to** the supplied source and is that
-    source's latest (highest-id, monotonic under the single serialized writer)
-    ``ConversionOutput``. Verifying the output row's own ``source_id`` closes an
-    identity hole: without it, an output id from a *different* source that happens
-    to exceed the supplied source's max id would pass, letting another source's
-    Markdown be persisted under the wrong source. The query runs on the persist
-    transaction's session, so the identity + freshness check and the supersede are
-    atomic.
-    """
-
-    def is_current(self, session: Session, source_id: "UUID", conversion_output_id: int) -> bool:
-        """Return ``True`` iff the output belongs to ``source_id`` and is its latest."""
-        output = session.get(ConversionOutput, conversion_output_id)
-        if output is None or output.source_id != source_id:
-            return False
-        return conversion_output_id >= latest_output_id(session, source_id)
+__all__ = [
+    "BlobReader",
+    "ConversionOutputFreshness",
+    "S3MarkdownSource",
+]

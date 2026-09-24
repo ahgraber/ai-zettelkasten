@@ -17,16 +17,18 @@ from uuid import UUID
 from sqlmodel import Session
 import uvicorn
 
+from aizk.contextualization.backfill import run_contextualization_backfill
+from aizk.contextualization.settings import ContextualizationConfig
+from aizk.contextualization.wiring.worker import run_graph_worker
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 from aizk.db.migrations import run_migrations
-from aizk.graph.backfill import BackfillResult, run_contextualization_backfill, run_extraction_backfill
-from aizk.graph.config import AdmissionConfig, ContextualizationConfig, ExtractionConfig, NerConfig
+from aizk.graph.backfill import BackfillResult, run_extraction_backfill
+from aizk.graph.config import AdmissionConfig, ExtractionConfig, NerConfig
 from aizk.graph.dataset_extraction import run_dataset_extraction
 from aizk.graph.dataset_stats import compute_dataset_statistics
 from aizk.graph.extraction import GLINER2_REPO_ID
 from aizk.graph.extraction_worker import build_extractor, run_extraction_worker
-from aizk.graph.worker import run_graph_worker
 from aizk.pipeline.capacity import StageAtCapacityError
 from aizk.pipeline.invalidation import ReprocessingConfirmationError
 from aizk.service.bootstrap import set_process_title
@@ -217,6 +219,20 @@ def _cmd_extract_dataset(args: argparse.Namespace) -> int:
     return 0
 
 
+def _add_backfill_arguments(parser: argparse.ArgumentParser, *, yes_help: str) -> None:
+    """Add the ``--dry-run`` and ``--yes`` options both backfill commands take."""
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Resolve and report the target set without persisting any work-unit.",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help=yes_help,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     """Parse arguments and dispatch the contextualization CLI command."""
     prepare_process()
@@ -256,15 +272,9 @@ def main(argv: list[str] | None = None) -> int:
         metavar="N",
         help="Cap a corpus scan to its first N sources; ignored with --output-id.",
     )
-    backfill_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Resolve and report the target set without persisting any work-unit.",
-    )
-    backfill_parser.add_argument(
-        "--yes",
-        action="store_true",
-        help="Confirm an implicit (corpus-scan or --limit) target selection; not needed with --output-id.",
+    _add_backfill_arguments(
+        backfill_parser,
+        yes_help="Confirm an implicit (corpus-scan or --limit) target selection; not needed with --output-id.",
     )
     backfill_parser.set_defaults(func=_cmd_backfill)
     extraction_backfill_parser = subparsers.add_parser(
@@ -282,15 +292,9 @@ def main(argv: list[str] | None = None) -> int:
             "intent, so it is never confirmation-gated; only an implicit corpus scan requires --yes."
         ),
     )
-    extraction_backfill_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Resolve and report the target set without persisting any work-unit.",
-    )
-    extraction_backfill_parser.add_argument(
-        "--yes",
-        action="store_true",
-        help="Confirm an implicit (corpus-scan) target selection; not needed with --source-id.",
+    _add_backfill_arguments(
+        extraction_backfill_parser,
+        yes_help="Confirm an implicit (corpus-scan) target selection; not needed with --source-id.",
     )
     extraction_backfill_parser.set_defaults(func=_cmd_extraction_backfill)
     extract_dataset_parser = subparsers.add_parser(

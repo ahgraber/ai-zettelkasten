@@ -129,17 +129,20 @@ class Edge(NamedTuple):
 #: to equal the scan exactly, so neither a new violation nor a resolved one can
 #: pass unnoticed.
 RECORDED_EXCEPTIONS: dict[Edge, str] = {
+    Edge("aizk.graph.admission", "aizk.contextualization.core.intake"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.api.dependencies", "aizk.contextualization.processing.markdown_source"): (
+        "removed when the content explorer moves to aizk.console"
+    ),
     Edge("aizk.graph.api.dependencies", "aizk.service.api.dependencies"): (
         "removed when the graph API dependencies move into the stage packages"
     ),
     Edge("aizk.graph.api.dependencies", "aizk.storage.s3"): (
         "removed when the graph API dependencies move into the stage packages"
     ),
-    Edge("aizk.graph.api.routes", "aizk.service.api.responses"): (
-        "removed when the contextualization routes move to aizk.contextualization"
-    ),
-    Edge("aizk.graph.api.routes", "aizk.service.auth"): (
-        "removed when the contextualization routes move to aizk.contextualization"
+    Edge("aizk.graph.api.routes", "aizk.contextualization.api.routes"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
     ),
     Edge("aizk.graph.api.routes.extraction", "aizk.service.api.responses"): (
         "removed when the extraction routes move to aizk.extraction"
@@ -148,26 +151,56 @@ RECORDED_EXCEPTIONS: dict[Edge, str] = {
         "removed when the extraction routes move to aizk.extraction"
     ),
     Edge("aizk.graph.api.routes.ui", "aizk.service.auth"): "removed when the content explorer moves to aizk.console",
-    Edge("aizk.graph.contextualization", "aizk.ai.providers.llm"): (
-        "removed when the contextualization stage moves to aizk.contextualization"
+    Edge("aizk.graph.api.schemas.contextualization", "aizk.contextualization.api.schemas"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
     ),
-    Edge("aizk.graph.handler", "aizk.ai.providers.llm"): (
-        "removed when the contextualization stage moves to aizk.contextualization"
+    Edge("aizk.graph.config", "aizk.contextualization.settings"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.contextualization", "aizk.contextualization.core.applicability"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.contextualization", "aizk.contextualization.core.keys"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.contextualization", "aizk.contextualization.core.revisions"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.contextualization", "aizk.contextualization.core.summary"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.enqueue", "aizk.contextualization.core.intake"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.enqueue", "aizk.contextualization.stage"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.events", "aizk.contextualization.events"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.handler", "aizk.contextualization.handler"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.job_actions", "aizk.contextualization.job_actions"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
     ),
     Edge("aizk.graph.llm", "aizk.ai.providers.llm"): (
         "removed when the compatibility re-exports at the old module paths are removed"
     ),
-    Edge("aizk.graph.markdown_source", "aizk.storage"): (
-        "removed when the Markdown source moves to aizk.contextualization"
+    Edge("aizk.graph.markdown_source", "aizk.contextualization.processing.markdown_source"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
     ),
-    Edge("aizk.graph.worker", "aizk.ai.providers.llm"): (
-        "removed when the contextualization worker moves to aizk.contextualization"
+    Edge("aizk.graph.worker", "aizk.contextualization.wiring.worker"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
     ),
-    Edge("aizk.graph.worker", "aizk.storage.s3"): (
-        "removed when the contextualization worker moves to aizk.contextualization"
+    Edge("aizk.graph.workunit", "aizk.contextualization.core.intake"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
     ),
-    Edge("aizk.graph.workunit", "aizk.ai.providers.llm"): (
-        "removed when the contextualization stage moves to aizk.contextualization"
+    Edge("aizk.graph.workunit", "aizk.contextualization.processing.document"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.workunit", "aizk.contextualization.stage"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
     ),
     Edge("aizk.utilities.batch_utils", "aizk.ai.providers.batch"): (
         "removed when the compatibility re-exports at the old module paths are removed"
@@ -190,7 +223,7 @@ FORBIDDEN_DIRECTIONS: frozenset[tuple[str, str]] = frozenset(
 )
 
 #: Stage packages whose composition roots live in their ``wiring`` sub-package.
-STAGE_PACKAGES: tuple[str, ...] = ("aizk.conversion",)
+STAGE_PACKAGES: tuple[str, ...] = ("aizk.conversion", "aizk.contextualization")
 
 #: Every module-level import of a stage's ``wiring`` from outside its composition
 #: roots, with the change that removes it. Asserted to equal the scan exactly.

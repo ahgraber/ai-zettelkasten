@@ -534,6 +534,39 @@ def test_extraction_backfill_points_at_its_own_worker(
     assert "aizk-graph extraction-worker" in capsys.readouterr().out
 
 
+def test_extraction_backfill_has_no_limit_option() -> None:
+    """``extraction-backfill`` cannot bound a corpus scan, so ``--limit`` is a usage error."""
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["extraction-backfill", "--limit", "1"])
+
+    assert exc_info.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ("subcommand", "run_attr", "label"),
+    [
+        ("backfill", "run_contextualization_backfill", "Contextualization"),
+        ("extraction-backfill", "run_extraction_backfill", "Extraction"),
+    ],
+    ids=["contextualization", "extraction"],
+)
+def test_a_backfill_dry_run_report_names_its_stage(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    subcommand: str,
+    run_attr: str,
+    label: str,
+) -> None:
+    """Each command's dry-run report leads with its own stage label."""
+    _stub_backfill_engine(monkeypatch)
+    monkeypatch.setattr(cli, run_attr, lambda _e, **_k: cli.BackfillResult(targeted=3, enqueued=2, reused=1))
+
+    assert cli.main([subcommand, "--dry-run"]) == 0
+    assert capsys.readouterr().out == (
+        f"{label} backfill (dry run): 3 targeted, 2 would be enqueued, 1 already exist. No work-units were written.\n"
+    )
+
+
 def test_unknown_or_missing_command_is_rejected() -> None:
     """A subcommand is required, and an unknown one is rejected (argparse exits)."""
     with pytest.raises(SystemExit):

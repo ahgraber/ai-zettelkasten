@@ -6,166 +6,84 @@ domain and co-commit lifecycle events with status changes.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING
 
-from sqlalchemy import func
 from sqlmodel import select
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from fastapi.responses import JSONResponse
+from fastapi import HTTPException
 
 from aizk.conversion.datamodel.source import Source
-from aizk.db.engine import begin_immediate_on
 from aizk.graph.api.dependencies import get_admission_config, get_db_session
 from aizk.graph.api.schemas import ExtractionJobList, ExtractionJobResponse, ExtractionSubmission
-from aizk.graph.datamodel import ExtractionJob
-from aizk.graph.extraction_workunit import enqueue_extraction
+from aizk.graph.api.stage_routes import stage_router
+from aizk.graph.extraction_workunit import EXTRACTION_DEFINITION, enqueue_extraction
 from aizk.graph.job_actions import apply_extraction_cancel as _apply_cancel, apply_extraction_retry as _apply_retry
-from aizk.pipeline.capacity import StageAtCapacityError
-from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.service.api.responses import INTAKE_RESPONSES, queue_full_response
-from aizk.service.auth import Principal, get_principal
+from aizk.service.auth import get_principal
 
 if TYPE_CHECKING:
     from sqlmodel import Session
 
-    from aizk.graph.config import AdmissionConfig
-
-#: Resolves the request principal (trust-network: a single deployment principal).
-#: Required on every route for auth parity with the conversion API; the graph
-#: stage is internal/post-conversion and does not owner-scope its work-units.
-_Principal = Annotated[Principal, Depends(get_principal)]
-
-router = APIRouter(prefix="/v1/extractions", tags=["extractions"])
+    from aizk.graph.datamodel import ExtractionJob
+    from aizk.pipeline.events import CreationOrigin
 
 
-def _get_or_404(session: "Session", job_id: int) -> ExtractionJob:
-    """Return the work-unit or raise 404."""
-    job = session.get(ExtractionJob, job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail=f"extraction work-unit {job_id} not found")
-    return job
-
-
-@router.post(
-    "",
-    response_model=ExtractionJobResponse,
-    status_code=status.HTTP_201_CREATED,
-    responses=INTAKE_RESPONSES
-    | {
-        200: {"model": ExtractionJobResponse, "description": "Work was already enqueued"},
-        404: {"description": "No such source"},
-    },
-)
-def submit_job(
-    submission: ExtractionSubmission,
-    api_response: Response,
-    session: Annotated["Session", Depends(get_db_session)],
-    admission_config: Annotated["AdmissionConfig", Depends(get_admission_config)],
-    principal: _Principal,
-) -> ExtractionJobResponse | JSONResponse:
-    """Submit one source for entity-mention extraction.
-
-    Returns 201 for a new unit, 200 for an existing unit, 404 when the source is
-    missing, and 503 when the stage is at capacity.
-    """
-    begin_immediate_on(session)
+def _require_source(session: "Session", submission: ExtractionSubmission) -> None:
+    """Raise 404 when the submitted source does not exist."""
     # Resolved on the durable ``source_id`` identity, not the table's row surrogate.
     known_source = session.exec(select(Source).where(Source.source_id == submission.source_id)).first()
     if known_source is None:
         session.rollback()
         raise HTTPException(status_code=404, detail=f"source {submission.source_id} not found")
-    try:
-        job, created = enqueue_extraction(
-            session,
-            source_id=submission.source_id,
-            queue_max_depth=admission_config.extraction_queue_max_depth,
-            origin="intake",
-            principal=principal.subject,
-        )
-    except StageAtCapacityError:
-        session.rollback()
-        return queue_full_response(admission_config.queue_retry_after_seconds)
-    session.commit()
-    session.refresh(job)
-    if not created:
-        api_response.status_code = status.HTTP_200_OK
-    return ExtractionJobResponse.model_validate(job)
 
 
-@router.get("", response_model=ExtractionJobList)
-def list_jobs(
-    session: Annotated["Session", Depends(get_db_session)],
-    _principal: _Principal,
-    status: Annotated[WorkUnitStatus | None, Query()] = None,
-    limit: Annotated[int, Query(ge=1, le=1000)] = 50,
-    offset: Annotated[int, Query(ge=0)] = 0,
-) -> ExtractionJobList:
-    """List extraction work-units, newest first, optionally filtered by status."""
-    count_stmt = select(func.count()).select_from(ExtractionJob)
-    page_stmt = select(ExtractionJob).order_by(ExtractionJob.created_at.desc())  # type: ignore[attr-defined]
-    if status is not None:
-        count_stmt = count_stmt.where(ExtractionJob.status == status)
-        page_stmt = page_stmt.where(ExtractionJob.status == status)
-
-    total = session.exec(count_stmt).one()
-    jobs = session.exec(page_stmt.limit(limit).offset(offset)).all()
-    return ExtractionJobList(
-        jobs=[ExtractionJobResponse.model_validate(job) for job in jobs],
-        total=total,
-        limit=limit,
-        offset=offset,
+def _enqueue(
+    session: "Session",
+    submission: ExtractionSubmission,
+    *,
+    queue_max_depth: int,
+    origin: "CreationOrigin",
+    principal: str,
+) -> "tuple[ExtractionJob, bool]":
+    """Enqueue or reuse the unit for the submitted source."""
+    return enqueue_extraction(
+        session,
+        source_id=submission.source_id,
+        queue_max_depth=queue_max_depth,
+        origin=origin,
+        principal=principal,
     )
 
 
-@router.get("/{job_id}", response_model=ExtractionJobResponse)
-def get_job(
-    job_id: int,
-    session: Annotated["Session", Depends(get_db_session)],
-    _principal: _Principal,
-) -> ExtractionJobResponse:
-    """Return one extraction work-unit, or 404 if it does not exist."""
-    return ExtractionJobResponse.model_validate(_get_or_404(session, job_id))
+router = stage_router(
+    EXTRACTION_DEFINITION,
+    prefix="/v1/extractions",
+    tag="extractions",
+    label="extraction",
+    submit_model=ExtractionSubmission,
+    response_model=ExtractionJobResponse,
+    list_model=ExtractionJobList,
+    enqueue=_enqueue,
+    retry=_apply_retry,
+    cancel=_apply_cancel,
+    capacity_field="extraction_queue_max_depth",
+    submit_doc="""Submit one source for entity-mention extraction.
 
+    Returns 201 for a new unit, 200 for an existing unit, 404 when the source is
+    missing, and 503 when the stage is at capacity.
+    """,
+    submit_not_found_description="No such source",
+    principal_dependency=get_principal,
+    session_dependency=get_db_session,
+    admission_config_dependency=get_admission_config,
+    intake_responses=INTAKE_RESPONSES,
+    queue_full_response=queue_full_response,
+    precheck=_require_source,
+)
 
-@router.post("/{job_id}/retry", response_model=ExtractionJobResponse)
-def retry_job(
-    job_id: int,
-    session: Annotated["Session", Depends(get_db_session)],
-    principal: _Principal,
-) -> ExtractionJobResponse:
-    """Re-queue a terminal work-unit, clear retry state, and record the event.
-
-    Returns 409 when the status is not re-queueable.
-    """
-    begin_immediate_on(session)
-    job = _get_or_404(session, job_id)
-    try:
-        _apply_retry(session, job, principal=principal.subject)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    session.commit()
-    session.refresh(job)
-    return ExtractionJobResponse.model_validate(job)
-
-
-@router.post("/{job_id}/cancel", response_model=ExtractionJobResponse)
-def cancel_job(
-    job_id: int,
-    session: Annotated["Session", Depends(get_db_session)],
-    _principal: _Principal,
-) -> ExtractionJobResponse:
-    """Cancel a work-unit and record terminal ``CANCELLED`` status.
-
-    Returns 409 when the status is not cancellable. Running units stop
-    cooperatively.
-    """
-    begin_immediate_on(session)
-    job = _get_or_404(session, job_id)
-    try:
-        _apply_cancel(session, job)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    session.commit()
-    session.refresh(job)
-    return ExtractionJobResponse.model_validate(job)
+_endpoints = {route.endpoint.__name__: route.endpoint for route in router.routes}
+submit_job = _endpoints["submit_job"]
+list_jobs = _endpoints["list_jobs"]
+get_job = _endpoints["get_job"]
+retry_job = _endpoints["retry_job"]
+cancel_job = _endpoints["cancel_job"]

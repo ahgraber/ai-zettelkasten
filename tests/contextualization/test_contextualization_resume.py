@@ -27,17 +27,14 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk, split
+from aizk.contextualization.core.keys import MAX_SUMMARY_CHARS
+from aizk.contextualization.core.revisions import contextualize_chunks, resolve_revisions
+from aizk.contextualization.core.summary import resolve_summary_text, summarize_document
+from aizk.contextualization.handler import ContextualizationStageHandler
+from aizk.contextualization.processing.document import ProcessResult, process_document
 import aizk.graph.chunks as persistence_mod
 from aizk.graph.chunks import memo_get, persist_chunks
 from aizk.graph.content_index import CONTENT_FTS_DDL
-from aizk.graph.contextualization import (
-    MAX_SUMMARY_CHARS,
-    StalePlanError,
-    contextualize_chunks,
-    resolve_revisions,
-    resolve_summary_text,
-    summarize_document,
-)
 from aizk.graph.datamodel import (
     MEMO_KIND_REVISION,
     MEMO_KIND_SUMMARY,
@@ -47,9 +44,8 @@ from aizk.graph.datamodel import (
     DocumentSummary,
     SummaryRunApplicability,
 )
-from aizk.graph.handler import ContextualizationStageHandler
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
-from aizk.graph.workunit import ProcessResult, process_document
+from aizk.graph.variants import StalePlanError
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.lifecycle import RetryClass
 from aizk.pipeline.run import PipelineRun, RunStatus
@@ -749,8 +745,8 @@ def memo_get_via(engine: Engine, kind: str, scope: UUID, derivation_key: str) ->
 
 def _revision_key(chunk: SplitterChunk) -> str:
     """Compute the per-row revision derivation key for a single-chunk document."""
+    from aizk.contextualization.core.keys import contextualization_row_derivation_key
     from aizk.graph._version import CONTEXT_VERSION
-    from aizk.graph.contextualization import contextualization_row_derivation_key
 
     return contextualization_row_derivation_key(
         "summary", chunk, None, None, None, SPLITTER_VERSION, CONTEXT_VERSION, STUB_MODEL_CONFIG
@@ -766,7 +762,7 @@ def _all_runs(engine: Engine, scope: UUID) -> Iterator[PipelineRun]:
 # Helper used above for memo reads on the summary key needs the summary derivation key.
 def _summary_key() -> str:
     """Compute the summary derivation key used by the resolve-level tests."""
+    from aizk.contextualization.core.keys import summary_derivation_key
     from aizk.graph._version import SUMMARY_VERSION
-    from aizk.graph.contextualization import summary_derivation_key
 
     return summary_derivation_key(_DOC_TEXT, SUMMARY_VERSION, STUB_MODEL_CONFIG)

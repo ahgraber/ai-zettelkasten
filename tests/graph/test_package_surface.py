@@ -11,7 +11,7 @@ _IMPORT_RUNNER = (
     "import sys\n"
     "import aizk.graph\n"
     "stage_modules = ('aizk.graph.contextualization', 'aizk.graph.handler', 'aizk.graph.workunit',"
-    " 'aizk.ai.providers.llm')\n"
+    " 'aizk.ai.providers.llm', 'aizk.contextualization')\n"
     "print(sorted(name for name in stage_modules if name in sys.modules))\n"
 )
 

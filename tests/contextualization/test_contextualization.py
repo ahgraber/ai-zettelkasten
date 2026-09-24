@@ -1,7 +1,7 @@
 """Behavioral tests for the summary and variant contextualization runs.
 
 Exercises the ``chunk-contextualization`` revision through
-:mod:`aizk.graph.contextualization` with a stubbed model: both runs are scoped to
+:mod:`aizk.contextualization.core` with a stubbed model: both runs are scoped to
 the durable source identity (``source_id``); the summary run records its
 derivation key, version, and consumed ``conversion_output_id`` and supersedes on
 input change; the variant run records per-chunk ``summary_run_id`` /
@@ -14,9 +14,9 @@ production, so these assert structure and provenance, never exact model output.
 
 Derivation keys are opaque SHA-256 digests (``aizk.pipeline.identity.derivation_key``);
 no test decodes one. A key is asserted by equality against the pure functions
-that compute it (:func:`~aizk.graph.contextualization.summary_derivation_key`,
-:func:`~aizk.graph.contextualization.contextualization_run_derivation_key`,
-:func:`~aizk.graph.contextualization.contextualization_row_derivation_key`), which
+that compute it (:func:`~aizk.contextualization.core.keys.summary_derivation_key`,
+:func:`~aizk.contextualization.core.keys.contextualization_run_derivation_key`,
+:func:`~aizk.contextualization.core.keys.contextualization_row_derivation_key`), which
 embed each chunk's portable content key (``aizk.graph.fingerprints.chunk_key``),
 not its database-local surrogate ``chunk_id``, so the keys recompute identically
 on any backend; the surrogate is recorded only as provenance (the variant's
@@ -35,23 +35,18 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
+import aizk.contextualization.core.keys as ctx_mod
+from aizk.contextualization.core.keys import (
+    contextualization_row_derivation_key,
+    contextualization_run_derivation_key,
+    summary_derivation_key,
+)
+from aizk.contextualization.core.revisions import assert_variant_matches_run_input, contextualize_chunks
+from aizk.contextualization.core.summary import summarize_document
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.graph._version import CONTEXT_VERSION, SUMMARY_VERSION
 from aizk.graph.chunks import manifest_of_run, persist_chunks, run_input
 from aizk.graph.content_index import CONTENT_FTS_DDL
-import aizk.graph.contextualization as ctx_mod
-from aizk.graph.contextualization import (
-    SUMMARY_STAGE,
-    VARIANT_STAGE,
-    ContextSource,
-    assert_variant_matches_run_input,
-    contextualization_row_derivation_key,
-    contextualization_run_derivation_key,
-    contextualize_chunks,
-    resolve_chunk_text,
-    summarize_document,
-    summary_derivation_key,
-)
 from aizk.graph.datamodel import (
     Chunk,
     ContextualizationRunApplicability,
@@ -62,6 +57,7 @@ from aizk.graph.datamodel import (
 )
 from aizk.graph.fingerprints import payload_fingerprint
 from aizk.graph.llm import STUB_MODEL_CONFIG, ModelConfig, StubLLMClient
+from aizk.graph.variants import SUMMARY_STAGE, VARIANT_STAGE, ContextSource, resolve_chunk_text
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus
 

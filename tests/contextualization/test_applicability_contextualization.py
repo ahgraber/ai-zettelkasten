@@ -1,8 +1,8 @@
 """Validation-clause tests for the chunk, summary, and contextualization applicability writers.
 
 Exercises :func:`~aizk.graph.chunks.record_chunk_run_applicability`,
-:func:`~aizk.graph.contextualization.record_summary_run_applicability`, and
-:func:`~aizk.graph.contextualization.record_contextualization_run_applicability`
+:func:`~aizk.contextualization.core.applicability.record_summary_run_applicability`, and
+:func:`~aizk.contextualization.core.applicability.record_contextualization_run_applicability`
 against the six validation clauses shared design describes: the run exists and is
 active for the relation's stage; every referenced input exists and belongs to the
 run's scope; the recomputed candidate key (from the referenced inputs' persisted
@@ -27,6 +27,12 @@ from sqlmodel import Session, select
 import xxhash
 
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
+from aizk.contextualization.core.applicability import (
+    record_contextualization_run_applicability,
+    record_summary_run_applicability,
+)
+from aizk.contextualization.core.keys import summary_input_fingerprint
+from aizk.contextualization.core.summary import summarize_document
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.graph._version import CONTEXT_VERSION
 from aizk.graph.chunks import (
@@ -36,14 +42,6 @@ from aizk.graph.chunks import (
     persist_chunks,
     record_chunk_run_applicability,
 )
-from aizk.graph.contextualization import (
-    SUMMARY_STAGE,
-    VARIANT_STAGE,
-    record_contextualization_run_applicability,
-    record_summary_run_applicability,
-    summarize_document,
-    summary_input_fingerprint,
-)
 from aizk.graph.datamodel import (
     ChunkRunApplicability,
     ContextualizationRunApplicability,
@@ -52,6 +50,7 @@ from aizk.graph.datamodel import (
     SummaryRunApplicability,
 )
 from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
+from aizk.graph.variants import SUMMARY_STAGE, VARIANT_STAGE
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus
 
@@ -412,7 +411,7 @@ def _seed_contextualization(
     session: Session, *, output_id: str = _OUTPUT_ID
 ) -> tuple[PipelineRun, DocumentSummary, list]:
     """Persist chunks, summarize, and contextualize under a single conversion output; return (chunking, summary, variants)."""
-    from aizk.graph.contextualization import contextualize_chunks
+    from aizk.contextualization.core.revisions import contextualize_chunks
 
     chunking_run, chunks = _persist_chunking(
         session, [_make_chunk("alpha", ordinal=0), _make_chunk("beta", ordinal=1)], output_id=output_id
