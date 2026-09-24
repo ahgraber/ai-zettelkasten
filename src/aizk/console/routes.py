@@ -25,9 +25,9 @@ from aizk.console.monitor import BASE_COLUMN_COUNT, format_bulk_notice, format_d
 from aizk.console.rendering import TEMPLATES
 import aizk.console.stages  # noqa: F401 -- import registers the stage descriptors
 from aizk.db.engine import begin_immediate_on
-from aizk.graph.api.dependencies import get_db_session
 from aizk.pipeline.admission import MAX_BULK_SELECTION
 from aizk.pipeline.events import PipelineEvent
+from aizk.service.api.dependencies import get_db_session
 from aizk.service.auth import Principal, get_principal
 
 logger = logging.getLogger(__name__)

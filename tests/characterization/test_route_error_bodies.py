@@ -21,9 +21,9 @@ from tests.conversion._helpers import make_job, make_source
 
 from fastapi.testclient import TestClient
 
+from aizk.console.explorer import get_blob_reader
 from aizk.conversion.api.main import create_app as create_conversion_app
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
-from aizk.graph.api.dependencies import get_blob_reader
 from aizk.graph.api.main import create_app as create_graph_app
 from aizk.graph.datamodel import ContextualizationJob, ExtractionJob
 from aizk.pipeline.lifecycle import WorkUnitStatus

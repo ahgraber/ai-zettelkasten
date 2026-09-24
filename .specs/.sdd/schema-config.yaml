@@ -15,5 +15,5 @@ schemas:
     generate:
       command: >-
         uv run python -c
-        'from aizk.graph.api.main import create_app;
+        'from aizk.console.app import create_app;
         import json; print(json.dumps(create_app().openapi(), indent=2))'

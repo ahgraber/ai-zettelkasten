@@ -25,8 +25,8 @@ from fastapi.responses import RedirectResponse
 from aizk.console.descriptors import registered_stages, rollup_counts
 from aizk.console.rendering import TEMPLATES
 import aizk.console.stages  # noqa: F401 -- import registers the stage descriptors
-from aizk.graph.api.dependencies import get_db_session
 from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.service.api.dependencies import get_db_session
 from aizk.service.auth import Principal, get_principal
 
 #: The generic lifecycle categories the dashboard columns render, in order.

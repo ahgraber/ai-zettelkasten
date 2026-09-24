@@ -41,7 +41,7 @@ import uvicorn
 import xxhash
 
 from aizk.chunking import SPLITTER_VERSION, split
-from aizk.graph.api.dependencies import get_blob_reader
+from aizk.console.explorer import get_blob_reader
 from aizk.graph.api.main import create_app
 from aizk.graph.contextualization import (
     VARIANT_STAGE,

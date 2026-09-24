@@ -135,13 +135,7 @@ RECORDED_EXCEPTIONS: dict[Edge, str] = {
     Edge("aizk.graph.admission", "aizk.extraction.stage"): (
         "removed when the compatibility re-exports at the old module paths are removed"
     ),
-    Edge("aizk.graph.api.dependencies", "aizk.contextualization.processing.markdown_source"): (
-        "removed when the content explorer moves to aizk.console"
-    ),
     Edge("aizk.graph.api.dependencies", "aizk.service.api.dependencies"): (
-        "removed when the graph API dependencies move into the stage packages"
-    ),
-    Edge("aizk.graph.api.dependencies", "aizk.storage.s3"): (
         "removed when the graph API dependencies move into the stage packages"
     ),
     Edge("aizk.graph.api.routes", "aizk.contextualization.api.routes"): (
@@ -150,7 +144,9 @@ RECORDED_EXCEPTIONS: dict[Edge, str] = {
     Edge("aizk.graph.api.routes.extraction", "aizk.extraction.api.routes"): (
         "removed when the compatibility re-exports at the old module paths are removed"
     ),
-    Edge("aizk.graph.api.routes.ui", "aizk.service.auth"): "removed when the content explorer moves to aizk.console",
+    Edge("aizk.graph.api.routes.ui", "aizk.console.explorer"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
     Edge("aizk.graph.api.schemas.contextualization", "aizk.contextualization.api.schemas"): (
         "removed when the compatibility re-exports at the old module paths are removed"
     ),
@@ -489,10 +485,9 @@ def test_console_reads_of_the_graph_stage_are_permitted_not_exceptions() -> None
 
 
 def test_the_store_imports_a_stage_only_through_a_recorded_compatibility_or_explorer_edge() -> None:
-    """A store module imports a stage package only through a recorded old-path re-export or explorer edge."""
+    """A store module imports a stage package only through a recorded old-path re-export edge."""
     transitional = {
         "removed when the compatibility re-exports at the old module paths are removed",
-        "removed when the content explorer moves to aizk.console",
     }
     store_to_stage = [
         edge

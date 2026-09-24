@@ -3,8 +3,8 @@
 The console's stage descriptors must dispatch to *domain* code, never to another
 module's FastAPI route internals. The conversion descriptor's boundary is pinned in
 ``tests/graph/integration/test_console_conversion.py``; these guard the graph stages:
-their transition helpers come from ``aizk.graph.job_actions`` (the lifted domain
-module), so no descriptor imports from ``aizk.graph.api`` (the route/wiring layer).
+their transition helpers come from each stage's ``job_actions`` (the lifted domain
+module), so no descriptor imports from each stage's ``api`` (the route/wiring layer).
 """
 
 from __future__ import annotations
@@ -31,17 +31,24 @@ def _module_imports(module) -> set[str]:
 
 
 @pytest.mark.parametrize(
-    "module",
-    [contextualization_stage, extraction_stage],
+    ("module", "domain_module", "route_prefixes"),
+    [
+        (
+            contextualization_stage,
+            "aizk.contextualization.job_actions",
+            ("aizk.graph.api", "aizk.contextualization.api"),
+        ),
+        (extraction_stage, "aizk.extraction.job_actions", ("aizk.graph.api", "aizk.extraction.api")),
+    ],
     ids=["contextualization", "extraction"],
 )
-def test_graph_descriptor_imports_domain_not_routes(module) -> None:
+def test_graph_descriptor_imports_domain_not_routes(module, domain_module, route_prefixes) -> None:
     """A graph descriptor imports its transitions from the domain module, not a route module."""
     imports = _module_imports(module)
 
     # No import from the route/wiring layer.
-    assert not any(name.startswith("aizk.graph.api") for name in imports), (
-        f"{module.__name__} imports from the route layer: {[n for n in imports if n.startswith('aizk.graph.api')]}"
+    assert not any(name.startswith(route_prefixes) for name in imports), (
+        f"{module.__name__} imports from the route layer: {[n for n in imports if n.startswith(route_prefixes)]}"
     )
     # The transition helpers come from the lifted domain module.
-    assert "aizk.graph.job_actions" in imports
+    assert domain_module in imports

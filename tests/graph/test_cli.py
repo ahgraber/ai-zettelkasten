@@ -70,7 +70,7 @@ def test_serve_runs_the_operator_app_factory_on_the_operator_port(monkeypatch: p
     monkeypatch.setattr(cli.uvicorn, "run", fake_run)
 
     assert cli.main(["serve"]) == 0
-    assert calls["app"] == "aizk.graph.api.main:create_app"
+    assert calls["app"] == "aizk.console.app:create_app"
     assert calls["factory"] is True
     assert (calls["host"], calls["port"]) == ("127.0.0.1", 8001)
 

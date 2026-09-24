@@ -11,14 +11,14 @@ from aizk.console.stages._graph import build_graph_descriptor
 from aizk.extraction.core.currentness import classify_extraction_sources
 from aizk.extraction.core.extractors import resolve_extraction_config
 from aizk.extraction.events import EXTRACTION_STAGE
-from aizk.extraction.settings import ExtractionConfig
-from aizk.extraction.stage import pending_extraction_count, pending_extraction_sources
-from aizk.graph.datamodel import ExtractionJob
-from aizk.graph.job_actions import (
+from aizk.extraction.job_actions import (
     apply_extraction_cancel,
     apply_extraction_readmission,
     apply_extraction_retry,
 )
+from aizk.extraction.settings import ExtractionConfig
+from aizk.extraction.stage import pending_extraction_count, pending_extraction_sources
+from aizk.graph.datamodel import ExtractionJob
 from aizk.graph.mentions import ResolvedExtractionConfig
 
 if TYPE_CHECKING:
@@ -52,7 +52,7 @@ def _currentness(session: "Session") -> dict[UUID, str]:
 #: only reconciliation. Offered only by this stage: contextualization's
 #: work-unit is per conversion output, so a re-converted source becomes pending
 #: again on its own and needs no operator action. Eligibility lives in
-#: :func:`~aizk.graph.job_actions.apply_extraction_readmission`.
+#: :func:`~aizk.extraction.job_actions.apply_extraction_readmission`.
 _READMISSION = StageAction(
     key="re-extract",
     applied_label="re-extracted",

@@ -23,10 +23,10 @@ from sqlmodel import Session
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from aizk.console.explorer import get_blob_reader
 from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.db.engine import _ENGINE_CACHE, get_engine
 from aizk.db.migrations import run_migrations
-from aizk.graph.api.dependencies import get_blob_reader
 from aizk.graph.api.main import create_app
 from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.datamodel import ChunkRunInput, ExtractionRunInput

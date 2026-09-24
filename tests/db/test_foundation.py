@@ -24,7 +24,7 @@ _FORBIDDEN_STAGE_DB_IMPORTS = ("aizk.conversion.db", "aizk.conversion.migrations
 _GRAPH_DB_CONSUMERS = (
     "aizk.contextualization.wiring.worker",
     "aizk.graph.cli",
-    "aizk.graph.api.dependencies",
+    "aizk.console.explorer",
 )
 
 

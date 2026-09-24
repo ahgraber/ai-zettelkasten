@@ -24,12 +24,12 @@ from sqlmodel import Session, SQLModel, select
 
 from fastapi.testclient import TestClient
 
+from aizk.console.explorer import get_blob_reader
 from aizk.contextualization.api import routes as contextualization_routes
 from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.db.engine import get_engine
-from aizk.graph.api.dependencies import get_blob_reader
 from aizk.graph.api.main import create_app
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.enqueue import enqueue_output
@@ -401,7 +401,7 @@ def test_lifespan_sets_object_storage_and_get_blob_reader_builds_from_it(client:
     app = client.app
     assert isinstance(app.state.object_storage, ObjectStorageSettings)
 
-    with patch("aizk.graph.api.dependencies.S3Client") as mock_s3_client:
+    with patch("aizk.console.explorer.S3Client") as mock_s3_client:
         get_blob_reader(SimpleNamespace(app=app))
 
     mock_s3_client.assert_called_once_with(app.state.object_storage)

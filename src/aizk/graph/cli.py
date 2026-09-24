@@ -62,7 +62,7 @@ def _cmd_serve(_args: argparse.Namespace) -> int:
     # Factory import string: the app reads the shared config on its own listener,
     # distinct from the conversion API (hence a distinct default port).
     uvicorn.run(
-        "aizk.graph.api.main:create_app",
+        "aizk.console.app:create_app",
         factory=True,
         host=operator_api.host,
         port=operator_api.port,
