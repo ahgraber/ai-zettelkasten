@@ -11,7 +11,7 @@ artifacts are unavailable, so the broad test suite never requires the opt-in
 
 The gate is opt-in — run it explicitly and serially::
 
-    AIZK_RUN_NER_DETERMINISM=1 uv run pytest tests/graph/test_extractor_determinism.py
+    AIZK_RUN_NER_DETERMINISM=1 uv run pytest tests/extraction/test_extractor_determinism.py
 
 and re-run it after any extractor, model, or pinned-revision bump. It does not
 run in the default suite even when the models are installed: loading a

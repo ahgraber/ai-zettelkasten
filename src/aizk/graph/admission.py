@@ -12,10 +12,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from aizk.contextualization.core.intake import contextualization_adapter
-from aizk.graph.datamodel import ExtractionJob
+from aizk.extraction.stage import extraction_adapter
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
 from aizk.graph.extraction_events import EXTRACTION_STAGE
-from aizk.graph.extraction_workunit import enqueue_extraction, pending_extraction_sources
 from aizk.pipeline.admission import MAX_BULK_SELECTION, AdmissionAdapter, AdmissionLoop, run_admission_pass
 
 if TYPE_CHECKING:
@@ -32,20 +31,6 @@ __all__ = [
     "extraction_adapter",
     "run_admission_pass",
 ]
-
-
-def extraction_adapter(config: "AdmissionConfig") -> AdmissionAdapter:
-    """Declare the extraction stage's admission over chunked sources."""
-    return AdmissionAdapter(
-        stage=EXTRACTION_STAGE,
-        model=ExtractionJob,
-        pending_work=lambda session, limit: pending_extraction_sources(session, limit=limit),
-        enqueue=lambda session, key, queue_max_depth, principal: enqueue_extraction(
-            session, source_id=key, queue_max_depth=queue_max_depth, origin="admission", principal=principal
-        ),
-        queue_max_depth=config.extraction_queue_max_depth,
-        enabled=config.admission_extraction_enabled,
-    )
 
 
 _ADAPTER_FACTORIES: "dict[str, Callable[[AdmissionConfig], AdmissionAdapter]]" = {

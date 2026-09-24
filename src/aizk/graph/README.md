@@ -190,7 +190,7 @@ NER sits behind a pluggable `EntityExtractor` interface (`aizk.graph.extraction`
 
 `extractor_version` encodes the extractor, model, and configuration (e.g. GLiNER2's zero-shot entity-label schema), so any swap is an observable, versioned run input rather than an in-place change.
 Both real extractors are lazily imported — the contract suite runs on the stub without the `ner` group.
-Determinism (same input → identical detections at pinned versions) is verified opt-in: `AIZK_RUN_NER_DETERMINISM=1 uv run pytest tests/graph/test_extractor_determinism.py`.
+Determinism (same input → identical detections at pinned versions) is verified opt-in: `AIZK_RUN_NER_DETERMINISM=1 uv run pytest tests/extraction/test_extractor_determinism.py`.
 The techstack choice is an addendum to [ADR-006 §3](../../../docs/decision-record/006-graph-construction-entity-canonicalization.md).
 
 ## Using it

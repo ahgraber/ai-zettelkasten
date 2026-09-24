@@ -18,7 +18,7 @@ from aizk.contextualization.processing.markdown_source import ConversionOutputFr
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 from aizk.graph.admission import AdmissionLoop, admission_adapter_for
-from aizk.graph.config import AdmissionConfig
+from aizk.pipeline.admission import AdmissionConfig
 from aizk.pipeline.runner import DEFAULT_CANCEL_GRACE, StageRunner
 from aizk.pipeline.stage import require_stale_threshold
 from aizk.storage.s3 import ObjectStorageSettings, S3Client

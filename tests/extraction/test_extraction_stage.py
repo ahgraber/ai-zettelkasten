@@ -50,6 +50,7 @@ from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
+import aizk.pipeline.runner as runner_module
 from aizk.pipeline.runner import StageRunner
 
 if TYPE_CHECKING:
@@ -75,7 +76,7 @@ _SCHEMA_TABLES = [
 class _StubExtractor:
     """Deterministic EntityExtractor test double returning configured detections per input text.
 
-    Mirrors ``tests/graph/test_extraction_run_mode.py``'s ``_StubExtractor``: a
+    Mirrors ``tests/extraction/test_extraction_run_mode.py``'s ``_StubExtractor``: a
     fixed ``text -> detections`` mapping keyed by exact input text, and a
     ``calls`` log so a test can assert the single extractor access point was
     (or was not) reached.
@@ -130,7 +131,7 @@ def _seed_chunking_run(session: Session, *, source_id: UUID, texts: "Sequence[st
     Builds only what ``extract_document`` reads (a source's active chunking run
     and its chunks in document order) and what its upstream-output
     revalidation needs, mirroring
-    ``tests/graph/test_extraction_run_mode.py``'s ``_seed_chunking_run``.
+    ``tests/extraction/test_extraction_run_mode.py``'s ``_seed_chunking_run``.
     """
     run = record_run(session, stage=CHUNKING_STAGE, scope_id=source_id, derivation_key="chunking-key-1")
     chunks: list[Chunk] = []
@@ -474,6 +475,41 @@ def test_is_cancelled_observes_a_durable_db_cancel(tmp_path: Path) -> None:
     assert handler._is_cancelled(job_id) is True
 
 
+def test_a_cancel_committed_while_the_unit_runs_writes_no_mentions(tmp_path: Path) -> None:
+    """An operator cancel committed during extraction stops the unit before persist, and the unit ends cancelled."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        _seed_chunking_run(session, source_id=_SOURCE_A, texts=[_CHUNK_TEXT])
+        job, _created = enqueue_extraction(
+            session, source_id=_SOURCE_A, queue_max_depth=0, origin="backfill", principal="test"
+        )
+        session.commit()
+        job_id = job.id
+
+    class _CancellingExtractor(_StubExtractor):
+        """Commits an operator CANCELLED on the unit on its first call, simulating the operator API."""
+
+        def extract(self, text: str) -> "Sequence[Detection]":
+            """Commit CANCELLED through a separate session once, then return the configured detections."""
+            with Session(engine) as session:
+                unit = session.get(ExtractionJob, job_id)
+                if unit.status is WorkUnitStatus.RUNNING:
+                    unit.status = WorkUnitStatus.CANCELLED
+                    session.add(unit)
+                    session.commit()
+            return super().extract(text)
+
+    stub = _CancellingExtractor(_DETECTIONS)
+    runner = _make_runner(engine, stub)
+    with no_thread_leaks(action="raise"):
+        runner.run_until_idle()
+
+    assert stub.calls == [_CHUNK_TEXT]
+    with Session(engine) as session:
+        assert session.get(ExtractionJob, job_id).status is WorkUnitStatus.CANCELLED
+        assert session.exec(select(Mention)).all() == []
+
+
 def test_finalize_does_not_overwrite_a_concurrent_cancel(tmp_path: Path) -> None:
     """A cancel that lands while the unit runs wins: finalize won't write SUCCEEDED over it."""
     engine = _make_engine(tmp_path)
@@ -532,3 +568,16 @@ def test_finalize_runner_cancel_records_terminal_cancelled(tmp_path: Path) -> No
             select(PipelineEvent).where(PipelineEvent.work_unit_ref == str(job_id), PipelineEvent.kind == "cancelled")
         ).one()
         assert event.to_status == "cancelled"
+
+
+def test_the_runner_titles_the_process_after_the_extraction_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A runner driving the extraction handler advertises ``aizk-stage-mention_extraction``."""
+    titles: list[str] = []
+    monkeypatch.setattr(runner_module, "setproctitle", lambda title: titles.append(title))
+    engine = _make_engine(tmp_path)
+
+    StageRunner(_make_handler(engine), engine).set_process_title()
+
+    assert titles == ["aizk-stage-mention_extraction"]

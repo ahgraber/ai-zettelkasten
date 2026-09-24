@@ -8,12 +8,12 @@ from uuid import UUID
 
 from aizk.console.descriptors import StageAction
 from aizk.console.stages._graph import build_graph_descriptor
-from aizk.graph.config import ExtractionConfig
+from aizk.extraction.core.currentness import classify_extraction_sources
+from aizk.extraction.core.extractors import resolve_extraction_config
+from aizk.extraction.events import EXTRACTION_STAGE
+from aizk.extraction.settings import ExtractionConfig
+from aizk.extraction.stage import pending_extraction_count, pending_extraction_sources
 from aizk.graph.datamodel import ExtractionJob
-from aizk.graph.extraction import resolve_extraction_config
-from aizk.graph.extraction_events import EXTRACTION_STAGE
-from aizk.graph.extraction_run import classify_extraction_sources
-from aizk.graph.extraction_workunit import pending_extraction_count, pending_extraction_sources
 from aizk.graph.job_actions import (
     apply_extraction_cancel,
     apply_extraction_readmission,

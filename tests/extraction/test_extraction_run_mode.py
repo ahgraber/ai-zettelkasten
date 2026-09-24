@@ -14,7 +14,7 @@ module does not exercise) so each test only seeds what
 :func:`~aizk.graph.chunks.document_order_chunks` and
 :func:`~aizk.graph.extraction.select_extraction_input` read. A deterministic stub
 :class:`~aizk.graph.extraction.EntityExtractor` keeps mentions reproducible,
-mirroring ``tests/graph/test_extraction.py``'s conventions.
+mirroring ``tests/extraction/test_extraction.py``'s conventions.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
+import aizk.extraction.processing.document as extraction_run_module
 from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.contextualization import VARIANT_STAGE, StalePlanError
 from aizk.graph.datamodel import (
@@ -44,10 +45,9 @@ from aizk.graph.datamodel import (
     MentionCooccurrence,
 )
 from aizk.graph.extraction import Detection
-import aizk.graph.extraction_run as extraction_run_module
 from aizk.graph.extraction_run import extract_corpus, extract_document, extract_source
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
-from aizk.graph.mentions import active_extraction_run
+from aizk.graph.mentions import MENTION_EXTRACTION_STAGE, active_extraction_run
 from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 
@@ -74,7 +74,7 @@ _SOURCE_B = UUID("22222222-2222-2222-2222-222222222222")
 class _StubExtractor:
     """Deterministic EntityExtractor test double returning configured detections per input text.
 
-    Local to this module, mirroring ``tests/graph/test_extraction.py``'s
+    Local to this module, mirroring ``tests/extraction/test_extraction.py``'s
     StubExtractor: a fixed ``text -> detections`` mapping keyed by exact input
     text, so identical content extracted against independently-minted chunk
     surrogates in two different databases still drives identical detections.
@@ -655,3 +655,69 @@ def test_the_active_run_superseded_between_read_and_write_raises_stale_plan_erro
             "the original run's mentions are untouched"
         )
         assert session.exec(select(ExtractionRunApplicability)).all() == [], "no applicability was recorded"
+
+
+def _extraction_row_counts(engine: Engine) -> tuple[int, int, int]:
+    """Count the extraction runs, run inputs, and mentions in ``engine``."""
+    with Session(engine) as session:
+        runs = session.exec(select(PipelineRun).where(PipelineRun.stage == MENTION_EXTRACTION_STAGE)).all()
+        return len(runs), len(session.exec(select(ExtractionRunInput)).all()), len(session.exec(select(Mention)).all())
+
+
+def test_a_cancel_observed_before_extraction_writes_nothing(tmp_path: Path) -> None:
+    """A probe that reports cancellation after the read phase returns ``Cancelled`` before any extractor call."""
+    engine = _make_engine(tmp_path, "cancelled_before_extraction.db")
+    chunk_text = "Acme Corp announced results."
+    with Session(engine) as session:
+        _seed_chunking_run(session, source_id=_SOURCE_A, texts=[chunk_text])
+    stub = _StubExtractor({chunk_text: [Detection(surface_form="Acme Corp", span_start=0, span_end=9)]})
+
+    result = extract_document(
+        engine, source_id=_SOURCE_A, extractor=stub, input_policy="raw", is_cancelled=lambda: True
+    )
+
+    assert isinstance(result, extraction_run_module.Cancelled)
+    assert stub.calls == []
+    assert _extraction_row_counts(engine) == (0, 0, 0)
+
+
+def test_a_cancel_observed_before_persist_writes_nothing(tmp_path: Path) -> None:
+    """A probe that first reports cancellation at the persist point returns ``Cancelled`` after extraction."""
+    engine = _make_engine(tmp_path, "cancelled_before_persist.db")
+    chunk_text = "Acme Corp announced results."
+    with Session(engine) as session:
+        _seed_chunking_run(session, source_id=_SOURCE_A, texts=[chunk_text])
+    stub = _StubExtractor({chunk_text: [Detection(surface_form="Acme Corp", span_start=0, span_end=9)]})
+    probe_answers = iter([False, True])
+
+    result = extract_document(
+        engine, source_id=_SOURCE_A, extractor=stub, input_policy="raw", is_cancelled=lambda: next(probe_answers)
+    )
+
+    assert isinstance(result, extraction_run_module.Cancelled)
+    assert stub.calls == [chunk_text]
+    assert _extraction_row_counts(engine) == (0, 0, 0)
+
+
+def test_a_cancel_observed_before_reconciliation_records_nothing(tmp_path: Path) -> None:
+    """A probe that reports cancellation when the active run matches returns ``Cancelled`` without reconciling."""
+    engine = _make_engine(tmp_path, "cancelled_before_reconcile.db")
+    chunk_text = "Acme Corp announced results."
+    with Session(engine) as session:
+        _seed_chunking_run(session, source_id=_SOURCE_A, texts=[chunk_text], derivation_key="chunking-v1")
+    stub = _StubExtractor({chunk_text: [Detection(surface_form="Acme Corp", span_start=0, span_end=9)]})
+    extract_document(engine, source_id=_SOURCE_A, extractor=stub, input_policy="raw")
+    with Session(engine) as session:
+        _seed_chunking_run(session, source_id=_SOURCE_A, texts=[chunk_text], derivation_key="chunking-v2")
+    counts_before = _extraction_row_counts(engine)
+    stub.calls.clear()
+
+    result = extract_document(
+        engine, source_id=_SOURCE_A, extractor=stub, input_policy="raw", is_cancelled=lambda: True
+    )
+
+    assert isinstance(result, extraction_run_module.Cancelled)
+    assert stub.calls == []
+    assert _extraction_row_counts(engine) == counts_before
+    with Session(engine) as session:
+        assert session.exec(select(ExtractionRunApplicability)).all() == []

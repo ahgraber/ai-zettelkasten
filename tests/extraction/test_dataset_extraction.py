@@ -58,7 +58,7 @@ _SOURCE_B = UUID("22222222-2222-2222-2222-222222222222")
 
 
 class _StubExtractor:
-    """Deterministic EntityExtractor test double, mirroring ``tests/graph/test_extraction.py``'s StubExtractor."""
+    """Deterministic EntityExtractor test double, mirroring ``tests/extraction/test_extraction.py``'s StubExtractor."""
 
     def __init__(self, detections_by_text: dict[str, list[Detection]]) -> None:
         """Store the fixed ``text -> detections`` mapping."""

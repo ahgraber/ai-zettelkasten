@@ -97,7 +97,7 @@ def build_graph_descriptor(
     ``currentness`` maps a stage's classified source ids to their currentness value
     (a stage-defined string; extraction's is one of ``"current"``,
     ``"needs_reconciliation"``, ``"stale"`` — see
-    :class:`~aizk.graph.extraction_run.Currentness`); a source absent from the
+    :class:`~aizk.extraction.core.currentness.Currentness`); a source absent from the
     mapping is unclassified. It gives the stage a stale count (sources whose value
     is ``"stale"``) and marks each monitor row's currentness, so an operator can
     distinguish and select stale and needs-reconciliation rows together. Omitting

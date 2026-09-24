@@ -23,12 +23,14 @@ from aizk.contextualization.wiring.worker import run_graph_worker
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 from aizk.db.migrations import run_migrations
-from aizk.graph.backfill import BackfillResult, run_extraction_backfill
-from aizk.graph.config import AdmissionConfig, ExtractionConfig, NerConfig
-from aizk.graph.dataset_extraction import run_dataset_extraction
-from aizk.graph.dataset_stats import compute_dataset_statistics
-from aizk.graph.extraction import GLINER2_REPO_ID
-from aizk.graph.extraction_worker import build_extractor, run_extraction_worker
+from aizk.extraction.backfill import run_extraction_backfill
+from aizk.extraction.core.dataset_stats import compute_dataset_statistics
+from aizk.extraction.core.extractors import GLINER2_REPO_ID
+from aizk.extraction.processing.corpus import run_dataset_extraction
+from aizk.extraction.settings import ExtractionConfig, NerConfig
+from aizk.extraction.wiring.worker import build_extractor, run_extraction_worker
+from aizk.graph.backfill import BackfillResult
+from aizk.graph.config import AdmissionConfig
 from aizk.pipeline.capacity import StageAtCapacityError
 from aizk.pipeline.invalidation import ReprocessingConfirmationError
 from aizk.service.bootstrap import set_process_title
@@ -72,7 +74,7 @@ def _cmd_serve(_args: argparse.Namespace) -> int:
 def _cmd_fetch_gliner2_weights(_args: argparse.Namespace) -> int:
     """Download the pinned GLiNER2 weights into the configured local directory.
 
-    The command downloads the revision in :class:`~aizk.graph.config.NerConfig`;
+    The command downloads the revision in :class:`~aizk.extraction.settings.NerConfig`;
     workers load the weights from disk.
     """
     set_process_title("graph-fetch-gliner2-weights")

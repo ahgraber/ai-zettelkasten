@@ -1,4 +1,4 @@
-"""Graph database fixtures shared by the graph and contextualization test trees."""
+"""Graph database fixtures shared by the graph, contextualization, and extraction test trees."""
 
 from __future__ import annotations
 

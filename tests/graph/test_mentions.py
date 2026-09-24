@@ -908,7 +908,7 @@ def test_persist_mentions_accepts_contextualized_draft_against_real_variant(sess
 class _StubExtractor:
     """Deterministic EntityExtractor test double returning configured detections per input text.
 
-    Local to this test, mirroring ``tests/graph/test_extraction.py``'s StubExtractor.
+    Local to this test, mirroring ``tests/extraction/test_extraction.py``'s StubExtractor.
     """
 
     def __init__(self, detections_by_text: dict[str, list[Detection]], *, extractor_version: str = "stub/v1") -> None:

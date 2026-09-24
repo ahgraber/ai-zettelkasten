@@ -241,7 +241,7 @@ def test_extract_dataset_confirmation_gate_refusal_returns_nonzero(
 ) -> None:
     """A corpus-scan target selection (no ``--source-id``) without ``--yes`` is refused; exits non-zero.
 
-    Mirrors ``tests/graph/test_extraction_workunit.py``'s coverage of
+    Mirrors ``tests/extraction/test_extraction_workunit.py``'s coverage of
     ``enqueue_extraction_backfill``'s confirmation-gate refusal: the same
     :class:`~aizk.pipeline.invalidation.ReprocessingConfirmationError` gate,
     surfaced through the CLI's dispatch layer rather than raised past it. Every

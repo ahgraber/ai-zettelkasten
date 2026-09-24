@@ -16,7 +16,7 @@ from typing import Any
 from pydantic import ValidationError
 import pytest
 
-from aizk.graph import extraction_worker as extraction_worker_module
+from aizk.extraction.wiring import worker as extraction_worker_module
 from aizk.graph.admission import AdmissionAdapter
 from aizk.graph.config import AdmissionConfig, ExtractionConfig
 from aizk.graph.extraction_events import EXTRACTION_STAGE
@@ -26,7 +26,7 @@ from aizk.graph.extraction_worker import build_extractor, run_extraction_worker
 def test_build_extractor_selects_spacy(monkeypatch: pytest.MonkeyPatch) -> None:
     """``extractor = "spacy"`` constructs a SpacyExtractor."""
     sentinel = object()
-    monkeypatch.setattr("aizk.graph.extraction_worker.SpacyExtractor", lambda: sentinel)
+    monkeypatch.setattr("aizk.extraction.wiring.worker.SpacyExtractor", lambda: sentinel)
     config = ExtractionConfig(extractor="spacy")
 
     assert build_extractor(config) is sentinel
@@ -35,7 +35,7 @@ def test_build_extractor_selects_spacy(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_build_extractor_selects_gliner2(monkeypatch: pytest.MonkeyPatch) -> None:
     """``extractor = "gliner2"`` constructs a Gliner2Extractor."""
     sentinel = object()
-    monkeypatch.setattr("aizk.graph.extraction_worker.Gliner2Extractor", lambda: sentinel)
+    monkeypatch.setattr("aizk.extraction.wiring.worker.Gliner2Extractor", lambda: sentinel)
     config = ExtractionConfig(extractor="gliner2")
 
     assert build_extractor(config) is sentinel

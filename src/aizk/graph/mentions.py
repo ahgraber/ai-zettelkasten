@@ -43,7 +43,7 @@ MENTION_EXTRACTION_STAGE = "mention_extraction"
 #: The extraction run's raw-vs-contextualized input toggle: ``contextualized``
 #: reads a chunk's active contextualized variant when one is present and
 #: non-empty (else raw fallback, per
-#: :func:`~aizk.graph.extraction.select_extraction_input`); ``raw`` reads every
+#: :func:`~aizk.extraction.core.extractors.select_extraction_input`); ``raw`` reads every
 #: chunk's raw text unconditionally, regardless of any variant. Constrained to
 #: exactly these two values so a typo'd policy is rejected by
 #: :func:`open_extraction_run` rather than silently minting a novel derivation

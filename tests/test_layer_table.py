@@ -132,6 +132,9 @@ RECORDED_EXCEPTIONS: dict[Edge, str] = {
     Edge("aizk.graph.admission", "aizk.contextualization.core.intake"): (
         "removed when the compatibility re-exports at the old module paths are removed"
     ),
+    Edge("aizk.graph.admission", "aizk.extraction.stage"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
     Edge("aizk.graph.api.dependencies", "aizk.contextualization.processing.markdown_source"): (
         "removed when the content explorer moves to aizk.console"
     ),
@@ -144,17 +147,20 @@ RECORDED_EXCEPTIONS: dict[Edge, str] = {
     Edge("aizk.graph.api.routes", "aizk.contextualization.api.routes"): (
         "removed when the compatibility re-exports at the old module paths are removed"
     ),
-    Edge("aizk.graph.api.routes.extraction", "aizk.service.api.responses"): (
-        "removed when the extraction routes move to aizk.extraction"
-    ),
-    Edge("aizk.graph.api.routes.extraction", "aizk.service.auth"): (
-        "removed when the extraction routes move to aizk.extraction"
+    Edge("aizk.graph.api.routes.extraction", "aizk.extraction.api.routes"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
     ),
     Edge("aizk.graph.api.routes.ui", "aizk.service.auth"): "removed when the content explorer moves to aizk.console",
     Edge("aizk.graph.api.schemas.contextualization", "aizk.contextualization.api.schemas"): (
         "removed when the compatibility re-exports at the old module paths are removed"
     ),
+    Edge("aizk.graph.api.schemas.extraction", "aizk.extraction.api.schemas"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
     Edge("aizk.graph.config", "aizk.contextualization.settings"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.config", "aizk.extraction.settings"): (
         "removed when the compatibility re-exports at the old module paths are removed"
     ),
     Edge("aizk.graph.contextualization", "aizk.contextualization.core.applicability"): (
@@ -169,6 +175,12 @@ RECORDED_EXCEPTIONS: dict[Edge, str] = {
     Edge("aizk.graph.contextualization", "aizk.contextualization.core.summary"): (
         "removed when the compatibility re-exports at the old module paths are removed"
     ),
+    Edge("aizk.graph.dataset_extraction", "aizk.extraction.processing.corpus"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.dataset_stats", "aizk.extraction.core.dataset_stats"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
     Edge("aizk.graph.enqueue", "aizk.contextualization.core.intake"): (
         "removed when the compatibility re-exports at the old module paths are removed"
     ),
@@ -178,10 +190,40 @@ RECORDED_EXCEPTIONS: dict[Edge, str] = {
     Edge("aizk.graph.events", "aizk.contextualization.events"): (
         "removed when the compatibility re-exports at the old module paths are removed"
     ),
+    Edge("aizk.graph.extraction", "aizk.extraction.core.extractors"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.extraction_events", "aizk.extraction.events"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.extraction_handler", "aizk.extraction.handler"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.extraction_run", "aizk.extraction.core.applicability"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.extraction_run", "aizk.extraction.core.currentness"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.extraction_run", "aizk.extraction.processing.corpus"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.extraction_run", "aizk.extraction.processing.document"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.extraction_worker", "aizk.extraction.wiring.worker"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.extraction_workunit", "aizk.extraction.stage"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
     Edge("aizk.graph.handler", "aizk.contextualization.handler"): (
         "removed when the compatibility re-exports at the old module paths are removed"
     ),
     Edge("aizk.graph.job_actions", "aizk.contextualization.job_actions"): (
+        "removed when the compatibility re-exports at the old module paths are removed"
+    ),
+    Edge("aizk.graph.job_actions", "aizk.extraction.job_actions"): (
         "removed when the compatibility re-exports at the old module paths are removed"
     ),
     Edge("aizk.graph.llm", "aizk.ai.providers.llm"): (
@@ -219,11 +261,14 @@ FORBIDDEN_DIRECTIONS: frozenset[tuple[str, str]] = frozenset(
         ("db", "storage"),
         ("ai.providers", "service"),
         ("ai.providers", "graph"),
+        ("contextualization", "extraction"),
+        ("extraction", "contextualization"),
+        ("pipeline", "graph"),
     }
 )
 
 #: Stage packages whose composition roots live in their ``wiring`` sub-package.
-STAGE_PACKAGES: tuple[str, ...] = ("aizk.conversion", "aizk.contextualization")
+STAGE_PACKAGES: tuple[str, ...] = ("aizk.conversion", "aizk.contextualization", "aizk.extraction")
 
 #: Every module-level import of a stage's ``wiring`` from outside its composition
 #: roots, with the change that removes it. Asserted to equal the scan exactly.
@@ -441,3 +486,18 @@ def test_console_reads_of_the_graph_stage_are_permitted_not_exceptions() -> None
 
     assert all(_is_permitted(edge) for edge in console_to_graph)
     assert not any(edge in RECORDED_EXCEPTIONS for edge in console_to_graph)
+
+
+def test_the_store_imports_a_stage_only_through_a_recorded_compatibility_or_explorer_edge() -> None:
+    """A store module imports a stage package only through a recorded old-path re-export or explorer edge."""
+    transitional = {
+        "removed when the compatibility re-exports at the old module paths are removed",
+        "removed when the content explorer moves to aizk.console",
+    }
+    store_to_stage = [
+        edge
+        for edge in _scan()
+        if _package_of(edge.importer) == "graph" and _package_of(edge.imported) in ("contextualization", "extraction")
+    ]
+
+    assert [edge for edge in store_to_stage if RECORDED_EXCEPTIONS.get(edge) not in transitional] == []
