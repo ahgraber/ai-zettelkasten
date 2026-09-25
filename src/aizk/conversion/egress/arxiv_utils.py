@@ -10,7 +10,7 @@ from urllib.parse import urlencode, urljoin, urlparse
 from xml.etree.ElementTree import Element
 
 from defusedxml import ElementTree
-import httpx
+import httpx2
 
 from aizk.utilities.limiters import LeakyBucketRateLimiter
 from aizk.utilities.url_utils import validate_url
@@ -306,7 +306,7 @@ def _parse_arxiv_entry(entry: Element, namespaces: Dict[str, str]) -> Dict[str, 
 
 
 # %%
-"""ArxivClient is an httpx client that must use the appropriate limiter to respect the arxiv API limits.  The clients should be able to be used as context managers and client objects."""
+"""ArxivClient is an httpx2 client that must use the appropriate limiter to respect the arxiv API limits.  The clients should be able to be used as context managers and client objects."""
 # "make no more than one request every N seconds, and limit requests to a single connection at a time.""
 _arxiv_rate_limiter = LeakyBucketRateLimiter(
     max_requests=1,
@@ -340,15 +340,15 @@ class ArxivClient:
             timeout: Request timeout in seconds (default: 30.0)
         """
         self.timeout = timeout
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: Optional[httpx2.AsyncClient] = None
 
-    def _ensure_client(self) -> httpx.AsyncClient:
-        """Create a new httpx async client."""
-        limits = httpx.Limits(max_connections=1, max_keepalive_connections=1)
-        return httpx.AsyncClient(timeout=self.timeout, limits=limits, follow_redirects=True)
+    def _ensure_client(self) -> httpx2.AsyncClient:
+        """Create a new httpx2 async client."""
+        limits = httpx2.Limits(max_connections=1, max_keepalive_connections=1)
+        return httpx2.AsyncClient(timeout=self.timeout, limits=limits, follow_redirects=True)
 
-    def create(self) -> httpx.AsyncClient:
-        """Create and store the httpx async client for reuse."""
+    def create(self) -> httpx2.AsyncClient:
+        """Create and store the httpx2 async client for reuse."""
         if self._client is None:
             self._client = self._ensure_client()
         return self._client
@@ -363,13 +363,13 @@ class ArxivClient:
         await self.aclose()
 
     async def aclose(self) -> None:
-        """Close the underlying httpx async client."""
+        """Close the underlying httpx2 async client."""
         if self._client is not None:
             await self._client.aclose()
             self._client = None
 
     def close(self) -> None:
-        """Synchronously close the underlying httpx async client.
+        """Synchronously close the underlying httpx2 async client.
 
         Raises:
             RuntimeError: If an event loop is already running; use ``await aclose`` in that case.
@@ -388,7 +388,7 @@ class ArxivClient:
 
         loop.run_until_complete(self.aclose())
 
-    async def _get(self, url: str) -> httpx.Response:
+    async def _get(self, url: str) -> httpx2.Response:
         """Perform a GET request and return the response object."""
         client = self._client or self._ensure_client()
         should_close = self._client is None
@@ -396,7 +396,7 @@ class ArxivClient:
         try:
             response = await client.get(url)
             response.raise_for_status()
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             status = e.response.status_code
             error_msg = f"HTTP {status} error for {url}"
             if status == 403:
@@ -405,9 +405,9 @@ class ArxivClient:
                     "CRITICAL: ArXiv treats repeated requests after 403 as DoS attacks. Stopping to prevent further issues."
                 )
                 raise ArxivAccessDeniedError(error_msg) from e
-            raise httpx.HTTPError(error_msg) from e
-        except httpx.HTTPError as e:
-            raise httpx.HTTPError(f"Request failed for {url}: {e}") from e
+            raise httpx2.HTTPError(error_msg) from e
+        except httpx2.HTTPError as e:
+            raise httpx2.HTTPError(f"Request failed for {url}: {e}") from e
         finally:
             if should_close:
                 await client.aclose()
@@ -428,7 +428,7 @@ class ArxivClient:
 
         Raises:
             ValueError: If IDs list is empty or XML parsing fails
-            httpx.HTTPError: If the API request fails
+            httpx2.HTTPError: If the API request fails
             ArxivAccessDeniedError: If the API returns HTTP 403 (access denied)
             ArxivParsingError: If there are errors parsing the XML response
         """
@@ -469,7 +469,7 @@ class ArxivClient:
             The HTML content of the paper page as a string.
 
         Raises:
-            httpx.HTTPError: If the request fails.
+            httpx2.HTTPError: If the request fails.
             ArxivAccessDeniedError: If the API returns HTTP 403 (access denied).
         """
         url = arxiv_html_url(arxiv_id, use_export_url=use_export_url)
@@ -488,7 +488,7 @@ class ArxivClient:
             The PDF content as bytes.
 
         Raises:
-            httpx.HTTPError: If the request fails.
+            httpx2.HTTPError: If the request fails.
             ArxivAccessDeniedError: If the API returns HTTP 403 (access denied).
         """
         url = arxiv_pdf_url(arxiv_id, use_export_url=use_export_url)

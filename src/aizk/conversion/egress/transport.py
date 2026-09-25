@@ -1,8 +1,8 @@
-"""Connection-pinned httpx transport that defeats DNS-rebinding TOCTOU.
+"""Connection-pinned httpx2 transport that defeats DNS-rebinding TOCTOU.
 
 The transport carries a `ValidatedDestination` already approved by the egress
 helper and dials that exact IP for the TCP connect. The Host header (set by
-httpx at request construction time) and the TLS SNI hostname are preserved as
+httpx2 at request construction time) and the TLS SNI hostname are preserved as
 the original hostname so HTTP routing and certificate verification both see
 the right name.
 
@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import ssl
 
-import httpx
+import httpx2
 
 from aizk.conversion.egress.policy import ValidatedDestination
 
@@ -35,7 +35,7 @@ def _build_default_ssl_context() -> ssl.SSLContext:
     return context
 
 
-class EgressPinnedTransport(httpx.AsyncHTTPTransport):
+class EgressPinnedTransport(httpx2.AsyncHTTPTransport):
     """`AsyncHTTPTransport` that pins TCP connect target to a validated IP.
 
     On every outbound request the transport rewrites `request.url.host` to the
@@ -63,7 +63,7 @@ class EgressPinnedTransport(httpx.AsyncHTTPTransport):
                 fails. Defaults to `_build_default_ssl_context()` (TLS 1.2+).
             verify: Must be ``True``. Passing ``False`` raises ``ValueError`` —
                 the transport refuses to weaken TLS posture for egress traffic.
-            **kwargs: Forwarded to ``httpx.AsyncHTTPTransport`` (timeouts,
+            **kwargs: Forwarded to ``httpx2.AsyncHTTPTransport`` (timeouts,
                 connection limits, etc.).
 
         Raises:
@@ -80,7 +80,7 @@ class EgressPinnedTransport(httpx.AsyncHTTPTransport):
         super().__init__(verify=ctx, **kwargs)  # type: ignore[arg-type]
         self._destination = destination
 
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         """Pin the TCP connect target to the validated IP, then dispatch.
 
         Rewrites ``request.url.host`` to ``self._destination.ip`` so the
@@ -90,7 +90,7 @@ class EgressPinnedTransport(httpx.AsyncHTTPTransport):
         right name. Restores the original URL on the request before returning
         so callers (and the manual redirect loop) see the unmodified target.
 
-        Note: the Host header is set by httpx at request build time and is
+        Note: the Host header is set by httpx2 at request build time and is
         therefore preserved as the original hostname automatically — the URL
         swap inside this method does not propagate back to the headers.
         """
@@ -98,8 +98,8 @@ class EgressPinnedTransport(httpx.AsyncHTTPTransport):
         original_host = original_url.host
         original_extensions = request.extensions
         # Swap URL host to the pinned IP for the TCP connect. The Host header
-        # was already set on the request by httpx at construction time and is
-        # preserved as the original hostname; httpcore reads `sni_hostname`
+        # was already set on the request by httpx2 at construction time and is
+        # preserved as the original hostname; httpcore2 reads `sni_hostname`
         # from extensions for the TLS handshake.
         request.url = original_url.copy_with(host=self._destination.ip)
         request.extensions = {**original_extensions, "sni_hostname": original_host}
@@ -109,7 +109,7 @@ class EgressPinnedTransport(httpx.AsyncHTTPTransport):
             # Restore the original URL and extensions on the request so callers
             # (and the manual redirect loop in the fetcher) see the unmodified
             # target. Restoring extensions matters if the request is ever reused
-            # (e.g., wrapped in `httpx.AsyncHTTPTransport(retries=N)`); the
+            # (e.g., wrapped in `httpx2.AsyncHTTPTransport(retries=N)`); the
             # leftover `sni_hostname` would otherwise attach to a wrong dest.
             request.url = original_url
             request.extensions = original_extensions

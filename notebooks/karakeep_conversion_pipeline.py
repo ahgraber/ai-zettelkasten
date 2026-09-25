@@ -62,7 +62,7 @@ import os
 from typing import Any
 
 from dotenv import load_dotenv
-import httpx
+import httpx2
 
 import tenacity
 
@@ -89,7 +89,7 @@ def resolve_conversion_api_base_url() -> str:
 
 @retry()
 async def submit_bookmark(
-    http_client: httpx.AsyncClient,
+    http_client: httpx2.AsyncClient,
     karakeep_id: str,
 ) -> dict[str, Any]:
     """Submit a single bookmark ID to the conversion API.
@@ -133,7 +133,7 @@ async def submit_all_bookmarks(
     failed = 0
     cursor: str | None = None
 
-    async with httpx.AsyncClient(base_url=base_url, timeout=30) as http_client:
+    async with httpx2.AsyncClient(base_url=base_url, timeout=30) as http_client:
         pages_processed = 0
         while True:
             if n_pages is not None and pages_processed >= n_pages:
@@ -152,7 +152,7 @@ async def submit_all_bookmarks(
                     continue
                 try:
                     await submit_bookmark(http_client, bookmark.id)
-                except httpx.HTTPStatusError as exc:
+                except httpx2.HTTPStatusError as exc:
                     failed += 1
                     response = exc.response
                     logger.exception(
@@ -161,7 +161,7 @@ async def submit_all_bookmarks(
                         response.status_code,
                         response.text,
                     )
-                except httpx.HTTPError:
+                except httpx2.HTTPError:
                     failed += 1
                     logger.exception("Submission failed for bookmark %s", bookmark.id)
                 else:
@@ -185,7 +185,7 @@ async def list_jobs(
     params: dict[str, Any] = {"limit": limit, "offset": offset}
     if status:
         params["status"] = status
-    async with httpx.AsyncClient(base_url=base_url, timeout=30) as http_client:
+    async with httpx2.AsyncClient(base_url=base_url, timeout=30) as http_client:
         response = await http_client.get("/v1/jobs", params=params)
         response.raise_for_status()
         return response.json()
@@ -194,7 +194,7 @@ async def list_jobs(
 async def summarize_job_statuses() -> dict[str, int]:
     """Summarize job statuses across all jobs."""
     base_url = resolve_conversion_api_base_url()
-    async with httpx.AsyncClient(base_url=base_url, timeout=30) as http_client:
+    async with httpx2.AsyncClient(base_url=base_url, timeout=30) as http_client:
         response = await http_client.get("/v1/jobs/status-counts")
         response.raise_for_status()
         payload = response.json()
@@ -209,7 +209,7 @@ async def summarize_job_statuses() -> dict[str, int]:
 # )
 # base_url = resolve_conversion_api_base_url()
 
-# async with httpx.AsyncClient(base_url=base_url, timeout=30) as http_client:
+# async with httpx2.AsyncClient(base_url=base_url, timeout=30) as http_client:
 #     await submit_bookmark(http_client, "ldow3o5ib8cvxkwj7439xhqm")
 
 # %%

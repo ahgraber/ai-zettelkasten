@@ -2,7 +2,7 @@
 
 Fetches content bytes for a UrlRef, supporting both KaraKeep asset URLs
 (fetched via the KaraKeep client) and arbitrary HTTP URLs (fetched via the
-egress-validated httpx helper that enforces deny-list policy, connection
+egress-validated httpx2 helper that enforces deny-list policy, connection
 pinning, and per-hop redirect validation).
 """
 

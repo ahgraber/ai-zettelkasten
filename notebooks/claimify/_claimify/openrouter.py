@@ -9,7 +9,7 @@
     model = OpenRouterModel("openai/gpt-5-mini", provider=provider)
 
 `make_openrouter_provider` wires `AsyncTenacityTransport` (from
-`pydantic_ai.retries`) into the provider's httpx client so transient failures
+`pydantic_ai.retries`) into the provider's httpx2 client so transient failures
 retry automatically: 429s honour OpenRouter's `Retry-After` header, 5xx and
 network-layer errors back off exponentially.
 
@@ -54,8 +54,8 @@ fallback via `GET /api/v1/generation?id=<response_id>`.
 
 from __future__ import annotations
 
-import httpx
-from httpx import HTTPStatusError
+import httpx2
+from httpx2 import HTTPStatusError
 from pydantic_ai.providers.openrouter import OpenRouterProvider
 from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
 
@@ -65,13 +65,13 @@ from tenacity import retry_if_exception_type, stop_after_attempt
 # plus HTTP-level signals we explicitly raise from `_validate_response` below.
 _RETRYABLE_EXCEPTIONS: tuple[type[BaseException], ...] = (
     HTTPStatusError,
-    httpx.TimeoutException,
-    httpx.NetworkError,
-    httpx.RemoteProtocolError,
+    httpx2.TimeoutException,
+    httpx2.NetworkError,
+    httpx2.RemoteProtocolError,
 )
 
 
-def _validate_response(response: httpx.Response) -> None:
+def _validate_response(response: httpx2.Response) -> None:
     """Convert retryable HTTP statuses to exceptions so tenacity can retry them.
 
     - 429: rate limited; `wait_retry_after` will honour `Retry-After`.
@@ -96,7 +96,7 @@ def make_openrouter_provider(
 
     - HTTP 429 with `Retry-After`-aware backoff via `wait_retry_after`.
     - HTTP 5xx from OpenRouter or upstream providers.
-    - httpx transport errors: timeouts, connection resets, DNS failures,
+    - httpx2 transport errors: timeouts, connection resets, DNS failures,
       `RemoteProtocolError`.
 
     Non-retryable: 4xx other than 429 (auth, bad request, etc.), any error
@@ -121,5 +121,5 @@ def make_openrouter_provider(
         ),
         validate_response=_validate_response,
     )
-    http_client = httpx.AsyncClient(transport=transport)
+    http_client = httpx2.AsyncClient(transport=transport)
     return OpenRouterProvider(api_key=api_key, http_client=http_client)

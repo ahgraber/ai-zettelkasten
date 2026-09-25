@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import httpx
+import httpx2
 import pytest
 
 from aizk.conversion.backfill import (
@@ -69,7 +69,7 @@ def test_resolve_conversion_api_base_url_translates_the_bind_address(host: str, 
 def test_resolve_conversion_api_base_url_produces_a_url_httpx_accepts(host: str) -> None:
     """Every resolved base URL parses, so an IPv6 host does not fail at client construction."""
     url = resolve_conversion_api_base_url(SimpleNamespace(api_host=host, api_port=8000))
-    assert httpx.URL(url).host
+    assert httpx2.URL(url).host
 
 
 # --- preflight --------------------------------------------------------------
@@ -79,9 +79,9 @@ def test_resolve_conversion_api_base_url_produces_a_url_httpx_accepts(host: str)
 async def test_preflight_api_accepts_a_reachable_api() -> None:
     """A responding readiness endpoint satisfies the preflight."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.url.path == "/health/ready"
-        return httpx.Response(200, json={"status": "ok"})
+        return httpx2.Response(200, json={"status": "ok"})
 
     async with mock_async_client(handler) as client:
         await preflight_api(client)
@@ -91,8 +91,8 @@ async def test_preflight_api_accepts_a_reachable_api() -> None:
 async def test_preflight_api_reports_an_unreachable_api_with_the_command_to_start_it() -> None:
     """A refused connection is reported as a typed error naming the command that fixes it."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("connection refused", request=request)
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("connection refused", request=request)
 
     async with mock_async_client(handler) as client:
         with pytest.raises(ConversionApiUnreachableError, match="aizk-conversion serve"):
@@ -108,8 +108,8 @@ async def test_preflight_api_rejects_an_api_that_is_not_ready() -> None:
     is worse than refusing up front.
     """
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(503, json={"status": "unavailable", "checks": [{"name": "db", "status": "error"}]})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(503, json={"status": "unavailable", "checks": [{"name": "db", "status": "error"}]})
 
     async with mock_async_client(handler) as client:
         with pytest.raises(ConversionApiUnreachableError, match="not ready"):
@@ -120,8 +120,8 @@ async def test_preflight_api_rejects_an_api_that_is_not_ready() -> None:
 async def test_preflight_api_rejects_a_missing_readiness_endpoint() -> None:
     """A 404 proves something answered, not that the conversion API did; it does not pass."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(404, text="Not Found")
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(404, text="Not Found")
 
     async with mock_async_client(handler) as client:
         with pytest.raises(ConversionApiUnreachableError):
@@ -132,8 +132,8 @@ async def test_preflight_api_rejects_a_missing_readiness_endpoint() -> None:
 async def test_preflight_api_surfaces_the_failing_readiness_check() -> None:
     """The refusal names which dependency failed, so the operator knows what to fix."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             503,
             json={"status": "unavailable", "checks": [{"name": "s3", "status": "error", "detail": "timeout"}]},
         )
@@ -152,11 +152,11 @@ async def test_backfill_pages_through_karakeep_and_submits_every_bookmark() -> N
     karakeep = _StubKarakeep([(["b1", "b2"], "cursor-2"), (["b3"], None)])
     submitted: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == "/health/ready":
-            return httpx.Response(200, json={})
+            return httpx2.Response(200, json={})
         submitted.append(request.url.path)
-        return httpx.Response(201, json={"id": len(submitted)})
+        return httpx2.Response(201, json={"id": len(submitted)})
 
     async with mock_async_client(handler) as client:
         result = await run_conversion_backfill(
@@ -174,10 +174,10 @@ async def test_backfill_counts_a_deduped_submission_separately_from_a_new_one() 
     karakeep = _StubKarakeep([(["b1", "b2"], None)])
     statuses = iter([201, 200])
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == "/health/ready":
-            return httpx.Response(200, json={})
-        return httpx.Response(next(statuses), json={"id": 1})
+            return httpx2.Response(200, json={})
+        return httpx2.Response(next(statuses), json={"id": 1})
 
     async with mock_async_client(handler) as client:
         result = await run_conversion_backfill(
@@ -194,13 +194,13 @@ async def test_backfill_honors_retry_after_when_the_queue_is_full() -> None:
     attempts: list[str] = []
     slept: list[float] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == "/health/ready":
-            return httpx.Response(200, json={})
+            return httpx2.Response(200, json={})
         attempts.append("submit")
         if len(attempts) == 1:
-            return httpx.Response(503, json={"detail": "Queue is at capacity"}, headers={"Retry-After": "7"})
-        return httpx.Response(201, json={"id": 1})
+            return httpx2.Response(503, json={"detail": "Queue is at capacity"}, headers={"Retry-After": "7"})
+        return httpx2.Response(201, json={"id": 1})
 
     async def fake_sleep(seconds: float) -> None:
         slept.append(seconds)
@@ -230,11 +230,11 @@ async def test_backfill_does_not_sleep_after_its_final_attempt() -> None:
     attempts: list[str] = []
     slept: list[float] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == "/health/ready":
-            return httpx.Response(200, json={"status": "ok"})
+            return httpx2.Response(200, json={"status": "ok"})
         attempts.append("submit")
-        return httpx.Response(503, json={"detail": "full"}, headers={"Retry-After": "7"})
+        return httpx2.Response(503, json={"detail": "full"}, headers={"Retry-After": "7"})
 
     async def fake_sleep(seconds: float) -> None:
         slept.append(seconds)
@@ -258,12 +258,12 @@ async def test_backfill_counts_a_rejected_bookmark_without_aborting_the_run() ->
     """One unacceptable bookmark is counted as failed; the rest of the corpus still submits."""
     karakeep = _StubKarakeep([(["bad", "good"], None)])
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == "/health/ready":
-            return httpx.Response(200, json={})
+            return httpx2.Response(200, json={})
         if "bad" in request.content.decode():
-            return httpx.Response(422, json={"detail": {"error": "kind_not_accepted"}})
-        return httpx.Response(201, json={"id": 1})
+            return httpx2.Response(422, json={"detail": {"error": "kind_not_accepted"}})
+        return httpx2.Response(201, json={"id": 1})
 
     async with mock_async_client(handler) as client:
         result = await run_conversion_backfill(
@@ -279,11 +279,11 @@ async def test_backfill_limit_stops_after_the_requested_bookmark_count() -> None
     karakeep = _StubKarakeep([(["b1", "b2", "b3"], "cursor-2"), (["b4"], None)])
     submitted: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == "/health/ready":
-            return httpx.Response(200, json={})
+            return httpx2.Response(200, json={})
         submitted.append(request.url.path)
-        return httpx.Response(201, json={"id": len(submitted)})
+        return httpx2.Response(201, json={"id": len(submitted)})
 
     async with mock_async_client(handler) as client:
         result = await run_conversion_backfill(
@@ -301,11 +301,11 @@ async def test_backfill_dry_run_submits_nothing() -> None:
     karakeep = _StubKarakeep([(["b1", "b2"], None)])
     submitted: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == "/health/ready":
-            return httpx.Response(200, json={})
+            return httpx2.Response(200, json={})
         submitted.append(request.url.path)
-        return httpx.Response(201, json={"id": 1})
+        return httpx2.Response(201, json={"id": 1})
 
     async with mock_async_client(handler) as client:
         result = await run_conversion_backfill(
@@ -321,8 +321,8 @@ async def test_backfill_preflights_before_paging_karakeep() -> None:
     """An unreachable API fails before any KaraKeep page is fetched."""
     karakeep = _StubKarakeep([(["b1"], None)])
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("connection refused", request=request)
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("connection refused", request=request)
 
     async with mock_async_client(handler) as client:
         with pytest.raises(ConversionApiUnreachableError):

@@ -25,7 +25,7 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from dotenv import load_dotenv
-import httpx
+import httpx2
 from pydantic import AnyUrl
 from setproctitle import setproctitle
 from tqdm.auto import tqdm
@@ -382,13 +382,13 @@ def enrich_picture_descriptions(
         }
 
         try:
-            response = httpx.post(url, json=payload, headers=headers, timeout=timeout)
+            response = httpx2.post(url, json=payload, headers=headers, timeout=timeout)
             response.raise_for_status()
             result = response.json()["choices"][0]["message"]["content"]
             if pic.meta is None:
                 pic.meta = PictureMeta()
             pic.meta.description = DescriptionMetaField(text=result, created_by="aizk:vlm_enrichment")
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             logger.warning("VLM call failed for figure %s: %s", pic.self_ref, exc)
 
 

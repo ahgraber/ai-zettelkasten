@@ -7,7 +7,7 @@ import asyncio
 import logging
 import sys
 
-import httpx
+import httpx2
 import uvicorn
 
 from aizk.conversion.backfill import (
@@ -96,7 +96,7 @@ async def _run_backfill(args: argparse.Namespace) -> ConversionBackfillResult:
     karakeep_config = KarakeepFetcherConfig()
     karakeep_client = KarakeepClient(api_key=karakeep_config.api_key, base_url=karakeep_config.base_url)
     base_url = resolve_conversion_api_base_url(ServiceSettings())
-    async with httpx.AsyncClient(base_url=base_url, timeout=_BACKFILL_TIMEOUT_SECONDS) as http_client:
+    async with httpx2.AsyncClient(base_url=base_url, timeout=_BACKFILL_TIMEOUT_SECONDS) as http_client:
         return await run_conversion_backfill(
             http_client=http_client,
             karakeep_client=karakeep_client,

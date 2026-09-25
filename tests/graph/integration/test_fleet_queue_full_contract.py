@@ -12,7 +12,7 @@ comparison runs against real routes rather than a shared helper called twice.
 
 from __future__ import annotations
 
-from httpx import Response
+from httpx2 import Response
 import pytest
 from sqlmodel import Session
 

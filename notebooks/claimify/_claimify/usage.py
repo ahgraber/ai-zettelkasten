@@ -31,7 +31,7 @@ import os
 from statistics import mean, median
 from typing import Any
 
-import httpx
+import httpx2
 from pydantic_ai.messages import ModelResponse
 
 from _claimify.models import UsageSample
@@ -109,15 +109,15 @@ def extract_usage(result: Any, *, model: str) -> UsageSample:
 OPENROUTER_GENERATION_URL = "https://openrouter.ai/api/v1/generation"
 
 _COST_CACHE: dict[str, float | None] = {}
-_HTTP_CLIENT: httpx.AsyncClient | None = None
+_HTTP_CLIENT: httpx2.AsyncClient | None = None
 _HTTP_LOCK = asyncio.Lock()
 
 
-async def _get_http_client() -> httpx.AsyncClient:
+async def _get_http_client() -> httpx2.AsyncClient:
     global _HTTP_CLIENT
     async with _HTTP_LOCK:
         if _HTTP_CLIENT is None:
-            _HTTP_CLIENT = httpx.AsyncClient(timeout=10.0)
+            _HTTP_CLIENT = httpx2.AsyncClient(timeout=10.0)
         return _HTTP_CLIENT
 
 
@@ -159,7 +159,7 @@ async def _resolve_openrouter_cost(
     for _ in range(attempts):
         try:
             r = await client.get(OPENROUTER_GENERATION_URL, params={"id": response_id}, headers=headers)
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             logger.debug("generation lookup transport error id=%s: %s", response_id, exc)
             await asyncio.sleep(backoff)
             backoff *= 2
@@ -180,10 +180,11 @@ async def _resolve_openrouter_cost(
                 if key_name in data:
                     try:
                         value = float(data[key_name])
-                        _COST_CACHE[response_id] = value
-                        return value
                     except (TypeError, ValueError):
                         continue
+                    else:
+                        _COST_CACHE[response_id] = value
+                        return value
         logger.debug("generation lookup id=%s returned no cost: %s", response_id, str(payload)[:200])
         break
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock, patch
 
-import httpx
+import httpx2
 from pyleak import no_task_leaks
 import pytest
 
@@ -122,7 +122,7 @@ async def test_check_picture_description_ok() -> None:
     config = _make_picture_description_config()
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
-    with patch("aizk.conversion.api.routes.health.httpx.get", return_value=mock_response):
+    with patch("aizk.conversion.api.routes.health.httpx2.get", return_value=mock_response):
         result = await _check_picture_description(config)
     assert result.name == "picture_description"
     assert result.status == "ok"
@@ -132,8 +132,8 @@ async def test_check_picture_description_ok() -> None:
 async def test_check_picture_description_unavailable_on_non_2xx() -> None:
     config = _make_picture_description_config()
     with patch(
-        "aizk.conversion.api.routes.health.httpx.get",
-        side_effect=httpx.HTTPStatusError("401", request=MagicMock(), response=MagicMock()),
+        "aizk.conversion.api.routes.health.httpx2.get",
+        side_effect=httpx2.HTTPStatusError("401", request=MagicMock(), response=MagicMock()),
     ):
         result = await _check_picture_description(config)
     assert result.name == "picture_description"
@@ -144,8 +144,8 @@ async def test_check_picture_description_unavailable_on_non_2xx() -> None:
 async def test_check_picture_description_unavailable_on_connection_error() -> None:
     config = _make_picture_description_config()
     with patch(
-        "aizk.conversion.api.routes.health.httpx.get",
-        side_effect=httpx.ConnectError("refused"),
+        "aizk.conversion.api.routes.health.httpx2.get",
+        side_effect=httpx2.ConnectError("refused"),
     ):
         result = await _check_picture_description(config)
     assert result.name == "picture_description"

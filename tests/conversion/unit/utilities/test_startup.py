@@ -6,7 +6,7 @@ import logging
 from unittest.mock import MagicMock, patch
 
 from botocore.exceptions import ClientError
-import httpx
+import httpx2
 import pytest
 
 from aizk.conversion.utilities.config import DoclingConverterConfig, KarakeepFetcherConfig
@@ -101,11 +101,11 @@ def test_probe_s3_raises_on_connection_error(config: ObjectStorageSettings) -> N
 
 
 def test_probe_karakeep_succeeds_when_reachable() -> None:
-    mock_response = MagicMock(spec=httpx.Response)
+    mock_response = MagicMock(spec=httpx2.Response)
     mock_response.status_code = 200
     mock_response.raise_for_status = MagicMock()
 
-    with patch("aizk.conversion.wiring.probes.httpx.get", return_value=mock_response) as mock_get:
+    with patch("aizk.conversion.wiring.probes.httpx2.get", return_value=mock_response) as mock_get:
         probe_karakeep(KarakeepFetcherConfig(_env_file=None, base_url="http://karakeep.local", api_key="test-key"))
 
     mock_get.assert_called_once_with(
@@ -127,11 +127,11 @@ def test_probe_karakeep_raises_on_missing_base_url() -> None:
 
 
 def test_probe_karakeep_raises_on_http_error() -> None:
-    mock_response = httpx.Response(status_code=401, request=httpx.Request("GET", "http://test"))
+    mock_response = httpx2.Response(status_code=401, request=httpx2.Request("GET", "http://test"))
     with (
         patch(
-            "aizk.conversion.wiring.probes.httpx.get",
-            side_effect=httpx.HTTPStatusError("401", request=mock_response.request, response=mock_response),
+            "aizk.conversion.wiring.probes.httpx2.get",
+            side_effect=httpx2.HTTPStatusError("401", request=mock_response.request, response=mock_response),
         ),
         pytest.raises(StartupValidationError, match="HTTP 401"),
     ):
@@ -140,7 +140,7 @@ def test_probe_karakeep_raises_on_http_error() -> None:
 
 def test_probe_karakeep_raises_on_connection_error() -> None:
     with (
-        patch("aizk.conversion.wiring.probes.httpx.get", side_effect=httpx.ConnectError("refused")),
+        patch("aizk.conversion.wiring.probes.httpx2.get", side_effect=httpx2.ConnectError("refused")),
         pytest.raises(StartupValidationError, match="unreachable"),
     ):
         probe_karakeep(KarakeepFetcherConfig(_env_file=None, base_url="http://karakeep.local", api_key="test-key"))
@@ -307,7 +307,7 @@ def test_probe_picture_description_succeeds_on_200() -> None:
     )
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
-    with patch("aizk.conversion.wiring.probes.httpx.get", return_value=mock_response):
+    with patch("aizk.conversion.wiring.probes.httpx2.get", return_value=mock_response):
         probe_picture_description(docling_cfg)
 
 
@@ -319,8 +319,8 @@ def test_probe_picture_description_raises_on_non_2xx() -> None:
     )
     with (
         patch(
-            "aizk.conversion.wiring.probes.httpx.get",
-            side_effect=httpx.HTTPStatusError("401", request=MagicMock(), response=MagicMock(status_code=401)),
+            "aizk.conversion.wiring.probes.httpx2.get",
+            side_effect=httpx2.HTTPStatusError("401", request=MagicMock(), response=MagicMock(status_code=401)),
         ),
         pytest.raises(StartupValidationError, match="401"),
     ):
@@ -335,8 +335,8 @@ def test_probe_picture_description_raises_on_connection_error() -> None:
     )
     with (
         patch(
-            "aizk.conversion.wiring.probes.httpx.get",
-            side_effect=httpx.ConnectError("refused"),
+            "aizk.conversion.wiring.probes.httpx2.get",
+            side_effect=httpx2.ConnectError("refused"),
         ),
         pytest.raises(StartupValidationError, match="unreachable"),
     ):

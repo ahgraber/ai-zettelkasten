@@ -5,7 +5,7 @@ from __future__ import annotations
 import socket
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 
 from aizk.conversion.core.errors import (
@@ -86,8 +86,8 @@ async def test_egress_fetch_returns_body_and_headers(monkeypatch: pytest.MonkeyP
     _stub_dns_returning(monkeypatch, {"example.com": "8.8.8.8"})
     payload = b"<!doctype html><html><body>ok</body></html>"
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, headers={"content-type": "text/html"}, content=payload)
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, headers={"content-type": "text/html"}, content=payload)
 
     body, response_headers = await egress_fetch_bytes(
         "https://example.com/page",
@@ -106,9 +106,9 @@ async def test_initial_url_in_deny_set_raises_deny_list(monkeypatch: pytest.Monk
     _stub_dns_returning(monkeypatch, {"metadata.local": "169.254.169.254"})
     fired = {"calls": 0}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         fired["calls"] += 1
-        return httpx.Response(200)
+        return httpx2.Response(200)
 
     with pytest.raises(DenyListDestination):
         await egress_fetch_bytes(
@@ -133,14 +133,14 @@ async def test_redirect_to_deny_set_raises_violation_and_does_not_fetch_target(
     )
     fetched_urls: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         # The transport sees the URL with the IP swapped in by EgressPinnedTransport,
         # but with MockTransport in tests there's no swap — record the URL as-is.
         fetched_urls.append(str(request.url))
         if "public.example.com" in str(request.url):
             # Use https so the rejection is purely deny-list, not scheme_downgrade.
-            return httpx.Response(302, headers={"location": "https://metadata.local/secret"})
-        return httpx.Response(200, content=b"PRIVATE")
+            return httpx2.Response(302, headers={"location": "https://metadata.local/secret"})
+        return httpx2.Response(200, content=b"PRIVATE")
 
     with pytest.raises(RedirectEgressViolation) as excinfo:
         await egress_fetch_bytes(
@@ -163,8 +163,8 @@ async def test_https_to_http_redirect_rejected_as_scheme_downgrade(
 ) -> None:
     _stub_dns_returning(monkeypatch, {"a.example": "93.184.216.34"})
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(302, headers={"location": "http://a.example/insecure"})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(302, headers={"location": "http://a.example/insecure"})
 
     with pytest.raises(RedirectEgressViolation) as excinfo:
         await egress_fetch_bytes(
@@ -183,10 +183,10 @@ async def test_sixth_redirect_hop_raises(monkeypatch: pytest.MonkeyPatch) -> Non
     _stub_dns_returning(monkeypatch, {"a.example": "93.184.216.34"})
     counter = {"n": 0}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         counter["n"] += 1
         # Return 302 forever — the helper should reject before issuing a 7th request.
-        return httpx.Response(302, headers={"location": f"https://a.example/hop{counter['n']}"})
+        return httpx2.Response(302, headers={"location": f"https://a.example/hop{counter['n']}"})
 
     with pytest.raises(RedirectEgressViolation) as excinfo:
         await egress_fetch_bytes(
@@ -224,14 +224,14 @@ async def test_https_https_http_three_hop_downgrade_rejected_at_third_hop(
     )
     seen: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         url = str(request.url)
         seen.append(url)
         if "a.example" in url:
-            return httpx.Response(302, headers={"location": "https://b.example/two"})
+            return httpx2.Response(302, headers={"location": "https://b.example/two"})
         if "b.example" in url:
-            return httpx.Response(302, headers={"location": "http://c.example/three"})
-        return httpx.Response(200, content=b"unexpected")
+            return httpx2.Response(302, headers={"location": "http://c.example/three"})
+        return httpx2.Response(200, content=b"unexpected")
 
     with pytest.raises(RedirectEgressViolation) as excinfo:
         await egress_fetch_bytes(
@@ -255,11 +255,11 @@ async def test_relative_location_resolves_against_previous_url(
     _stub_dns_returning(monkeypatch, {"a.example": "93.184.216.34"})
     seen: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         seen.append(str(request.url))
         if request.url.path == "/start":
-            return httpx.Response(302, headers={"location": "/next"})
-        return httpx.Response(200, content=b"FINAL")
+            return httpx2.Response(302, headers={"location": "/next"})
+        return httpx2.Response(200, content=b"FINAL")
 
     body, _ = await egress_fetch_bytes(
         "https://a.example/start",
@@ -283,11 +283,11 @@ async def test_cross_host_redirect_strips_authorization(monkeypatch: pytest.Monk
     )
     captured: list[dict[str, str]] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         captured.append(dict(request.headers.items()))
         if "a.example" in str(request.url):
-            return httpx.Response(302, headers={"location": "https://b.example/secrets"})
-        return httpx.Response(200, content=b"OK")
+            return httpx2.Response(302, headers={"location": "https://b.example/secrets"})
+        return httpx2.Response(200, content=b"OK")
 
     await egress_fetch_bytes(
         "https://a.example/start",
@@ -309,11 +309,11 @@ async def test_same_host_redirect_preserves_authorization(
     _stub_dns_returning(monkeypatch, {"a.example": "93.184.216.34"})
     captured: list[dict[str, str]] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         captured.append(dict(request.headers.items()))
         if request.url.path == "/start":
-            return httpx.Response(302, headers={"location": "https://a.example/next"})
-        return httpx.Response(200, content=b"OK")
+            return httpx2.Response(302, headers={"location": "https://a.example/next"})
+        return httpx2.Response(200, content=b"OK")
 
     await egress_fetch_bytes(
         "https://a.example/start",
@@ -332,8 +332,8 @@ async def test_same_host_redirect_preserves_authorization(
 async def test_response_exceeding_cap_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     _stub_dns_returning(monkeypatch, {"a.example": "93.184.216.34"})
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=b"x" * 100)
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b"x" * 100)
 
     with pytest.raises(FetchTooLargeError):
         await egress_fetch_bytes(
@@ -347,10 +347,10 @@ async def test_response_exceeding_cap_raises(monkeypatch: pytest.MonkeyPatch) ->
 async def test_declared_content_length_over_cap_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     _stub_dns_returning(monkeypatch, {"a.example": "93.184.216.34"})
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         # Lie about content-length but actually return shorter body — the
         # declared-length pre-check should reject before we read.
-        return httpx.Response(200, headers={"content-length": "1000000"}, content=b"short")
+        return httpx2.Response(200, headers={"content-length": "1000000"}, content=b"short")
 
     with pytest.raises(FetchTooLargeError):
         await egress_fetch_bytes(
@@ -367,8 +367,8 @@ async def test_declared_content_length_over_cap_raises(monkeypatch: pytest.Monke
 async def test_3xx_without_location_raises_fetch_error(monkeypatch: pytest.MonkeyPatch) -> None:
     _stub_dns_returning(monkeypatch, {"a.example": "93.184.216.34"})
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(302)
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(302)
 
     with pytest.raises(FetchError, match="missing Location"):
         await egress_fetch_bytes(
@@ -382,8 +382,8 @@ async def test_3xx_without_location_raises_fetch_error(monkeypatch: pytest.Monke
 async def test_non_2xx_terminal_raises_fetch_error(monkeypatch: pytest.MonkeyPatch) -> None:
     _stub_dns_returning(monkeypatch, {"a.example": "93.184.216.34"})
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500)
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(500)
 
     with pytest.raises(FetchError):
         await egress_fetch_bytes(
@@ -419,12 +419,12 @@ async def test_dns_rebinding_scenario_uses_captured_ip(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(socket, "getaddrinfo", fake)
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=b"OK")
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b"OK")
 
-    def capturing_factory(destination: ValidatedDestination) -> httpx.AsyncBaseTransport:
+    def capturing_factory(destination: ValidatedDestination) -> httpx2.AsyncBaseTransport:
         captured_ips.append(destination.ip)
-        return httpx.MockTransport(handler)
+        return httpx2.MockTransport(handler)
 
     body, _ = await egress_fetch_bytes(
         "https://attacker.example/start",

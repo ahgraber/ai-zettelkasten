@@ -20,7 +20,7 @@ from dataclasses import dataclass
 import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
-import httpx
+import httpx2
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -81,7 +81,7 @@ def resolve_conversion_api_base_url(config: Any) -> str:  # noqa: ANN401 - Servi
     return f"http://{host}:{config.api_port}"
 
 
-def _failing_checks(response: httpx.Response) -> str:
+def _failing_checks(response: httpx2.Response) -> str:
     """Summarize the readiness checks that did not pass, for the refusal message."""
     try:
         checks = response.json().get("checks") or []
@@ -91,7 +91,7 @@ def _failing_checks(response: httpx.Response) -> str:
     return ", ".join(failed) if failed else f"HTTP {response.status_code}"
 
 
-async def preflight_api(http_client: httpx.AsyncClient) -> None:
+async def preflight_api(http_client: httpx2.AsyncClient) -> None:
     """Verify the conversion API is ready before a backfill starts paging KaraKeep.
 
     Readiness, not mere reachability, is the bar. Every submission writes database
@@ -106,12 +106,12 @@ async def preflight_api(http_client: httpx.AsyncClient) -> None:
     """
     try:
         response = await http_client.get(_READINESS_PATH)
-    except httpx.RequestError as exc:
+    except httpx2.RequestError as exc:
         raise ConversionApiUnreachableError(
             f"conversion API is not reachable at {http_client.base_url} — "
             "start it with `aizk-conversion serve` (or `just serve`)."
         ) from exc
-    if response.status_code != httpx.codes.OK:
+    if response.status_code != httpx2.codes.OK:
         raise ConversionApiUnreachableError(
             f"conversion API at {http_client.base_url} is not ready ({_failing_checks(response)}) — "
             "submissions would fail, so the backfill will not start."
@@ -119,11 +119,11 @@ async def preflight_api(http_client: httpx.AsyncClient) -> None:
 
 
 async def _submit_bookmark(
-    http_client: httpx.AsyncClient,
+    http_client: httpx2.AsyncClient,
     bookmark_id: str,
     *,
     sleep: "Callable[[float], Awaitable[None]]",
-) -> httpx.Response:
+) -> httpx2.Response:
     """Submit one bookmark, waiting out queue-full responses.
 
     Returns the API's final response. A ``503`` carries the server's own
@@ -135,7 +135,7 @@ async def _submit_bookmark(
     payload = {"source_ref": {"kind": "karakeep_bookmark", "bookmark_id": bookmark_id}}
     for attempt in range(_MAX_QUEUE_FULL_RETRIES):
         response = await http_client.post(_JOBS_PATH, json=payload)
-        if response.status_code != httpx.codes.SERVICE_UNAVAILABLE:
+        if response.status_code != httpx2.codes.SERVICE_UNAVAILABLE:
             return response
         if attempt == _MAX_QUEUE_FULL_RETRIES - 1:
             break
@@ -155,7 +155,7 @@ async def _submit_bookmark(
 
 async def run_conversion_backfill(
     *,
-    http_client: httpx.AsyncClient,
+    http_client: httpx2.AsyncClient,
     karakeep_client: BookmarkPager,
     page_size: int = _DEFAULT_PAGE_SIZE,
     limit: int | None = None,
@@ -203,19 +203,19 @@ async def run_conversion_backfill(
             try:
                 response = await _submit_bookmark(http_client, bookmark.id, sleep=wait)
                 response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
+            except httpx2.HTTPStatusError as exc:
                 failed += 1
                 logger.warning(
                     "Bookmark submission rejected",
                     extra={"bookmark_id": bookmark.id, "status_code": exc.response.status_code},
                 )
-            except httpx.HTTPError:
+            except httpx2.HTTPError:
                 failed += 1
                 logger.warning("Bookmark submission failed in transit", extra={"bookmark_id": bookmark.id})
             else:
                 # The API answers a duplicate with 200 and the existing job; only a
                 # 201 is a job this run caused to exist.
-                if response.status_code == httpx.codes.CREATED:
+                if response.status_code == httpx2.codes.CREATED:
                     submitted += 1
                 else:
                     existing += 1

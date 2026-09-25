@@ -1,11 +1,11 @@
-"""Unit tests for the connection-pinned httpx transport."""
+"""Unit tests for the connection-pinned httpx2 transport."""
 
 from __future__ import annotations
 
 import ssl
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 
 from aizk.conversion.egress.policy import ValidatedDestination
@@ -31,14 +31,14 @@ class _CapturingTransport(EgressPinnedTransport):
 
     def __init__(self, destination: ValidatedDestination, **kwargs: Any) -> None:
         super().__init__(destination, **kwargs)
-        self.captured_url: httpx.URL | None = None
+        self.captured_url: httpx2.URL | None = None
         self.captured_sni: str | None = None
         self.captured_host_header: str | None = None
 
-    async def _parent_handle(self, request: httpx.Request) -> httpx.Response:  # noqa: ARG002
-        return httpx.Response(200, request=request)
+    async def _parent_handle(self, request: httpx2.Request) -> httpx2.Response:  # noqa: ARG002
+        return httpx2.Response(200, request=request)
 
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         original_url = request.url
         original_host = original_url.host
         request.url = original_url.copy_with(host=self._destination.ip)
@@ -56,7 +56,7 @@ class _CapturingTransport(EgressPinnedTransport):
 @pytest.mark.asyncio
 async def test_transport_swaps_url_host_to_pinned_ip() -> None:
     transport = _CapturingTransport(_DEST)
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with httpx2.AsyncClient(transport=transport) as client:
         await client.get("https://example.com/path")
     assert transport.captured_url is not None
     assert transport.captured_url.host == "93.184.216.34"
@@ -65,7 +65,7 @@ async def test_transport_swaps_url_host_to_pinned_ip() -> None:
     transport2 = _CapturingTransport(
         ValidatedDestination(ip="93.184.216.34", port=8443, host="example.com", scheme="https")
     )
-    async with httpx.AsyncClient(transport=transport2) as client:
+    async with httpx2.AsyncClient(transport=transport2) as client:
         await client.get("https://example.com:8443/path")
     assert transport2.captured_url is not None
     assert transport2.captured_url.host == "93.184.216.34"
@@ -75,7 +75,7 @@ async def test_transport_swaps_url_host_to_pinned_ip() -> None:
 @pytest.mark.asyncio
 async def test_transport_sets_sni_hostname_to_original_host() -> None:
     transport = _CapturingTransport(_DEST)
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with httpx2.AsyncClient(transport=transport) as client:
         await client.get("https://example.com/path")
     assert transport.captured_sni == "example.com"
 
@@ -83,9 +83,9 @@ async def test_transport_sets_sni_hostname_to_original_host() -> None:
 @pytest.mark.asyncio
 async def test_transport_preserves_host_header_as_original() -> None:
     transport = _CapturingTransport(_DEST)
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with httpx2.AsyncClient(transport=transport) as client:
         await client.get("https://example.com:443/path")
-    # httpx auto-set the Host header at request build time; the URL swap inside
+    # httpx2 auto-set the Host header at request build time; the URL swap inside
     # the transport must NOT change it (otherwise downstream would see the IP).
     assert transport.captured_host_header is not None
     assert "example.com" in transport.captured_host_header
@@ -95,7 +95,7 @@ async def test_transport_preserves_host_header_as_original() -> None:
 @pytest.mark.asyncio
 async def test_transport_restores_url_on_request_after_call() -> None:
     transport = _CapturingTransport(_DEST)
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with httpx2.AsyncClient(transport=transport) as client:
         response = await client.get("https://example.com/path")
     # The response.request URL the caller sees must be the original target.
     assert response.request.url.host == "example.com"
@@ -139,24 +139,24 @@ def test_transport_constructs_with_default_ssl_context() -> None:
 async def test_real_transport_dial_url_carries_pinned_ip(monkeypatch: pytest.MonkeyPatch) -> None:
     """The real `EgressPinnedTransport.handle_async_request` rewrites URL host to the pinned IP.
 
-    Stubs `httpx.AsyncHTTPTransport.handle_async_request` (the parent class's
+    Stubs `httpx2.AsyncHTTPTransport.handle_async_request` (the parent class's
     method) so the real `EgressPinnedTransport.handle_async_request` runs end
     to end including the `finally` restoration. Captures what the parent
     transport would have dialed.
     """
     captured: dict[str, Any] = {}
 
-    async def fake_parent(self: httpx.AsyncHTTPTransport, request: httpx.Request) -> httpx.Response:
+    async def fake_parent(self: httpx2.AsyncHTTPTransport, request: httpx2.Request) -> httpx2.Response:
         captured["url_host"] = request.url.host
         captured["url_port"] = request.url.port
         captured["sni_hostname"] = request.extensions.get("sni_hostname")
         captured["host_header"] = request.headers.get("host")
-        return httpx.Response(200, request=request)
+        return httpx2.Response(200, request=request)
 
-    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", fake_parent)
+    monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", fake_parent)
 
     transport = EgressPinnedTransport(_DEST)
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with httpx2.AsyncClient(transport=transport) as client:
         response = await client.get("https://example.com/path")
 
     # The parent transport (which would open the real socket) saw the IP, not
@@ -182,20 +182,20 @@ async def test_real_transport_restores_extensions_on_exception(monkeypatch: pyte
     """
     seen: dict[str, Any] = {}
 
-    async def raising_parent(self: httpx.AsyncHTTPTransport, request: httpx.Request) -> httpx.Response:
+    async def raising_parent(self: httpx2.AsyncHTTPTransport, request: httpx2.Request) -> httpx2.Response:
         # Snapshot what the parent saw, then raise.
         seen["mid_url_host"] = request.url.host
         seen["mid_sni"] = request.extensions.get("sni_hostname")
-        raise httpx.ConnectError("simulated connect failure")
+        raise httpx2.ConnectError("simulated connect failure")
 
-    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", raising_parent)
+    monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", raising_parent)
 
     transport = EgressPinnedTransport(_DEST)
-    request = httpx.Request("GET", "https://example.com/path")
+    request = httpx2.Request("GET", "https://example.com/path")
     pre_url = request.url
     pre_extensions = request.extensions
 
-    with pytest.raises(httpx.ConnectError):
+    with pytest.raises(httpx2.ConnectError):
         await transport.handle_async_request(request)
 
     # During the call, the parent saw the swapped URL and added sni_hostname.

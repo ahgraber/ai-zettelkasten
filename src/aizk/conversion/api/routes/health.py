@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-import httpx
+import httpx2
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
@@ -51,7 +51,7 @@ async def _check_picture_description(config) -> CheckResult:
     headers = {"Authorization": f"Bearer {api_key}"}
 
     def _get() -> None:
-        response = httpx.get(url, headers=headers, timeout=_CHECK_TIMEOUT_SECONDS)
+        response = httpx2.get(url, headers=headers, timeout=_CHECK_TIMEOUT_SECONDS)
         response.raise_for_status()
 
     try:

@@ -1,4 +1,4 @@
-"""Re-export the connection-pinned httpx transport for importers written against this path."""
+"""Re-export the connection-pinned httpx2 transport for importers written against this path."""
 
 from __future__ import annotations
 

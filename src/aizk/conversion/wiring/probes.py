@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-import httpx
+import httpx2
 
 from aizk.conversion.settings import DoclingConverterConfig, KarakeepFetcherConfig
 from aizk.db.backends.sqlite import SqliteDurabilityConfig
@@ -45,16 +45,16 @@ def probe_karakeep(karakeep_cfg: KarakeepFetcherConfig) -> None:
     }
 
     try:
-        response = httpx.get(
+        response = httpx2.get(
             url,
             headers=headers,
             params={"limit": 1},
             timeout=_PROBE_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
+    except httpx2.HTTPStatusError as exc:
         raise StartupValidationError(f"KaraKeep API returned HTTP {exc.response.status_code}: {exc}") from exc
-    except httpx.RequestError as exc:
+    except httpx2.RequestError as exc:
         raise StartupValidationError(f"KaraKeep API unreachable at {url}: {exc}") from exc
 
 
@@ -76,13 +76,13 @@ def probe_picture_description(docling_cfg: DoclingConverterConfig) -> None:
     headers = {"Authorization": f"Bearer {api_key}"}
 
     try:
-        response = httpx.get(url, headers=headers, timeout=_PROBE_TIMEOUT_SECONDS)
+        response = httpx2.get(url, headers=headers, timeout=_PROBE_TIMEOUT_SECONDS)
         response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
+    except httpx2.HTTPStatusError as exc:
         raise StartupValidationError(
             f"Picture description endpoint returned HTTP {exc.response.status_code}: {url}"
         ) from exc
-    except httpx.RequestError as exc:
+    except httpx2.RequestError as exc:
         raise StartupValidationError(f"Picture description endpoint unreachable at {url}: {exc}") from exc
 
 

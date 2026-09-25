@@ -28,7 +28,7 @@ import time
 from typing import Optional
 
 from dotenv import load_dotenv
-import httpx  # NOQA: E402
+import httpx2  # NOQA: E402
 from pydantic import BaseModel, Field, ValidationError
 from setproctitle import setproctitle
 from tqdm.auto import tqdm
@@ -50,10 +50,10 @@ aizk_logger.setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-# set httpx logging to warnings and errors only
-httpx_logger = logging.getLogger("httpx")
-httpx_logger.setLevel(logging.WARNING)
-httpx_logger.propagate = False
+# set httpx2 logging to warnings and errors only
+httpx2_logger = logging.getLogger("httpx2")
+httpx2_logger.setLevel(logging.WARNING)
+httpx2_logger.propagate = False
 
 datadir = Path("./data/reorder_experiment/")
 datadir.mkdir(parents=True, exist_ok=True)
@@ -172,7 +172,7 @@ for html in datadir.glob("*/**/*.html"):
         f.write(md)
 
 # %%
-async_client = httpx.AsyncClient(timeout=90)
+async_client = httpx2.AsyncClient(timeout=90)
 base_url = os.environ.get("AIZK_DOCLING_BASE_URL", "http://localhost:5001")
 endpoint = base_url + "/v1/convert/file/async"
 overwrite: bool = True

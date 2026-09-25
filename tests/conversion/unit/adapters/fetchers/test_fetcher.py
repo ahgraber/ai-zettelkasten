@@ -8,7 +8,7 @@ Covers:
 
 from __future__ import annotations
 
-import httpx
+import httpx2
 from pyleak import no_task_leaks
 import pytest
 
@@ -82,7 +82,7 @@ async def test_fetch_karakeep_asset_wraps_errors_as_retryable():
             return False
 
         async def get_asset(self, asset_id: str) -> bytes:
-            raise httpx.ConnectError("connection refused")
+            raise httpx2.ConnectError("connection refused")
 
     import unittest.mock as _mock
 
@@ -195,7 +195,7 @@ async def test_fetch_arxiv_rejects_non_arxiv_bookmark_permanently(monkeypatch):
 
 
 class _RecordingClient:
-    """Async httpx client stub that records .get() URLs and replies from a table."""
+    """Async httpx2 client stub that records .get() URLs and replies from a table."""
 
     def __init__(self, responses_by_url: dict[str, int], body: bytes = b"# README") -> None:
         self._responses_by_url = responses_by_url
@@ -208,10 +208,10 @@ class _RecordingClient:
     async def __aexit__(self, *_a):
         return False
 
-    async def get(self, url: str) -> httpx.Response:
+    async def get(self, url: str) -> httpx2.Response:
         self.requested_urls.append(url)
         status = self._responses_by_url.get(url, 404)
-        return httpx.Response(status_code=status, content=self._body if status == 200 else b"")
+        return httpx2.Response(status_code=status, content=self._body if status == 200 else b"")
 
 
 @pytest.mark.asyncio(loop_scope="function")
@@ -230,7 +230,7 @@ async def test_github_readme_prefers_md_over_rst_on_main_branch(monkeypatch):
     url_md_main = "https://raw.githubusercontent.com/owner/repo/main/README.md"
     url_rst_master = "https://raw.githubusercontent.com/owner/repo/master/README.rst"
     stub = _RecordingClient({url_md_main: 200, url_rst_master: 200}, body=b"# md content")
-    monkeypatch.setattr(fetcher.httpx, "AsyncClient", lambda **_kw: stub)
+    monkeypatch.setattr(fetcher.httpx2, "AsyncClient", lambda **_kw: stub)
 
     result = await fetcher.fetch_github_readme(bookmark, config)
 
@@ -256,7 +256,7 @@ async def test_github_readme_falls_back_to_rst_when_md_missing(monkeypatch):
     # Only the .rst variant on main is reachable.
     url_rst = "https://raw.githubusercontent.com/owner/repo/main/README.rst"
     stub = _RecordingClient({url_rst: 200}, body=b"rst body")
-    monkeypatch.setattr(fetcher.httpx, "AsyncClient", lambda **_kw: stub)
+    monkeypatch.setattr(fetcher.httpx2, "AsyncClient", lambda **_kw: stub)
 
     result = await fetcher.fetch_github_readme(bookmark, config)
 
@@ -280,7 +280,7 @@ async def test_github_readme_no_readme_raises_permanent_error(monkeypatch):
     monkeypatch.setattr(fetcher, "parse_github_owner_repo", lambda _u: ("owner", "repo"))
 
     stub = _RecordingClient({})  # everything 404s
-    monkeypatch.setattr(fetcher.httpx, "AsyncClient", lambda **_kw: stub)
+    monkeypatch.setattr(fetcher.httpx2, "AsyncClient", lambda **_kw: stub)
 
     with pytest.raises(fetcher.GitHubReadmeNotFoundError) as excinfo:
         await fetcher.fetch_github_readme(bookmark, config)

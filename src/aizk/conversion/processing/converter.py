@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-import httpx
+import httpx2
 from PIL import Image
 from pydantic import AnyUrl, HttpUrl
 
@@ -288,12 +288,12 @@ def _get_classification_label(pic: PictureItem) -> str | None:
 def _call_vlm_api(image: Image.Image, prompt: str, config: DoclingConverterConfig) -> str:
     """Call the VLM chat completions API with an image and prompt.
 
-    Egress-policy note: this call uses ``httpx.post`` directly against the
+    Egress-policy note: this call uses ``httpx2.post`` directly against the
     operator-configured ``AIZK_CONVERTER__DOCLING__PICTURE_DESCRIPTION_BASE_URL``
     and is NOT routed through ``egress_fetch_bytes``. The carve-out is
     intentional — see ``.specs/changes/network-egress-policy/design.md``
     § "Operator-trusted endpoints are carved out of the egress gate".
-    Default ``httpx`` TLS posture (hostname check on, cert verify on)
+    Default ``httpx2`` TLS posture (hostname check on, cert verify on)
     applies; the timeout is bounded by ``config.picture_timeout``.
 
     Args:
@@ -335,10 +335,10 @@ def _call_vlm_api(image: Image.Image, prompt: str, config: DoclingConverterConfi
     url = f"{base_url}/chat/completions"
 
     try:
-        response = httpx.post(url, json=payload, headers=headers, timeout=config.picture_timeout)
+        response = httpx2.post(url, json=payload, headers=headers, timeout=config.picture_timeout)
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
-    except (httpx.HTTPError, httpx.TimeoutException) as exc:
+    except (httpx2.HTTPError, httpx2.TimeoutException) as exc:
         raise DoclingError(f"VLM API call failed: {exc}") from exc
 
 

@@ -14,7 +14,7 @@ import socket
 from typing import Any, Callable
 from unittest.mock import MagicMock
 
-import httpx
+import httpx2
 import pytest
 from sqlmodel import Session
 
@@ -142,9 +142,9 @@ def test_redirect_to_private_ip_rejected(monkeypatch: pytest.MonkeyPatch) -> Non
 
     connected_ips: list[str] = []
 
-    def _handler(request: httpx.Request) -> httpx.Response:
+    def _handler(request: httpx2.Request) -> httpx2.Response:
         # First hop returns redirect to private IP
-        return httpx.Response(302, headers={"location": "http://10.0.0.5/admin"})
+        return httpx2.Response(302, headers={"location": "http://10.0.0.5/admin"})
 
     factory = mock_transport_factory(_handler, connected_to=connected_ips)
 

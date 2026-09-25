@@ -31,7 +31,7 @@ import time
 from typing import Final
 from urllib.parse import urljoin, urlparse
 
-import httpx
+import httpx2
 
 from aizk.conversion.core.errors import (
     DenyListDestination,
@@ -56,7 +56,7 @@ _REDIRECT_STATUS_CODES: Final[frozenset[int]] = frozenset({301, 302, 303, 307, 3
 _AUTH_HEADER_NAMES: Final[frozenset[str]] = frozenset({"authorization", "cookie"})
 _X_AUTH_HEADER_PATTERN: Final[re.Pattern[str]] = re.compile(r"^x-.*auth.*$", re.IGNORECASE)
 
-TransportFactory = Callable[[ValidatedDestination], httpx.AsyncBaseTransport]
+TransportFactory = Callable[[ValidatedDestination], httpx2.AsyncBaseTransport]
 
 
 @dataclass(frozen=True)
@@ -74,12 +74,12 @@ class _Redirect:
     location: str
 
 
-def _default_timeout() -> httpx.Timeout:
+def _default_timeout() -> httpx2.Timeout:
     """Return the per-hop timeout pinned by the design (connect 5 s, read 30 s)."""
-    return httpx.Timeout(connect=5.0, read=30.0, write=30.0, pool=5.0)
+    return httpx2.Timeout(connect=5.0, read=30.0, write=30.0, pool=5.0)
 
 
-def _default_transport_factory(destination: ValidatedDestination) -> httpx.AsyncBaseTransport:
+def _default_transport_factory(destination: ValidatedDestination) -> httpx2.AsyncBaseTransport:
     """Return an `EgressPinnedTransport` for the validated destination."""
     return EgressPinnedTransport(destination)
 
@@ -162,7 +162,7 @@ def _follow_redirect(
     return next_url, next_headers
 
 
-async def _read_capped_body(response: httpx.Response, url: str, max_bytes: int) -> bytes:
+async def _read_capped_body(response: httpx2.Response, url: str, max_bytes: int) -> bytes:
     """Read response body up to ``max_bytes``, raising ``FetchTooLargeError`` on overrun.
 
     Performs a pre-flight ``Content-Length`` check (declared-too-large is
@@ -209,7 +209,7 @@ async def _do_one_hop(
     headers: Mapping[str, str],
     destination: ValidatedDestination,
     factory: TransportFactory,
-    timeout: httpx.Timeout,
+    timeout: httpx2.Timeout,
     max_response_bytes: int,
 ) -> _Terminal | _Redirect:
     """Execute a single GET against ``url`` via the pinned transport.
@@ -220,7 +220,7 @@ async def _do_one_hop(
     response is a 3xx without a ``Location`` header.
     """
     transport = factory(destination)
-    async with httpx.AsyncClient(
+    async with httpx2.AsyncClient(
         transport=transport,
         follow_redirects=False,
         timeout=timeout,
@@ -240,7 +240,7 @@ async def _do_one_hop(
                 body = await _read_capped_body(response, url, max_response_bytes)
                 lowered = {k.lower(): v for k, v in response.headers.items()}
                 return _Terminal(body=body, headers=lowered)
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             raise FetchError(f"HTTP error fetching {sanitize_url_for_log(url)!r}: {exc}") from exc
 
 
@@ -249,7 +249,7 @@ async def egress_fetch_bytes(
     *,
     max_response_bytes: int,
     headers: Mapping[str, str] | None = None,
-    timeout: httpx.Timeout | None = None,
+    timeout: httpx2.Timeout | None = None,
     max_redirects: int = _DEFAULT_MAX_REDIRECTS,
     total_budget_seconds: float = _DEFAULT_TOTAL_BUDGET_SECONDS,
     transport_factory: TransportFactory | None = None,

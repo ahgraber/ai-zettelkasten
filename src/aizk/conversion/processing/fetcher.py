@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from urllib.parse import urlparse
 
-import httpx
+import httpx2
 
 from aizk.conversion.core.errors import (
     ArxivPdfFetchError,
@@ -157,7 +157,7 @@ async def fetch_github_readme(
     readme_variants = ["README.md", "README.MD", "readme.md", "README.rst", "README.txt", "README"]
     branches = ["main", "master"]
 
-    async with httpx.AsyncClient(
+    async with httpx2.AsyncClient(
         timeout=config.fetch_timeout_seconds if config else 30,
         follow_redirects=True,
     ) as client:
@@ -170,7 +170,7 @@ async def fetch_github_readme(
                     if response.status_code == 200:
                         logger.info("Found GitHub README HTML: %s/%s (%s, %s)", owner, repo, branch, readme)
                         return response.content
-                except httpx.HTTPError:
+                except httpx2.HTTPError:
                     continue
 
     raise GitHubReadmeNotFoundError(f"No README found for {owner}/{repo}")
