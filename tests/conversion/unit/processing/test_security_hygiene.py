@@ -23,7 +23,7 @@ from aizk.conversion.core.errors import (
     FetchTooLargeError,
 )
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.egress.policy import assert_egress_allowed
 from aizk.conversion.egress.prefetch import prefetch_images
@@ -88,7 +88,7 @@ def running_job(db_session: Session, source: Source) -> ConversionJob:
         source_id=source.source_id,
         owner_id="self",
         title=source.title,
-        status=ConversionJobStatus.RUNNING,
+        status=WorkUnitStatus.RUNNING,
         idempotency_key="hygiene-test-key",
         attempts=1,
     )
@@ -124,8 +124,9 @@ def test_classify_job_error_sanitizes_egress_policy_error_message(
     updated = db_session.get(ConversionJob, running_job.id)
     assert updated is not None
 
-    # Status must be FAILED_PERM (EgressPolicyError.retryable = False).
-    assert updated.status == ConversionJobStatus.FAILED_PERM
+    # Status must be a permanent FAILED (EgressPolicyError.retryable = False).
+    assert updated.status == WorkUnitStatus.FAILED
+    assert updated.earliest_next_attempt_at is None
 
     # error_message must be the error_code only — never the rejected destination.
     assert updated.error_message == exc.error_code
@@ -191,7 +192,8 @@ def test_classify_job_error_strips_traceback_for_subprocess_egress_error(
     db_session.expire_all()
     updated = db_session.get(ConversionJob, running_job.id)
     assert updated is not None
-    assert updated.status == ConversionJobStatus.FAILED_PERM
+    assert updated.status == WorkUnitStatus.FAILED
+    assert updated.earliest_next_attempt_at is None
     assert updated.error_message == "deny_list"
     assert rejected_host not in (updated.error_message or "")
     # The crucial regression: error_detail must be None even though the

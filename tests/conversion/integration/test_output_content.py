@@ -11,7 +11,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.datamodel.job import ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.storage.manifest import (
     ManifestArtifactMarkdown,
@@ -22,6 +21,7 @@ from aizk.conversion.storage.manifest import (
     ManifestV1,
 )
 from aizk.conversion.storage.s3_client import S3Client, S3Error, S3NotFoundError
+from aizk.pipeline.lifecycle import WorkUnitStatus
 from tests.conversion._helpers import make_job, make_source
 
 
@@ -36,7 +36,7 @@ def _create_job(session, *, source_id, idempotency_key: str):
         session,
         source_id=source_id,
         idempotency_key=idempotency_key,
-        status=ConversionJobStatus.SUCCEEDED,
+        status=WorkUnitStatus.SUCCEEDED,
         attempts=1,
     )
 

@@ -60,16 +60,16 @@ def actionable_backlog(session: "Session", model: Any) -> int:
     ).one()
 
 
-def check_capacity(session: "Session", model: Any, *, stage: str, limit: int) -> None:
+def check_capacity(session: "Session", model: Any, *, stage: str, limit: int, zero_limit_closes: bool = False) -> None:
     """Raise when a new work-unit would exceed the stage capacity.
 
     Call this after idempotency deduplication. A non-positive ``limit`` disables
-    the check.
+    the check, or refuses every new unit when ``zero_limit_closes`` is set.
 
     Raises:
         StageAtCapacityError: If the actionable backlog reaches ``limit``.
     """
-    if limit <= 0:
+    if limit <= 0 and not zero_limit_closes:
         return
     depth = actionable_backlog(session, model)
     if depth >= limit:

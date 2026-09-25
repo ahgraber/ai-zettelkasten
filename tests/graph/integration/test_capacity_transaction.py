@@ -26,13 +26,13 @@ from sqlmodel import Session
 
 from fastapi.testclient import TestClient
 
-from aizk.conversion.datamodel.job import ConversionJobStatus
 from aizk.graph.admission import contextualization_adapter, run_admission_pass
 from aizk.graph.api.main import create_app
 from aizk.graph.backfill import run_contextualization_backfill, run_extraction_backfill
 from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.config import AdmissionConfig
 from aizk.pipeline import capacity
+from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus
 
 #: Positive, and above anything a test enqueues: the check must run, not refuse.
@@ -83,7 +83,7 @@ def _seed_converted(db_session: Session, seed_source, seed_conversion_job, seed_
         db_session,
         source_id=source.source_id,
         idempotency_key=f"cap-{tag}",
-        status=ConversionJobStatus.SUCCEEDED,
+        status=WorkUnitStatus.SUCCEEDED,
     )
     return seed_conversion_output(db_session, job_id=job.id, source_id=source.source_id).id
 

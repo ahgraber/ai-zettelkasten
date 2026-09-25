@@ -41,10 +41,20 @@
     "inputs": { "output_id": 7, "content_hash": "0123456789abcdef" },
     "model_dump_json": "{\"kind\":\"succeeded\",\"output_id\":7,\"content_hash\":\"0123456789abcdef\"}"
   },
-  "upload_pending": {
-    "payload_class": "UploadPendingPayload",
+  "conversion_completed": {
+    "payload_class": "ConversionCompletedPayload",
     "inputs": { "content_hash": "0123456789abcdef" },
-    "model_dump_json": "{\"kind\":\"upload_pending\",\"content_hash\":\"0123456789abcdef\"}"
+    "model_dump_json": "{\"kind\":\"conversion_completed\",\"content_hash\":\"0123456789abcdef\"}"
+  },
+  "requeued": {
+    "payload_class": "RequeuedPayload",
+    "inputs": { "requeue_reason": "operator_retry", "submitted_by": "operator" },
+    "model_dump_json": "{\"kind\":\"requeued\",\"requeue_reason\":\"operator_retry\",\"submitted_by\":\"operator\"}"
+  },
+  "timed_out": {
+    "payload_class": "TimedOutPayload",
+    "inputs": { "timeout_seconds": 7200.0, "phase": "convert" },
+    "model_dump_json": "{\"kind\":\"timed_out\",\"timeout_seconds\":7200.0,\"phase\":\"convert\"}"
   },
   "recovered_stale": {
     "payload_class": "RecoveredStalePayload",

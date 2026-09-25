@@ -15,6 +15,7 @@ conversion service's configured loop timings onto the runner:
 
 from __future__ import annotations
 
+import datetime
 import logging
 
 from aizk.conversion.handler import ConversionStageHandler
@@ -23,6 +24,7 @@ from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 from aizk.pipeline.runner import StageRunner
 from aizk.pipeline.shutdown import ShutdownController
+from aizk.pipeline.stage import require_stale_threshold
 from aizk.storage.settings import ObjectStorageSettings
 
 logger = logging.getLogger(__name__)
@@ -71,6 +73,12 @@ def run_worker(
     # Imported here: keeps docling and torch off the CLI's import path.
     from aizk.conversion.wiring.worker import build_worker_runtime
 
+    require_stale_threshold(
+        stale_after=datetime.timedelta(minutes=config.worker_stale_job_minutes),
+        timeout=datetime.timedelta(seconds=config.worker_job_timeout_seconds),
+        drain_timeout=float(config.worker_drain_timeout_seconds),
+        cancel_grace=_SUBPROCESS_TERMINATION_BUDGET_SECONDS,
+    )
     runtime = build_worker_runtime(config, object_storage=object_storage)
     handler = ConversionStageHandler(config, runtime=runtime)
     runner = StageRunner(

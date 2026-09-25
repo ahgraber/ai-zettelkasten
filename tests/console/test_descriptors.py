@@ -21,13 +21,12 @@ from aizk.console.descriptors import (
 from aizk.console.stages.contextualization import DESCRIPTOR as CONTEXTUALIZATION_DESCRIPTOR
 from aizk.console.stages.conversion import CONVERSION_ROLLUP, DESCRIPTOR as CONVERSION_DESCRIPTOR
 from aizk.console.stages.extraction import DESCRIPTOR as EXTRACTION_DESCRIPTOR
-from aizk.conversion.datamodel.job import ConversionJobStatus
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
 
 def test_conversion_rollup_covers_every_native_status() -> None:
-    """Every ``ConversionJobStatus`` member maps to exactly one generic category."""
-    assert set(CONVERSION_ROLLUP) == set(ConversionJobStatus)
+    """Every ``WorkUnitStatus`` member maps to exactly one generic category."""
+    assert set(CONVERSION_ROLLUP) == set(WorkUnitStatus)
     assert all(target in WorkUnitStatus for target in CONVERSION_ROLLUP.values())
 
 
@@ -38,15 +37,8 @@ def test_graph_rollup_covers_every_work_unit_status() -> None:
 
 
 def test_conversion_rollup_matches_the_declared_mapping() -> None:
-    """The conversion mapping folds queued/running/failed variants as designed."""
-    assert CONVERSION_ROLLUP[ConversionJobStatus.NEW] == WorkUnitStatus.QUEUED
-    assert CONVERSION_ROLLUP[ConversionJobStatus.QUEUED] == WorkUnitStatus.QUEUED
-    assert CONVERSION_ROLLUP[ConversionJobStatus.RUNNING] == WorkUnitStatus.RUNNING
-    assert CONVERSION_ROLLUP[ConversionJobStatus.UPLOAD_PENDING] == WorkUnitStatus.RUNNING
-    assert CONVERSION_ROLLUP[ConversionJobStatus.SUCCEEDED] == WorkUnitStatus.SUCCEEDED
-    assert CONVERSION_ROLLUP[ConversionJobStatus.FAILED_RETRYABLE] == WorkUnitStatus.FAILED
-    assert CONVERSION_ROLLUP[ConversionJobStatus.FAILED_PERM] == WorkUnitStatus.FAILED
-    assert CONVERSION_ROLLUP[ConversionJobStatus.CANCELLED] == WorkUnitStatus.CANCELLED
+    """Conversion persists the generic statuses, so its mapping is the identity."""
+    assert all(source == target for source, target in CONVERSION_ROLLUP.items())
 
 
 def test_rollup_counts_folds_native_counts_without_loss() -> None:
@@ -58,17 +50,15 @@ def test_rollup_counts_folds_native_counts_without_loss() -> None:
         count_by_status=lambda *a, **k: {},
         get_unit=lambda *a, **k: None,
         columns_template="",
-        native_statuses=[status.value for status in ConversionJobStatus],
+        native_statuses=[status.value for status in WorkUnitStatus],
         rollup=CONVERSION_ROLLUP,
         events_stage="conversion",
         actions=[],
     )
     native_counts = {
-        ConversionJobStatus.QUEUED.value: 2,
-        ConversionJobStatus.UPLOAD_PENDING.value: 1,
-        ConversionJobStatus.RUNNING.value: 3,
-        ConversionJobStatus.FAILED_RETRYABLE.value: 4,
-        ConversionJobStatus.FAILED_PERM.value: 5,
+        WorkUnitStatus.QUEUED.value: 2,
+        WorkUnitStatus.RUNNING.value: 4,
+        WorkUnitStatus.FAILED.value: 9,
     }
 
     generic = rollup_counts(descriptor, native_counts)
@@ -89,7 +79,7 @@ def test_rollup_counts_fails_closed_on_an_unmapped_native_status() -> None:
         count_by_status=lambda *a, **k: {},
         get_unit=lambda *a, **k: None,
         columns_template="",
-        native_statuses=[status.value for status in ConversionJobStatus],
+        native_statuses=[status.value for status in WorkUnitStatus],
         rollup=CONVERSION_ROLLUP,
         events_stage="conversion",
         actions=[],

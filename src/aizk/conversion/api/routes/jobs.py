@@ -29,18 +29,21 @@ from aizk.conversion.api.schemas import (
     QueueFullResponse,
 )
 from aizk.conversion.auth import Principal
-from aizk.conversion.core.hashing import compute_idempotency_key
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, SourceRef, compute_source_ref_hash
-from aizk.conversion.datamodel.events import (
-    ConversionEventKind,
-    QueuedPayload,
-    record_transition,
-)
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
-from aizk.conversion.job_actions import apply_job_cancel, apply_job_retry
+from aizk.conversion.stage import (
+    CONVERSION_DEFINITION,
+    ConversionJobParams,
+    cancel_conversion_job,
+    retry_conversion_job,
+)
 from aizk.db.engine import begin_immediate_on
+from aizk.pipeline.capacity import StageAtCapacityError
+from aizk.pipeline.lifecycle import RetryClass, WorkUnitStatus, derive_retry_class, retry_class_filter
+from aizk.pipeline.repository import IneligibleTransitionError
+from aizk.pipeline.stage import enqueue
 from aizk.utilities.clock import utcnow
 
 logger = logging.getLogger(__name__)
@@ -88,6 +91,8 @@ def _job_to_response(
         title=source_title,
         source_type=source.source_type,
         status=job.status,
+        retry_class=derive_retry_class(job.status, job.earliest_next_attempt_at),
+        phase=job.phase if job.status == WorkUnitStatus.RUNNING else None,
         attempts=job.attempts,
         payload_version=job.payload_version,
         idempotency_key=job.idempotency_key,
@@ -176,68 +181,42 @@ def submit_job(
     # BEGIN IMMEDIATE for the idempotency-check + job-creation sequence
     begin_immediate_on(session)
 
-    # Compute new-formula idempotency key
-    converter_name = request.app.state.converter_name
-    config_snap = request.app.state.converter_config_snapshot
-    idempotency_key = submission.idempotency_key or compute_idempotency_key(
-        source_ref_hash, converter_name, config_snap
+    params = ConversionJobParams(
+        source_ref=source_ref_json,
+        title=source.title or source.karakeep_id or str(source.source_id),
+        payload_version=submission.payload_version,
+        source_ref_hash=source_ref_hash,
+        converter_name=request.app.state.converter_name,
+        config_snapshot=request.app.state.converter_config_snapshot,
+        requested_key=submission.idempotency_key,
     )
-
     # Owner-scoped duplicate detection: a same-key match from a different
     # principal must not satisfy the duplicate-submission path. The
     # database uniqueness constraint on (owner_id, idempotency_key) keeps
     # this safe under concurrent submits as well.
-    existing_job = session.exec(
-        select(ConversionJob)
-        .where(ConversionJob.idempotency_key == idempotency_key)
-        .where(ConversionJob.owner_id == principal.subject)
-    ).first()
-    if existing_job:
-        output = _get_output_summary(session, existing_job.id)
-        api_response.status_code = status.HTTP_200_OK
-        return _job_to_response(existing_job, source, output)
-
-    actionable_statuses = [ConversionJobStatus.QUEUED, ConversionJobStatus.FAILED_RETRYABLE]
-    queue_depth = session.exec(
-        select(func.count()).select_from(ConversionJob).where(ConversionJob.status.in_(actionable_statuses))
-    ).one()
-    if queue_depth >= config.queue_max_depth:
+    try:
+        job, created = enqueue(
+            session,
+            CONVERSION_DEFINITION,
+            params,
+            origin="intake",
+            principal=principal.subject,
+            queue_max_depth=config.queue_max_depth,
+            columns={"source_id": source.source_id, "owner_id": principal.subject},
+            zero_limit_closes=True,
+        )
+    except StageAtCapacityError:
         session.rollback()
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={"detail": "Queue is at capacity", "retry_after": config.queue_retry_after_seconds},
             headers={"Retry-After": str(config.queue_retry_after_seconds)},
         )
+    if not created:
+        output = _get_output_summary(session, job.id)
+        api_response.status_code = status.HTTP_200_OK
+        return _job_to_response(job, source, output)
 
-    now = utcnow()
-    job = ConversionJob(
-        source_id=source.source_id,
-        owner_id=principal.subject,
-        title=source.title or source.karakeep_id or str(source.source_id),
-        payload_version=submission.payload_version,
-        status=ConversionJobStatus.QUEUED,
-        attempts=0,
-        idempotency_key=idempotency_key,
-        source_ref=source_ref_json,
-        queued_at=now,
-        created_at=now,
-        updated_at=now,
-    )
-    session.add(job)
-    # Flush so job.id is assigned before the origin event captures it.
-    session.flush()
-    record_transition(
-        session,
-        job,
-        to_status=ConversionJobStatus.QUEUED,
-        kind=ConversionEventKind.QUEUED,
-        attempt=0,
-        payload=QueuedPayload(
-            submitted_by=principal.subject,
-            requeue_reason="initial",
-        ),
-        from_status=None,
-    )
     session.commit()
     session.refresh(job)
     session.refresh(source)
@@ -251,17 +230,22 @@ def get_job_status_counts(
     principal: Annotated[Principal, Depends(get_principal)],
 ) -> JobStatusCounts:
     """Return aggregated counts of jobs by status, scoped to the caller."""
+    has_wait = ConversionJob.earliest_next_attempt_at.is_not(None)
     rows = session.exec(
-        select(ConversionJob.status, func.count())
+        select(ConversionJob.status, has_wait, func.count())
         .where(ConversionJob.owner_id == principal.subject)
-        .group_by(ConversionJob.status)
+        .group_by(ConversionJob.status, has_wait)
     ).all()
     counts: dict[str, int] = {}
-    for status_, count in rows:
-        key = status_.value if isinstance(status_, ConversionJobStatus) else str(status_)
-        counts[key] = count
+    failed_by_retry_class = dict.fromkeys((retry_class.value for retry_class in RetryClass), 0)
+    for status_, waiting, count in rows:
+        key = status_.value if isinstance(status_, WorkUnitStatus) else str(status_)
+        counts[key] = counts.get(key, 0) + count
+        if key == WorkUnitStatus.FAILED.value:
+            retry_class = RetryClass.RETRYABLE if waiting else RetryClass.PERMANENT
+            failed_by_retry_class[retry_class.value] += count
     total = sum(counts.values())
-    return JobStatusCounts(counts=counts, total=total)
+    return JobStatusCounts(counts=counts, total=total, failed_by_retry_class=failed_by_retry_class)
 
 
 @router.get("/{job_id}", response_model=JobResponse)
@@ -285,7 +269,8 @@ def get_job(
 def list_jobs(
     session: Annotated[Session, Depends(get_db_session)],
     principal: Annotated[Principal, Depends(get_principal)],
-    status_filter: Annotated[ConversionJobStatus | None, Query(alias="status")] = None,
+    status_filter: Annotated[WorkUnitStatus | None, Query(alias="status")] = None,
+    retry_class: Annotated[RetryClass | None, Query()] = None,
     source_id: Annotated[UUID | None, Query()] = None,
     created_after: Annotated[dt.datetime | None, Query()] = None,
     created_before: Annotated[dt.datetime | None, Query()] = None,
@@ -299,6 +284,9 @@ def list_jobs(
     if status_filter:
         query = query.where(ConversionJob.status == status_filter)
         count_query = count_query.where(ConversionJob.status == status_filter)
+    if retry_class:
+        query = query.where(retry_class_filter(ConversionJob, retry_class))
+        count_query = count_query.where(retry_class_filter(ConversionJob, retry_class))
     if source_id:
         query = query.where(ConversionJob.source_id == source_id)
         count_query = count_query.where(ConversionJob.source_id == source_id)
@@ -333,7 +321,11 @@ def list_jobs(
     return JobList(jobs=responses, total=total, limit=limit, offset=offset)
 
 
-@router.post("/{job_id}/retry", response_model=JobResponse)
+@router.post(
+    "/{job_id}/retry",
+    response_model=JobResponse,
+    responses={409: {"description": "Job cannot be retried"}},
+)
 def retry_job(
     job_id: int,
     session: Annotated[Session, Depends(get_db_session)],
@@ -344,13 +336,12 @@ def retry_job(
     job = session.get(ConversionJob, job_id)
     if not job or job.owner_id != principal.subject:
         raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
-    now = utcnow()
     try:
-        apply_job_retry(session, job, now, submitted_by=principal.subject)
-    except ValueError as exc:
+        retry_conversion_job(session, job, principal=principal.subject)
+    except IneligibleTransitionError as exc:
         raise HTTPException(
-            status_code=400,
-            detail={"error": str(exc), "message": "Job cannot be retried"},
+            status_code=409,
+            detail={"error": exc.code, "message": "Job cannot be retried"},
         ) from exc
     session.commit()
     session.refresh(job)
@@ -359,7 +350,11 @@ def retry_job(
     return _job_to_response(job, source, output)
 
 
-@router.post("/{job_id}/cancel", response_model=JobResponse)
+@router.post(
+    "/{job_id}/cancel",
+    response_model=JobResponse,
+    responses={409: {"description": "Job cannot be cancelled"}},
+)
 def cancel_job(
     job_id: int,
     session: Annotated[Session, Depends(get_db_session)],
@@ -370,13 +365,12 @@ def cancel_job(
     job = session.get(ConversionJob, job_id)
     if not job or job.owner_id != principal.subject:
         raise HTTPException(status_code=404, detail={"error": "job_not_found", "message": "Job not found"})
-    now = utcnow()
     try:
-        apply_job_cancel(session, job, now, cancelled_by=principal.subject)
-    except ValueError as exc:
+        cancel_conversion_job(session, job, principal=principal.subject)
+    except IneligibleTransitionError as exc:
         raise HTTPException(
-            status_code=400,
-            detail={"error": str(exc), "message": "Job cannot be cancelled"},
+            status_code=409,
+            detail={"error": exc.code, "message": "Job cannot be cancelled"},
         ) from exc
     session.commit()
     session.refresh(job)
@@ -393,7 +387,6 @@ def bulk_job_actions(
 ) -> BulkActionResponse:
     """Apply retry or cancel actions across multiple jobs."""
     begin_immediate_on(session)
-    now = utcnow()
     results: list[BulkActionResult] = []
     success = 0
     errors = 0
@@ -408,13 +401,13 @@ def bulk_job_actions(
             continue
         try:
             if payload.action == "retry":
-                apply_job_retry(session, job, now, submitted_by=principal.subject)
+                retry_conversion_job(session, job, principal=principal.subject)
             else:
-                apply_job_cancel(session, job, now, cancelled_by=principal.subject)
+                cancel_conversion_job(session, job, principal=principal.subject)
             results.append(BulkActionResult(job_id=job_id, status="success", error=None))
             success += 1
-        except ValueError as exc:
-            results.append(BulkActionResult(job_id=job_id, status="error", error=str(exc)))
+        except IneligibleTransitionError as exc:
+            results.append(BulkActionResult(job_id=job_id, status="error", error=exc.code))
             errors += 1
 
     session.commit()

@@ -1,9 +1,9 @@
 """Build the work-unit routes a graph stage registers: submit, list, detail, retry, and cancel."""
 
 from collections.abc import Callable
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy import func
 from sqlmodel import Session, select
 
@@ -13,8 +13,19 @@ from fastapi.responses import JSONResponse
 from aizk.db.engine import begin_immediate_on
 from aizk.pipeline.admission import AdmissionConfig
 from aizk.pipeline.capacity import StageAtCapacityError
-from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.pipeline.lifecycle import RetryClass, WorkUnitStatus, derive_retry_class, retry_class_filter
 from aizk.pipeline.stage import StageDefinition
+
+
+class StageJobResponse(BaseModel):
+    """Base of a graph stage's job response, carrying the ``retry_class`` derived from the unit's row."""
+
+    retry_class: RetryClass | None = None
+
+    @model_validator(mode="after")
+    def _derive_retry_class(self) -> Self:
+        self.retry_class = derive_retry_class(self.status, self.earliest_next_attempt_at)
+        return self
 
 
 def _get_or_404(session: Session, model: type[Any], job_id: int, label: str) -> Any:
@@ -106,6 +117,7 @@ def stage_router(
         session: Annotated[Session, Depends(session_dependency)],
         _principal: principal_annotation,
         status: Annotated[WorkUnitStatus | None, Query()] = None,
+        retry_class: Annotated[RetryClass | None, Query()] = None,
         limit: Annotated[int, Query(ge=1, le=1000)] = 50,
         offset: Annotated[int, Query(ge=0)] = 0,
     ) -> Any:
@@ -114,6 +126,9 @@ def stage_router(
         if status is not None:
             count_stmt = count_stmt.where(model.status == status)
             page_stmt = page_stmt.where(model.status == status)
+        if retry_class is not None:
+            count_stmt = count_stmt.where(retry_class_filter(model, retry_class))
+            page_stmt = page_stmt.where(retry_class_filter(model, retry_class))
 
         total = session.exec(count_stmt).one()
         jobs = session.exec(page_stmt.limit(limit).offset(offset)).all()

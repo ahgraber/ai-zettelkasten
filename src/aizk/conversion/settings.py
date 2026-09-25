@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import os
 import re
 from typing import Final
@@ -102,6 +103,11 @@ class KarakeepFetcherConfig(BaseSettings):
     api_key: str = ""
 
 
+def default_stale_job_minutes(job_timeout_seconds: float, drain_timeout_seconds: float) -> int:
+    """Return the whole minutes past the job timeout plus the drain timeout, plus one."""
+    return math.ceil((job_timeout_seconds + drain_timeout_seconds) / 60) + 1
+
+
 class ConversionConfig(BaseSettings):
     """Environment-driven configuration for the conversion stage."""
 
@@ -114,7 +120,8 @@ class ConversionConfig(BaseSettings):
     fetch_timeout_seconds: int = 30
     retry_max_attempts: int = 3
     retry_base_delay_seconds: int = 60
-    worker_stale_job_minutes: int = 30
+    worker_max_attempts: int = 3
+    worker_stale_job_minutes: int | None = None
     worker_stale_job_check_seconds: float = 60.0
     fetch_max_response_bytes: int = 25 * 1024 * 1024
     worker_job_timeout_seconds: float = 7200
@@ -138,6 +145,14 @@ class ConversionConfig(BaseSettings):
         default=4,
         description="Thread-pool size for the async-egress validation executor.",
     )
+
+    @model_validator(mode="after")
+    def _derive_stale_job_minutes(self) -> "ConversionConfig":
+        if self.worker_stale_job_minutes is None:
+            self.worker_stale_job_minutes = default_stale_job_minutes(
+                self.worker_job_timeout_seconds, self.worker_drain_timeout_seconds
+            )
+        return self
 
     def prefetch_policy(self) -> PrefetchPolicy:
         """Build a :class:`PrefetchPolicy` from the five ``PREFETCH_*`` config fields."""

@@ -26,7 +26,6 @@ from fastapi.testclient import TestClient
 from aizk.console import descriptors as descriptors_module
 from aizk.console.descriptors import StageDescriptor
 from aizk.console.stages._graph import build_graph_descriptor
-from aizk.conversion.datamodel.job import ConversionJobStatus
 from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.datamodel import ContextualizationJob
 from aizk.graph.events import CONTEXTUALIZATION_STAGE
@@ -145,7 +144,7 @@ def test_a_declaring_stage_shows_its_pending_count(
             db_session,
             source_id=source.source_id,
             idempotency_key=f"pending-{index}",
-            status=ConversionJobStatus.SUCCEEDED,
+            status=WorkUnitStatus.SUCCEEDED,
         )
         seed_conversion_output(db_session, job_id=job.id, source_id=source.source_id)
 
@@ -166,7 +165,7 @@ def test_the_pending_count_does_not_perturb_the_unit_rollup(
     """Pending sources count no work-unit, so the per-status counts and total are unchanged."""
     covered = seed_source(db_session, karakeep_id="bm_covered", title="Covered")
     covered_job = seed_conversion_job(
-        db_session, source_id=covered.source_id, idempotency_key="covered", status=ConversionJobStatus.SUCCEEDED
+        db_session, source_id=covered.source_id, idempotency_key="covered", status=WorkUnitStatus.SUCCEEDED
     )
     covered_output = seed_conversion_output(db_session, job_id=covered_job.id, source_id=covered.source_id)
     seed_contextualization_job(
@@ -177,7 +176,7 @@ def test_the_pending_count_does_not_perturb_the_unit_rollup(
     )
     behind = seed_source(db_session, karakeep_id="bm_behind", title="Behind")
     behind_job = seed_conversion_job(
-        db_session, source_id=behind.source_id, idempotency_key="behind", status=ConversionJobStatus.SUCCEEDED
+        db_session, source_id=behind.source_id, idempotency_key="behind", status=WorkUnitStatus.SUCCEEDED
     )
     seed_conversion_output(db_session, job_id=behind_job.id, source_id=behind.source_id)
 

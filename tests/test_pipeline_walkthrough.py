@@ -22,7 +22,7 @@ from aizk.conversion.core.coordinator import ConversionCoordinator
 from aizk.conversion.core.registry import ConverterRegistry, FetcherRegistry
 from aizk.conversion.core.source_ref import ArxivRef, GithubReadmeRef, SourceRef
 from aizk.conversion.core.types import SourceMetadata
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.handler import ConversionStageHandler
@@ -42,6 +42,7 @@ from aizk.graph.extraction_workunit import enqueue_extraction
 from aizk.graph.handler import ContextualizationStageHandler
 from aizk.graph.markdown_source import ConversionOutputFreshness, S3MarkdownSource
 from aizk.graph.mentions import INPUT_POLICY_RAW
+from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import active_run
 from aizk.storage.settings import ObjectStorageSettings
 from aizk.utilities.hashing import compute_markdown_hash
@@ -175,7 +176,8 @@ def test_bookmark_flows_from_submission_to_mentions(
     assert handle == job_id
     assert converter.inputs[0].content == (FIXTURES_DIR / "article.html").read_bytes()
     with Session(engine) as session:
-        assert session.get(ConversionJob, job_id).status == ConversionJobStatus.SUCCEEDED
+        assert session.get(ConversionJob, job_id).status == WorkUnitStatus.SUCCEEDED
+        assert session.get(ConversionJob, job_id).phase is None
         output = session.exec(select(ConversionOutput).where(ConversionOutput.job_id == job_id)).one()
         output_id, markdown_key, markdown_hash = output.id, output.markdown_key, output.markdown_hash_xx64
     assert markdown_key in store

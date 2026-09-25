@@ -9,10 +9,11 @@ import pytest
 from sqlmodel import Session
 
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.processing import uploader
+from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.storage.settings import ObjectStorageSettings
 
 
@@ -71,7 +72,7 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
         owner_id="self",
         title="Hash Reuse",
         idempotency_key="p" * 64,
-        status=ConversionJobStatus.SUCCEEDED,
+        status=WorkUnitStatus.SUCCEEDED,
     )
     db_session.add(prior_job)
     db_session.commit()
@@ -100,7 +101,7 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
         owner_id="self",
         title="Hash Reuse",
         idempotency_key="n" * 64,
-        status=ConversionJobStatus.RUNNING,
+        status=WorkUnitStatus.RUNNING,
     )
     db_session.add(new_job)
     db_session.commit()
@@ -135,7 +136,7 @@ def test_upload_converted_reuses_s3_when_hash_matches(monkeypatch, db_session: S
     )
 
     db_session.refresh(new_job)
-    assert new_job.status == ConversionJobStatus.SUCCEEDED
+    assert new_job.status == WorkUnitStatus.SUCCEEDED
 
     from sqlmodel import select as _select
 
@@ -183,7 +184,7 @@ def test_upload_converted_shortcut_writes_fresh_manifest_with_current_source_met
         owner_id="self",
         title="Old Title",
         idempotency_key="d" * 64,
-        status=ConversionJobStatus.SUCCEEDED,
+        status=WorkUnitStatus.SUCCEEDED,
     )
     db_session.add(prior_job)
     db_session.commit()
@@ -212,7 +213,7 @@ def test_upload_converted_shortcut_writes_fresh_manifest_with_current_source_met
         owner_id="self",
         title="placeholder-uuid-fallback",
         idempotency_key="e" * 64,
-        status=ConversionJobStatus.RUNNING,
+        status=WorkUnitStatus.RUNNING,
     )
     db_session.add(new_job)
     db_session.commit()
@@ -282,7 +283,7 @@ def test_upload_converted_shortcut_writes_fresh_manifest_with_current_source_met
 
     # ConversionOutput.title must also reflect the new source_title (not job placeholder).
     db_session.refresh(new_job)
-    assert new_job.status == ConversionJobStatus.SUCCEEDED
+    assert new_job.status == WorkUnitStatus.SUCCEEDED
     from sqlmodel import select as _select
 
     outputs = db_session.exec(_select(ConversionOutput).where(ConversionOutput.job_id == new_job.id)).all()
@@ -327,7 +328,7 @@ def test_upload_converted_shortcut_manifest_upload_is_retryable(
         owner_id="self",
         title="Retry Shortcut",
         idempotency_key="r" * 64,
-        status=ConversionJobStatus.SUCCEEDED,
+        status=WorkUnitStatus.SUCCEEDED,
     )
     db_session.add(prior_job)
     db_session.commit()
@@ -356,7 +357,7 @@ def test_upload_converted_shortcut_manifest_upload_is_retryable(
         owner_id="self",
         title="Retry Shortcut",
         idempotency_key="s" * 64,
-        status=ConversionJobStatus.RUNNING,
+        status=WorkUnitStatus.RUNNING,
     )
     db_session.add(new_job)
     db_session.commit()
@@ -407,7 +408,7 @@ def test_upload_converted_shortcut_manifest_upload_is_retryable(
     assert upload_attempts == [prior_output.manifest_key, prior_output.manifest_key]
 
     db_session.refresh(new_job)
-    assert new_job.status == ConversionJobStatus.SUCCEEDED
+    assert new_job.status == WorkUnitStatus.SUCCEEDED
     from sqlmodel import select as _select
 
     outputs = db_session.exec(_select(ConversionOutput).where(ConversionOutput.job_id == new_job.id)).all()
@@ -440,7 +441,7 @@ def test_upload_converted_uploads_when_hash_differs(monkeypatch, db_session: Ses
         owner_id="self",
         title="Hash Upload",
         idempotency_key="u" * 64,
-        status=ConversionJobStatus.RUNNING,
+        status=WorkUnitStatus.RUNNING,
     )
     db_session.add(new_job)
     db_session.commit()
@@ -471,7 +472,7 @@ def test_upload_converted_uploads_when_hash_differs(monkeypatch, db_session: Ses
     assert any("output.md" in key for key in upload_calls), "Markdown should be uploaded when no hash match"
 
     db_session.refresh(new_job)
-    assert new_job.status == ConversionJobStatus.SUCCEEDED
+    assert new_job.status == WorkUnitStatus.SUCCEEDED
 
     from sqlmodel import select as _select
 
@@ -479,3 +480,51 @@ def test_upload_converted_uploads_when_hash_differs(monkeypatch, db_session: Ses
     assert len(outputs) == 1
     assert outputs[0].markdown_key == f"{bookmark.source_id}/output.md", "markdown_key must be a bare S3 key"
     assert outputs[0].manifest_key == f"{bookmark.source_id}/manifest.json", "manifest_key must be a bare S3 key"
+
+
+def test_upload_converted_writes_nothing_for_a_job_cancelled_before_the_success_write(
+    monkeypatch, db_session: Session, tmp_path: Path
+) -> None:
+    """A job cancelled while its PUTs run keeps ``cancelled`` and gets no output row."""
+    from sqlmodel import select as _select
+
+    from tests.fakes.storage import install_spy_s3
+
+    monkeypatch.setattr(uploader, "get_engine", lambda _url=None: db_session.get_bind())
+    ref = KarakeepBookmarkRef(bookmark_id="bm_cancel_before_write")
+    bookmark = Bookmark(
+        owner_id="self",
+        karakeep_id="bm_cancel_before_write",
+        source_ref=ref.model_dump_json(),
+        source_ref_hash=compute_source_ref_hash(ref),
+    )
+    db_session.add(bookmark)
+    db_session.commit()
+    db_session.refresh(bookmark)
+    job = ConversionJob(
+        source_id=bookmark.source_id,
+        owner_id="self",
+        title="Cancel Before Write",
+        idempotency_key="k" * 64,
+        status=WorkUnitStatus.RUNNING,
+        attempts=1,
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+    workspace = _make_workspace_metadata(tmp_path, markdown_hash="cancelhash000001")
+    spy = install_spy_s3(monkeypatch)
+
+    def _cancel(_key: str) -> None:
+        with Session(db_session.get_bind()) as session:
+            row = session.get(ConversionJob, job.id)
+            row.status = WorkUnitStatus.CANCELLED
+            session.add(row)
+            session.commit()
+
+    spy.before_put = _cancel
+    uploader._upload_converted(job.id, workspace, ObjectStorageSettings(_env_file=None))
+
+    db_session.expire_all()
+    assert db_session.get(ConversionJob, job.id).status == WorkUnitStatus.CANCELLED
+    assert db_session.exec(_select(ConversionOutput).where(ConversionOutput.job_id == job.id)).all() == []

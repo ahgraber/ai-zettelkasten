@@ -101,3 +101,14 @@ def test_upgrade_downgrade_round_trip_leaves_no_user_tables(tmp_path: Path) -> N
 
     remaining = set(inspect(create_engine(url)).get_table_names()) - {"alembic_version"}
     assert remaining == set(), f"tables remain after downgrade: {remaining}"
+
+
+def test_conversion_jobs_source_id_keeps_its_foreign_key(tmp_path: Path) -> None:
+    """The migrated ``conversion_jobs.source_id`` references ``sources.source_id``."""
+    url = f"sqlite:///{tmp_path / 'conversion_fk.db'}"
+    command.upgrade(_alembic_cfg(url), "head")
+
+    foreign_keys = inspect(create_engine(url)).get_foreign_keys("conversion_jobs")
+    assert [(fk["constrained_columns"], fk["referred_table"], fk["referred_columns"]) for fk in foreign_keys] == [
+        (["source_id"], "sources", ["source_id"])
+    ]

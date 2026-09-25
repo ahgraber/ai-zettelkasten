@@ -10,8 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.datamodel.job import ConversionJobStatus
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.pipeline.lifecycle import WorkUnitStatus
 from tests.conversion._helpers import make_job, make_source
 
 
@@ -56,14 +56,14 @@ def test_get_bookmark_outputs_returns_all_ordered_descending(db_session, app) ->
         db_session,
         source_id=bookmark.source_id,
         idempotency_key="a" * 64,
-        status=ConversionJobStatus.SUCCEEDED,
+        status=WorkUnitStatus.SUCCEEDED,
         attempts=1,
     )
     job2 = make_job(
         db_session,
         source_id=bookmark.source_id,
         idempotency_key="b" * 64,
-        status=ConversionJobStatus.SUCCEEDED,
+        status=WorkUnitStatus.SUCCEEDED,
         attempts=1,
     )
 
@@ -93,14 +93,14 @@ def test_get_bookmark_outputs_latest_returns_one(db_session, app) -> None:
         db_session,
         source_id=bookmark.source_id,
         idempotency_key="c" * 64,
-        status=ConversionJobStatus.SUCCEEDED,
+        status=WorkUnitStatus.SUCCEEDED,
         attempts=1,
     )
     job2 = make_job(
         db_session,
         source_id=bookmark.source_id,
         idempotency_key="d" * 64,
-        status=ConversionJobStatus.SUCCEEDED,
+        status=WorkUnitStatus.SUCCEEDED,
         attempts=1,
     )
 
@@ -128,7 +128,7 @@ def test_get_bookmark_outputs_returns_only_owned_when_source_is_shared(db_sessio
         db_session,
         source_id=bookmark.source_id,
         idempotency_key="e" * 64,
-        status=ConversionJobStatus.SUCCEEDED,
+        status=WorkUnitStatus.SUCCEEDED,
         attempts=1,
         owner_id="self",
     )
@@ -136,7 +136,7 @@ def test_get_bookmark_outputs_returns_only_owned_when_source_is_shared(db_sessio
         db_session,
         source_id=bookmark.source_id,
         idempotency_key="f" * 64,
-        status=ConversionJobStatus.SUCCEEDED,
+        status=WorkUnitStatus.SUCCEEDED,
         attempts=1,
         owner_id="someone_else",
     )
@@ -168,7 +168,7 @@ def test_get_bookmark_outputs_returns_empty_when_all_cross_owner(db_session, app
         db_session,
         source_id=bookmark.source_id,
         idempotency_key="g" * 64,
-        status=ConversionJobStatus.SUCCEEDED,
+        status=WorkUnitStatus.SUCCEEDED,
         attempts=1,
         owner_id="someone_else",
     )

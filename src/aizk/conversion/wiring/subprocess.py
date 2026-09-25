@@ -15,7 +15,7 @@ from sqlmodel import Session
 
 from aizk.conversion.core.hashing import compute_markdown_hash
 from aizk.conversion.core.source_ref import SourceRef
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.processing.errors import ConversionCancelledError
 from aizk.conversion.processing.types import (
     SourceMetaFields,
@@ -30,6 +30,7 @@ from aizk.conversion.storage.paths import (
 )
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
+from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.service.bootstrap import load_process_dotenv_once, set_process_title
 from aizk.storage.settings import ObjectStorageSettings
 from aizk.utilities.clock import utcnow
@@ -41,7 +42,7 @@ def _raise_if_cancelled(job_id: int, engine: Engine) -> None:
     """Raise if the job status has been marked as cancelled."""
     with Session(engine) as session:
         job = session.get(ConversionJob, job_id)
-        if job and job.status == ConversionJobStatus.CANCELLED:
+        if job and job.status == WorkUnitStatus.CANCELLED:
             raise ConversionCancelledError(f"Job {job_id} cancelled")
 
 

@@ -18,10 +18,11 @@ from sqlmodel import Session, select
 
 from aizk.conversion.core.errors import MissingOwnerOnJob
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.processing import uploader
+from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.storage.settings import ObjectStorageSettings
 
 
@@ -83,7 +84,7 @@ def _seed_source_and_job(
         owner_id=owner_id,
         title=bookmark_id,
         idempotency_key=("o" * 64),
-        status=ConversionJobStatus.RUNNING,
+        status=WorkUnitStatus.RUNNING,
     )
     db_session.add(job)
     db_session.commit()
@@ -127,7 +128,7 @@ def test_upload_propagates_owner_id_from_job_to_output(
     db_session.expire_all()
     refreshed_job = db_session.get(ConversionJob, job.id)
     assert refreshed_job is not None
-    assert refreshed_job.status == ConversionJobStatus.SUCCEEDED
+    assert refreshed_job.status == WorkUnitStatus.SUCCEEDED
     assert refreshed_job.owner_id == "bob", "worker must NOT mutate Job.owner_id"
 
     output = db_session.exec(select(ConversionOutput).where(ConversionOutput.job_id == job.id)).one()

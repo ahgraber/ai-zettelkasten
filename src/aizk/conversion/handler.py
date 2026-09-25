@@ -3,35 +3,38 @@
 This adapter exposes the conversion stage's unit-of-work (a conversion job,
 keyed by its integer ``ConversionJob.id``) to the generic pipeline runner. The
 runner owns the loop, concurrency bound, timeout enforcement, transaction
-boundary, and observability; this handler owns the conversion-specific
-surface: startup dependency validation, the unit-of-work execution, result
-classification, the timeout/concurrency configuration, and the run ``scope_id``.
+boundary, and observability; the lifecycle (claim, stale recovery, terminal
+transition, cancel) is :class:`~aizk.pipeline.stage.HandlerBase` over the
+work-unit repository. This handler owns the conversion-specific surface:
+startup dependency validation, subprocess isolation, the unit-of-work
+execution, result classification, the job ``phase`` column, and the run
+``scope_id``.
 
-It implements :meth:`ConversionStageHandler.execute`,
-:meth:`ConversionStageHandler.cancel`, and
-:meth:`ConversionStageHandler.finalize` by reusing the existing conversion
+It implements :meth:`ConversionStageHandler.execute` and
+:meth:`ConversionStageHandler.cancel` by reusing the existing conversion
 helpers (``_get_source_ref``, ``_spawn_and_supervise``,
 ``_write_source_enrichment``, ``_prepare_upload`` / ``_execute_upload``,
-``record_transition``, ``classify_job_error``, and
-``supervision._terminate_and_wait``). ``finalize`` writes the *failed* /
-*timed-out* / *cancelled* terminal statuses into the runner's transaction, while
-the *success* terminal status stays fused into ``_execute_upload`` inside
-``execute`` (so the SUCCEEDED ``finalize`` branch is an idempotent no-op).
+``classify_job_error``, and ``supervision._terminate_and_wait``). The
+repository writes the *failed* / *timed-out* / *cancelled* terminal statuses
+into the runner's transaction, while the *success* terminal status stays fused
+into ``_execute_upload`` inside ``execute`` (so the SUCCEEDED ``finalize``
+branch only reports whether that write landed).
 
 The division — what ``execute`` does vs what the runner / ``finalize`` own:
 
 * ``execute`` runs the conversion unit-of-work middle: preflight source-ref
-  fetch, subprocess spawn + supervision, the conversion-private
-  ``RUNNING -> UPLOAD_PENDING`` progress transition, best-effort source
-  enrichment, and the ``_prepare_upload`` + upload-retry loop (which writes the
-  *success* terminal status ``SUCCEEDED`` via ``_execute_upload`` — that fused
-  write stays where the conversion pipeline's tests guard it). On a failure it
-  RAISES the conversion exception so ``map_result`` classifies it; it does NOT
-  write a *failed* terminal status.
+  fetch, subprocess spawn + supervision, best-effort source enrichment, the
+  ``phase = upload`` write with the ``conversion_completed`` event, and the
+  ``_prepare_upload`` + upload-retry loop (which writes the *success* terminal
+  status ``SUCCEEDED`` via ``_execute_upload`` — that fused write stays where
+  the conversion pipeline's tests guard it). On a failure it RAISES the
+  conversion exception so ``map_result`` classifies it; it does NOT write a
+  *failed* terminal status.
 * The claim (``RUNNING`` transition + ``attempts`` post-increment + ``claimed``
-  event) is owned by ``claim_next``. The job arrives already ``RUNNING`` with
-  ``attempts`` incremented, so ``execute`` MUST NOT re-claim it (doing so would
-  double-increment ``attempts`` and re-emit ``claimed``).
+  event + ``phase = convert``) is owned by ``claim_next``. The job arrives
+  already ``RUNNING`` with ``attempts`` incremented, so ``execute`` MUST NOT
+  re-claim it (doing so would double-increment ``attempts`` and re-emit
+  ``claimed``).
 * The wall-clock timeout is owned by the runner: it calls ``cancel(handle)`` at
   the deadline (the same ``worker_job_timeout_seconds`` value the conversion
   supervision loop uses) and determines ``TIMED_OUT`` / ``CANCELLED`` from its
@@ -40,13 +43,14 @@ The division — what ``execute`` does vs what the runner / ``finalize`` own:
   deadline disabled and lets ``cancel`` *signal* termination via a per-handle
   event that the supervision loop (the single owner of the subprocess) acts on;
   the cooperative DB-status cancel poll is preserved for API-initiated
-  cancellation. The in-process upload phase — which ``cancel`` cannot interrupt
-  once the subprocess has exited — is separately re-bound by the same deadline
-  inside ``execute`` (raising ``ConversionTimeoutError`` between upload attempts).
+  cancellation. The in-process upload phase cannot be interrupted once the
+  subprocess has exited; a timeout during upload is recorded when the upload
+  returns, and not over a job the upload already settled.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
 import datetime
 import logging
 from pathlib import Path
@@ -57,14 +61,8 @@ from typing import TYPE_CHECKING
 
 from sqlmodel import Session
 
-from aizk.conversion.datamodel.events import (
-    CancelledPayload,
-    ConversionEventKind,
-    FailedPayload,
-    UploadPendingPayload,
-    record_transition,
-)
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.events import FailedPayload, record_conversion_completed
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.processing.errors import (
     ConversionCancelledError,
     ConversionRuntimeMissingError,
@@ -80,13 +78,14 @@ from aizk.conversion.processing.source import _get_source_ref, _write_source_enr
 from aizk.conversion.processing.subproc import _is_job_cancelled, _spawn_and_supervise
 from aizk.conversion.processing.types import SubprocessMetadata
 from aizk.conversion.processing.uploader import _execute_upload, _prepare_upload
-from aizk.conversion.queries import claim_next_in_session, recover_stale_in_session
 from aizk.conversion.settings import ConversionConfig
+from aizk.conversion.stage import CONVERSION_DEFINITION, CONVERT_PHASE, UPLOAD_PHASE, cancellable
 from aizk.conversion.storage.paths import metadata_path, read_text_nofollow
 from aizk.db.config import DatabaseConfig
-from aizk.db.engine import get_engine
+from aizk.db.engine import begin_immediate_on, get_engine
 from aizk.pipeline.handler import Isolation, StageResult
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
+from aizk.pipeline.stage import HandlerBase
 from aizk.utilities.clock import utcnow
 from aizk.utilities.errors import StartupValidationError
 
@@ -98,13 +97,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ConversionStageHandler:
+class ConversionStageHandler(HandlerBase[ConversionJob]):
     """Drive conversion jobs through the generic pipeline runner.
 
     The work-unit handle is the integer ``ConversionJob.id``. The runner passes
     handles through ``execute`` -> ``map_result`` -> ``finalize`` -> ``cleanup``
     without inspecting them; only this handler understands their shape.
     """
+
+    default_error = ("conversion_failed", "conversion_failed")
 
     def __init__(self, config: ConversionConfig, runtime: "WorkerRuntime | None" = None) -> None:
         """Store the conversion configuration the runner-facing surface reads.
@@ -116,6 +117,15 @@ class ConversionStageHandler:
             runtime: The assembled worker runtime (coordinator, resource guard,
                 capabilities).
         """
+        super().__init__(
+            get_engine(DatabaseConfig().database_url),
+            replace(CONVERSION_DEFINITION, failed_payload=self._failed_payload),
+            timeout_seconds=config.worker_job_timeout_seconds,
+            concurrency=config.worker_concurrency,
+            stale_after_minutes=config.worker_stale_job_minutes,
+            retry_base_delay_seconds=config.retry_base_delay_seconds,
+            retry_max_attempts=config.worker_max_attempts,
+        )
         self._config = config
         self._runtime = runtime
         # Per-handle subprocess tracking, the seam ``cancel`` uses to *signal*
@@ -142,11 +152,6 @@ class ConversionStageHandler:
         self._error_details: dict[int, JobErrorDetails] = {}
         self._processes_lock = threading.Lock()
 
-    @property
-    def stage(self) -> str:
-        """Return the stable stage name used in the correlation spine."""
-        return "conversion"
-
     def validate_dependencies(self) -> None:
         """Run the adapter-declared startup probes, gating work acceptance.
 
@@ -171,16 +176,6 @@ class ConversionStageHandler:
             The job id rendered as a string; conversion scopes runs per job.
         """
         return str(handle)
-
-    @property
-    def timeout(self) -> datetime.timedelta:
-        """Return the wall-clock timeout after which a running job is terminated."""
-        return datetime.timedelta(seconds=self._config.worker_job_timeout_seconds)
-
-    @property
-    def concurrency_limit(self) -> int:
-        """Return the maximum number of jobs the runner may execute simultaneously."""
-        return self._config.worker_concurrency
 
     @property
     def isolation(self) -> Isolation:
@@ -221,35 +216,41 @@ class ConversionStageHandler:
             return TerminalOutcome(WorkUnitStatus.FAILED, retry_class)
         return TerminalOutcome(WorkUnitStatus.SUCCEEDED)
 
-    def claim_next(self, session: "Session") -> int | None:
-        """Claim the next eligible job in submission order, or ``None``.
+    def cancellable(self, row: ConversionJob) -> bool:
+        """Report whether a ``running`` job may be cancelled: not in its upload phase."""
+        return cancellable(row)
 
-        Runs inside the runner-owned ``BEGIN IMMEDIATE`` transaction: selects
-        the oldest eligible job (QUEUED, or FAILED_RETRYABLE past its
-        retry-wait), transitions it to RUNNING, **post-increments**
-        ``attempts`` (the claim is the attempt counter's source of truth), and
-        records the ``claimed`` event. Returns the claimed job id, or ``None``
-        when none is eligible. Does NOT commit — the runner owns the transaction
-        boundary.
+    def on_claim(self, session: Session, row: ConversionJob) -> None:
+        """Set the claimed job's phase to ``convert``."""
+        row.phase = CONVERT_PHASE
 
-        Delegates to :func:`aizk.conversion.queries.claim_next_in_session`,
-        the single source of truth for the claim query + transition.
-        """
-        return claim_next_in_session(session)
+    def on_transition(self, session: Session, row: ConversionJob, to_status: WorkUnitStatus) -> None:
+        """Clear the phase on leaving ``running``; record a timeout's or failure's error fields."""
+        if to_status is WorkUnitStatus.TIMED_OUT:
+            row.error_code = ConversionTimeoutError.error_code
+            row.error_message = f"Job {row.id} exceeded its runtime during {row.phase}"
+            row.last_error_at = row.finished_at
+        elif to_status is WorkUnitStatus.FAILED:
+            details = self._matching_details(row.id, row.error_code)
+            row.error_detail = details.error_detail if details is not None else None
+        row.phase = None
 
-    def recover_stale(self, session: "Session") -> list[int]:
-        """Transition jobs stranded in RUNNING back to eligible; return their ids.
+    def _matching_details(self, job_id: int | None, error_code: str | None) -> JobErrorDetails | None:
+        with self._processes_lock:
+            details = self._error_details.get(job_id) if job_id is not None else None
+        return details if details is not None and details.error_code == error_code else None
 
-        Runs inside the runner-owned ``BEGIN IMMEDIATE`` transaction: reclaims
-        RUNNING jobs stranded past the configured stale threshold
-        (``worker_stale_job_minutes``) to FAILED_RETRYABLE, recording a
-        ``recovered_stale`` event for each. Does NOT commit — the runner owns the
-        transaction boundary.
-
-        Delegates to :func:`aizk.conversion.queries.recover_stale_in_session`,
-        the single source of truth for the recovery query + transition.
-        """
-        return recover_stale_in_session(session, self._config)
+    def _failed_payload(
+        self, row: ConversionJob, *, error_code: str, error_message: str, retryable: bool
+    ) -> FailedPayload:
+        details = self._matching_details(row.id, error_code)
+        return FailedPayload(
+            error_code=error_code,
+            error_message=error_message,
+            error_detail=details.error_detail if details is not None else None,
+            retryable=retryable,
+            last_phase=details.last_phase if details is not None else None,
+        )
 
     def execute(self, handle: int) -> StageResult:
         """Run the conversion unit-of-work for ``handle``, bridging failure details.
@@ -289,9 +290,9 @@ class ConversionStageHandler:
            slot state in ``_resolve_outcome`` and take precedence over whatever
            this raises.
         5. Best-effort source enrichment from the subprocess metadata.
-        6. Write the conversion-private ``RUNNING -> UPLOAD_PENDING`` progress
-           transition in this method's own short-lived session (``execute`` gets
-           no runner session; the runner only ever sees generic ``running``).
+        6. Write ``phase = upload`` with the ``conversion_completed`` event in
+           this method's own ``BEGIN IMMEDIATE`` transaction, refusing a job
+           that is no longer ``running``.
         7. ``_prepare_upload`` once, then the S3-PUT retry loop via
            ``_execute_upload`` (which writes the ``SUCCEEDED`` terminal status —
            that fused success write stays in the conversion uploader where its
@@ -319,16 +320,8 @@ class ConversionStageHandler:
         if runtime is None:
             raise ConversionRuntimeMissingError("conversion runtime was not injected")
         engine = get_engine(DatabaseConfig().database_url)
-
-        # The in-process upload phase cannot be interrupted by ``cancel`` (the
-        # subprocess is already gone once supervision returns), so re-bind it by
-        # the wall-clock deadline the runner enforces. Computed once at execute
-        # start from the same ``worker_job_timeout_seconds`` the runner uses,
-        # this gates the upload-retry loop (incl. its sleep backoff) so the
-        # in-process phase cannot run past the timeout. ``<= 0`` disables it,
-        # mirroring the subprocess deadline convention.
-        timeout_seconds = config.worker_job_timeout_seconds
-        upload_deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
+        with self._lock:
+            claimed_attempt = self._attempts.get(handle)
 
         # ``claim_next`` has already transitioned the job to RUNNING and
         # post-incremented ``attempts``, so do NOT re-claim here — re-claiming
@@ -346,8 +339,12 @@ class ConversionStageHandler:
             snap_job = snap_session.get(ConversionJob, handle)
             if snap_job is None:
                 raise JobDataIntegrityError(f"Job {handle} missing at supervision entry")
-            attempt_snapshot = snap_job.attempts
+            attempt_snapshot = snap_job.attempts if claimed_attempt is None else claimed_attempt
             source_id_snapshot = snap_job.source_id
+            started_at = snap_job.started_at or self._clock()
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=datetime.timezone.utc)
+        deadline = started_at + datetime.timedelta(seconds=config.worker_job_timeout_seconds)
 
         def _on_phase_event(phase: str, reported_at: datetime.datetime) -> None:
             """Persist one phase event per subprocess report; best-effort."""
@@ -356,12 +353,18 @@ class ConversionStageHandler:
 
             try:
                 with Session(engine) as phase_session:
+                    begin_immediate_on(phase_session)
+                    if not _holds_claim(phase_session, handle, attempt_snapshot):
+                        logger.warning(
+                            "Phase event skipped: job %s is not running on attempt %d", handle, attempt_snapshot
+                        )
+                        return
                     record_phase_event(
                         phase_session,
                         job_id=handle,
                         source_id=source_id_snapshot,
                         attempt=attempt_snapshot,
-                        current_status=ConversionJobStatus.RUNNING,
+                        current_status=WorkUnitStatus.RUNNING,
                         phase=phase,
                         reported_at=reported_at,
                     )
@@ -437,7 +440,7 @@ class ConversionStageHandler:
             # Uses typed SubprocessMetadata so schema drift fails loudly rather
             # than silently dropping fields. Failure here does not affect manifest
             # or output. We also pull subprocess_meta into outer scope so the
-            # UPLOAD_PENDING transition's payload can carry the content_hash.
+            # conversion_completed event's payload can carry the content_hash.
             subprocess_meta: SubprocessMetadata | None = None
             metadata_file = metadata_path(workspace)
             if metadata_file.exists():
@@ -452,38 +455,19 @@ class ConversionStageHandler:
                             f"metadata.json failed SubprocessMetadata validation: {exc}"
                         ) from exc
 
-                    with Session(engine) as session:
-                        job_rec = session.get(ConversionJob, handle)
-                        if job_rec:
-                            _write_source_enrichment(
-                                subprocess_meta,
-                                str(job_rec.source_id),
-                                engine,
-                                job_id=handle,
-                                attempt=job_rec.attempts,
-                            )
+                    _write_source_enrichment(
+                        subprocess_meta,
+                        str(source_id_snapshot),
+                        engine,
+                        job_id=handle,
+                        attempt=attempt_snapshot,
+                        holds_claim=lambda session: _holds_claim(session, handle, attempt_snapshot),
+                    )
                 except Exception:
                     logger.exception("Failed to read SubprocessMetadata for enrichment; job proceeds")
 
             content_hash = subprocess_meta.markdown_hash_xx64 if subprocess_meta else None
-            # Conversion-private RUNNING -> UPLOAD_PENDING progress marker.
-            # ``execute`` gets no runner session, so this transition is written
-            # through conversion's own short-lived session/transaction. It is not
-            # the runner lifecycle (the runner only ever sees generic
-            # ``running``); it is a conversion-internal progress entry.
-            with Session(engine) as session:
-                job_record = session.get(ConversionJob, handle)
-                if job_record:
-                    job_record.updated_at = utcnow()
-                    record_transition(
-                        session,
-                        job_record,
-                        to_status=ConversionJobStatus.UPLOAD_PENDING,
-                        kind=ConversionEventKind.UPLOAD_PENDING,
-                        attempt=job_record.attempts,
-                        payload=UploadPendingPayload(content_hash=content_hash),
-                    )
-                    session.commit()
+            _start_upload_phase(engine, handle, content_hash, attempt_snapshot)
 
             # Local prep (read metadata, generate + write manifest) runs exactly
             # once outside the retry loop. It is not idempotent against itself
@@ -492,25 +476,13 @@ class ConversionStageHandler:
             # attempt 1. The retry loop only wraps the S3 PUTs, which are
             # idempotent on their key. A failure here raises so ``map_result``
             # classifies it.
-            upload_plan = _prepare_upload(handle, workspace, runtime.object_storage)
+            upload_plan = _prepare_upload(handle, workspace, runtime.object_storage, attempt=attempt_snapshot)
             if upload_plan is None:
-                # Job already finalized (content-hash shortcut, missing, or
-                # cancelled): nothing to upload.
-                return None
-
-            # Bound the upload phase by the wall-clock deadline before it begins.
-            # ``cancel`` can no longer interrupt this in-process phase (the
-            # subprocess is gone), so a pre-upload check raises rather than
-            # starting an upload already past the deadline.
-            if upload_deadline is not None and time.monotonic() >= upload_deadline:
-                raise ConversionTimeoutError(f"Job {handle} exceeded its runtime during uploading", "uploading")
+                raise ConversionCancelledError(f"Job {handle} cancelled or missing before upload")
 
             last_exc: Exception | None = None
             for attempt in range(1, config.retry_max_attempts + 1):
-                # Re-check the deadline before each attempt so the retry loop
-                # (incl. its ``time.sleep`` backoff) cannot run past the timeout.
-                if upload_deadline is not None and time.monotonic() >= upload_deadline:
-                    raise ConversionTimeoutError(f"Job {handle} exceeded its runtime during uploading", "uploading")
+                _raise_past_deadline(self._clock(), deadline, handle)
                 try:
                     _execute_upload(upload_plan, handle, runtime.object_storage)
                     last_exc = None
@@ -519,7 +491,11 @@ class ConversionStageHandler:
                     last_exc = exc
                     if attempt == config.retry_max_attempts:
                         break
-                    delay = config.retry_base_delay_seconds * (2 ** (attempt - 1))
+                    now = self._clock()
+                    _raise_past_deadline(now, deadline, handle)
+                    delay = min(
+                        config.retry_base_delay_seconds * (2 ** (attempt - 1)), (deadline - now).total_seconds()
+                    )
                     logger.warning(
                         "Upload attempt %d failed for job %s; retrying in %s seconds: %s",
                         attempt,
@@ -591,153 +567,47 @@ class ConversionStageHandler:
                 self._terminate_events.pop(handle, None)
         return process, result, deadline
 
-    def finalize(self, session: Session, handle: int, outcome: TerminalOutcome) -> None:
+    def finalize(self, session: Session, handle: int, outcome: TerminalOutcome) -> bool:
         """Write the job's terminal status into the runner's transaction.
 
-        Writes the *failed* / *timed-out* / *cancelled* terminal statuses. Runs
-        inside the runner-owned ``BEGIN IMMEDIATE`` transaction (``session``) and
-        **does NOT commit** — the runner commits once. The success terminal write
-        (``SUCCEEDED`` + ``ConversionOutput``) is *already* durable from
-        ``_execute_upload`` inside :meth:`execute`, so the SUCCEEDED branch is an
-        idempotent no-op here.
+        Runs inside the runner-owned ``BEGIN IMMEDIATE`` transaction
+        (``session``) and **does NOT commit** — the runner commits once. The
+        success terminal write (``SUCCEEDED`` + ``ConversionOutput``) is
+        *already* durable from ``_execute_upload`` inside :meth:`execute`, so a
+        ``SUCCEEDED`` outcome writes nothing here and reports whether the job
+        reads ``succeeded`` at the finalizing attempt. Every other outcome goes
+        through the repository, which writes only while the job is still
+        ``running`` on that attempt.
 
-        Branch on ``outcome.status``:
-
-        * ``SUCCEEDED`` — no-op. ``_execute_upload`` already wrote the success
-          terminal status and the output row; ``finalize`` neither re-transitions
-          nor emits a second SUCCEEDED event/output. The ``uploaded=False``
-          shortcut (``_prepare_upload`` returned ``None`` because the job row was
-          missing or already CANCELLED) is also a no-op, leaving the job for the
-          next claim / as-cancelled.
-        * ``FAILED`` (retryable) and ``TIMED_OUT`` — ``FAILED_RETRYABLE`` with
-          ``earliest_next_attempt_at = now + retry_base_delay_seconds * 2**attempts``,
-          the ``error_*`` fields, ``last_error_at``, and a ``failed`` event
-          carrying ``FailedPayload``. Timeout reuses the retryable path: a
-          ``ConversionTimeoutError`` is retryable.
-        * ``FAILED`` (permanent) — ``FAILED_PERM`` with ``finished_at = now`` and
-          ``earliest_next_attempt_at = None``, the same error fields + event.
-        * ``CANCELLED`` — no-op when the job is already ``CANCELLED`` (an
-          API-cancelled job is left as-is); when the runner drove a cooperative
-          cancel and the DB is not yet ``CANCELLED``, write the ``CANCELLED``
-          transition.
-
-        The error fields/scrub come from the per-handle stash ``execute`` recorded
-        (the error-details bridge): the egress scrub is already applied there so a
-        rejected URL/IP never lands in ``error_message`` / ``error_detail``. The
-        stash is **read but not cleared** here: the runner retains the slot and
-        re-invokes ``finalize`` on a finalize-time DB error, so clearing now would
-        make the retry fall back to ``_unknown_failure_details()`` and lose the real
-        scrubbed cause. :meth:`cleanup` releases it, once, only after the durable
-        commit (it runs on every terminal outcome). ``attempt`` for the event is
-        re-read from the row in ``session`` (the claim incremented it), never a
-        stale snapshot.
+        The error fields come from the per-handle stash ``execute`` recorded
+        (the error-details bridge): the egress scrub is already applied there so
+        a rejected URL/IP never lands in ``error_message`` / ``error_detail``.
+        The stash is **read but not cleared** here: the runner retains the slot
+        and re-invokes ``finalize`` on a finalize-time DB error, so clearing now
+        would lose the real scrubbed cause. :meth:`cleanup` releases it, once,
+        only after the durable commit (it runs on every terminal outcome).
 
         Args:
             session: The runner's active ``BEGIN IMMEDIATE`` session.
             handle: The conversion job id.
             outcome: The runner-resolved terminal outcome.
+
+        Returns:
+            Whether the job's terminal status is this attempt's outcome.
         """
-        with self._processes_lock:
-            details = self._error_details.get(handle)
-
-        status = outcome.status
-        if status is WorkUnitStatus.SUCCEEDED:
-            # Success is already terminal (``_execute_upload`` wrote SUCCEEDED +
-            # the output). No re-transition, no second event/output. The
-            # ``uploaded=False`` shortcut (job missing / cancelled) is likewise a
-            # no-op.
-            return
-
-        if status is WorkUnitStatus.CANCELLED:
-            self._finalize_cancelled(session, handle)
-            return
-
-        if status is WorkUnitStatus.TIMED_OUT:
-            # A timeout is a retryable ``ConversionTimeoutError`` ->
-            # ``FAILED_RETRYABLE``. The bridge stash holds that exception's
-            # (scrubbed) details; synthesize a timeout detail if the stash is
-            # somehow absent so the row still records the cause.
-            details = details or _timeout_details(handle)
-            self._finalize_failed(session, handle, details, retryable=True)
-            return
-
-        # WorkUnitStatus.FAILED — retry class is required on the outcome.
-        details = details or _unknown_failure_details()
-        retryable = outcome.retry_class is RetryClass.RETRYABLE
-        self._finalize_failed(session, handle, details, retryable=retryable)
-
-    def _finalize_cancelled(self, session: Session, handle: int) -> None:
-        """Write the ``CANCELLED`` terminal transition unless already cancelled.
-
-        No-op when the job row is missing or already ``CANCELLED`` (an
-        API-cancelled job is left untouched); otherwise records the runner-driven
-        cooperative cancellation as a ``cancelled`` event. The event ``attempt``
-        is re-read from the row in ``session``. Does not commit.
-        """
+        if outcome.status is not WorkUnitStatus.SUCCEEDED:
+            with self._processes_lock:
+                details = self._error_details.get(handle)
+            if details is not None:
+                with self._lock:
+                    self._errors[handle] = (details.error_code, details.error_message)
+            return super().finalize(session, handle, outcome)
+        with self._lock:
+            attempt = self._attempts.get(handle)
         job = session.get(ConversionJob, handle)
-        if job is None or job.status == ConversionJobStatus.CANCELLED:
-            return
-        now = utcnow()
-        job.updated_at = now
-        job.finished_at = now
-        record_transition(
-            session,
-            job,
-            to_status=ConversionJobStatus.CANCELLED,
-            kind=ConversionEventKind.CANCELLED,
-            attempt=job.attempts,
-            payload=CancelledPayload(cancellation_reason="runner_cancel"),
-        )
-
-    def _finalize_failed(
-        self,
-        session: Session,
-        handle: int,
-        details: JobErrorDetails,
-        *,
-        retryable: bool,
-    ) -> None:
-        """Write a ``FAILED_RETRYABLE`` / ``FAILED_PERM`` transition + event.
-
-        The retryable branch sets ``earliest_next_attempt_at = now +
-        retry_base_delay_seconds * 2**attempts``; the permanent branch sets
-        ``finished_at`` and clears ``earliest_next_attempt_at``. Both write the
-        (already-scrubbed) ``error_*`` fields, ``last_error_at``, and a
-        ``failed`` event carrying ``FailedPayload``. No-op when the job row is
-        missing or already ``CANCELLED``. The event ``attempt`` is re-read from
-        the row in ``session``. Does not commit.
-        """
-        job = session.get(ConversionJob, handle)
-        if job is None or job.status == ConversionJobStatus.CANCELLED:
-            return
-        now = utcnow()
-        if retryable:
-            delay = self._config.retry_base_delay_seconds * (2**job.attempts)
-            job.earliest_next_attempt_at = now + datetime.timedelta(seconds=delay)
-            to_status = ConversionJobStatus.FAILED_RETRYABLE
-        else:
-            job.earliest_next_attempt_at = None
-            job.finished_at = now
-            to_status = ConversionJobStatus.FAILED_PERM
-        job.error_code = details.error_code
-        job.error_message = details.error_message
-        job.error_detail = details.error_detail
-        job.last_error_at = now
-        job.updated_at = now
-        record_transition(
-            session,
-            job,
-            to_status=to_status,
-            kind=ConversionEventKind.FAILED,
-            attempt=job.attempts,
-            payload=FailedPayload(
-                error_code=details.error_code,
-                error_message=details.error_message,
-                error_detail=details.error_detail,
-                retryable=retryable,
-                last_phase=details.last_phase,
-            ),
-        )
+        if job is None or WorkUnitStatus(job.status) is not WorkUnitStatus.SUCCEEDED:
+            return False
+        return attempt is None or job.attempts == attempt
 
     def cleanup(self, handle: int) -> None:
         """Release the job's transient per-handle resources.
@@ -753,6 +623,7 @@ class ConversionStageHandler:
         still sees the stashed cause while the bridge can never grow unbounded.
         Idempotent and never raises — the runner calls it on every terminal outcome.
         """
+        super().cleanup(handle)
         with self._processes_lock:
             self._processes.pop(handle, None)
             self._terminate_events.pop(handle, None)
@@ -782,31 +653,30 @@ class ConversionStageHandler:
         terminate_event.set()
 
 
-def _timeout_details(handle: int) -> JobErrorDetails:
-    """Synthesize the failure details for a runner-driven timeout.
-
-    The error-details bridge normally supplies the stashed
-    ``ConversionTimeoutError`` details for a ``TIMED_OUT`` outcome. This is the
-    fallback for the (unexpected) case where the stash is absent — e.g. the
-    runner resolved ``TIMED_OUT`` from its slot state while ``execute`` returned
-    without raising. It mirrors the ``ConversionTimeoutError`` contract
-    (``error_code='conversion_timeout'``, retryable) so the persisted row still
-    records the cause.
-    """
-    return classify_job_error(ConversionTimeoutError(f"Job {handle} timed out", "unknown"))
+def _holds_claim(session: Session, handle: int, attempt: int) -> bool:
+    job = session.get(ConversionJob, handle)
+    return job is not None and WorkUnitStatus(job.status) is WorkUnitStatus.RUNNING and job.attempts == attempt
 
 
-def _unknown_failure_details() -> JobErrorDetails:
-    """Synthesize generic retryable failure details when none were stashed.
+def _raise_past_deadline(now: datetime.datetime, deadline: datetime.datetime, handle: int) -> None:
+    if now >= deadline:
+        raise ConversionTimeoutError(f"Job {handle} exceeded its runtime during {UPLOAD_PHASE}", UPLOAD_PHASE)
 
-    Defensive fallback for a ``FAILED`` outcome with no stashed details (which
-    should not happen — ``execute``'s wrapper stashes on every ``Exception``):
-    code ``conversion_failed``, retryable.
-    """
-    return JobErrorDetails(
-        error_code="conversion_failed",
-        error_message="conversion_failed",
-        error_detail=None,
-        retryable=True,
-        last_phase=None,
-    )
+
+def _start_upload_phase(engine, handle: int, content_hash: str | None, attempt: int) -> None:
+    with Session(engine) as session:
+        begin_immediate_on(session)
+        job = session.get(ConversionJob, handle)
+        if job is None or WorkUnitStatus(job.status) is not WorkUnitStatus.RUNNING:
+            session.rollback()
+            raise ConversionCancelledError(f"Job {handle} is no longer running before upload")
+        if job.attempts != attempt:
+            session.rollback()
+            raise ConversionCancelledError(
+                f"Job {handle} is on attempt {job.attempts}, not attempt {attempt}, before upload"
+            )
+        job.phase = UPLOAD_PHASE
+        job.updated_at = utcnow()
+        session.add(job)
+        record_conversion_completed(session, job, content_hash=content_hash)
+        session.commit()

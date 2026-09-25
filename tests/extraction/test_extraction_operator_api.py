@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 import contextlib
+import datetime as dt
 from pathlib import Path
 from uuid import UUID
 
@@ -87,7 +88,13 @@ def _add_source(engine, source_id: UUID) -> None:
 
 
 def _seed(
-    engine, *, source_id: UUID, status: WorkUnitStatus, attempts: int = 0, idempotency_key: str | None = None
+    engine,
+    *,
+    source_id: UUID,
+    status: WorkUnitStatus,
+    attempts: int = 0,
+    idempotency_key: str | None = None,
+    earliest_next_attempt_at: dt.datetime | None = None,
 ) -> int:
     """Insert one work-unit in the given status; return its id."""
     with Session(engine) as session:
@@ -96,6 +103,7 @@ def _seed(
             source_id=source_id,
             status=status,
             attempts=attempts,
+            earliest_next_attempt_at=earliest_next_attempt_at,
         )
         session.add(job)
         session.commit()
@@ -247,6 +255,56 @@ def test_list_and_filter_by_status(client: TestClient, engine) -> None:
     assert body["jobs"][0]["status"] == "failed"
 
 
+def test_retry_class_is_derived_from_status_and_retry_wait(client: TestClient, engine) -> None:
+    """A failed unit with a retry wait is retryable, without one permanent, and every other status null."""
+    wait = dt.datetime(2026, 3, 1)
+    retryable_id = _seed(
+        engine, source_id=_SOURCE_A, status=WorkUnitStatus.FAILED, idempotency_key="r", earliest_next_attempt_at=wait
+    )
+    permanent_id = _seed(engine, source_id=_SOURCE_A, status=WorkUnitStatus.FAILED, idempotency_key="p")
+    others = {
+        _seed(
+            engine,
+            source_id=_SOURCE_B,
+            status=unit_status,
+            idempotency_key=unit_status.value,
+            earliest_next_attempt_at=wait,
+        )
+        for unit_status in [
+            WorkUnitStatus.QUEUED,
+            WorkUnitStatus.RUNNING,
+            WorkUnitStatus.SUCCEEDED,
+            WorkUnitStatus.CANCELLED,
+            WorkUnitStatus.TIMED_OUT,
+        ]
+    }
+
+    assert client.get(f"/v1/extractions/{retryable_id}").json()["retry_class"] == "retryable"
+    assert client.get(f"/v1/extractions/{permanent_id}").json()["retry_class"] == "permanent"
+    assert {client.get(f"/v1/extractions/{job_id}").json()["retry_class"] for job_id in others} == {None}
+
+
+def test_list_filters_by_retry_class_and_intersects_with_status(client: TestClient, engine) -> None:
+    """The retry-class filter selects one class of failed units and intersects with the status filter."""
+    _seed(engine, source_id=_SOURCE_B, status=WorkUnitStatus.QUEUED, idempotency_key="q")
+    retryable_id = _seed(
+        engine,
+        source_id=_SOURCE_A,
+        status=WorkUnitStatus.FAILED,
+        idempotency_key="r",
+        earliest_next_attempt_at=dt.datetime(2026, 3, 1),
+    )
+    permanent_id = _seed(engine, source_id=_SOURCE_A, status=WorkUnitStatus.FAILED, idempotency_key="p")
+
+    permanent = client.get("/v1/extractions", params={"retry_class": "permanent"}).json()
+    assert ([job["id"] for job in permanent["jobs"]], permanent["total"]) == ([permanent_id], 1)
+    retryable = client.get("/v1/extractions", params={"status": "failed", "retry_class": "retryable"}).json()
+    assert ([job["id"] for job in retryable["jobs"]], retryable["total"]) == ([retryable_id], 1)
+    empty = client.get("/v1/extractions", params={"status": "queued", "retry_class": "retryable"})
+    assert empty.status_code == 200
+    assert (empty.json()["jobs"], empty.json()["total"]) == ([], 0)
+
+
 def test_detail_and_404(client: TestClient, engine) -> None:
     """Detail returns one unit; an unknown id is 404."""
     job_id = _seed(engine, source_id=_SOURCE_A, status=WorkUnitStatus.QUEUED)
@@ -278,6 +336,7 @@ def test_retry_requeues_a_terminal_unit(client: TestClient, engine) -> None:
         assert events[0].to_status == "queued"
         assert events[0].source_id == _SOURCE_A
         assert RequeuedPayload.model_validate_json(events[0].payload_json).principal == "self"
+        assert RequeuedPayload.model_validate_json(events[0].payload_json).requeue_reason == "operator_retry"
 
 
 def test_retry_rejects_non_terminal_unit(client: TestClient, engine) -> None:

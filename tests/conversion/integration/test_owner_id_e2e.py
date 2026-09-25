@@ -30,6 +30,7 @@ from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.processing import uploader
+from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.storage.settings import ObjectStorageSettings
 
 
@@ -99,6 +100,10 @@ def test_full_pipeline_propagates_default_principal_to_all_three_tables(
     job = db_session.exec(select(ConversionJob).where(ConversionJob.source_id == source.source_id)).one()
     assert source.owner_id == "deployment-owner"
     assert job.owner_id == "deployment-owner"
+    job.status = WorkUnitStatus.RUNNING
+    job.attempts = 1
+    db_session.add(job)
+    db_session.commit()
 
     workspace = _write_workspace(tmp_path, bookmark_id=bookmark_id, markdown_hash="e2e0deadbeef0001")
     object_storage = ObjectStorageSettings(_env_file=None)

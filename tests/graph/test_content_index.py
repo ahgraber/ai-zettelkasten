@@ -24,7 +24,7 @@ from sqlmodel import Session
 import xxhash
 
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
-from aizk.db.migrations.versions.fc430997788f_baseline import _assert_fts5_available
+from aizk.db.migrations.versions.a62f1bf47735_baseline import _assert_fts5_available
 from aizk.graph.chunks import persist_chunks
 from aizk.graph.content_index import index_chunk_content, index_contextualized_content, rebuild_content_index
 from aizk.graph.contextualization import contextualize_chunks, summarize_document

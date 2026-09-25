@@ -26,7 +26,7 @@ from aizk.conversion.core.errors import (
     WorkspaceEscape,
 )
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, UrlRef, compute_source_ref_hash
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.egress.fetch import egress_fetch_bytes
 from aizk.conversion.egress.prefetch import prefetch_images
@@ -34,6 +34,7 @@ from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.processing import uploader as uploader_mod
 from aizk.conversion.settings import ConversionConfig, KarakeepFetcherConfig
 from aizk.conversion.wiring import subprocess as wiring_subprocess
+from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.storage.settings import ObjectStorageSettings
 from tests.fakes.http import mock_transport_factory
 from tests.fakes.process import InlineContext
@@ -353,7 +354,7 @@ def test_happy_path_public_url_succeeds(monkeypatch: pytest.MonkeyPatch, db_sess
         source_id=source.source_id,
         owner_id="self",
         title="Happy Path",
-        status=ConversionJobStatus.RUNNING,
+        status=WorkUnitStatus.RUNNING,
         attempts=1,
         idempotency_key="h" * 64,
         source_ref=ref.model_dump_json(),
@@ -378,7 +379,7 @@ def test_happy_path_public_url_succeeds(monkeypatch: pytest.MonkeyPatch, db_sess
     db_session.expire_all()
     updated = db_session.get(ConversionJob, job.id)
     assert updated is not None
-    assert updated.status == ConversionJobStatus.SUCCEEDED, (
+    assert updated.status == WorkUnitStatus.SUCCEEDED, (
         f"Expected SUCCEEDED; got {updated.status} / error: {updated.error_message}"
     )
     assert any("output.md" in key for key in storage), (

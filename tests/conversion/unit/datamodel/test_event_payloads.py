@@ -29,14 +29,16 @@ import pytest
 from aizk.conversion.datamodel.events import (
     CancelledPayload,
     ClaimedPayload,
+    ConversionCompletedPayload,
     ConversionEventKind,
     FailedPayload,
     PhasePayload,
     QueuedPayload,
     RecoveredStalePayload,
+    RequeuedPayload,
     SourceEnrichedPayload,
     SucceededPayload,
-    UploadPendingPayload,
+    TimedOutPayload,
     parse_payload_lenient,
 )
 
@@ -56,7 +58,7 @@ _VALID_FIELDS_BY_KIND: dict[ConversionEventKind, dict] = {
         "last_phase": "preparing_input",
     },
     ConversionEventKind.SUCCEEDED: {"output_id": 42, "content_hash": "deadbeef"},
-    ConversionEventKind.UPLOAD_PENDING: {"content_hash": "deadbeef"},
+    ConversionEventKind.CONVERSION_COMPLETED: {"content_hash": "deadbeef"},
     ConversionEventKind.RECOVERED_STALE: {"stale_after_minutes": 30, "last_started_at": _NOW},
     ConversionEventKind.SOURCE_ENRICHED: {
         "source_id": uuid4(),
@@ -64,6 +66,8 @@ _VALID_FIELDS_BY_KIND: dict[ConversionEventKind, dict] = {
         "update_succeeded": True,
         "failure_reason": None,
     },
+    ConversionEventKind.REQUEUED: {"requeue_reason": "operator_retry", "submitted_by": "user-1"},
+    ConversionEventKind.TIMED_OUT: {"timeout_seconds": 7200.0, "phase": "upload"},
 }
 
 
@@ -83,9 +87,11 @@ _KIND_TO_CLASS: dict[ConversionEventKind, type[BaseModel]] = {
     ConversionEventKind.CANCELLED: CancelledPayload,
     ConversionEventKind.FAILED: FailedPayload,
     ConversionEventKind.SUCCEEDED: SucceededPayload,
-    ConversionEventKind.UPLOAD_PENDING: UploadPendingPayload,
+    ConversionEventKind.CONVERSION_COMPLETED: ConversionCompletedPayload,
     ConversionEventKind.RECOVERED_STALE: RecoveredStalePayload,
     ConversionEventKind.SOURCE_ENRICHED: SourceEnrichedPayload,
+    ConversionEventKind.REQUEUED: RequeuedPayload,
+    ConversionEventKind.TIMED_OUT: TimedOutPayload,
 }
 
 
@@ -136,6 +142,19 @@ def test_unknown_kind_rejected_on_read() -> None:
     raw = json.dumps({"kind": "not_a_real_kind", "foo": "bar"})
     with pytest.raises(ValueError, match="Unknown event kind"):
         parse_payload_lenient(raw)
+
+
+def test_upload_pending_is_an_unknown_kind() -> None:
+    """The removed ``upload_pending`` kind is rejected on read like any unknown kind."""
+    raw = json.dumps({"kind": "upload_pending", "content_hash": "deadbeef"})
+    with pytest.raises(ValueError, match="Unknown event kind"):
+        parse_payload_lenient(raw)
+
+
+def test_queued_payload_accepts_only_the_initial_reason() -> None:
+    """``queued`` records a job's creation only; the operator-retry reason belongs to ``requeued``."""
+    with pytest.raises(ValidationError):
+        QueuedPayload(submitted_by="user-1", requeue_reason="retry_endpoint")
 
 
 def test_reader_tolerates_additive_fields() -> None:

@@ -21,7 +21,7 @@ from aizk.conversion.datamodel.events import (
     SucceededPayload,
     record_transition,
 )
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.processing.errors import ConversionArtifactsMissingError, SubprocessMetadataInvalid
@@ -37,7 +37,8 @@ from aizk.conversion.storage.paths import (
     read_text_nofollow,
 )
 from aizk.db.config import DatabaseConfig
-from aizk.db.engine import get_engine
+from aizk.db.engine import begin_immediate_on, get_engine
+from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.storage.s3 import S3Client, S3Error
 from aizk.storage.settings import ObjectStorageSettings
 from aizk.utilities.clock import utcnow
@@ -106,6 +107,7 @@ class _UploadPlan:
     figure_count: int
     docling_version: str
     pipeline_name: str
+    attempt: int
 
 
 def _load_subprocess_metadata(workspace: Path, job_id: int) -> SubprocessMetadata:
@@ -129,7 +131,9 @@ def _load_subprocess_metadata(workspace: Path, job_id: int) -> SubprocessMetadat
         ) from exc
 
 
-def _prepare_upload(job_id: int, workspace: Path, object_storage: ObjectStorageSettings) -> _UploadPlan | None:
+def _prepare_upload(
+    job_id: int, workspace: Path, object_storage: ObjectStorageSettings, attempt: int | None = None
+) -> _UploadPlan | None:
     """Build the upload plan; runs exactly once per job, before the retry loop.
 
     Returns ``None`` when the job is already finalized (content-hash shortcut
@@ -161,7 +165,7 @@ def _prepare_upload(job_id: int, workspace: Path, object_storage: ObjectStorageS
         job = session.get(ConversionJob, job_id)
         if not job:
             return None
-        if job.status == ConversionJobStatus.CANCELLED:
+        if job.status == WorkUnitStatus.CANCELLED:
             return None
         source = session.exec(select(Source).where(Source.source_id == job.source_id)).one()
 
@@ -247,6 +251,7 @@ def _prepare_upload(job_id: int, workspace: Path, object_storage: ObjectStorageS
                 figure_count=prior_output.figure_count,
                 docling_version=subprocess_meta.docling_version,
                 pipeline_name=subprocess_meta.pipeline_name,
+                attempt=job.attempts if attempt is None else attempt,
             )
 
         s3_prefix_uri = f"s3://{bucket}/{prefix}/"
@@ -300,6 +305,7 @@ def _prepare_upload(job_id: int, workspace: Path, object_storage: ObjectStorageS
             figure_count=len(figure_uploads),
             docling_version=subprocess_meta.docling_version,
             pipeline_name=subprocess_meta.pipeline_name,
+            attempt=job.attempts if attempt is None else attempt,
         )
 
 
@@ -322,10 +328,18 @@ def _execute_upload(plan: _UploadPlan, job_id: int, object_storage: ObjectStorag
     _upload_nofollow(plan.manifest_local, plan.manifest_key, s3_client)
 
     with Session(engine) as session:
+        begin_immediate_on(session)
         job = session.get(ConversionJob, job_id)
         if not job:
             return
-        if job.status == ConversionJobStatus.CANCELLED:
+        if WorkUnitStatus(job.status) is not WorkUnitStatus.RUNNING or job.attempts != plan.attempt:
+            logger.warning(
+                "Upload success skipped: job is %s on attempt %d, not running on attempt %d",
+                WorkUnitStatus(job.status).value,
+                job.attempts,
+                plan.attempt,
+                extra={"stage": "conversion", "work_unit_ref": str(job_id)},
+            )
             return
 
         output = ConversionOutput(
@@ -352,10 +366,11 @@ def _execute_upload(plan: _UploadPlan, job_id: int, object_storage: ObjectStorag
         job.error_code = None
         job.error_message = None
         job.updated_at = utcnow()
+        job.phase = None
         record_transition(
             session,
             job,
-            to_status=ConversionJobStatus.SUCCEEDED,
+            to_status=WorkUnitStatus.SUCCEEDED,
             kind=ConversionEventKind.SUCCEEDED,
             attempt=job.attempts,
             payload=SucceededPayload(

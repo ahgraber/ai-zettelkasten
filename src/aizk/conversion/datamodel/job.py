@@ -1,28 +1,15 @@
 """SQLModel entity for conversion jobs."""
 
-import datetime
-from enum import Enum
 from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
 from sqlalchemy import Column, Index, Text
-from sqlmodel import Field, Relationship, SQLModel
+from sqlmodel import Field, Relationship
+
+from aizk.pipeline.lifecycle import WorkUnitColumns
 
 
-class ConversionJobStatus(str, Enum):
-    """Allowed statuses for conversion jobs."""
-
-    NEW = "NEW"
-    QUEUED = "QUEUED"
-    RUNNING = "RUNNING"
-    UPLOAD_PENDING = "UPLOAD_PENDING"
-    SUCCEEDED = "SUCCEEDED"
-    FAILED_RETRYABLE = "FAILED_RETRYABLE"
-    FAILED_PERM = "FAILED_PERM"
-    CANCELLED = "CANCELLED"
-
-
-class ConversionJob(SQLModel, table=True):
+class ConversionJob(WorkUnitColumns, table=True):
     """Represents a single conversion attempt with retry tracking."""
 
     __tablename__ = "conversion_jobs"
@@ -42,6 +29,9 @@ class ConversionJob(SQLModel, table=True):
             "idempotency_key",
             unique=True,
         ),
+        Index("ix_conversion_jobs_status", "status"),
+        Index("ix_conversion_jobs_earliest_next_attempt_at", "earliest_next_attempt_at"),
+        Index("ix_conversion_jobs_created_at", "created_at"),
     )
 
     id: int | None = Field(default=None, primary_key=True, nullable=False)
@@ -49,27 +39,10 @@ class ConversionJob(SQLModel, table=True):
     owner_id: str = Field(nullable=False, index=True)
     title: str = Field(max_length=500, nullable=False)
     payload_version: int = Field(default=1, nullable=False)
-    status: ConversionJobStatus = Field(default=ConversionJobStatus.NEW, nullable=False, index=True)
-    attempts: int = Field(default=0, nullable=False)
-    error_code: Optional[str] = Field(default=None, max_length=50)
-    error_message: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     error_detail: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     idempotency_key: str = Field(max_length=64, nullable=False, index=True)
     source_ref: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
-    earliest_next_attempt_at: Optional[datetime.datetime] = Field(default=None, index=True)
-    last_error_at: Optional[datetime.datetime] = Field(default=None)
-    queued_at: Optional[datetime.datetime] = Field(default=None)
-    started_at: Optional[datetime.datetime] = Field(default=None)
-    finished_at: Optional[datetime.datetime] = Field(default=None)
-    created_at: datetime.datetime = Field(
-        default_factory=lambda: datetime.datetime.now(datetime.timezone.utc),
-        nullable=False,
-        index=True,
-    )
-    updated_at: datetime.datetime = Field(
-        default_factory=lambda: datetime.datetime.now(datetime.timezone.utc),
-        nullable=False,
-    )
+    phase: str | None = Field(default=None, max_length=7, nullable=True)
 
     source: "Source" = Relationship(back_populates="jobs")
     output: Optional["ConversionOutput"] = Relationship(back_populates="job")

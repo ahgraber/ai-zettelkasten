@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 import logging
 
@@ -15,6 +16,7 @@ from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.source import Source as SourceRecord
 from aizk.conversion.processing.errors import JobDataIntegrityError
 from aizk.conversion.processing.types import SubprocessMetadata
+from aizk.db.engine import begin_immediate_on
 from aizk.utilities.clock import utcnow
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,7 @@ def _write_source_enrichment(
     *,
     job_id: int,
     attempt: int,
+    holds_claim: Callable[[Session], bool] | None = None,
 ) -> None:
     """Best-effort update of Source row from SubprocessMetadata. Logs on failure, never raises.
 
@@ -71,6 +74,8 @@ def _write_source_enrichment(
         source_meta = subprocess_meta.source_meta.to_source_metadata()
 
         with Session(engine) as session:
+            if not _claim_held(session, holds_claim, job_id, attempt):
+                return
             source = session.exec(select(SourceRecord).where(SourceRecord.source_id == uuid_obj)).one_or_none()
             if source is None:
                 logger.warning(
@@ -102,6 +107,8 @@ def _write_source_enrichment(
     # advisory).
     try:
         with Session(engine) as event_session:
+            if not _claim_held(event_session, holds_claim, job_id, attempt):
+                return
             record_source_event(
                 event_session,
                 job_id=job_id,
@@ -117,3 +124,13 @@ def _write_source_enrichment(
             "Failed to record source_enriched event for source_id=%s (best-effort)",
             source_id,
         )
+
+
+def _claim_held(session: Session, holds_claim: Callable[[Session], bool] | None, job_id: int, attempt: int) -> bool:
+    if holds_claim is None:
+        return True
+    begin_immediate_on(session)
+    if holds_claim(session):
+        return True
+    logger.warning("Source enrichment skipped: job %s is not running on attempt %d", job_id, attempt)
+    return False

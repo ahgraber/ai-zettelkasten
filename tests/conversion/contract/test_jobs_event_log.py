@@ -16,7 +16,9 @@ from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
 from aizk.conversion.datamodel.events import ConversionEventKind, events_for_job
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
+from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.utilities.clock import utcnow
 
 
 def _submit_job(client: TestClient, bookmark_id: str) -> dict:
@@ -29,7 +31,7 @@ def _submit_job(client: TestClient, bookmark_id: str) -> dict:
 
 
 def _force_failed_retryable(db_session, job_id: int) -> None:
-    """Backdoor: move a freshly-submitted job into FAILED_RETRYABLE so it is retryable.
+    """Backdoor: move a freshly-submitted job into a retryable FAILED so it is retryable.
 
     The retry endpoint requires the job to be in a terminal-failed/cancelled state.
     These contract tests don't run a worker, so the test sets the state directly.
@@ -38,7 +40,8 @@ def _force_failed_retryable(db_session, job_id: int) -> None:
     """
     job = db_session.get(ConversionJob, job_id)
     assert job is not None
-    job.status = ConversionJobStatus.FAILED_RETRYABLE
+    job.status = WorkUnitStatus.FAILED
+    job.earliest_next_attempt_at = utcnow()
     db_session.add(job)
     db_session.commit()
 
@@ -58,7 +61,7 @@ def test_job_submission_emits_queued_event(db_session) -> None:
     event = events[0]
     assert event.kind == ConversionEventKind.QUEUED
     assert event.from_status is None
-    assert event.to_status == ConversionJobStatus.QUEUED
+    assert event.to_status == WorkUnitStatus.QUEUED
     assert event.attempt == 0
     assert event.source_id is not None
 
@@ -68,11 +71,11 @@ def test_job_submission_emits_queued_event(db_session) -> None:
     assert payload["submitted_by"] == "self"
 
 
-def test_retry_endpoint_emits_queued_event_with_retry_reason(db_session) -> None:
-    """POST /v1/jobs/{id}/retry appends a `queued` event with retry semantics.
+def test_retry_endpoint_emits_requeued_event_with_retry_reason(db_session) -> None:
+    """POST /v1/jobs/{id}/retry appends a `requeued` event with retry semantics.
 
-    The event's ``requeue_reason`` is ``"retry_endpoint"`` and ``attempt``
-    equals the job's incremented attempt count.
+    The event's ``requeue_reason`` is ``"operator_retry"`` and ``attempt``
+    equals the job's unchanged attempt count.
     """
     app = create_app()
     with TestClient(app) as client:
@@ -84,19 +87,18 @@ def test_retry_endpoint_emits_queued_event_with_retry_reason(db_session) -> None
         assert retry_resp.status_code == 200, retry_resp.json()
 
     events = events_for_job(db_session, job_id)
-    # Origin queued + retry queued; no other API events fire.
-    queued_events = [e for e in events if e.kind == ConversionEventKind.QUEUED]
-    assert len(queued_events) == 2
-    retry_event = queued_events[-1]
+    # Origin queued + retry requeued; no other API events fire.
+    assert [e.kind for e in events] == [ConversionEventKind.QUEUED, ConversionEventKind.REQUEUED]
+    retry_event = events[-1]
 
     job = db_session.get(ConversionJob, job_id)
     assert retry_event.attempt == job.attempts
-    assert retry_event.attempt == 1
-    assert retry_event.from_status == ConversionJobStatus.FAILED_RETRYABLE
-    assert retry_event.to_status == ConversionJobStatus.QUEUED
+    assert retry_event.attempt == 0
+    assert retry_event.from_status == WorkUnitStatus.FAILED
+    assert retry_event.to_status == WorkUnitStatus.QUEUED
 
     payload = json.loads(retry_event.payload_json)
-    assert payload["requeue_reason"] == "retry_endpoint"
+    assert payload["requeue_reason"] == "operator_retry"
     assert payload["submitted_by"] == "self"
 
 
@@ -114,16 +116,16 @@ def test_cancel_endpoint_emits_cancelled_event(db_session) -> None:
     cancelled_events = [e for e in events if e.kind == ConversionEventKind.CANCELLED]
     assert len(cancelled_events) == 1
     cancel_event = cancelled_events[0]
-    assert cancel_event.from_status == ConversionJobStatus.QUEUED
-    assert cancel_event.to_status == ConversionJobStatus.CANCELLED
+    assert cancel_event.from_status == WorkUnitStatus.QUEUED
+    assert cancel_event.to_status == WorkUnitStatus.CANCELLED
 
     payload = json.loads(cancel_event.payload_json)
     assert payload["kind"] == "cancelled"
     assert payload["cancelled_by"] == "self"
 
 
-def test_bulk_retry_emits_one_queued_event_per_job(db_session) -> None:
-    """POST /v1/jobs/actions with action=retry appends N `queued` events for N jobs."""
+def test_bulk_retry_emits_one_requeued_event_per_job(db_session) -> None:
+    """POST /v1/jobs/actions with action=retry appends N `requeued` events for N jobs."""
     app = create_app()
     with TestClient(app) as client:
         ids = [_submit_job(client, f"bm_event_bulk_retry_{i}")["id"] for i in range(3)]
@@ -141,14 +143,16 @@ def test_bulk_retry_emits_one_queued_event_per_job(db_session) -> None:
 
     for jid in ids:
         events = events_for_job(db_session, jid)
-        queued_events = [e for e in events if e.kind == ConversionEventKind.QUEUED]
-        # origin queued + bulk-retry queued
-        assert len(queued_events) == 2, f"job {jid} produced events {[e.kind for e in events]}"
-        retry_event = queued_events[-1]
-        assert retry_event.attempt == 1
-        assert retry_event.from_status == ConversionJobStatus.FAILED_RETRYABLE
+        # origin queued + bulk-retry requeued
+        kinds = [e.kind for e in events]
+        assert kinds == [ConversionEventKind.QUEUED, ConversionEventKind.REQUEUED], (
+            f"job {jid} produced events {kinds}"
+        )
+        retry_event = events[-1]
+        assert retry_event.attempt == 0
+        assert retry_event.from_status == WorkUnitStatus.FAILED
         payload = json.loads(retry_event.payload_json)
-        assert payload["requeue_reason"] == "retry_endpoint"
+        assert payload["requeue_reason"] == "operator_retry"
         assert payload["submitted_by"] == "self"
 
 
@@ -172,7 +176,7 @@ def test_bulk_cancel_emits_one_cancelled_event_per_job(db_session) -> None:
         cancelled_events = [e for e in events if e.kind == ConversionEventKind.CANCELLED]
         assert len(cancelled_events) == 1, f"job {jid} produced events {[e.kind for e in events]}"
         cancel_event = cancelled_events[0]
-        assert cancel_event.from_status == ConversionJobStatus.QUEUED
-        assert cancel_event.to_status == ConversionJobStatus.CANCELLED
+        assert cancel_event.from_status == WorkUnitStatus.QUEUED
+        assert cancel_event.to_status == WorkUnitStatus.CANCELLED
         payload = json.loads(cancel_event.payload_json)
         assert payload["cancelled_by"] == "self"

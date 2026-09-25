@@ -64,8 +64,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field as PydField, TypeAdapter, ValidationError
 from sqlmodel import select
 
-from aizk.conversion.datamodel.job import ConversionJobStatus
 from aizk.pipeline.events import PipelineEvent
+from aizk.pipeline.lifecycle import WorkUnitStatus
 
 if TYPE_CHECKING:
     from sqlmodel import Session
@@ -104,9 +104,11 @@ class ConversionEventKind(str, Enum):
     CANCELLED = "cancelled"
     FAILED = "failed"
     SUCCEEDED = "succeeded"
-    UPLOAD_PENDING = "upload_pending"
+    CONVERSION_COMPLETED = "conversion_completed"
     RECOVERED_STALE = "recovered_stale"
     SOURCE_ENRICHED = "source_enriched"
+    REQUEUED = "requeued"
+    TIMED_OUT = "timed_out"
 
 
 # ---------------------------------------------------------------------------
@@ -115,13 +117,13 @@ class ConversionEventKind(str, Enum):
 
 
 class QueuedPayload(BaseModel):
-    """Payload for a transition into QUEUED (initial submission or retry requeue)."""
+    """Payload for a transition into QUEUED (initial submission)."""
 
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["queued"] = "queued"
     submitted_by: str | None = None
-    requeue_reason: Literal["initial", "retry_endpoint"]
+    requeue_reason: Literal["initial"]
 
 
 class ClaimedPayload(BaseModel):
@@ -155,7 +157,7 @@ class CancelledPayload(BaseModel):
 
 
 class FailedPayload(BaseModel):
-    """Payload for a transition into FAILED_RETRYABLE or FAILED_PERM.
+    """Payload for a transition into FAILED.
 
     ``error_message`` and ``error_detail`` carry the *post-sanitization*
     values written to ``ConversionJob.error_message`` and
@@ -184,10 +186,10 @@ class SucceededPayload(BaseModel):
     content_hash: str
 
 
-class UploadPendingPayload(BaseModel):
-    """Payload for a transition into UPLOAD_PENDING.
+class ConversionCompletedPayload(BaseModel):
+    """Payload for the end of conversion, recorded within ``running`` when upload starts.
 
-    ``content_hash`` is optional because the transition is recorded even
+    ``content_hash`` is optional because the event is recorded even
     when ``SubprocessMetadata`` failed to load — the subsequent upload
     will then fail at ``_prepare_upload`` and surface its own ``failed``
     event, but the audit log still captures the attempted phase entry.
@@ -195,8 +197,28 @@ class UploadPendingPayload(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["upload_pending"] = "upload_pending"
+    kind: Literal["conversion_completed"] = "conversion_completed"
     content_hash: str | None = None
+
+
+class RequeuedPayload(BaseModel):
+    """Payload for an operator retry that returns a terminal job to ``queued``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["requeued"] = "requeued"
+    requeue_reason: str
+    submitted_by: str | None = None
+
+
+class TimedOutPayload(BaseModel):
+    """Payload for a transition into ``timed_out``: the timeout and the job's phase."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["timed_out"] = "timed_out"
+    timeout_seconds: float
+    phase: str | None = None
 
 
 class RecoveredStalePayload(BaseModel):
@@ -229,9 +251,11 @@ JobEventPayload = Annotated[
         CancelledPayload,
         FailedPayload,
         SucceededPayload,
-        UploadPendingPayload,
+        ConversionCompletedPayload,
         RecoveredStalePayload,
         SourceEnrichedPayload,
+        RequeuedPayload,
+        TimedOutPayload,
     ],
     PydField(discriminator="kind"),
 ]
@@ -245,9 +269,11 @@ _KIND_TO_MODEL: dict[ConversionEventKind, type[BaseModel]] = {
     ConversionEventKind.CANCELLED: CancelledPayload,
     ConversionEventKind.FAILED: FailedPayload,
     ConversionEventKind.SUCCEEDED: SucceededPayload,
-    ConversionEventKind.UPLOAD_PENDING: UploadPendingPayload,
+    ConversionEventKind.CONVERSION_COMPLETED: ConversionCompletedPayload,
     ConversionEventKind.RECOVERED_STALE: RecoveredStalePayload,
     ConversionEventKind.SOURCE_ENRICHED: SourceEnrichedPayload,
+    ConversionEventKind.REQUEUED: RequeuedPayload,
+    ConversionEventKind.TIMED_OUT: TimedOutPayload,
 }
 
 
@@ -350,11 +376,11 @@ def record_transition(
     session: "Session",
     job: "ConversionJob",
     *,
-    to_status: ConversionJobStatus,
+    to_status: WorkUnitStatus,
     kind: ConversionEventKind,
     attempt: int,
     payload: BaseModel,
-    from_status: ConversionJobStatus | None | _UnsetType = _UNSET,
+    from_status: WorkUnitStatus | None | _UnsetType = _UNSET,
 ) -> PipelineEvent:
     """Record a status transition and the matching event row in one transaction.
 
@@ -402,16 +428,19 @@ def record_transition(
         The constructed (and ``session.add``-staged) event row.
 
     Raises:
-        ValueError: If ``payload.kind`` does not match ``kind``.
+        ValueError: If ``payload.kind`` does not match ``kind``, or ``kind`` is
+            ``conversion_completed``, which records no status change.
         ValidationError: If ``payload`` does not satisfy the typed payload
             model for its ``kind``.
     """
+    if kind is ConversionEventKind.CONVERSION_COMPLETED:
+        raise ValueError("conversion_completed records no status change; use record_conversion_completed")
     # Validate the conversion-specific payload through the strict per-kind union
     # BEFORE any mutation, so a bad payload never leaves a half-applied status.
     payload_json = _serialize_payload(payload, kind)
 
     if isinstance(from_status, _UnsetType):
-        prior_status: ConversionJobStatus | None = job.status
+        prior_status: WorkUnitStatus | None = job.status
     else:
         prior_status = from_status
     job.status = to_status
@@ -438,7 +467,7 @@ def record_phase_event(
     job_id: int,
     source_id: UUID,
     attempt: int,
-    current_status: ConversionJobStatus,
+    current_status: WorkUnitStatus,
     phase: str,
     reported_at: datetime.datetime,
 ) -> PipelineEvent | None:
@@ -494,6 +523,28 @@ def record_phase_event(
         )
         return None
 
+    return event
+
+
+def record_conversion_completed(
+    session: "Session",
+    job: "ConversionJob",
+    *,
+    content_hash: str | None,
+) -> PipelineEvent:
+    """Stage the ``conversion_completed`` event for a ``running`` job, with no status change."""
+    payload = ConversionCompletedPayload(content_hash=content_hash)
+    event = PipelineEvent(
+        stage=STAGE,
+        work_unit_ref=_work_unit_ref(job.id),
+        source_id=job.source_id,
+        attempt=job.attempts,
+        kind=ConversionEventKind.CONVERSION_COMPLETED.value,
+        from_status=WorkUnitStatus.RUNNING.value,
+        to_status=WorkUnitStatus.RUNNING.value,
+        payload_json=payload.model_dump_json(),
+    )
+    session.add(event)
     return event
 
 

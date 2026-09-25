@@ -14,14 +14,16 @@ import datetime as dt
 import pytest
 from sqlmodel import Session, select
 
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.events import events_for_job
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.job_actions import (
     DELETABLE_STATUSES,
-    apply_job_cancel,
     apply_job_delete,
-    apply_job_retry,
 )
+from aizk.conversion.stage import cancel_conversion_job, retry_conversion_job
+from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.pipeline.repository import IneligibleTransitionError
 from tests.conversion._helpers import make_job, make_source
 
 
@@ -55,9 +57,9 @@ def test_deletable_statuses_are_the_terminal_non_active_set() -> None:
     assert (
         frozenset(
             {
-                ConversionJobStatus.FAILED_RETRYABLE,
-                ConversionJobStatus.FAILED_PERM,
-                ConversionJobStatus.CANCELLED,
+                WorkUnitStatus.FAILED,
+                WorkUnitStatus.CANCELLED,
+                WorkUnitStatus.TIMED_OUT,
             }
         )
         == DELETABLE_STATUSES
@@ -71,7 +73,7 @@ def test_apply_job_delete_removes_the_job_and_its_output(db_session: Session) ->
         db_session,
         source_id=source.source_id,
         idempotency_key="d" * 64,
-        status=ConversionJobStatus.FAILED_PERM,
+        status=WorkUnitStatus.FAILED,
     )
     _make_output(db_session, job_id=job.id, source_id=source.source_id)
     job_id = job.id
@@ -90,7 +92,7 @@ def test_apply_job_delete_rejects_a_non_terminal_job(db_session: Session) -> Non
         db_session,
         source_id=source.source_id,
         idempotency_key="r" * 64,
-        status=ConversionJobStatus.RUNNING,
+        status=WorkUnitStatus.RUNNING,
     )
 
     with pytest.raises(ValueError, match="job_not_deletable"):
@@ -98,60 +100,100 @@ def test_apply_job_delete_rejects_a_non_terminal_job(db_session: Session) -> Non
 
     db_session.refresh(job)
     assert db_session.get(ConversionJob, job.id) is not None
-    assert job.status is ConversionJobStatus.RUNNING
+    assert job.status is WorkUnitStatus.RUNNING
 
 
-def test_apply_job_retry_requeues_and_increments_attempt(db_session: Session) -> None:
-    """Retry re-queues a failed job, increments the attempt, and clears the error."""
+def test_retry_requeues_and_keeps_the_attempt_count(db_session: Session) -> None:
+    """Retry re-queues a failed job, keeps the attempt, clears every error field, and records ``requeued``."""
     source = make_source(db_session, "bm_retry")
     job = make_job(
         db_session,
         source_id=source.source_id,
         idempotency_key="y" * 64,
-        status=ConversionJobStatus.FAILED_RETRYABLE,
+        status=WorkUnitStatus.FAILED,
         attempts=1,
+        earliest_next_attempt_at=_utcnow(),
     )
+    job.error_code = "fetch_failed"
+    job.error_message = "upstream returned 503"
+    job.error_detail = "traceback"
+    job.last_error_at = _utcnow()
+    db_session.commit()
 
-    apply_job_retry(db_session, job, _utcnow(), submitted_by="self")
+    retry_conversion_job(db_session, job, principal="self")
     db_session.commit()
     db_session.refresh(job)
 
-    assert job.status is ConversionJobStatus.QUEUED
-    assert job.attempts == 2
-    assert job.error_code is None
+    assert job.status is WorkUnitStatus.QUEUED
+    assert job.attempts == 1
+    assert (job.error_code, job.error_message, job.error_detail, job.last_error_at) == (None, None, None, None)
     assert job.earliest_next_attempt_at is None
+    last = events_for_job(db_session, job.id)[-1]
+    assert (last.kind, last.from_status, last.to_status) == ("requeued", "failed", "queued")
+    assert '"submitted_by":"self"' in last.payload_json
 
 
-def test_apply_job_cancel_terminates_an_active_job(db_session: Session) -> None:
+def test_cancel_terminates_an_active_job(db_session: Session) -> None:
     """Cancel writes a terminal ``CANCELLED`` status for a queued job."""
     source = make_source(db_session, "bm_cancel")
     job = make_job(
         db_session,
         source_id=source.source_id,
         idempotency_key="c" * 64,
-        status=ConversionJobStatus.QUEUED,
+        status=WorkUnitStatus.QUEUED,
     )
 
-    apply_job_cancel(db_session, job, _utcnow(), cancelled_by="self")
+    cancel_conversion_job(db_session, job, principal="self")
     db_session.commit()
     db_session.refresh(job)
 
-    assert job.status is ConversionJobStatus.CANCELLED
+    assert job.status is WorkUnitStatus.CANCELLED
     assert job.finished_at is not None
 
 
-def test_apply_job_cancel_rejects_a_succeeded_job(db_session: Session) -> None:
+def test_cancel_rejects_a_succeeded_job(db_session: Session) -> None:
     """A succeeded job is not cancellable; the helper raises without mutating."""
     source = make_source(db_session, "bm_cancel_done")
     job = make_job(
         db_session,
         source_id=source.source_id,
         idempotency_key="s" * 64,
-        status=ConversionJobStatus.SUCCEEDED,
+        status=WorkUnitStatus.SUCCEEDED,
     )
 
-    with pytest.raises(ValueError, match="job_not_cancellable"):
-        apply_job_cancel(db_session, job, _utcnow(), cancelled_by="self")
+    with pytest.raises(IneligibleTransitionError) as exc_info:
+        cancel_conversion_job(db_session, job, principal="self")
+    assert exc_info.value.code == "job_not_cancellable"
 
     db_session.refresh(job)
-    assert job.status is ConversionJobStatus.SUCCEEDED
+    assert job.status is WorkUnitStatus.SUCCEEDED
+
+
+def test_cancel_refuses_a_running_job_in_its_upload_phase(db_session: Session) -> None:
+    """A running job in its upload phase is not cancellable; one converting is, and its phase clears."""
+    source = make_source(db_session, "bm_cancel_phase")
+    uploading = make_job(
+        db_session,
+        source_id=source.source_id,
+        idempotency_key="u" * 64,
+        status=WorkUnitStatus.RUNNING,
+        phase="upload",
+    )
+    converting = make_job(
+        db_session,
+        source_id=source.source_id,
+        idempotency_key="v" * 64,
+        status=WorkUnitStatus.RUNNING,
+        phase="convert",
+    )
+
+    with pytest.raises(IneligibleTransitionError) as exc_info:
+        cancel_conversion_job(db_session, uploading, principal="self")
+    assert exc_info.value.code == "job_not_cancellable"
+    cancel_conversion_job(db_session, converting, principal="self")
+    db_session.commit()
+
+    db_session.refresh(uploading)
+    db_session.refresh(converting)
+    assert (uploading.status, uploading.phase) == (WorkUnitStatus.RUNNING, "upload")
+    assert (converting.status, converting.phase) == (WorkUnitStatus.CANCELLED, None)

@@ -24,7 +24,7 @@ from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.run import PipelineRun
 
 _MIGRATIONS_DIR = Path(importlib.util.find_spec("aizk.db.migrations").origin).resolve().parent
-_BASELINE_MIGRATION = _MIGRATIONS_DIR / "versions" / "fc430997788f_baseline.py"
+_BASELINE_MIGRATION = _MIGRATIONS_DIR / "versions" / "a62f1bf47735_baseline.py"
 
 
 def _alembic_cfg(database_url: str) -> Config:

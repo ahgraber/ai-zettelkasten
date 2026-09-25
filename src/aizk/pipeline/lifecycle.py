@@ -2,10 +2,7 @@
 
 This module defines the stage-agnostic state machine the runner reasons about
 uniformly across stages. A unit is queued, then running, then reaches exactly
-one terminal outcome — succeeded, failed, cancelled, or timed out. Each stage's
-own status enum maps onto this generic lifecycle via
-``StageHandler.map_result``; the runner never needs to know a stage's
-private statuses.
+one terminal outcome — succeeded, failed, cancelled, or timed out.
 
 :class:`WorkUnitColumns` is the shared declaration of the lifecycle columns a
 stage's work-unit table carries; each stage keeps its own table and adds its
@@ -17,11 +14,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 import datetime
 from enum import Enum
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import DateTime, Enum as SAEnum, Text, func
 from sqlmodel import Field, SQLModel
 
 from aizk.utilities.clock import utcnow
+
+if TYPE_CHECKING:
+    from sqlalchemy import ColumnElement
 
 #: Maximum work-units one bulk action may target, on any operator surface.
 #: Bounds the write transaction a single action opens. Stated once so the JSON
@@ -65,6 +66,22 @@ class RetryClass(str, Enum):
 def is_terminal(status: WorkUnitStatus) -> bool:
     """Return ``True`` when ``status`` is a terminal lifecycle outcome."""
     return status in TERMINAL_STATUSES
+
+
+def derive_retry_class(
+    status: WorkUnitStatus, earliest_next_attempt_at: datetime.datetime | None
+) -> RetryClass | None:
+    """Return ``retryable`` for a ``failed`` unit with a retry wait, ``permanent`` without one, else ``None``."""
+    if status != WorkUnitStatus.FAILED:
+        return None
+    return RetryClass.RETRYABLE if earliest_next_attempt_at is not None else RetryClass.PERMANENT
+
+
+def retry_class_filter(model: Any, retry_class: RetryClass) -> ColumnElement[bool]:
+    """Return the SQL condition selecting ``model``'s ``failed`` units of ``retry_class``."""
+    wait = model.earliest_next_attempt_at
+    has_wait = wait.is_not(None) if retry_class is RetryClass.RETRYABLE else wait.is_(None)
+    return (model.status == WorkUnitStatus.FAILED) & has_wait
 
 
 #: The error code of a unit the runner terminated because its drain timeout

@@ -334,6 +334,43 @@ def test_execute_honors_a_durable_cancel_committed_mid_run(tmp_path: Path) -> No
         assert session.exec(select(PipelineRun)).all() == []
 
 
+def test_runner_counts_no_success_for_a_unit_cancelled_mid_run(tmp_path: Path) -> None:
+    """A cancel another session commits while the unit runs ends it cancelled, counted as a skipped finalize."""
+    engine = _make_engine(tmp_path)
+    with Session(engine) as session:
+        job, _created = enqueue_document(
+            session,
+            conversion_output_id=_OUTPUT_ID,
+            source_id=_AIZK_UUID,
+            queue_max_depth=0,
+            origin="backfill",
+            principal="test",
+        )
+        session.commit()
+        job_id = job.id
+
+    class _CancellingClient(StubLLMClient):
+        def generate(self, prompt: str) -> str:
+            with Session(engine) as session:
+                job = session.get(ContextualizationJob, job_id)
+                if job.status is WorkUnitStatus.RUNNING:
+                    job.status = WorkUnitStatus.CANCELLED
+                    session.add(job)
+                    session.commit()
+            return super().generate(prompt)
+
+    runner = _make_runner(engine, _CancellingClient())
+    with no_thread_leaks(action="raise"):
+        runner.run_until_idle()
+
+    with Session(engine) as session:
+        assert session.get(ContextualizationJob, job_id).status is WorkUnitStatus.CANCELLED
+    counters = runner.metrics.counters
+    assert "pipeline.work_unit.succeeded" not in counters
+    assert counters.get("pipeline.work_unit.finalize_skipped") == 1
+    assert runner.metrics.counter_tags["pipeline.work_unit.finalize_skipped"]["outcome"] == "succeeded"
+
+
 def test_finalize_bridge_survives_a_rolled_back_retry(tmp_path: Path) -> None:
     """A finalize that fails (rolls back) does not strip the execute->finalize bridge.
 

@@ -16,7 +16,7 @@ import pytest
 from sqlmodel import Session
 
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.egress.bookmark_utils import BookmarkContentError
 from aizk.conversion.handler import ConversionStageHandler
@@ -25,6 +25,7 @@ from aizk.conversion.processing.errors import ReportedChildError, SubprocessMeta
 from aizk.conversion.settings import ConversionConfig
 from aizk.conversion.storage.s3_client import S3Error, S3UploadError
 from aizk.conversion.wiring.subprocess import _report_status
+from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.storage.settings import ObjectStorageSettings
 
 
@@ -153,7 +154,7 @@ def job(db_session: Session, bookmark: Source) -> ConversionJob:
         source_id=bookmark.source_id,
         owner_id="self",
         title=bookmark.title,
-        status=ConversionJobStatus.RUNNING,
+        status=WorkUnitStatus.RUNNING,
         idempotency_key="test-traceback-key",
         attempts=1,
     )
@@ -275,11 +276,11 @@ def test_finalize_stores_none_detail_when_no_traceback(
 # ---------------------------------------------------------------------------
 # finalize — error.retryable → status mapping (via map_result + finalize)
 #
-# Pins the contract that drives retry behavior: a regression that flips
-# FAILED_RETRYABLE ↔ FAILED_PERM for any error class would silently break
+# Pins the contract that drives retry behavior: a regression that flips the
+# retryable ↔ permanent FAILED class for any error class would silently break
 # the worker's retry loop or eat permanent failures into infinite retries.
 # ``ConversionCancelledError`` is intentionally absent here — under the runner
-# adapter cancellation maps to the CANCELLED lifecycle (not FAILED_PERM); that
+# adapter cancellation maps to the CANCELLED lifecycle (not FAILED); that
 # path is covered by ``test_handler.py``'s map_result + finalize tests.
 # ---------------------------------------------------------------------------
 
@@ -287,77 +288,77 @@ def test_finalize_stores_none_detail_when_no_traceback(
 @pytest.mark.parametrize(
     ("error_factory", "expected_status", "expects_finished_at"),
     [
-        # Retryable errors → FAILED_RETRYABLE, finished_at stays None.
+        # Retryable errors → FAILED with a retry wait, finished_at stays None.
         pytest.param(
             lambda: errors_mod.ConversionSubprocessError("subprocess died"),
-            ConversionJobStatus.FAILED_RETRYABLE,
+            WorkUnitStatus.FAILED,
             False,
             id="ConversionSubprocessError-retryable",
         ),
         pytest.param(
             lambda: errors_mod.PreflightError("preflight failed"),
-            ConversionJobStatus.FAILED_RETRYABLE,
+            WorkUnitStatus.FAILED,
             False,
             id="PreflightError-retryable",
         ),
         pytest.param(
             lambda: errors_mod.ConversionTimeoutError("timed out", phase="converting"),
-            ConversionJobStatus.FAILED_RETRYABLE,
-            False,
-            id="ConversionTimeoutError-retryable",
+            WorkUnitStatus.TIMED_OUT,
+            True,
+            id="ConversionTimeoutError-timed-out",
         ),
         pytest.param(
             lambda: fetcher.FetchError("fetch failed"),
-            ConversionJobStatus.FAILED_RETRYABLE,
+            WorkUnitStatus.FAILED,
             False,
             id="FetchError-retryable",
         ),
         pytest.param(
             lambda: S3Error("bucket unreachable", "s3_error"),
-            ConversionJobStatus.FAILED_RETRYABLE,
+            WorkUnitStatus.FAILED,
             False,
             id="S3Error-retryable",
         ),
         pytest.param(
             lambda: ReportedChildError("transient", "transient_code"),
-            ConversionJobStatus.FAILED_RETRYABLE,
+            WorkUnitStatus.FAILED,
             False,
             id="ReportedChildError-default-retryable",
         ),
-        # Permanent errors → FAILED_PERM, finished_at set.
+        # Permanent errors → FAILED with no retry wait, finished_at set.
         pytest.param(
             lambda: errors_mod.JobDataIntegrityError("bad job"),
-            ConversionJobStatus.FAILED_PERM,
+            WorkUnitStatus.FAILED,
             True,
             id="JobDataIntegrityError-permanent",
         ),
         pytest.param(
             lambda: errors_mod.ConversionArtifactsMissingError("no artifacts"),
-            ConversionJobStatus.FAILED_PERM,
+            WorkUnitStatus.FAILED,
             True,
             id="ConversionArtifactsMissingError-permanent",
         ),
         pytest.param(
             lambda: BookmarkContentError("missing content"),
-            ConversionJobStatus.FAILED_PERM,
+            WorkUnitStatus.FAILED,
             True,
             id="BookmarkContentError-permanent",
         ),
         pytest.param(
             lambda: converter.DoclingEmptyOutputError(),
-            ConversionJobStatus.FAILED_PERM,
+            WorkUnitStatus.FAILED,
             True,
             id="DoclingEmptyOutputError-permanent",
         ),
         pytest.param(
             lambda: ReportedChildError("permanent child", "docling_empty_output", retryable=False),
-            ConversionJobStatus.FAILED_PERM,
+            WorkUnitStatus.FAILED,
             True,
             id="ReportedChildError-marked-permanent",
         ),
         pytest.param(
             lambda: SubprocessMetadataInvalid("malformed metadata.json"),
-            ConversionJobStatus.FAILED_PERM,
+            WorkUnitStatus.FAILED,
             True,
             id="SubprocessMetadataInvalid-permanent",
         ),
@@ -368,7 +369,7 @@ def test_finalize_maps_retryable_to_status(
     job: ConversionJob,
     config: ConversionConfig,
     error_factory,
-    expected_status: ConversionJobStatus,
+    expected_status: WorkUnitStatus,
     expects_finished_at: bool,
 ) -> None:
     error = error_factory()
@@ -413,7 +414,8 @@ def test_finalize_handles_plain_exception_without_retryable_attr(
     updated = db_session.get(ConversionJob, job.id)
     assert updated is not None
     # Default policy: when in doubt, retry.
-    assert updated.status == ConversionJobStatus.FAILED_RETRYABLE
+    assert updated.status == WorkUnitStatus.FAILED
+    assert updated.earliest_next_attempt_at is not None
     # error_code falls back to the existing default in classify_job_error.
     assert updated.error_code == "conversion_failed"
 
@@ -423,12 +425,12 @@ def test_finalize_skips_cancelled_job(
     bookmark: Source,
     config: ConversionConfig,
 ) -> None:
-    """A CANCELLED job must not be re-mapped to FAILED_* by finalize."""
+    """A CANCELLED job must not be re-mapped to FAILED by finalize."""
     j = ConversionJob(
         source_id=bookmark.source_id,
         owner_id="self",
         title=bookmark.title,
-        status=ConversionJobStatus.CANCELLED,
+        status=WorkUnitStatus.CANCELLED,
         idempotency_key="cancelled-key",
         attempts=1,
     )
@@ -441,7 +443,7 @@ def test_finalize_skips_cancelled_job(
     db_session.expire_all()
     updated = db_session.get(ConversionJob, j.id)
     assert updated is not None
-    assert updated.status == ConversionJobStatus.CANCELLED
+    assert updated.status == WorkUnitStatus.CANCELLED
 
 
 # ---------------------------------------------------------------------------
@@ -455,7 +457,7 @@ def test_error_detail_column_exists_after_migration(db_session: Session, bookmar
         source_id=bookmark.source_id,
         owner_id="self",
         title="Migration Test",
-        status=ConversionJobStatus.FAILED_PERM,
+        status=WorkUnitStatus.FAILED,
         idempotency_key="migration-test-key",
         error_detail="Traceback ...",
     )
@@ -518,7 +520,7 @@ def test_load_subprocess_metadata_raises_on_invalid(tmp_path, metadata):
 
 
 # ---------------------------------------------------------------------------
-# Integrated — _prepare_upload failure → finalize → FAILED_PERM
+# Integrated — _prepare_upload failure → finalize → permanent FAILED
 # ---------------------------------------------------------------------------
 
 
@@ -529,8 +531,8 @@ def test_prepare_upload_invalid_metadata_flows_to_failed_perm(
     config: ConversionConfig,
 ) -> None:
     """SubprocessMetadataInvalid from _prepare_upload flows through the adapter's
-    finalize to FAILED_PERM — ``execute`` raises it, ``map_result`` classifies it
-    PERMANENT, and ``finalize`` writes the terminal FAILED_PERM status."""
+    finalize to a permanent FAILED — ``execute`` raises it, ``map_result`` classifies it
+    PERMANENT, and ``finalize`` writes the terminal FAILED status."""
 
     from aizk.conversion.processing.uploader import _prepare_upload
 
@@ -546,6 +548,6 @@ def test_prepare_upload_invalid_metadata_flows_to_failed_perm(
     db_session.expire_all()
     updated = db_session.get(ConversionJob, job.id)
     assert updated is not None
-    assert updated.status == ConversionJobStatus.FAILED_PERM
+    assert updated.status == WorkUnitStatus.FAILED
     assert updated.error_code == "subprocess_metadata_invalid"
     assert updated.finished_at is not None

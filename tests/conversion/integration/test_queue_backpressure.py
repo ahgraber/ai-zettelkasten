@@ -10,8 +10,11 @@ from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.source import Source as Bookmark
+from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.utilities.clock import utcnow
+from tests.conversion._helpers import make_job
 
 
 def _create_source(session, karakeep_id: str) -> Bookmark:
@@ -40,7 +43,7 @@ def _create_queued_job(session, *, source_id: UUID, idempotency_key: str) -> Con
         owner_id="self",
         title="Test",
         payload_version=1,
-        status=ConversionJobStatus.QUEUED,
+        status=WorkUnitStatus.QUEUED,
         attempts=0,
         idempotency_key=idempotency_key,
     )
@@ -160,3 +163,68 @@ def test_retry_after_header_present_on_503(db_session, monkeypatch) -> None:
 
     assert response.status_code == 503
     assert response.headers["Retry-After"] == "45"
+
+
+def test_failed_jobs_awaiting_retry_count_toward_capacity(db_session, monkeypatch) -> None:
+    """Queued jobs plus failed jobs with a retry wait that reach the limit refuse a new submission with 503."""
+    monkeypatch.setenv("AIZK_QUEUE_MAX_DEPTH", "3")
+    bookmark = _create_source(db_session, "bp-retryable")
+    _fill_queue(db_session, bookmark, 1)
+    for key in ("a", "b"):
+        make_job(
+            db_session,
+            source_id=bookmark.source_id,
+            idempotency_key=key * 64,
+            status=WorkUnitStatus.FAILED,
+            earliest_next_attempt_at=utcnow(),
+        )
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/v1/jobs", json={"source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bp-retryable-new"}}
+        )
+
+    assert response.status_code == 503
+
+
+def test_permanently_failed_jobs_do_not_count_toward_capacity(db_session, monkeypatch) -> None:
+    """Failed jobs with no retry wait leave the queue below capacity, so a submission is accepted."""
+    monkeypatch.setenv("AIZK_QUEUE_MAX_DEPTH", "2")
+    bookmark = _create_source(db_session, "bp-permanent")
+    for key in ("a", "b"):
+        make_job(db_session, source_id=bookmark.source_id, idempotency_key=key * 64, status=WorkUnitStatus.FAILED)
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/v1/jobs", json={"source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bp-permanent-new"}}
+        )
+
+    assert response.status_code == 201
+
+
+def test_a_zero_queue_depth_closes_the_queue_to_new_jobs_only(db_session, monkeypatch) -> None:
+    """With a limit of 0, an empty queue refuses a new submission with 503 and still returns a duplicate with 200."""
+    monkeypatch.setenv("AIZK_QUEUE_MAX_DEPTH", "0")
+    bookmark = _create_source(db_session, "bp-closed")
+    existing = make_job(
+        db_session,
+        source_id=bookmark.source_id,
+        idempotency_key="closed-key",
+        status=WorkUnitStatus.SUCCEEDED,
+    )
+
+    with TestClient(create_app()) as client:
+        new = client.post(
+            "/v1/jobs", json={"source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bp-closed-new"}}
+        )
+        duplicate = client.post(
+            "/v1/jobs",
+            json={
+                "source_ref": {"kind": "karakeep_bookmark", "bookmark_id": "bp-closed"},
+                "idempotency_key": "closed-key",
+            },
+        )
+
+    assert new.status_code == 503
+    assert duplicate.status_code == 200
+    assert duplicate.json()["id"] == existing.id

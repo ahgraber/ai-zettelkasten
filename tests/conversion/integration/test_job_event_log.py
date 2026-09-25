@@ -12,7 +12,7 @@ After the conversion→runner cutover the status mutations are driven through
 the runner adapter (:class:`~aizk.conversion.handler.ConversionStageHandler`):
 ``claim_next`` emits ``claimed``; ``finalize`` writes the terminal
 ``failed``/``cancelled`` transitions; ``recover_stale`` emits ``recovered_stale``; the
-success ``upload_pending``/``succeeded`` events are written inside ``execute`` /
+success ``conversion_completed``/``succeeded`` events are written inside ``execute`` /
 ``_execute_upload``. The KEPT helpers ``_write_source_enrichment`` and
 ``record_phase_event`` are exercised directly.
 """
@@ -21,19 +21,24 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import threading
 from unittest.mock import Mock
 from uuid import uuid4
 
+from pyleak import no_thread_leaks
 from sqlmodel import Session, select
 
+from fastapi.testclient import TestClient
+
 from aizk.conversion import handler as repository_mod
+from aizk.conversion.api.main import create_app
 from aizk.conversion.core.errors import EgressPolicyError
 from aizk.conversion.datamodel.events import (
     ConversionEventKind,
     events_for_job,
     parse_payload_lenient,
 )
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.processing.errors import classify_job_error
@@ -41,9 +46,12 @@ from aizk.conversion.processing.source import _write_source_enrichment
 from aizk.conversion.processing.types import SourceMetaFields, SubprocessMetadata, SupervisionResult
 from aizk.conversion.settings import ConversionConfig
 from aizk.pipeline.events import PipelineEvent
-from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
-from tests.conversion._helpers import make_job, make_source
+from aizk.pipeline.lifecycle import WORKER_DRAIN_TERMINATED, RetryClass, TerminalOutcome, WorkUnitStatus
+from aizk.pipeline.runner import StageRunner
+from aizk.pipeline.shutdown import ShutdownController
+from tests.conversion._helpers import conversion_runner, convert_inline, make_job, make_queued_conversion, make_source
 from tests.fakes.runtime import fake_worker_runtime
+from tests.fakes.storage import install_spy_s3
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -109,7 +117,7 @@ def _make_running_job(session: Session, source: Source, *, attempts: int = 1) ->
         session,
         source_id=source.source_id,
         idempotency_key=uuid4().hex,
-        status=ConversionJobStatus.RUNNING,
+        status=WorkUnitStatus.RUNNING,
         attempts=attempts,
     )
     job.started_at = dt.datetime.now(dt.timezone.utc)
@@ -125,7 +133,7 @@ def _make_queued_job(session: Session, source: Source) -> ConversionJob:
         session,
         source_id=source.source_id,
         idempotency_key=uuid4().hex,
-        status=ConversionJobStatus.QUEUED,
+        status=WorkUnitStatus.QUEUED,
     )
     job.source_ref = json.dumps({"kind": "karakeep_bookmark", "bookmark_id": source.karakeep_id})
     session.add(job)
@@ -172,14 +180,15 @@ def test_stale_recovery_uses_recovered_stale_kind(monkeypatch, db_session: Sessi
     assert recovered == [job.id]
     db_session.expire_all()
     refreshed = db_session.get(ConversionJob, job.id)
-    assert refreshed.status == ConversionJobStatus.FAILED_RETRYABLE
+    assert refreshed.status == WorkUnitStatus.FAILED
+    assert refreshed.earliest_next_attempt_at is not None
 
     events = _events_for_job(db_session, job.id)
     assert len(events) == 1
     evt = events[0]
     assert evt.kind == ConversionEventKind.RECOVERED_STALE
-    assert evt.from_status == ConversionJobStatus.RUNNING
-    assert evt.to_status == ConversionJobStatus.FAILED_RETRYABLE
+    assert evt.from_status == WorkUnitStatus.RUNNING
+    assert evt.to_status == WorkUnitStatus.FAILED
     assert evt.attempt == 1
 
     payload = parse_payload_lenient(evt.payload_json)
@@ -194,7 +203,7 @@ def test_stale_recovery_uses_recovered_stale_kind(monkeypatch, db_session: Sessi
 def test_permanent_failure_arm_emits_failed_event_with_non_retryable_indicator(
     monkeypatch, db_session: Session
 ) -> None:
-    """R1: a non-retryable error transitions to FAILED_PERM with retryable=false."""
+    """R1: a non-retryable error transitions to a permanent FAILED with retryable=false."""
     source = make_source(db_session, "bm_permfail", url="https://example.com", title="Perm Fail")
     job = _make_running_job(db_session, source, attempts=1)
 
@@ -207,14 +216,15 @@ def test_permanent_failure_arm_emits_failed_event_with_non_retryable_indicator(
 
     db_session.expire_all()
     refreshed = db_session.get(ConversionJob, job.id)
-    assert refreshed.status == ConversionJobStatus.FAILED_PERM
+    assert refreshed.status == WorkUnitStatus.FAILED
+    assert refreshed.earliest_next_attempt_at is None
 
     events = _events_for_job(db_session, job.id)
     failed_events = [e for e in events if e.kind == ConversionEventKind.FAILED]
     assert len(failed_events) == 1
     evt = failed_events[-1]
-    assert evt.from_status == ConversionJobStatus.RUNNING
-    assert evt.to_status == ConversionJobStatus.FAILED_PERM
+    assert evt.from_status == WorkUnitStatus.RUNNING
+    assert evt.to_status == WorkUnitStatus.FAILED
     assert evt.attempt == 1
 
     payload = parse_payload_lenient(evt.payload_json)
@@ -263,15 +273,15 @@ def test_claim_emits_claimed_event(monkeypatch, db_session: Session) -> None:
 
     db_session.expire_all()
     refreshed = db_session.get(ConversionJob, job.id)
-    assert refreshed.status == ConversionJobStatus.RUNNING
+    assert refreshed.status == WorkUnitStatus.RUNNING
     assert refreshed.attempts == 1
 
     events = _events_for_job(db_session, job.id)
     assert len(events) == 1
     evt = events[0]
     assert evt.kind == ConversionEventKind.CLAIMED
-    assert evt.from_status == ConversionJobStatus.QUEUED
-    assert evt.to_status == ConversionJobStatus.RUNNING
+    assert evt.from_status == WorkUnitStatus.QUEUED
+    assert evt.to_status == WorkUnitStatus.RUNNING
     assert evt.attempt == 1  # post-increment
 
 
@@ -284,7 +294,7 @@ def test_transition_rollback_leaves_job_in_prior_status(monkeypatch, db_session:
         db_session,
         source_id=source.source_id,
         idempotency_key=uuid4().hex,
-        status=ConversionJobStatus.QUEUED,
+        status=WorkUnitStatus.QUEUED,
     )
     job_id = job.id
 
@@ -295,7 +305,7 @@ def test_transition_rollback_leaves_job_in_prior_status(monkeypatch, db_session:
         record_transition(
             txn_session,
             txn_job,
-            to_status=ConversionJobStatus.RUNNING,
+            to_status=WorkUnitStatus.RUNNING,
             kind=ConversionEventKind.CLAIMED,
             attempt=1,
             payload=ClaimedPayload(claimed_at=dt.datetime.now(dt.timezone.utc)),
@@ -304,7 +314,7 @@ def test_transition_rollback_leaves_job_in_prior_status(monkeypatch, db_session:
 
     db_session.expire_all()
     refreshed = db_session.get(ConversionJob, job_id)
-    assert refreshed.status == ConversionJobStatus.QUEUED, "Rollback must leave status unchanged"
+    assert refreshed.status == WorkUnitStatus.QUEUED, "Rollback must leave status unchanged"
     assert _events_for_job(db_session, job_id) == [], "Rollback must leave no event row"
 
 
@@ -403,7 +413,7 @@ def test_direct_source_mutation_emits_no_event(db_session: Session) -> None:
 
 
 def test_successful_job_emits_full_event_sequence(monkeypatch, db_session: Session) -> None:
-    """R1+R2: end-to-end happy path emits claimed → phase × 2 → upload_pending → succeeded."""
+    """R1+R2: end-to-end happy path emits claimed → phase × 2 → conversion_completed → succeeded."""
     source = make_source(
         db_session, "bm_full_success", url="https://example.com", title="Full Success", content_type="html"
     )
@@ -449,7 +459,7 @@ def test_successful_job_emits_full_event_sequence(monkeypatch, db_session: Sessi
         record_transition,
     )
 
-    def _fake_prepare_upload(job_id, workspace, cfg):
+    def _fake_prepare_upload(job_id, workspace, cfg, attempt=None):
         return Mock(markdown_hash_xx64="deadbeefcafef00d", output_id_marker=42)
 
     def _fake_execute_upload(plan, job_id, cfg):
@@ -459,7 +469,7 @@ def test_successful_job_emits_full_event_sequence(monkeypatch, db_session: Sessi
 
         with Session(db_session.get_bind()) as s:
             j = s.get(ConversionJob, job_id)
-            if not j or j.status == ConversionJobStatus.CANCELLED:
+            if not j or j.status == WorkUnitStatus.CANCELLED:
                 return
             output = ConversionOutput(
                 job_id=job_id,
@@ -482,7 +492,7 @@ def test_successful_job_emits_full_event_sequence(monkeypatch, db_session: Sessi
             record_transition(
                 s,
                 j,
-                to_status=ConversionJobStatus.SUCCEEDED,
+                to_status=WorkUnitStatus.SUCCEEDED,
                 kind=_Kind.SUCCEEDED,
                 attempt=j.attempts,
                 payload=SucceededPayload(output_id=output.id, content_hash="deadbeefcafef00d"),
@@ -497,16 +507,16 @@ def test_successful_job_emits_full_event_sequence(monkeypatch, db_session: Sessi
 
     db_session.expire_all()
     refreshed = db_session.get(ConversionJob, job.id)
-    assert refreshed.status == ConversionJobStatus.SUCCEEDED
+    assert refreshed.status == WorkUnitStatus.SUCCEEDED
 
     events = _events_for_job(db_session, job.id)
     kinds_in_order = [e.kind for e in events]
 
     # claimed, phase, phase, source_enriched (best-effort during enrichment),
-    # upload_pending, succeeded.
+    # conversion_completed, succeeded.
     assert kinds_in_order[0] == ConversionEventKind.CLAIMED
     assert kinds_in_order[-2:] == [
-        ConversionEventKind.UPLOAD_PENDING,
+        ConversionEventKind.CONVERSION_COMPLETED,
         ConversionEventKind.SUCCEEDED,
     ]
     phase_events = [e for e in events if e.kind == ConversionEventKind.PHASE]
@@ -597,7 +607,7 @@ def test_phase_event_with_unrecognized_phase_is_dropped(monkeypatch, db_session:
             job_id=job.id,
             source_id=job.source_id,
             attempt=job.attempts,
-            current_status=ConversionJobStatus.RUNNING,
+            current_status=WorkUnitStatus.RUNNING,
             phase="not_a_real_phase",
             reported_at=dt.datetime.now(dt.timezone.utc),
         )
@@ -666,7 +676,7 @@ def test_phase_event_persistence_failure_does_not_halt_job(monkeypatch, db_sessi
         return _CompletedProcess(), SupervisionResult("converting", None, False, False), None
 
     monkeypatch.setattr(repository_mod, "_spawn_and_supervise", _fake_spawn_and_supervise)
-    monkeypatch.setattr(repository_mod, "_prepare_upload", lambda *a, **k: None)
+    monkeypatch.setattr(repository_mod, "_prepare_upload", lambda *a, **k: object())
     monkeypatch.setattr(repository_mod, "_execute_upload", lambda *a, **k: None)
 
     handler = ConversionStageHandler(config, runtime=fake_worker_runtime())
@@ -675,13 +685,13 @@ def test_phase_event_persistence_failure_does_not_halt_job(monkeypatch, db_sessi
 
     db_session.expire_all()
     refreshed = db_session.get(ConversionJob, job.id)
-    # The job advanced past the phase-wiring code; it reaches at least
-    # UPLOAD_PENDING (the upload stubs are no-ops, so SUCCEEDED is not asserted
+    # The job advanced past the phase-wiring code; it reaches the upload
+    # phase (the upload stubs are no-ops, so SUCCEEDED is not asserted
     # here). What matters for R2 is that the worker did not abort.
-    assert refreshed.status in {
-        ConversionJobStatus.RUNNING,
-        ConversionJobStatus.UPLOAD_PENDING,
-    }, f"Phase-event failure must not corrupt the job projection; got {refreshed.status!r}"
+    assert (refreshed.status, refreshed.phase) == (
+        WorkUnitStatus.RUNNING,
+        "upload",
+    ), f"Phase-event failure must not corrupt the job projection; got {refreshed.status!r}"
 
 
 def test_retryable_failure_preserves_prior_attempt_events(monkeypatch, db_session: Session) -> None:
@@ -710,11 +720,11 @@ def test_retryable_failure_preserves_prior_attempt_events(monkeypatch, db_sessio
 
     db_session.expire_all()
     refreshed = db_session.get(ConversionJob, job.id)
-    assert refreshed.status == ConversionJobStatus.FAILED_RETRYABLE
+    assert refreshed.status == WorkUnitStatus.FAILED
     assert refreshed.attempts == 1
 
     # Simulate the worker re-claiming the job for attempt 2.
-    refreshed.status = ConversionJobStatus.RUNNING
+    refreshed.status = WorkUnitStatus.RUNNING
     refreshed.attempts = 2
     refreshed.started_at = dt.datetime.now(dt.timezone.utc)
     db_session.add(refreshed)
@@ -727,7 +737,7 @@ def test_retryable_failure_preserves_prior_attempt_events(monkeypatch, db_sessio
         record_transition(
             s,
             j,
-            to_status=ConversionJobStatus.SUCCEEDED,
+            to_status=WorkUnitStatus.SUCCEEDED,
             kind=_Kind.SUCCEEDED,
             attempt=j.attempts,
             payload=SucceededPayload(output_id=123, content_hash="cafef00d"),
@@ -742,3 +752,135 @@ def test_retryable_failure_preserves_prior_attempt_events(monkeypatch, db_sessio
     assert len(succeeded_attempt2) == 1, "Attempt-2 succeeded event must coexist"
     # Confirm the attempt-1 event kind is `failed`, not `recovered_stale`.
     assert failed_attempt1[0].kind == _Kind.FAILED
+
+
+def test_a_reclaimed_job_keeps_its_first_attempt_events_and_writes_its_second(
+    monkeypatch, db_session: Session
+) -> None:
+    """A crash on attempt 1 and a success on attempt 2 leave both attempts' events, each under its own number."""
+    engine = db_session.get_bind()
+
+    def _crash_first(_job_id: int) -> None:
+        if len(converted) == 1:
+            raise RuntimeError("converter crashed")
+
+    converted = convert_inline(monkeypatch, on_convert=_crash_first)
+    install_spy_s3(monkeypatch)
+    job = make_queued_conversion(db_session, "bm_two_attempts")
+
+    with no_thread_leaks(action="raise"):
+        conversion_runner(engine, ConversionConfig(_env_file=None, retry_base_delay_seconds=0)).run_until_idle()
+
+    events = _events_for_job(db_session, job.id)
+    by_attempt = {attempt: [e.kind for e in events if e.attempt == attempt] for attempt in (1, 2)}
+    assert len(events) == sum(len(kinds) for kinds in by_attempt.values())
+    assert by_attempt[1] == [ConversionEventKind.CLAIMED, ConversionEventKind.FAILED]
+    assert by_attempt[2][0] == ConversionEventKind.CLAIMED
+    assert by_attempt[2][-1] == ConversionEventKind.SUCCEEDED
+
+
+def test_an_operator_cancel_mid_conversion_records_running_to_cancelled(db_session: Session) -> None:
+    """Cancelling a ``running`` job in its convert phase through the API records one ``running → cancelled`` event."""
+    source = make_source(db_session, "bm_cancel_running", url="https://example.com", title="Cancel Running")
+    job = _make_running_job(db_session, source, attempts=1)
+    job.phase = "convert"
+    db_session.add(job)
+    db_session.commit()
+
+    with TestClient(create_app()) as client:
+        response = client.post(f"/v1/jobs/{job.id}/cancel")
+    assert response.status_code == 200, response.json()
+
+    [event] = _events_for_job(db_session, job.id)
+    assert event.kind == ConversionEventKind.CANCELLED
+    assert (event.from_status, event.to_status, event.attempt) == (
+        WorkUnitStatus.RUNNING,
+        WorkUnitStatus.CANCELLED,
+        1,
+    )
+    assert parse_payload_lenient(event.payload_json).cancelled_by == "self"
+
+
+def test_retry_from_timed_out_requeues_and_keeps_the_attempt_count(db_session: Session) -> None:
+    """An operator retry of a ``timed_out`` job returns it to ``queued`` with a ``requeued`` event and its attempts unchanged."""
+    source = make_source(db_session, "bm_retry_timed_out", url="https://example.com", title="Retry Timed Out")
+    job = make_job(
+        db_session,
+        source_id=source.source_id,
+        idempotency_key=uuid4().hex,
+        status=WorkUnitStatus.TIMED_OUT,
+        attempts=2,
+    )
+    job.error_code = "conversion_timeout"
+    job.error_message = "exceeded its runtime"
+    job.finished_at = dt.datetime.now(dt.timezone.utc)
+    job.last_error_at = job.finished_at
+    db_session.add(job)
+    db_session.commit()
+
+    with TestClient(create_app()) as client:
+        response = client.post(f"/v1/jobs/{job.id}/retry")
+    assert response.status_code == 200, response.json()
+
+    db_session.expire_all()
+    retried = db_session.get(ConversionJob, job.id)
+    assert (retried.status, retried.attempts) == (WorkUnitStatus.QUEUED, 2)
+    assert (retried.error_code, retried.finished_at, retried.earliest_next_attempt_at) == (None, None, None)
+    [event] = _events_for_job(db_session, job.id)
+    assert event.kind == ConversionEventKind.REQUEUED
+    assert (event.from_status, event.to_status, event.attempt) == (WorkUnitStatus.TIMED_OUT, WorkUnitStatus.QUEUED, 2)
+    payload = parse_payload_lenient(event.payload_json)
+    assert (payload.requeue_reason, payload.submitted_by) == ("operator_retry", "self")
+
+
+def test_a_drain_terminated_job_is_failed_with_the_drain_error_code(monkeypatch, db_session: Session) -> None:
+    """A job still converting when the drain timeout elapses ends ``failed`` with ``worker_drain_terminated`` and a retry wait."""
+    job = _make_queued_job(db_session, make_source(db_session, "bm_drained", url="https://example.com", title="Drain"))
+    started = threading.Event()
+
+    class _Process:
+        pid = 9996
+        exitcode = None
+
+        def is_alive(self) -> bool:
+            return False
+
+    def _convert_until_terminated(**kwargs):
+        process = _Process()
+        kwargs["on_spawn"](process)
+        started.set()
+        kwargs["terminate_event"].wait(timeout=10.0)
+        return process, SupervisionResult("converting", None, True, False), None
+
+    monkeypatch.setattr(repository_mod, "_spawn_and_supervise", _convert_until_terminated)
+    controller = ShutdownController()
+    forced: list[int] = []
+    runner = StageRunner(
+        ConversionStageHandler(ConversionConfig(_env_file=None), runtime=fake_worker_runtime()),
+        db_session.get_bind(),
+        shutdown=controller,
+        poll_interval=0.01,
+        drain_timeout=0.2,
+        cancel_grace=5.0,
+        force_exit=forced.append,
+    )
+
+    with no_thread_leaks(action="raise"):
+        driver = threading.Thread(target=runner.run)
+        driver.start()
+        assert started.wait(timeout=5.0), "the conversion began"
+        controller.request_shutdown()
+        driver.join(timeout=10.0)
+        assert not driver.is_alive(), "the runner exited"
+
+    assert forced == [1]
+    db_session.expire_all()
+    drained = db_session.get(ConversionJob, job.id)
+    assert (drained.status, drained.error_code, drained.phase) == (
+        WorkUnitStatus.FAILED,
+        WORKER_DRAIN_TERMINATED,
+        None,
+    )
+    assert drained.earliest_next_attempt_at is not None
+    failed = [e for e in _events_for_job(db_session, job.id) if e.kind == ConversionEventKind.FAILED]
+    assert [parse_payload_lenient(e.payload_json).error_code for e in failed] == [WORKER_DRAIN_TERMINATED]

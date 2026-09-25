@@ -49,6 +49,31 @@ def test_legacy_stamped_database_refuses_and_is_unchanged(tmp_path: Path) -> Non
     assert _digest(db_path) == before
 
 
+def test_database_stamped_at_the_retired_baseline_refuses_and_is_unchanged(tmp_path: Path) -> None:
+    """A database stamped at the retired baseline revision ``fc430997788f`` is refused."""
+    db_path = tmp_path / "retired_baseline.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("CREATE TABLE conversion_jobs (id INTEGER PRIMARY KEY, status VARCHAR(16))")
+        conn.execute("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)")
+        conn.execute("INSERT INTO alembic_version (version_num) VALUES ('fc430997788f')")
+        conn.commit()
+    finally:
+        conn.close()
+    url = f"sqlite:///{db_path}"
+
+    before = _digest(db_path)
+
+    with pytest.raises(LegacyDatabaseError) as exc_info:
+        run_migrations(url)
+
+    message = str(exc_info.value)
+    assert "fc430997788f" in message
+    assert "Rebuilding the database" in message
+
+    assert _digest(db_path) == before
+
+
 def test_unstamped_database_with_tables_refuses_and_is_unchanged(tmp_path: Path) -> None:
     """A database with tables but no ``alembic_version`` row is refused."""
     db_path = tmp_path / "unstamped.db"

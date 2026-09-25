@@ -7,8 +7,25 @@ import datetime as dt
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.datamodel.job import ConversionJobStatus
+from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.utilities.clock import utcnow
 from tests.conversion._helpers import make_job, make_source
+
+
+def _seed_retry_class_mix(db_session) -> list[int]:
+    source = make_source(db_session, "bm_retry_class")
+    make_job(db_session, source_id=source.source_id, idempotency_key="q" * 64, status=WorkUnitStatus.QUEUED)
+    make_job(db_session, source_id=source.source_id, idempotency_key="p" * 64, status=WorkUnitStatus.FAILED)
+    return [
+        make_job(
+            db_session,
+            source_id=source.source_id,
+            idempotency_key=key * 64,
+            status=WorkUnitStatus.FAILED,
+            earliest_next_attempt_at=utcnow(),
+        ).id
+        for key in ("a", "b")
+    ]
 
 
 def test_list_empty_returns_zero_total(db_session) -> None:
@@ -41,14 +58,14 @@ def test_list_returns_jobs_ordered_descending_by_created_at(db_session) -> None:
 
 def test_list_filters_by_status(db_session) -> None:
     bookmark = make_source(db_session, "bm_status")
-    make_job(db_session, source_id=bookmark.source_id, idempotency_key="q" * 64, status=ConversionJobStatus.QUEUED)
+    make_job(db_session, source_id=bookmark.source_id, idempotency_key="q" * 64, status=WorkUnitStatus.QUEUED)
     j_succ = make_job(
-        db_session, source_id=bookmark.source_id, idempotency_key="s" * 64, status=ConversionJobStatus.SUCCEEDED
+        db_session, source_id=bookmark.source_id, idempotency_key="s" * 64, status=WorkUnitStatus.SUCCEEDED
     )
 
     app = create_app()
     with TestClient(app) as client:
-        resp = client.get("/v1/jobs", params={"status": "SUCCEEDED"})
+        resp = client.get("/v1/jobs", params={"status": "succeeded"})
 
     assert resp.status_code == 200
     body = resp.json()
@@ -109,3 +126,36 @@ def test_list_rejects_invalid_pagination(db_session) -> None:
     assert resp_neg.status_code == 422
     assert resp_over.status_code == 422
     assert resp_zero.status_code == 422
+
+
+def test_list_filters_by_retry_class(db_session) -> None:
+    """``retry_class=retryable`` returns only the failed jobs with a retry wait, and ``total`` counts only them."""
+    retryable_ids = _seed_retry_class_mix(db_session)
+
+    with TestClient(create_app()) as client:
+        resp = client.get("/v1/jobs", params={"retry_class": "retryable"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 2
+    assert sorted(j["id"] for j in body["jobs"]) == sorted(retryable_ids)
+    assert {j["retry_class"] for j in body["jobs"]} == {"retryable"}
+
+
+def test_list_rejects_a_status_outside_the_lifecycle_vocabulary(db_session) -> None:
+    """A status value that is not one of the six lifecycle values is rejected."""
+    with TestClient(create_app()) as client:
+        resp = client.get("/v1/jobs", params={"status": "FAILED_PERM"})
+
+    assert resp.status_code == 422
+
+
+def test_list_intersects_status_and_retry_class(db_session) -> None:
+    """``status=queued&retry_class=retryable`` is an empty page with ``total: 0``."""
+    _seed_retry_class_mix(db_session)
+
+    with TestClient(create_app()) as client:
+        resp = client.get("/v1/jobs", params={"status": "queued", "retry_class": "retryable"})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"jobs": [], "total": 0, "limit": 50, "offset": 0}

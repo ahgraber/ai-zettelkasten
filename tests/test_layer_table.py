@@ -496,3 +496,30 @@ def test_the_store_imports_a_stage_only_through_a_recorded_compatibility_or_expl
     ]
 
     assert [edge for edge in store_to_stage if RECORDED_EXCEPTIONS.get(edge) not in transitional] == []
+
+
+def test_the_stage_kit_code_names_no_conversion_concept() -> None:
+    """No identifier or string literal in ``aizk.pipeline`` names conversion, its owner column, or its actor field."""
+    named: set[str] = set()
+    for path in (_SRC / _ROOT_PACKAGE / "pipeline").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        docstrings = {
+            id(node.body[0].value)
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.body
+            and isinstance(node.body[0], ast.Expr)
+        }
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                named.add(node.id)
+            elif isinstance(node, ast.Attribute):
+                named.add(node.attr)
+            elif isinstance(node, (ast.arg, ast.keyword)) and node.arg:
+                named.add(node.arg)
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings:
+                named.add(node.value)
+
+    assert {
+        name for name in named if any(term in name.lower() for term in ("conversion", "owner_id", "submitted_by"))
+    } == set()

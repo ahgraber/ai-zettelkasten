@@ -8,14 +8,17 @@ the process advertises its stage role for operator monitoring.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from pyleak import no_thread_leaks
 import pytest
+from sqlmodel import Session
 
+from aizk.pipeline.lifecycle import WorkUnitStatus
 import aizk.pipeline.runner as runner_module
 from aizk.pipeline.runner import InMemoryMetrics, StageRunner
 
-from ._stub_handler import StubStageHandler, create_stub_engine
+from ._stub_handler import StubStageHandler, StubWorkUnit, create_stub_engine, create_stub_file_engine
 
 
 def test_lifecycle_logs_metrics_and_role(caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -65,3 +68,34 @@ def test_lifecycle_logs_metrics_and_role(caplog: pytest.LogCaptureFixture, monke
     record = claim_records[0]
     assert getattr(record, "stage", None) == "observable", "log carries stage trace context"
     assert getattr(record, "work_unit_ref", None) == str(unit_id), "log carries work-unit reference"
+
+
+def test_unwritten_finalize_counts_a_skip_not_the_outcome(tmp_path: Path) -> None:
+    """A finalize that writes nothing counts ``finalize_skipped`` tagged with the outcome, not the outcome."""
+    engine = create_stub_file_engine(str(tmp_path / "stub.db"), create_schema=True)
+    handler = StubStageHandler(engine, stage_name="observable")
+
+    def _cancelled_elsewhere(label: str) -> str:
+        with Session(engine) as session:
+            unit = session.get(StubWorkUnit, int(label))
+            assert unit is not None
+            unit.status = WorkUnitStatus.CANCELLED
+            session.add(unit)
+            session.commit()
+        return "ok"
+
+    unit_id = handler.enqueue("cancelled-elsewhere", behavior=_cancelled_elsewhere)
+    metrics = InMemoryMetrics()
+    runner = StageRunner(handler, engine, metrics=metrics, poll_interval=0.01)
+
+    with no_thread_leaks(action="raise"):
+        runner.run_until_idle()
+
+    assert handler.get_status(unit_id) == WorkUnitStatus.CANCELLED.value
+    assert "pipeline.work_unit.succeeded" not in metrics.counters
+    assert metrics.counters.get("pipeline.work_unit.finalize_skipped") == 1
+    assert metrics.counter_tags["pipeline.work_unit.finalize_skipped"] == {
+        "stage": "observable",
+        "outcome": "succeeded",
+    }
+    assert handler.recorded.cleaned_up == [str(unit_id)]

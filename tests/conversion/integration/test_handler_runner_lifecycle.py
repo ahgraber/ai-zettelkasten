@@ -32,12 +32,13 @@ import pytest
 from sqlmodel import Session
 
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.processing import subproc
 from aizk.conversion.settings import ConversionConfig
 from aizk.conversion.wiring import subprocess as wiring_subprocess
+from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.runner import StageRunner
 from tests.conversion.integration import _subprocess_helpers
 from tests.conversion.integration._zombie_checks import ZombieInspectionError, descendant_zombies
@@ -105,7 +106,7 @@ def _seed_queued_job(session: Session) -> int:
         owner_id="self",
         title="Runner Lifecycle Job",
         idempotency_key="harnesslc" * 4,
-        status=ConversionJobStatus.QUEUED,
+        status=WorkUnitStatus.QUEUED,
         source_ref=ref.model_dump_json(),
     )
     session.add(job)

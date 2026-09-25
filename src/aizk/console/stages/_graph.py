@@ -16,17 +16,17 @@ from typing import TYPE_CHECKING, Any, Protocol
 from sqlalchemy import String, cast, func, or_
 from sqlmodel import select
 
-from fastapi import HTTPException
-
 from aizk.console.descriptors import GRAPH_ROLLUP, StageAction, StageDescriptor
 from aizk.console.monitor import (
     MAX_LIMIT,
     MonitorPage,
     clamp_limit_offset,
+    count_failed_split,
     escape_like_term,
     execute_page,
     format_dt,
     make_page,
+    parse_status_filter,
     resolve_direction,
 )
 from aizk.conversion.datamodel.source import Source
@@ -48,19 +48,6 @@ class RetryTransition(Protocol):
 
     def __call__(self, session: "Session", unit: Any, *, principal: str) -> None:
         """Apply the retry inside the caller's transaction, or raise ``ValueError`` when ineligible."""
-
-
-def _parse_status(value: str | None) -> WorkUnitStatus | None:
-    """Parse a status-filter value into a :class:`WorkUnitStatus`, or 400 on a bad value."""
-    if not value:
-        return None
-    try:
-        return WorkUnitStatus(value)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "invalid_status", "message": "Invalid status filter"},
-        ) from exc
 
 
 def build_graph_descriptor(
@@ -140,7 +127,7 @@ def build_graph_descriptor(
         """Query one filtered/searched/paginated page of this stage's work-units."""
         limit, offset = clamp_limit_offset(limit, offset)
         direction = resolve_direction(direction)
-        status_filter = _parse_status(status)
+        status_filter = parse_status_filter(status)
         normalized_search = search.strip() if search else None
 
         # Outer join so a unit whose source_id has no ``sources`` row still lists
@@ -210,10 +197,7 @@ def build_graph_descriptor(
         A failed graph unit with ``earliest_next_attempt_at`` set is awaiting an
         automatic retry; one with it ``NULL`` has exhausted retries and is permanent.
         """
-        failed = select(func.count()).select_from(model).where(model.status == WorkUnitStatus.FAILED)
-        awaiting = session.exec(failed.where(model.earliest_next_attempt_at.is_not(None))).one()
-        permanent = session.exec(failed.where(model.earliest_next_attempt_at.is_(None))).one()
-        return awaiting, permanent
+        return count_failed_split(session, model)
 
     def detail(session: "Session", unit: Any) -> dict[str, Any]:
         """Compose the runs section: each declared run stage, present or absent."""

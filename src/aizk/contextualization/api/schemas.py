@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from aizk.graph.api.stage_routes import StageJobResponse
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
 #: Upper bound for a persisted integer key. A value beyond it cannot name a row,
@@ -20,7 +21,7 @@ class ContextualizationSubmission(BaseModel):
     conversion_output_id: int = Field(ge=1, le=_MAX_ROWID)
 
 
-class ContextualizationJobResponse(BaseModel):
+class ContextualizationJobResponse(StageJobResponse):
     """Serialized view of one contextualization work-unit."""
 
     model_config = ConfigDict(from_attributes=True)

@@ -30,7 +30,7 @@ def test_fetch_arxiv_pdf_propagates_fetch_too_large_error_unwrapped(monkeypatch)
     """``FetchTooLargeError`` from the egress helper must surface unchanged.
 
     Wrapping it as ``ArxivPdfFetchError`` (retryable=True) would flip the
-    worker's classification from FAILED_PERM to FAILED_RETRYABLE, causing
+    worker's classification from permanent to retryable, causing
     the same oversized PDF to be retried indefinitely.
     """
 

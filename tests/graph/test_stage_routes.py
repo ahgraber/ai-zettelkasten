@@ -80,3 +80,21 @@ def test_a_stage_route_keeps_its_operation_identity(
     assert operation["summary"] == summary
     assert operation["tags"] == tags
     assert list(operation["responses"]) == responses
+
+
+@pytest.mark.parametrize(
+    ("path", "response_schema"),
+    [("/v1/contextualizations", "ContextualizationJobResponse"), ("/v1/extractions", "ExtractionJobResponse")],
+)
+def test_a_stage_exposes_retry_class_as_a_nullable_enum_and_a_list_filter(path: str, response_schema: str) -> None:
+    """The job response carries an optional nullable ``retry_class`` enum and the list route takes it as a filter."""
+    document = create_app().openapi()
+    nullable_retry_class = {"anyOf": [{"$ref": "#/components/schemas/RetryClass"}, {"type": "null"}]}
+
+    schema = document["components"]["schemas"][response_schema]
+    assert schema["properties"]["retry_class"] == nullable_retry_class
+    assert "retry_class" not in schema["required"]
+    assert document["components"]["schemas"]["RetryClass"]["enum"] == ["retryable", "permanent"]
+    parameters = {parameter["name"]: parameter for parameter in document["paths"][path]["get"]["parameters"]}
+    assert list(parameters) == ["status", "retry_class", "limit", "offset"]
+    assert parameters["retry_class"]["schema"]["anyOf"] == nullable_retry_class["anyOf"]

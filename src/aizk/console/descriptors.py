@@ -31,8 +31,6 @@ if TYPE_CHECKING:
 
 
 #: Graph stages persist :class:`WorkUnitStatus`, so their rollup is the identity map.
-#: A stage that persists its own native enum (e.g. conversion) defines its own
-#: rollup in its stage module; the core stays free of any stage's native vocabulary.
 GRAPH_ROLLUP: dict[WorkUnitStatus, WorkUnitStatus] = {status: status for status in WorkUnitStatus}
 
 

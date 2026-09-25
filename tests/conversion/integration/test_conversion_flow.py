@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from aizk.conversion.api.main import create_app
 from aizk.conversion.core.hashing import build_output_config_snapshot, compute_idempotency_key
 from aizk.conversion.core.source_ref import ArxivRef, KarakeepBookmarkRef, compute_source_ref_hash
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.handler import ConversionStageHandler
@@ -22,6 +22,7 @@ from aizk.conversion.settings import ConversionConfig, DoclingConverterConfig
 from aizk.conversion.wiring import subprocess as wiring_subprocess
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
+from aizk.pipeline.lifecycle import WorkUnitStatus
 from tests.fakes.process import InlineContext
 from tests.fakes.runtime import fake_worker_runtime
 from tests.fakes.storage import install_memory_s3
@@ -33,15 +34,15 @@ def _run_conversion(job_id: int, config: ConversionConfig, runtime) -> None:
     The job arrives QUEUED; this function transitions it to RUNNING (as
     ``claim_next`` would in production) before invoking the adapter's
     unit-of-work (:meth:`ConversionStageHandler.execute`) — spawn + supervise
-    + enrich + UPLOAD_PENDING + upload→SUCCEEDED. A cancellation surfaces as
+    + enrich + upload phase + upload→SUCCEEDED. A cancellation surfaces as
     ``ConversionCancelledError``, which is caught here so it is observed as a
     clean short-circuit.
     """
     engine = get_engine(DatabaseConfig().database_url)
     with Session(engine) as session:
         job = session.get(ConversionJob, job_id)
-        if job is not None and job.status == ConversionJobStatus.QUEUED:
-            job.status = ConversionJobStatus.RUNNING
+        if job is not None and job.status == WorkUnitStatus.QUEUED:
+            job.status = WorkUnitStatus.RUNNING
             job.attempts += 1
             session.add(job)
             session.commit()
@@ -101,7 +102,7 @@ def _make_cancelling_subprocess_stub():
         with Session(engine) as session:
             job_record = session.get(ConversionJob, job_id)
             if job_record:
-                job_record.status = ConversionJobStatus.CANCELLED
+                job_record.status = WorkUnitStatus.CANCELLED
                 session.add(job_record)
                 session.commit()
         if status_queue:
@@ -132,7 +133,7 @@ def _create_job_for_ref(db_session, ref, *, idempotency_key: str) -> int:
         owner_id="self",
         title="Integration Job",
         payload_version=1,
-        status=ConversionJobStatus.QUEUED,
+        status=WorkUnitStatus.QUEUED,
         attempts=0,
         idempotency_key=idempotency_key,
         source_ref=ref.model_dump_json(),
@@ -156,7 +157,7 @@ def _process_and_get_markdown(db_session, monkeypatch, *, ref, idempotency_key: 
     with Session(engine) as session:
         output = session.exec(select(ConversionOutput).where(ConversionOutput.job_id == job_id)).one()
         job_record = session.get(ConversionJob, job_id)
-        assert job_record.status == ConversionJobStatus.SUCCEEDED
+        assert job_record.status == WorkUnitStatus.SUCCEEDED
         return storage[output.markdown_key].decode("utf-8")
 
 
@@ -181,7 +182,7 @@ def test_conversion_flow_end_to_end(monkeypatch):
 
         job_response = client.get(f"/v1/jobs/{job_id}")
         assert job_response.status_code == 200
-        assert job_response.json()["status"] == "SUCCEEDED"
+        assert job_response.json()["status"] == "succeeded"
 
 
 def test_conversion_flow_cancelled_job_skips_upload(monkeypatch):
@@ -216,7 +217,7 @@ def test_conversion_flow_cancelled_job_skips_upload(monkeypatch):
     engine = get_engine(DatabaseConfig().database_url)
     with Session(engine) as session:
         job_record = session.get(ConversionJob, job_id)
-        assert job_record.status == ConversionJobStatus.CANCELLED
+        assert job_record.status == WorkUnitStatus.CANCELLED
         output = session.exec(select(ConversionOutput).where(ConversionOutput.job_id == job_id)).first()
         assert output is None
 
@@ -272,7 +273,7 @@ def test_conversion_flow_proceeds_when_source_enrichment_fails(monkeypatch, db_s
     with Session(engine) as session:
         output = session.exec(select(ConversionOutput).where(ConversionOutput.job_id == job_id)).one()
         job_record = session.get(ConversionJob, job_id)
-        assert job_record.status == ConversionJobStatus.SUCCEEDED
+        assert job_record.status == WorkUnitStatus.SUCCEEDED
         assert storage[output.markdown_key].decode("utf-8") == "# direct-pdf-url\n"
 
 
@@ -362,7 +363,7 @@ def test_conversion_flow_enriches_source_and_manifest_end_to_end(monkeypatch, db
     engine = get_engine(DatabaseConfig().database_url)
     with Session(engine) as session:
         job_record = session.get(ConversionJob, job_id)
-        assert job_record.status == ConversionJobStatus.SUCCEEDED
+        assert job_record.status == WorkUnitStatus.SUCCEEDED
 
         source = session.exec(select(Source).where(Source.source_id == job_record.source_id)).one()
         assert source.url == _ENRICH_BOOKMARK_URL
@@ -411,7 +412,7 @@ def test_conversion_flow_source_title_branches_end_to_end(
     engine = get_engine(DatabaseConfig().database_url)
     with Session(engine) as session:
         job_record = session.get(ConversionJob, job_id)
-        assert job_record.status == ConversionJobStatus.SUCCEEDED
+        assert job_record.status == WorkUnitStatus.SUCCEEDED
 
         source = session.exec(select(Source).where(Source.source_id == job_record.source_id)).one()
         assert source.title == expected_source_title

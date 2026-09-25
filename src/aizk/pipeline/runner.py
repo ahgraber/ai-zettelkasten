@@ -431,7 +431,7 @@ class StageRunner(Generic[WorkUnitHandle]):
         outcome = self._resolve_outcome(future, slot)
         try:
             with self._begin_immediate() as session:
-                self._handler.finalize(session, handle, outcome)
+                written = self._handler.finalize(session, handle, outcome)
         except (OperationalError, DBAPIError):
             logger.exception(
                 "Finalize failed due to database error; leaving slot for retry on next reap",
@@ -439,7 +439,13 @@ class StageRunner(Generic[WorkUnitHandle]):
             )
             return  # durable transition not recorded — keep the slot; retry next reap
         # Durable terminal transition committed: now release the slot exactly once.
-        self._emit_outcome_metric(outcome)
+        if written:
+            self._emit_outcome_metric(outcome)
+        else:
+            self._metrics.increment(
+                "pipeline.work_unit.finalize_skipped",
+                tags={"stage": self._stage, "outcome": outcome.status.value},
+            )
         self._cleanup(handle)
         with self._slots_lock:
             self._slots.pop(future, None)

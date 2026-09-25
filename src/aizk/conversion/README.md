@@ -27,7 +27,7 @@ Three rows anchor everything downstream:
 
 - **`Source` (`sources`)** — the canonical, durable identity for anything the system can convert; its `source_id` (a UUID) is the identity every downstream stage scopes on.
   A source is materialized idempotently from the submitted `source_ref` (keyed on `source_ref_hash`), so re-submitting the same reference reuses one `source_id` rather than forking a parallel one.
-- **`ConversionJob` (`conversion_jobs`)** — one conversion _attempt_, keyed by an integer `id`, with owner-scoped idempotency (`(owner_id, idempotency_key)` unique), attempt/retry tracking, and a status lifecycle `NEW → QUEUED → RUNNING → UPLOAD_PENDING → {SUCCEEDED, FAILED_RETRYABLE, FAILED_PERM, CANCELLED}`.
+- **`ConversionJob` (`conversion_jobs`)** — one conversion _attempt_, keyed by an integer `id`, with owner-scoped idempotency (`(owner_id, idempotency_key)` unique), attempt/retry tracking, and a status lifecycle `queued → running → {succeeded, failed, cancelled, timed_out}`.
 - **`ConversionOutput` (`conversion_outputs`)** — the record of a _successful_ conversion, one per job.
   Its integer `id` is the **`conversion_output_id`** downstream stages use as the Markdown _locator_; the row carries the durable `source_id`, the S3 keys (`s3_prefix`, `markdown_key`, `manifest_key`), the content hash (`markdown_hash_xx64`) that lets a later fetch verify it read the exact bytes, and `docling_version` / `payload_version`.
 

@@ -17,10 +17,11 @@ import pytest
 import setproctitle
 from sqlmodel import Session
 
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.processing import errors as errors_mod
 from aizk.conversion.processing.supervision import _terminate_and_wait
 from aizk.conversion.wiring import subprocess as wiring_subprocess
+from aizk.pipeline.lifecycle import WorkUnitStatus
 from tests.conversion._helpers import make_source
 
 
@@ -48,7 +49,7 @@ def test_raise_if_cancelled_raises(db_session: Session) -> None:
         owner_id="self",
         title=bookmark.title,
         idempotency_key="d" * 64,
-        status=ConversionJobStatus.CANCELLED,
+        status=WorkUnitStatus.CANCELLED,
     )
     db_session.add(job)
     db_session.commit()

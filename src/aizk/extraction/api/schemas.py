@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from aizk.graph.api.stage_routes import StageJobResponse
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
 
@@ -16,7 +17,7 @@ class ExtractionSubmission(BaseModel):
     source_id: UUID
 
 
-class ExtractionJobResponse(BaseModel):
+class ExtractionJobResponse(StageJobResponse):
     """Serialized view of one extraction work-unit."""
 
     model_config = ConfigDict(from_attributes=True)

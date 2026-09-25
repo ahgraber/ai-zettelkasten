@@ -29,14 +29,15 @@ import psutil
 import pytest
 from sqlmodel import Session
 
-from aizk.conversion import handler as repository_mod, queries
+from aizk.conversion import handler as repository_mod
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.processing import errors as errors_mod
 from aizk.conversion.settings import ConversionConfig
 from aizk.conversion.wiring import subprocess as wiring_subprocess
+from aizk.pipeline.lifecycle import WorkUnitStatus
 from tests.conversion.integration import _subprocess_helpers
 from tests.conversion.integration._zombie_checks import ZombieInspectionError, descendant_zombies
 from tests.fakes.runtime import fake_worker_runtime
@@ -130,7 +131,7 @@ def _create_running_job(db_session: Session, bookmark: Bookmark) -> ConversionJo
         owner_id="self",
         title=bookmark.title or "Test Job",
         idempotency_key="lifecycle" * 8,
-        status=ConversionJobStatus.RUNNING,
+        status=WorkUnitStatus.RUNNING,
         attempts=1,
         started_at=dt.datetime.now(dt.timezone.utc),
         source_ref=source_ref.model_dump_json(),
@@ -240,7 +241,8 @@ def test_subprocess_completes_normally_no_zombies(
     monkeypatch.setattr(repository_mod, "get_engine", lambda _url=None: db_session.get_bind())
     monkeypatch.setattr(repository_mod, "_is_job_cancelled", lambda _job_id, _engine: False)
     # Skip the in-process upload phase; this test only cares about clean reaping.
-    monkeypatch.setattr(repository_mod, "_prepare_upload", lambda *_a, **_k: None)
+    monkeypatch.setattr(repository_mod, "_prepare_upload", lambda *_a, **_k: object())
+    monkeypatch.setattr(repository_mod, "_execute_upload", lambda *_a, **_k: None)
 
     config = ConversionConfig(_env_file=None)
     handler = ConversionStageHandler(config, runtime=fake_worker_runtime())
@@ -416,7 +418,7 @@ def test_cancel_mid_execution_terminates_within_poll_interval(
 
 
 def test_recover_stale_running_job_marks_retryable(monkeypatch, db_session: Session) -> None:
-    """Stale running jobs are reclaimed to FAILED_RETRYABLE via the shared recovery query."""
+    """Stale running jobs are reclaimed to a retryable FAILED via the shared recovery query."""
     monkeypatch.setenv("AIZK_WORKER_STALE_JOB_MINUTES", "0")
 
     bookmark = _create_test_bookmark(db_session)
@@ -427,13 +429,13 @@ def test_recover_stale_running_job_marks_retryable(monkeypatch, db_session: Sess
     db_session.refresh(job)
 
     config = ConversionConfig(_env_file=None)
-    # ``recover_stale_in_session`` runs inside a caller-owned transaction; the
+    # ``recover_stale`` runs inside a caller-owned transaction; the
     # runner owns the commit. Drive it directly here and commit.
-    recovered = queries.recover_stale_in_session(db_session, config)
+    recovered = ConversionStageHandler(config).recover_stale(db_session)
     db_session.commit()
 
     assert recovered == [job.id]
     db_session.refresh(job)
-    assert job.status == ConversionJobStatus.FAILED_RETRYABLE
+    assert job.status == WorkUnitStatus.FAILED
     assert job.error_code == "worker_stale_running"
     assert job.earliest_next_attempt_at is not None

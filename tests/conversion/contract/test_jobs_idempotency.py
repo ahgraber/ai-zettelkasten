@@ -26,7 +26,7 @@ def test_first_submission_returns_201(db_session) -> None:
     assert resp.status_code == 201
     body = resp.json()
     assert body["idempotency_key"] == "first-key".ljust(64, "0")
-    assert body["status"] == "QUEUED"
+    assert body["status"] == "queued"
 
 
 def test_duplicate_submission_returns_200_with_original_payload(db_session) -> None:

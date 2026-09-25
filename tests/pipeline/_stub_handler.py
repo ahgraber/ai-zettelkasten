@@ -431,7 +431,7 @@ class StubStageHandler(HandlerBase[StubWorkUnit]):
         """Return the stub's success event; it carries no run."""
         return StubEventKind.SUCCEEDED, StubSucceededPayload(), None
 
-    def finalize(self, session: Session, handle: int, outcome: TerminalOutcome) -> None:
+    def finalize(self, session: Session, handle: int, outcome: TerminalOutcome) -> bool:
         """Finalize through the base, after honoring an injected finalize fault.
 
         The fault (see :meth:`inject_finalize_fault`) raises the configured DB
@@ -444,9 +444,10 @@ class StubStageHandler(HandlerBase[StubWorkUnit]):
             self._finalize_faults_remaining -= 1
             assert self._finalize_fault_error is not None
             raise self._finalize_fault_error
-        super().finalize(session, handle, outcome)
+        written = super().finalize(session, handle, outcome)
         with self._lock:
             self.recorded.finalize_committed.append(str(handle))
+        return written
 
     def cleanup(self, handle: int) -> None:
         """Record that transient resources were released for ``handle``."""

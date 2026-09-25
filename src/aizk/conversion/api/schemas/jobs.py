@@ -10,8 +10,7 @@ from pydantic import AnyUrl, BaseModel, Field
 
 from aizk.conversion.api.schemas.ingress import IngressSourceRef
 from aizk.conversion.core.source_ref import SourceRef
-from aizk.conversion.datamodel.job import ConversionJobStatus
-from aizk.pipeline.lifecycle import MAX_BULK_SELECTION
+from aizk.pipeline.lifecycle import MAX_BULK_SELECTION, RetryClass, WorkUnitStatus
 
 # The capacity refusal body is shared with the other stages' intake routes and is
 # re-exported here beside the conversion job schemas.
@@ -45,7 +44,9 @@ class JobResponse(BaseModel):
     url: AnyUrl | None = None
     title: str | None = None
     source_type: str | None = None
-    status: ConversionJobStatus
+    status: WorkUnitStatus
+    retry_class: RetryClass | None = None
+    phase: Literal["convert", "upload"] | None = None
     attempts: int
     payload_version: int
     idempotency_key: str
@@ -69,11 +70,19 @@ class JobList(BaseModel):
     offset: int
 
 
+class RetryClassCounts(BaseModel):
+    """Counts of failed conversion jobs by retry class."""
+
+    retryable: int
+    permanent: int
+
+
 class JobStatusCounts(BaseModel):
     """Aggregated conversion job counts by status."""
 
     counts: dict[str, int]
     total: int
+    failed_by_retry_class: RetryClassCounts
 
 
 class OutputResponse(BaseModel):

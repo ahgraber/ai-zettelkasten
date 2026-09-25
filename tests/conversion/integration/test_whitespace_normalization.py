@@ -15,13 +15,14 @@ from sqlmodel import Session, select
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.settings import ConversionConfig
 from aizk.conversion.wiring import subprocess as wiring_subprocess
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
+from aizk.pipeline.lifecycle import WorkUnitStatus
 from tests.fakes.process import InlineContext
 from tests.fakes.runtime import fake_worker_runtime
 from tests.fakes.storage import install_memory_s3
@@ -32,13 +33,13 @@ def _run_conversion(job_id: int, config: ConversionConfig, runtime) -> None:
 
     Marks the QUEUED job RUNNING (as ``claim_next`` would) and runs the adapter's
     :meth:`ConversionStageHandler.execute`, which performs spawn + supervise +
-    enrich + UPLOAD_PENDING + upload→SUCCEEDED through the same conversion helpers.
+    enrich + upload phase + upload→SUCCEEDED through the same conversion helpers.
     """
     engine = get_engine(DatabaseConfig().database_url)
     with Session(engine) as session:
         job = session.get(ConversionJob, job_id)
-        if job is not None and job.status == ConversionJobStatus.QUEUED:
-            job.status = ConversionJobStatus.RUNNING
+        if job is not None and job.status == WorkUnitStatus.QUEUED:
+            job.status = WorkUnitStatus.RUNNING
             job.attempts += 1
             session.add(job)
             session.commit()

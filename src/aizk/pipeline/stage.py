@@ -18,7 +18,7 @@ runner still holds.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import datetime
 from enum import Enum
@@ -34,7 +34,7 @@ from aizk.pipeline.capacity import check_capacity
 from aizk.pipeline.events import CreationOrigin, record_transition
 from aizk.pipeline.handler import Isolation, StageResult
 from aizk.pipeline.lifecycle import TerminalOutcome, WorkUnitStatus
-from aizk.pipeline.repository import Model, WorkUnitRepository, find_by_key
+from aizk.pipeline.repository import Model, PayloadFactory, WorkUnitRepository, build_payload, find_by_key
 from aizk.utilities.clock import utcnow
 from aizk.utilities.errors import StartupValidationError
 
@@ -61,6 +61,9 @@ class StageDefinition(Generic[Model, Params]):
         event_kinds: The stage's event kind enum. The repository looks up the
             members named ``QUEUED``, ``CLAIMED``, ``RECOVERED_STALE``,
             ``FAILED``, ``CANCELLED``, ``TIMED_OUT``, and ``REQUEUED`` by name.
+            Each ``*_payload`` below is a payload class, called with the named
+            fields, or a factory, called with the work-unit row followed by
+            the same fields.
         queued_payload: Payload class of the creation event (``origin``,
             ``principal``).
         claimed_payload: Payload class of the claim event (``claimed_at``,
@@ -70,7 +73,8 @@ class StageDefinition(Generic[Model, Params]):
         failed_payload: Payload class of the failure event (``error_code``,
             ``error_message``, ``retryable``).
         cancelled_payload: Payload class of the cancel event
-            (``cancellation_reason``).
+            (``cancellation_reason``, and ``principal`` when the canceller
+            names one).
         timed_out_payload: Payload class of the timeout event
             (``timeout_seconds``).
         requeued_payload: Payload class of the operator-retry event
@@ -78,6 +82,9 @@ class StageDefinition(Generic[Model, Params]):
         pending: The admission query returning the parameters of units the
             stage still owes, up to a limit, or ``None`` when the stage
             declares none.
+        find_existing: The lookup ``(session, key, principal)`` returning the
+            unit an enqueue reuses, or ``None`` to reuse any unit carrying the
+            key.
     """
 
     name: str
@@ -85,14 +92,15 @@ class StageDefinition(Generic[Model, Params]):
     unit_key: Callable[[Params], str]
     work_unit_model: type[Model]
     event_kinds: type[Enum]
-    queued_payload: type[BaseModel]
-    claimed_payload: type[BaseModel]
-    recovered_stale_payload: type[BaseModel]
-    failed_payload: type[BaseModel]
-    cancelled_payload: type[BaseModel]
-    timed_out_payload: type[BaseModel]
-    requeued_payload: type[BaseModel]
+    queued_payload: PayloadFactory
+    claimed_payload: PayloadFactory
+    recovered_stale_payload: PayloadFactory
+    failed_payload: PayloadFactory
+    cancelled_payload: PayloadFactory
+    timed_out_payload: PayloadFactory
+    requeued_payload: PayloadFactory
     pending: Callable[[Session, int | None], list[Params]] | None = None
+    find_existing: Callable[[Session, str, str], Model | None] | None = None
 
 
 def enqueue(
@@ -104,14 +112,19 @@ def enqueue(
     principal: str,
     queue_max_depth: int,
     clock: Callable[[], datetime.datetime] = utcnow,
+    columns: Mapping[str, Any] | None = None,
+    zero_limit_closes: bool = False,
 ) -> tuple[Model, bool]:
     """Create or reuse the work-unit for ``params`` through the stage's definition.
 
-    A unit already carrying the derived key is returned unchanged with
-    ``created=False`` and no capacity check. Otherwise the capacity check runs,
-    a ``queued`` unit is staged and flushed with ``queued_at`` read from
-    ``clock``, and its creation event is recorded with ``origin`` and
-    ``principal``. Stages rows in the caller's transaction; does not commit.
+    A unit the definition's lookup finds for the derived key is returned
+    unchanged with ``created=False`` and no capacity check. Otherwise the
+    capacity check runs (a non-positive ``queue_max_depth`` is unlimited, or a
+    closed queue when ``zero_limit_closes`` is set), a ``queued`` unit is
+    staged from ``params`` and the stage's own ``columns`` and flushed with
+    ``queued_at`` read from ``clock``, and its creation event is recorded with
+    ``origin`` and ``principal``. Stages rows in the caller's transaction; does
+    not commit.
 
     Returns:
         The existing or new unit and whether this call created it.
@@ -120,17 +133,27 @@ def enqueue(
         StageAtCapacityError: If a new unit would exceed ``queue_max_depth``.
     """
     key = definition.unit_key(params)
-    existing = find_by_key(session, definition.work_unit_model, key)
+    if definition.find_existing is not None:
+        existing = definition.find_existing(session, key, principal)
+    else:
+        existing = find_by_key(session, definition.work_unit_model, key)
     if existing is not None:
         return existing, False
 
-    check_capacity(session, definition.work_unit_model, stage=definition.name, limit=queue_max_depth)
+    check_capacity(
+        session,
+        definition.work_unit_model,
+        stage=definition.name,
+        limit=queue_max_depth,
+        zero_limit_closes=zero_limit_closes,
+    )
 
     unit = definition.work_unit_model(
         idempotency_key=key,
         status=WorkUnitStatus.QUEUED,
         queued_at=clock(),
         **params.model_dump(),
+        **(columns or {}),
     )
     session.add(unit)
     session.flush()
@@ -143,7 +166,7 @@ def enqueue(
         to_status=WorkUnitStatus.QUEUED,
         kind=definition.event_kinds["QUEUED"],
         attempt=0,
-        payload=definition.queued_payload(origin=origin, principal=principal),
+        payload=build_payload(definition.queued_payload, unit, origin=origin, principal=principal),
         from_status=None,
     )
     return unit, True
@@ -364,7 +387,7 @@ class HandlerBase(Generic[Model]):
         with self._lock:
             return list(self._attempts)
 
-    def finalize(self, session: Session, handle: int, outcome: TerminalOutcome) -> None:
+    def finalize(self, session: Session, handle: int, outcome: TerminalOutcome) -> bool:
         """Write the unit's terminal transition through the repository.
 
         Reads the per-handle bridges without clearing them: the runner retains
@@ -372,12 +395,15 @@ class HandlerBase(Generic[Model]):
         error, and :meth:`cleanup` releases the bridges once the durable
         commit landed. Runs inside the runner-owned transaction; does not
         commit.
+
+        Returns:
+            Whether the terminal transition was written.
         """
         with self._lock:
             error = self._errors.get(handle, self.default_error)
             attempt = self._attempts.get(handle)
         succeeded = self.succeeded_event(handle) if outcome.status is WorkUnitStatus.SUCCEEDED else None
-        self._repository.finalize(session, handle, attempt, outcome, error=error, succeeded=succeeded)
+        return self._repository.finalize(session, handle, attempt, outcome, error=error, succeeded=succeeded)
 
     def cleanup(self, handle: int) -> None:
         """Release the unit's per-handle bridges and attempt token; called on every outcome."""

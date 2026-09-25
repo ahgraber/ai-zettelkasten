@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 
 from aizk.console.explorer import get_blob_reader
 from aizk.conversion.api.main import create_app as create_conversion_app
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.graph.api.main import create_app as create_graph_app
 from aizk.graph.datamodel import ContextualizationJob, ExtractionJob
 from aizk.pipeline.lifecycle import WorkUnitStatus
@@ -78,7 +78,7 @@ def succeeded_job(db_session: "Session") -> ConversionJob:
     return make_job(
         db_session,
         source_id=source.source_id,
-        status=ConversionJobStatus.SUCCEEDED,
+        status=WorkUnitStatus.SUCCEEDED,
         idempotency_key="c" * 64,
     )
 
@@ -180,18 +180,18 @@ def test_graph_cancel_ineligible_body(
 
 
 def test_single_retry_ineligible_body(conversion_client: TestClient, succeeded_job: ConversionJob) -> None:
-    """Retrying an ineligible job answers 400 with the coded reason."""
+    """Retrying an ineligible job answers 409 with the coded reason."""
     response = conversion_client.post(f"/v1/jobs/{succeeded_job.id}/retry")
 
-    assert response.status_code == 400
+    assert response.status_code == 409
     assert response.json() == {"detail": {"error": "job_not_retryable", "message": "Job cannot be retried"}}
 
 
 def test_single_cancel_ineligible_body(conversion_client: TestClient, succeeded_job: ConversionJob) -> None:
-    """Cancelling an ineligible job answers 400 with the coded reason."""
+    """Cancelling an ineligible job answers 409 with the coded reason."""
     response = conversion_client.post(f"/v1/jobs/{succeeded_job.id}/cancel")
 
-    assert response.status_code == 400
+    assert response.status_code == 409
     assert response.json() == {"detail": {"error": "job_not_cancellable", "message": "Job cannot be cancelled"}}
 
 

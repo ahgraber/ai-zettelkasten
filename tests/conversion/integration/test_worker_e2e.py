@@ -32,12 +32,13 @@ from sqlmodel import Session, select
 
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.events import ConversionEventKind, events_for_job
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source as Bookmark
 from aizk.conversion.processing import subproc, worker
 from aizk.conversion.settings import ConversionConfig
 from aizk.conversion.wiring import subprocess as wiring_subprocess
+from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.shutdown import ShutdownController
 from aizk.storage.settings import ObjectStorageSettings
 from tests.conversion.integration import _subprocess_helpers
@@ -79,7 +80,7 @@ def _seed_queued_job(session: Session, *, bookmark_id: str, idempotency_key: str
         owner_id="self",
         title="Runner E2E Job",
         idempotency_key=idempotency_key,
-        status=ConversionJobStatus.QUEUED,
+        status=WorkUnitStatus.QUEUED,
         source_ref=ref.model_dump_json(),
     )
     session.add(job)
@@ -124,8 +125,8 @@ def test_worker_drives_job_to_succeeded(monkeypatch, db_session: Session) -> Non
     subprocess runs the conversion (claim -> execute -> upload), the job reaches
     ``SUCCEEDED``, a ``ConversionOutput`` row is written, the uploaded markdown
     matches the converted content, and the ``pipeline_events`` log
-    (stage="conversion") carries the claimed -> upload_pending -> succeeded
-    transitions.
+    (stage="conversion") carries the claimed -> conversion_completed -> succeeded
+    events.
     Once SUCCEEDED is observed, a ``request_shutdown`` lets the runner drain (no
     in-flight work) and return cleanly (exit code 0).
     """
@@ -154,7 +155,7 @@ def test_worker_drives_job_to_succeeded(monkeypatch, db_session: Session) -> Non
         def _job_succeeded() -> bool:
             with Session(engine) as session:
                 job = session.get(ConversionJob, job_id)
-                return job is not None and job.status == ConversionJobStatus.SUCCEEDED
+                return job is not None and job.status == WorkUnitStatus.SUCCEEDED
 
         assert _wait_for(_job_succeeded, timeout_seconds=30.0), "runner drove the job to SUCCEEDED"
 
@@ -170,14 +171,14 @@ def test_worker_drives_job_to_succeeded(monkeypatch, db_session: Session) -> Non
     with Session(engine) as session:
         job = session.get(ConversionJob, job_id)
         assert job is not None
-        assert job.status == ConversionJobStatus.SUCCEEDED
+        assert job.status == WorkUnitStatus.SUCCEEDED
 
         output = session.exec(select(ConversionOutput).where(ConversionOutput.job_id == job_id)).one()
         assert storage[output.markdown_key].decode("utf-8") == "# Runner Drove This\n"
 
         kinds = [event.kind for event in events_for_job(session, job_id)]
         assert ConversionEventKind.CLAIMED.value in kinds, "claim transition recorded"
-        assert ConversionEventKind.UPLOAD_PENDING.value in kinds, "upload-pending transition recorded"
+        assert ConversionEventKind.CONVERSION_COMPLETED.value in kinds, "end of conversion recorded"
         assert ConversionEventKind.SUCCEEDED.value in kinds, "succeeded transition recorded"
         assert all(event.stage == "conversion" for event in events_for_job(session, job_id))
 
@@ -221,7 +222,7 @@ def test_worker_drains_inflight_on_shutdown(monkeypatch, db_session: Session) ->
         def _job_running() -> bool:
             with Session(engine) as session:
                 job = session.get(ConversionJob, job_id)
-                return job is not None and job.status != ConversionJobStatus.QUEUED
+                return job is not None and job.status != WorkUnitStatus.QUEUED
 
         assert _wait_for(_job_running, timeout_seconds=15.0), "runner claimed the job (now in flight)"
 
@@ -236,6 +237,6 @@ def test_worker_drains_inflight_on_shutdown(monkeypatch, db_session: Session) ->
         job = session.get(ConversionJob, job_id)
         assert job is not None
         # The in-flight unit drained to completion (not stranded RUNNING).
-        assert job.status == ConversionJobStatus.SUCCEEDED, "in-flight unit drained to its terminal outcome"
+        assert job.status == WorkUnitStatus.SUCCEEDED, "in-flight unit drained to its terminal outcome"
         output = session.exec(select(ConversionOutput).where(ConversionOutput.job_id == job_id)).one()
         assert output.markdown_key in storage

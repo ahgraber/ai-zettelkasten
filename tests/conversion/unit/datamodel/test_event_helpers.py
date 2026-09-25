@@ -29,6 +29,7 @@ import aizk.conversion.datamodel  # noqa: F401  (registers SQLModel metadata)
 from aizk.conversion.datamodel.events import (
     STAGE,
     ClaimedPayload,
+    ConversionCompletedPayload,
     ConversionEventKind,
     FailedPayload,
     PhasePayload,
@@ -37,9 +38,10 @@ from aizk.conversion.datamodel.events import (
     record_source_event,
     record_transition,
 )
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.source import Source
 from aizk.pipeline.events import PipelineEvent
+from aizk.pipeline.lifecycle import WorkUnitStatus
 
 _NOW = datetime.datetime(2026, 5, 17, 12, 0, 0, tzinfo=datetime.timezone.utc)
 
@@ -85,7 +87,7 @@ def queued_job(engine, source) -> ConversionJob:
             owner_id="self",
             title="test",
             payload_version=1,
-            status=ConversionJobStatus.QUEUED,
+            status=WorkUnitStatus.QUEUED,
             attempts=0,
             idempotency_key=uuid4().hex,
         )
@@ -107,7 +109,7 @@ def test_record_transition_does_not_commit(engine, queued_job):
         record_transition(
             session,
             job,
-            to_status=ConversionJobStatus.RUNNING,
+            to_status=WorkUnitStatus.RUNNING,
             kind=ConversionEventKind.CLAIMED,
             attempt=1,
             payload=ClaimedPayload(claimed_at=_NOW, worker_pid=1),
@@ -116,7 +118,7 @@ def test_record_transition_does_not_commit(engine, queued_job):
         # session should still see the pre-mutation state.
         with Session(engine) as other:
             other_job = other.get(ConversionJob, queued_job.id)
-            assert other_job.status == ConversionJobStatus.QUEUED
+            assert other_job.status == WorkUnitStatus.QUEUED
             assert _conversion_events(other) == []
 
         session.commit()
@@ -124,7 +126,7 @@ def test_record_transition_does_not_commit(engine, queued_job):
     # After commit both rows are observable.
     with Session(engine) as verify:
         committed = verify.get(ConversionJob, queued_job.id)
-        assert committed.status == ConversionJobStatus.RUNNING
+        assert committed.status == WorkUnitStatus.RUNNING
         events = _conversion_events(verify)
         assert len(events) == 1
         assert events[0].kind == ConversionEventKind.CLAIMED.value
@@ -142,7 +144,7 @@ def test_record_transition_writes_both_rows_in_one_commit(engine, queued_job):
         record_transition(
             session,
             job,
-            to_status=ConversionJobStatus.RUNNING,
+            to_status=WorkUnitStatus.RUNNING,
             kind=ConversionEventKind.CLAIMED,
             attempt=1,
             payload=ClaimedPayload(claimed_at=_NOW),
@@ -152,10 +154,10 @@ def test_record_transition_writes_both_rows_in_one_commit(engine, queued_job):
     with Session(engine) as verify:
         committed = verify.get(ConversionJob, queued_job.id)
         events = _conversion_events(verify)
-        assert committed.status == ConversionJobStatus.RUNNING
+        assert committed.status == WorkUnitStatus.RUNNING
         assert len(events) == 1
-        assert events[0].from_status == ConversionJobStatus.QUEUED.value
-        assert events[0].to_status == ConversionJobStatus.RUNNING.value
+        assert events[0].from_status == WorkUnitStatus.QUEUED.value
+        assert events[0].to_status == WorkUnitStatus.RUNNING.value
 
 
 def test_record_transition_persists_event_kind_value(engine, queued_job):
@@ -165,7 +167,7 @@ def test_record_transition_persists_event_kind_value(engine, queued_job):
         record_transition(
             session,
             job,
-            to_status=ConversionJobStatus.RUNNING,
+            to_status=WorkUnitStatus.RUNNING,
             kind=ConversionEventKind.CLAIMED,
             attempt=1,
             payload=ClaimedPayload(claimed_at=_NOW),
@@ -184,7 +186,7 @@ def test_record_transition_rolled_back_transaction_discards_both(engine, queued_
         record_transition(
             session,
             job,
-            to_status=ConversionJobStatus.RUNNING,
+            to_status=WorkUnitStatus.RUNNING,
             kind=ConversionEventKind.CLAIMED,
             attempt=1,
             payload=ClaimedPayload(claimed_at=_NOW),
@@ -194,7 +196,7 @@ def test_record_transition_rolled_back_transaction_discards_both(engine, queued_
     with Session(engine) as verify:
         committed = verify.get(ConversionJob, queued_job.id)
         events = _conversion_events(verify)
-        assert committed.status == ConversionJobStatus.QUEUED
+        assert committed.status == WorkUnitStatus.QUEUED
         assert events == []
 
 
@@ -211,12 +213,12 @@ def test_record_transition_validates_payload_before_mutation(engine, queued_job)
             record_transition(
                 session,
                 job,
-                to_status=ConversionJobStatus.RUNNING,
+                to_status=WorkUnitStatus.RUNNING,
                 kind=ConversionEventKind.FAILED,  # mismatch with claimed payload
                 attempt=1,
                 payload=ClaimedPayload(claimed_at=_NOW),
             )
-        assert job.status == ConversionJobStatus.QUEUED
+        assert job.status == WorkUnitStatus.QUEUED
 
 
 def test_record_transition_attempt_is_required(engine, queued_job):
@@ -227,7 +229,7 @@ def test_record_transition_attempt_is_required(engine, queued_job):
             record_transition(
                 session,
                 job,
-                to_status=ConversionJobStatus.RUNNING,
+                to_status=WorkUnitStatus.RUNNING,
                 kind=ConversionEventKind.CLAIMED,
                 payload=ClaimedPayload(claimed_at=_NOW),  # missing attempt=
             )
@@ -243,7 +245,7 @@ def test_record_transition_unknown_kind_payload_raises(engine, queued_job):
             record_transition(
                 session,
                 job,
-                to_status=ConversionJobStatus.FAILED_PERM,
+                to_status=WorkUnitStatus.FAILED,
                 kind=ConversionEventKind.FAILED,
                 attempt=1,
                 payload=FailedPayload(
@@ -253,7 +255,7 @@ def test_record_transition_unknown_kind_payload_raises(engine, queued_job):
                     bogus_extra_field="nope",  # type: ignore[call-arg]
                 ),
             )
-        assert job.status == ConversionJobStatus.QUEUED
+        assert job.status == WorkUnitStatus.QUEUED
 
 
 def test_record_transition_revalidates_payload_model_shape(engine, queued_job):
@@ -272,12 +274,29 @@ def test_record_transition_revalidates_payload_model_shape(engine, queued_job):
             record_transition(
                 session,
                 job,
-                to_status=ConversionJobStatus.FAILED_PERM,
+                to_status=WorkUnitStatus.FAILED,
                 kind=ConversionEventKind.FAILED,
                 attempt=1,
                 payload=malformed_failed_payload(),
             )
-        assert job.status == ConversionJobStatus.QUEUED
+        assert job.status == WorkUnitStatus.QUEUED
+        assert _conversion_events(session) == []
+
+
+def test_record_transition_refuses_conversion_completed(engine, queued_job):
+    """``conversion_completed`` records no status change, so the transition helper refuses it."""
+    with Session(engine) as session:
+        job = session.get(ConversionJob, queued_job.id)
+        with pytest.raises(ValueError, match="conversion_completed"):
+            record_transition(
+                session,
+                job,
+                to_status=WorkUnitStatus.RUNNING,
+                kind=ConversionEventKind.CONVERSION_COMPLETED,
+                attempt=1,
+                payload=ConversionCompletedPayload(content_hash="deadbeef"),
+            )
+        assert job.status == WorkUnitStatus.QUEUED
         assert _conversion_events(session) == []
 
 
@@ -291,7 +310,7 @@ def test_record_phase_event_does_not_mutate_status(engine, queued_job):
     with Session(engine) as session:
         job = session.get(ConversionJob, queued_job.id)
         # Move to RUNNING first for realism.
-        job.status = ConversionJobStatus.RUNNING
+        job.status = WorkUnitStatus.RUNNING
         session.add(job)
         session.commit()
 
@@ -300,7 +319,7 @@ def test_record_phase_event_does_not_mutate_status(engine, queued_job):
             job_id=job.id,
             source_id=job.source_id,
             attempt=1,
-            current_status=ConversionJobStatus.RUNNING,
+            current_status=WorkUnitStatus.RUNNING,
             phase="converting",
             reported_at=_NOW,
         )
@@ -309,11 +328,11 @@ def test_record_phase_event_does_not_mutate_status(engine, queued_job):
     with Session(engine) as verify:
         committed = verify.get(ConversionJob, queued_job.id)
         events = _conversion_events(verify)
-        assert committed.status == ConversionJobStatus.RUNNING
+        assert committed.status == WorkUnitStatus.RUNNING
         assert len(events) == 1
         assert events[0].kind == ConversionEventKind.PHASE.value
-        assert events[0].from_status == ConversionJobStatus.RUNNING.value
-        assert events[0].to_status == ConversionJobStatus.RUNNING.value
+        assert events[0].from_status == WorkUnitStatus.RUNNING.value
+        assert events[0].to_status == WorkUnitStatus.RUNNING.value
 
 
 def test_record_phase_event_persistence_failure_is_swallowed_and_logged(engine, queued_job, monkeypatch, caplog):
@@ -329,7 +348,7 @@ def test_record_phase_event_persistence_failure_is_swallowed_and_logged(engine, 
             job_id=queued_job.id,
             source_id=queued_job.source_id,
             attempt=1,
-            current_status=ConversionJobStatus.RUNNING,
+            current_status=WorkUnitStatus.RUNNING,
             phase="converting",
             reported_at=_NOW,
         )
@@ -349,7 +368,7 @@ def test_record_phase_event_validation_failure_drops_row(engine, queued_job, cap
                 job_id=job.id,
                 source_id=job.source_id,
                 attempt=1,
-                current_status=ConversionJobStatus.RUNNING,
+                current_status=WorkUnitStatus.RUNNING,
                 phase="not_a_real_phase",
                 reported_at=_NOW,
             )
@@ -436,7 +455,7 @@ def test_initial_submission_event_writes_null_from_status(engine, source):
             owner_id="self",
             title="test",
             payload_version=1,
-            status=ConversionJobStatus.QUEUED,
+            status=WorkUnitStatus.QUEUED,
             attempts=0,
             idempotency_key=uuid4().hex,
         )
@@ -446,7 +465,7 @@ def test_initial_submission_event_writes_null_from_status(engine, source):
         record_transition(
             session,
             job,
-            to_status=ConversionJobStatus.QUEUED,
+            to_status=WorkUnitStatus.QUEUED,
             kind=ConversionEventKind.QUEUED,
             attempt=0,
             payload=QueuedPayload(submitted_by="user-1", requeue_reason="initial"),
@@ -461,7 +480,7 @@ def test_initial_submission_event_writes_null_from_status(engine, source):
         assert events[0].from_status is None, (
             "Origin event must persist NULL from_status when from_status=None is passed"
         )
-        assert events[0].to_status == ConversionJobStatus.QUEUED.value
+        assert events[0].to_status == WorkUnitStatus.QUEUED.value
         assert events[0].attempt == 0
 
 
@@ -472,7 +491,7 @@ def test_record_transition_from_status_defaults_to_job_status(engine, queued_job
         record_transition(
             session,
             job,
-            to_status=ConversionJobStatus.RUNNING,
+            to_status=WorkUnitStatus.RUNNING,
             kind=ConversionEventKind.CLAIMED,
             attempt=1,
             payload=ClaimedPayload(claimed_at=_NOW),
@@ -481,6 +500,6 @@ def test_record_transition_from_status_defaults_to_job_status(engine, queued_job
 
     with Session(engine) as verify:
         events = _conversion_events(verify)
-        assert events[0].from_status == ConversionJobStatus.QUEUED.value, (
+        assert events[0].from_status == WorkUnitStatus.QUEUED.value, (
             "Default behavior must read from_status from job.status before mutation"
         )

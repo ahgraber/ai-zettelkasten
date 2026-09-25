@@ -19,8 +19,8 @@ from sqlmodel import Session
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app as create_conversion_app
-from aizk.conversion.datamodel.job import ConversionJobStatus
 from aizk.graph.api.main import create_app as create_graph_app
+from aizk.pipeline.lifecycle import WorkUnitStatus
 
 #: Set on both services so an equal ``Retry-After`` means agreement, not coincidence.
 _RETRY_AFTER = 45
@@ -40,7 +40,7 @@ def _conversion_refusal(
         db_session,
         source_id=source.source_id,
         idempotency_key="fleet-conversion-fill",
-        status=ConversionJobStatus.QUEUED,
+        status=WorkUnitStatus.QUEUED,
     )
 
     with TestClient(create_conversion_app()) as client:
@@ -69,7 +69,7 @@ def _graph_refusal(
             db_session,
             source_id=source.source_id,
             idempotency_key=f"fleet-graph-{index}",
-            status=ConversionJobStatus.SUCCEEDED,
+            status=WorkUnitStatus.SUCCEEDED,
         )
         outputs.append(seed_conversion_output(db_session, job_id=job.id, source_id=source.source_id))
 

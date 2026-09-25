@@ -133,7 +133,14 @@ def _add_output(engine, *, output_id: int, source_id: UUID = _AIZK_UUID) -> None
         session.commit()
 
 
-def _seed(engine, *, conversion_output_id: int, status: WorkUnitStatus, attempts: int = 0) -> int:
+def _seed(
+    engine,
+    *,
+    conversion_output_id: int,
+    status: WorkUnitStatus,
+    attempts: int = 0,
+    earliest_next_attempt_at: dt.datetime | None = None,
+) -> int:
     """Insert one work-unit in the given status; return its id."""
     with Session(engine) as session:
         job = ContextualizationJob(
@@ -142,6 +149,7 @@ def _seed(engine, *, conversion_output_id: int, status: WorkUnitStatus, attempts
             source_id=_AIZK_UUID,
             status=status,
             attempts=attempts,
+            earliest_next_attempt_at=earliest_next_attempt_at,
         )
         session.add(job)
         session.commit()
@@ -319,6 +327,43 @@ def test_list_and_filter_by_status(client: TestClient, engine) -> None:
     assert body["total"] == 1
     assert body["jobs"][0]["conversion_output_id"] == 3
     assert body["jobs"][0]["status"] == "failed"
+
+
+def test_retry_class_is_derived_from_status_and_retry_wait(client: TestClient, engine) -> None:
+    """A failed unit with a retry wait is retryable, without one permanent, and every other status null."""
+    retryable_id = _seed(engine, conversion_output_id=1, status=WorkUnitStatus.FAILED, earliest_next_attempt_at=_EPOCH)
+    permanent_id = _seed(engine, conversion_output_id=2, status=WorkUnitStatus.FAILED)
+    others = {
+        _seed(engine, conversion_output_id=10 + index, status=unit_status, earliest_next_attempt_at=_EPOCH)
+        for index, unit_status in enumerate(
+            [
+                WorkUnitStatus.QUEUED,
+                WorkUnitStatus.RUNNING,
+                WorkUnitStatus.SUCCEEDED,
+                WorkUnitStatus.CANCELLED,
+                WorkUnitStatus.TIMED_OUT,
+            ]
+        )
+    }
+
+    assert client.get(f"/v1/contextualizations/{retryable_id}").json()["retry_class"] == "retryable"
+    assert client.get(f"/v1/contextualizations/{permanent_id}").json()["retry_class"] == "permanent"
+    assert {client.get(f"/v1/contextualizations/{job_id}").json()["retry_class"] for job_id in others} == {None}
+
+
+def test_list_filters_by_retry_class_and_intersects_with_status(client: TestClient, engine) -> None:
+    """The retry-class filter selects one class of failed units and intersects with the status filter."""
+    _seed(engine, conversion_output_id=1, status=WorkUnitStatus.QUEUED)
+    retryable_id = _seed(engine, conversion_output_id=2, status=WorkUnitStatus.FAILED, earliest_next_attempt_at=_EPOCH)
+    permanent_id = _seed(engine, conversion_output_id=3, status=WorkUnitStatus.FAILED)
+
+    permanent = client.get("/v1/contextualizations", params={"retry_class": "permanent"}).json()
+    assert ([job["id"] for job in permanent["jobs"]], permanent["total"]) == ([permanent_id], 1)
+    retryable = client.get("/v1/contextualizations", params={"status": "failed", "retry_class": "retryable"}).json()
+    assert ([job["id"] for job in retryable["jobs"]], retryable["total"]) == ([retryable_id], 1)
+    empty = client.get("/v1/contextualizations", params={"status": "queued", "retry_class": "retryable"})
+    assert empty.status_code == 200
+    assert (empty.json()["jobs"], empty.json()["total"]) == ([], 0)
 
 
 def test_detail_and_404(client: TestClient, engine) -> None:

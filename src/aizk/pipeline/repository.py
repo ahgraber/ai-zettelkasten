@@ -30,6 +30,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 from uuid import UUID
 
+from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlmodel import select
 
@@ -38,7 +39,6 @@ from aizk.pipeline.lifecycle import WORKER_DRAIN_TERMINATED, RetryClass, Termina
 from aizk.utilities.clock import utcnow
 
 if TYPE_CHECKING:
-    from pydantic import BaseModel
     from sqlmodel import Session
 
     from aizk.pipeline.stage import StageDefinition
@@ -82,6 +82,9 @@ class WorkUnitModel(Protocol):
 
 Model = TypeVar("Model", bound=WorkUnitModel)
 
+#: A payload class, or a factory taking the work-unit row before the fields.
+PayloadFactory = Callable[..., "BaseModel"]
+
 #: Runs inside the claim transaction after the claim is staged.
 ClaimHook = Callable[["Session", Any], None]
 #: Runs inside the transaction of every transition out of ``running``.
@@ -107,6 +110,13 @@ class IneligibleTransitionError(ValueError):
 def find_by_key(session: "Session", model: Any, key: str) -> Any:
     """Return the work-unit of ``model`` carrying ``idempotency_key == key``, or ``None``."""
     return session.exec(select(model).where(model.idempotency_key == key)).one_or_none()
+
+
+def build_payload(factory: PayloadFactory, row: Any, **fields: Any) -> "BaseModel":
+    """Build an event payload: a payload class takes ``fields``; a factory takes ``row`` and ``fields``."""
+    if isinstance(factory, type) and issubclass(factory, BaseModel):
+        return factory(**fields)
+    return factory(row, **fields)
 
 
 class WorkUnitRepository(Generic[Model]):
@@ -230,7 +240,7 @@ class WorkUnitRepository(Generic[Model]):
             row,
             to_status=WorkUnitStatus.RUNNING,
             kind=self._kind("CLAIMED"),
-            payload=self._definition.claimed_payload(claimed_at=now, worker_pid=worker_pid),
+            payload=build_payload(self._definition.claimed_payload, row, claimed_at=now, worker_pid=worker_pid),
         )
         if self._on_claim is not None:
             self._on_claim(session, row)
@@ -279,7 +289,9 @@ class WorkUnitRepository(Generic[Model]):
                 row,
                 to_status=WorkUnitStatus.FAILED,
                 kind=self._kind("RECOVERED_STALE"),
-                payload=self._definition.recovered_stale_payload(
+                payload=build_payload(
+                    self._definition.recovered_stale_payload,
+                    row,
                     stale_after_minutes=self._stale_after_minutes,
                     last_started_at=last_started_at,
                 ),
@@ -361,7 +373,7 @@ class WorkUnitRepository(Generic[Model]):
                 row,
                 to_status=status,
                 kind=self._kind("CANCELLED"),
-                payload=self._definition.cancelled_payload(cancellation_reason="runner_cancel"),
+                payload=build_payload(self._definition.cancelled_payload, row, cancellation_reason="runner_cancel"),
             )
         elif status is WorkUnitStatus.TIMED_OUT:
             row.finished_at = now
@@ -371,7 +383,7 @@ class WorkUnitRepository(Generic[Model]):
                 row,
                 to_status=status,
                 kind=self._kind("TIMED_OUT"),
-                payload=self._definition.timed_out_payload(timeout_seconds=self._timeout_seconds),
+                payload=build_payload(self._definition.timed_out_payload, row, timeout_seconds=self._timeout_seconds),
             )
         else:
             self._finalize_failed(session, row, now, outcome, error)
@@ -416,8 +428,12 @@ class WorkUnitRepository(Generic[Model]):
             row,
             to_status=WorkUnitStatus.FAILED,
             kind=self._kind("FAILED"),
-            payload=self._definition.failed_payload(
-                error_code=error_code, error_message=error_message, retryable=retryable
+            payload=build_payload(
+                self._definition.failed_payload,
+                row,
+                error_code=error_code,
+                error_message=error_message,
+                retryable=retryable,
             ),
         )
 
@@ -459,7 +475,7 @@ class WorkUnitRepository(Generic[Model]):
             row,
             to_status=WorkUnitStatus.QUEUED,
             kind=self._kind("REQUEUED"),
-            payload=self._definition.requeued_payload(requeue_reason=reason, principal=principal),
+            payload=build_payload(self._definition.requeued_payload, row, requeue_reason=reason, principal=principal),
         )
 
     def cancel(
@@ -467,8 +483,9 @@ class WorkUnitRepository(Generic[Model]):
         session: "Session",
         row: Model,
         *,
-        reason: str = "operator_cancel",
+        reason: str | None = "operator_cancel",
         cancellable: Callable[[Model], bool] | None = None,
+        principal: str | None = None,
     ) -> None:
         """Cancel ``row`` at an operator's request, keeping its error fields.
 
@@ -476,9 +493,9 @@ class WorkUnitRepository(Generic[Model]):
         ``running`` unless the stage's ``cancellable(row)`` says the unit is in
         a part of ``running`` it declares non-cancellable. Clears the retry
         wait, sets ``finished_at``, keeps ``error_code`` / ``error_message`` /
-        ``last_error_at``, records one ``cancelled`` event with ``reason``, and
-        runs the transition hook when the unit was ``running``. Does not
-        commit.
+        ``last_error_at``, records one ``cancelled`` event with ``reason`` (and
+        ``principal`` when given), and runs the transition hook when the unit
+        was ``running``. Does not commit.
 
         Raises:
             IneligibleTransitionError: ``job_not_cancellable`` when the status
@@ -492,12 +509,15 @@ class WorkUnitRepository(Generic[Model]):
         row.earliest_next_attempt_at = None
         row.finished_at = now
         row.updated_at = now
+        fields: dict[str, Any] = {"cancellation_reason": reason}
+        if principal is not None:
+            fields["principal"] = principal
         self._record(
             session,
             row,
             to_status=WorkUnitStatus.CANCELLED,
             kind=self._kind("CANCELLED"),
-            payload=self._definition.cancelled_payload(cancellation_reason=reason),
+            payload=build_payload(self._definition.cancelled_payload, row, **fields),
         )
         if status is WorkUnitStatus.RUNNING:
             self._transition(session, row, WorkUnitStatus.CANCELLED)
@@ -510,8 +530,10 @@ __all__ = [
     "ClaimHook",
     "IneligibleTransitionError",
     "Model",
+    "PayloadFactory",
     "TransitionHook",
     "WorkUnitModel",
     "WorkUnitRepository",
+    "build_payload",
     "find_by_key",
 ]

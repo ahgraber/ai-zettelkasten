@@ -37,7 +37,7 @@ def test_jobs_schemas_registered():
         "JobResponse",
         "JobList",
         "JobStatusCounts",
-        "ConversionJobStatus",
+        "WorkUnitStatus",
         "BulkJobActionRequest",
         "BulkActionResponse",
         "KarakeepBookmarkRef",
@@ -56,6 +56,40 @@ def test_list_jobs_query_params_declared():
     declared = {p["name"] for p in get_op.get("parameters", [])}
     expected = {"status", "source_id", "created_after", "created_before", "limit", "offset"}
     assert expected.issubset(declared), f"Missing query params: {expected - declared}"
+
+
+def test_openapi_publishes_the_lifecycle_fields_filter_split_and_409s():
+    """The document carries the six statuses, ``retry_class`` and ``phase``, the list filter, the counts split, and the 409s."""
+    app_spec = create_app().openapi()
+    schemas = app_spec["components"]["schemas"]
+    nullable_retry_class = {"anyOf": [{"$ref": "#/components/schemas/RetryClass"}, {"type": "null"}]}
+
+    assert schemas["WorkUnitStatus"]["enum"] == ["queued", "running", "succeeded", "failed", "cancelled", "timed_out"]
+    assert schemas["RetryClass"]["enum"] == ["retryable", "permanent"]
+    job_response = schemas["JobResponse"]
+    assert job_response["properties"]["status"] == {"$ref": "#/components/schemas/WorkUnitStatus"}
+    assert job_response["properties"]["retry_class"] == nullable_retry_class
+    assert job_response["properties"]["phase"]["anyOf"] == [
+        {"enum": ["convert", "upload"], "type": "string"},
+        {"type": "null"},
+    ]
+    assert {"retry_class", "phase"}.isdisjoint(job_response["required"])
+
+    parameters = {p["name"]: p for p in app_spec["paths"]["/v1/jobs"]["get"]["parameters"]}
+    assert parameters["retry_class"]["schema"]["anyOf"] == nullable_retry_class["anyOf"]
+
+    counts = schemas["JobStatusCounts"]
+    assert counts["required"] == ["counts", "total", "failed_by_retry_class"]
+    split = schemas[counts["properties"]["failed_by_retry_class"]["$ref"].rsplit("/", 1)[-1]]
+    assert split["required"] == ["retryable", "permanent"]
+    assert {name: prop["type"] for name, prop in split["properties"].items()} == {
+        "retryable": "integer",
+        "permanent": "integer",
+    }
+
+    for action in ("retry", "cancel"):
+        responses = app_spec["paths"][f"/v1/jobs/{{job_id}}/{action}"]["post"]["responses"]
+        assert list(responses) == ["200", "409", "422"]
 
 
 def test_bulk_actions_request_schema_shape():

@@ -18,7 +18,6 @@ from sqlmodel import Session
 
 from fastapi.testclient import TestClient
 
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
 # --- L1: LIKE metacharacters match literally ---------------------------------
@@ -31,10 +30,10 @@ def test_search_treats_underscore_as_a_literal_not_a_wildcard(
     literal = seed_source(db_session, karakeep_id="bm_underscore", title="a_c")
     wildcardish = seed_source(db_session, karakeep_id="bm_abc", title="abc")
     hit = seed_conversion_job(
-        db_session, source_id=literal.source_id, idempotency_key="us-hit", status=ConversionJobStatus.QUEUED
+        db_session, source_id=literal.source_id, idempotency_key="us-hit", status=WorkUnitStatus.QUEUED
     )
     miss = seed_conversion_job(
-        db_session, source_id=wildcardish.source_id, idempotency_key="us-miss", status=ConversionJobStatus.QUEUED
+        db_session, source_id=wildcardish.source_id, idempotency_key="us-miss", status=WorkUnitStatus.QUEUED
     )
 
     response = client.get("/ui/tasks", params={"stage": "conversion", "search": "a_c"})
@@ -89,7 +88,7 @@ def test_delete_emits_a_structured_audit_log(
     """A delete records a structured audit line — the only durable trace of the event-less delete."""
     source = seed_source(db_session, karakeep_id="bm_auditlog", title="Audit Doc")
     job = seed_conversion_job(
-        db_session, source_id=source.source_id, idempotency_key="audit-del", status=ConversionJobStatus.FAILED_PERM
+        db_session, source_id=source.source_id, idempotency_key="audit-del", status=WorkUnitStatus.FAILED
     )
 
     with caplog.at_level(logging.INFO, logger="aizk.console.routes"):
@@ -110,7 +109,7 @@ def test_delete_control_carries_a_confirmation_guard(
     """The conversion monitor's Delete button carries an htmx confirmation guard; Retry does not."""
     source = seed_source(db_session, karakeep_id="bm_confirm", title="Confirm Doc")
     seed_conversion_job(
-        db_session, source_id=source.source_id, idempotency_key="confirm-job", status=ConversionJobStatus.FAILED_PERM
+        db_session, source_id=source.source_id, idempotency_key="confirm-job", status=WorkUnitStatus.FAILED
     )
 
     body = client.get("/ui/tasks", params={"stage": "conversion"}).text

@@ -18,7 +18,6 @@ from sqlmodel import Session
 
 from fastapi.testclient import TestClient
 
-from aizk.conversion.datamodel.job import ConversionJobStatus
 from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.contextualization import SUMMARY_STAGE, VARIANT_STAGE
 from aizk.graph.datamodel import ContextualizationJob
@@ -286,7 +285,7 @@ def _seed_pending_sources(
             session,
             source_id=source.source_id,
             idempotency_key=f"pending-{index}",
-            status=ConversionJobStatus.SUCCEEDED,
+            status=WorkUnitStatus.SUCCEEDED,
         )
         seed_conversion_output(session, job_id=job.id, source_id=source.source_id)
 

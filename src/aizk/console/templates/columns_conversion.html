@@ -1,4 +1,4 @@
-{# Conversion adds the KaraKeep bookmark id as one stage-specific column, rendered
-   between source_id and title (extra_columns=1). #}
-{% macro extra_headers() %}<th>karakeep_id</th>{% endmacro %}
-{% macro extra_cells(job) %}<td class="mono">{{ job.karakeep_id }}</td>{% endmacro %}
+{# Conversion adds the KaraKeep bookmark id, the phase, and the retry class as
+   stage-specific columns, rendered between source_id and title (extra_columns=3). #}
+{% macro extra_headers() %}<th>karakeep_id</th><th>phase</th><th>retry_class</th>{% endmacro %}
+{% macro extra_cells(job) %}<td class="mono">{{ job.karakeep_id }}</td><td class="mono">{{ job.phase }}</td><td class="mono">{{ job.retry_class }}</td>{% endmacro %}

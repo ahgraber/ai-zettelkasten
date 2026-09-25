@@ -1,6 +1,7 @@
 """Unit tests for conversion configuration loading."""
 
 import ast
+import datetime as dt
 import importlib
 import importlib.util
 from pathlib import Path
@@ -15,6 +16,7 @@ from aizk.conversion.settings import (
     KarakeepFetcherConfig,
 )
 from aizk.conversion.wiring.ingress_policy import IngressPolicy
+from aizk.pipeline.stage import require_stale_threshold
 from aizk.service.auth import AuthSettings
 from aizk.service.settings import ServiceSettings
 from aizk.storage.settings import ObjectStorageSettings
@@ -56,6 +58,29 @@ def test_conversion_config_accepts_explicit_field_name_overrides():
 
     assert config.fetch_max_response_bytes == 12345
     assert config.fetch_timeout_seconds == 7
+
+
+def test_worker_max_attempts_reads_its_env_var_apart_from_the_upload_retries(monkeypatch):
+    """The attempt cap has its own variable, defaulting to 3; ``retry_max_attempts`` stays the PUT-loop knob."""
+    assert ConversionConfig(_env_file=None).worker_max_attempts == 3
+
+    monkeypatch.setenv("AIZK_WORKER_MAX_ATTEMPTS", "5")
+    config = ConversionConfig(_env_file=None)
+
+    assert (config.worker_max_attempts, config.retry_max_attempts) == (5, 3)
+
+
+def test_stale_threshold_defaults_past_the_job_and_drain_timeouts():
+    """Unset, the stale threshold exceeds the job timeout plus the drain timeout and the termination allowance."""
+    config = ConversionConfig(_env_file=None, worker_job_timeout_seconds=600, worker_drain_timeout_seconds=30)
+
+    require_stale_threshold(
+        stale_after=dt.timedelta(minutes=config.worker_stale_job_minutes),
+        timeout=dt.timedelta(seconds=config.worker_job_timeout_seconds),
+        drain_timeout=config.worker_drain_timeout_seconds,
+        cancel_grace=10.0,
+    )
+    assert ConversionConfig(_env_file=None, worker_stale_job_minutes=45).worker_stale_job_minutes == 45
 
 
 def test_docling_config_reads_new_env_vars(monkeypatch):

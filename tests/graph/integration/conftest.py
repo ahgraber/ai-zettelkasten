@@ -13,6 +13,7 @@ allowlist from the process environment; the harness sets only those two variable
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+import datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -24,7 +25,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from aizk.console.explorer import get_blob_reader
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.db.engine import _ENGINE_CACHE, get_engine
 from aizk.db.migrations import run_migrations
 from aizk.graph.api.main import create_app
@@ -34,6 +35,7 @@ from aizk.graph.extraction_events import EXTRACTION_STAGE
 from aizk.graph.extraction_run import Currentness
 from aizk.graph.mentions import ResolvedExtractionConfig, extraction_derivation_key
 from aizk.pipeline.identity import fingerprint
+from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus
 
 #: The extraction configuration :func:`_fixed_extraction_config` pins the console
@@ -166,10 +168,12 @@ def seed_conversion_job() -> "Callable[..., ConversionJob]":
         *,
         source_id: UUID,
         idempotency_key: str,
-        status: ConversionJobStatus,
+        status: WorkUnitStatus,
         owner_id: str = "self",
         title: str = "Doc",
         attempts: int = 0,
+        earliest_next_attempt_at: datetime.datetime | None = None,
+        phase: str | None = None,
     ) -> ConversionJob:
         job = ConversionJob(
             source_id=source_id,
@@ -179,6 +183,8 @@ def seed_conversion_job() -> "Callable[..., ConversionJob]":
             status=status,
             attempts=attempts,
             idempotency_key=idempotency_key,
+            earliest_next_attempt_at=earliest_next_attempt_at,
+            phase=phase,
         )
         session.add(job)
         session.commit()

@@ -11,10 +11,11 @@ from typing import TYPE_CHECKING
 from sqlalchemy.engine import Engine
 from sqlmodel import Session
 
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.processing.supervision import _supervise_conversion_process
 from aizk.conversion.processing.types import SupervisionResult
 from aizk.conversion.settings import ConversionConfig
+from aizk.pipeline.lifecycle import WorkUnitStatus
 
 if TYPE_CHECKING:
     import threading
@@ -24,7 +25,7 @@ def _is_job_cancelled(job_id: int, engine: Engine) -> bool:
     """Return True when the job status is CANCELLED."""
     with Session(engine) as session:
         job = session.get(ConversionJob, job_id)
-        return bool(job and job.status == ConversionJobStatus.CANCELLED)
+        return bool(job and job.status == WorkUnitStatus.CANCELLED)
 
 
 def _spawn_and_supervise(

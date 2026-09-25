@@ -100,10 +100,13 @@ class StageHandler(Protocol[WorkUnitHandle]):
         """
         ...
 
-    def finalize(self, session: "Session", handle: WorkUnitHandle, outcome: "TerminalOutcome") -> None:
+    def finalize(self, session: "Session", handle: WorkUnitHandle, outcome: "TerminalOutcome") -> bool:
         """Transition the work-unit to its terminal status via ``record_transition``.
 
         Runs inside the runner-owned transaction and does not commit.
+
+        Returns:
+            Whether the terminal transition was written.
         """
         ...
 

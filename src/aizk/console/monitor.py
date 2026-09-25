@@ -16,6 +16,10 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import func
 from sqlmodel import select
 
+from fastapi import HTTPException
+
+from aizk.pipeline.lifecycle import RetryClass, WorkUnitStatus, retry_class_filter
+
 if TYPE_CHECKING:
     from sqlmodel import Session
     from sqlmodel.sql.expression import SelectOfScalar
@@ -63,6 +67,27 @@ def escape_like_term(term: str) -> str:
     rather than acting as a wildcard.
     """
     return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def parse_status_filter(value: str | None) -> WorkUnitStatus | None:
+    """Parse a status-filter value into a :class:`WorkUnitStatus`, or 400 on a bad value."""
+    if not value:
+        return None
+    try:
+        return WorkUnitStatus(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "invalid_status", "message": "Invalid status filter"},
+        ) from exc
+
+
+def count_failed_split(session: "Session", model: Any, *conditions: Any) -> tuple[int, int]:
+    """Count ``model``'s ``failed`` units matching ``conditions`` as ``(awaiting_retry, permanent)``."""
+    failed = select(func.count()).select_from(model).where(*conditions)
+    awaiting = session.exec(failed.where(retry_class_filter(model, RetryClass.RETRYABLE))).one()
+    permanent = session.exec(failed.where(retry_class_filter(model, RetryClass.PERMANENT))).one()
+    return awaiting, permanent
 
 
 def clamp_limit_offset(limit: int, offset: int) -> tuple[int, int]:

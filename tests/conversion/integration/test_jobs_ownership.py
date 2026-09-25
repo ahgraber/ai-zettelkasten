@@ -11,7 +11,8 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.datamodel.job import ConversionJobStatus
+from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.utilities.clock import utcnow
 from tests.conversion._helpers import make_job, make_source
 
 
@@ -73,21 +74,22 @@ def test_status_counts_excludes_cross_owner_jobs(db_session) -> None:
         db_session,
         source_id=bookmark.source_id,
         idempotency_key="a" * 64,
-        status=ConversionJobStatus.QUEUED,
+        status=WorkUnitStatus.QUEUED,
         owner_id="self",
     )
     make_job(
         db_session,
         source_id=bookmark.source_id,
         idempotency_key="b" * 64,
-        status=ConversionJobStatus.QUEUED,
+        status=WorkUnitStatus.QUEUED,
         owner_id="someone_else",
     )
     make_job(
         db_session,
         source_id=bookmark.source_id,
         idempotency_key="c" * 64,
-        status=ConversionJobStatus.FAILED_RETRYABLE,
+        status=WorkUnitStatus.FAILED,
+        earliest_next_attempt_at=utcnow(),
         owner_id="someone_else",
     )
 
@@ -98,7 +100,7 @@ def test_status_counts_excludes_cross_owner_jobs(db_session) -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["total"] == 1
-    assert body["counts"] == {"QUEUED": 1}
+    assert body["counts"] == {"queued": 1}
 
 
 def test_retry_returns_404_for_cross_owner_job(db_session) -> None:
@@ -107,7 +109,8 @@ def test_retry_returns_404_for_cross_owner_job(db_session) -> None:
         db_session,
         source_id=bookmark.source_id,
         idempotency_key="r" * 64,
-        status=ConversionJobStatus.FAILED_RETRYABLE,
+        status=WorkUnitStatus.FAILED,
+        earliest_next_attempt_at=utcnow(),
         owner_id="someone_else",
     )
 
@@ -119,7 +122,7 @@ def test_retry_returns_404_for_cross_owner_job(db_session) -> None:
     assert resp.json()["detail"]["error"] == "job_not_found"
 
     db_session.refresh(cross)
-    assert cross.status == ConversionJobStatus.FAILED_RETRYABLE
+    assert cross.status == WorkUnitStatus.FAILED
 
 
 def test_cancel_returns_404_for_cross_owner_job(db_session) -> None:
@@ -128,7 +131,7 @@ def test_cancel_returns_404_for_cross_owner_job(db_session) -> None:
         db_session,
         source_id=bookmark.source_id,
         idempotency_key="z" * 64,
-        status=ConversionJobStatus.QUEUED,
+        status=WorkUnitStatus.QUEUED,
         owner_id="someone_else",
     )
 
@@ -140,7 +143,7 @@ def test_cancel_returns_404_for_cross_owner_job(db_session) -> None:
     assert resp.json()["detail"]["error"] == "job_not_found"
 
     db_session.refresh(cross)
-    assert cross.status == ConversionJobStatus.QUEUED
+    assert cross.status == WorkUnitStatus.QUEUED
 
 
 def test_bulk_action_skips_cross_owner_jobs(db_session) -> None:
@@ -149,14 +152,16 @@ def test_bulk_action_skips_cross_owner_jobs(db_session) -> None:
         db_session,
         source_id=bookmark.source_id,
         idempotency_key="m" * 64,
-        status=ConversionJobStatus.FAILED_RETRYABLE,
+        status=WorkUnitStatus.FAILED,
+        earliest_next_attempt_at=utcnow(),
         owner_id="self",
     )
     cross = make_job(
         db_session,
         source_id=bookmark.source_id,
         idempotency_key="n" * 64,
-        status=ConversionJobStatus.FAILED_RETRYABLE,
+        status=WorkUnitStatus.FAILED,
+        earliest_next_attempt_at=utcnow(),
         owner_id="someone_else",
     )
 
@@ -178,5 +183,5 @@ def test_bulk_action_skips_cross_owner_jobs(db_session) -> None:
 
     db_session.refresh(owned)
     db_session.refresh(cross)
-    assert owned.status == ConversionJobStatus.QUEUED
-    assert cross.status == ConversionJobStatus.FAILED_RETRYABLE
+    assert owned.status == WorkUnitStatus.QUEUED
+    assert cross.status == WorkUnitStatus.FAILED
