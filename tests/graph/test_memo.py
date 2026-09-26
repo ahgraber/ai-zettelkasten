@@ -20,8 +20,8 @@ import pytest
 from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine
 
+from aizk.db.engine import begin_immediate
 from aizk.graph.chunks import memo_delete_keys, memo_get, memo_upsert_and_read
-from aizk.graph.db import begin_immediate
 
 _SUMMARY = "summary"
 _REVISION = "revision"

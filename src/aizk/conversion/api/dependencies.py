@@ -11,11 +11,10 @@ from fastapi import Request
 
 from aizk.conversion.wiring.capabilities import SubmissionCapabilities
 from aizk.service.api.dependencies import get_config, get_db_session, get_object_storage
-from aizk.service.auth import get_auth_settings, get_principal
+from aizk.service.auth import get_principal
 from aizk.storage.s3 import S3Client
 
 __all__ = [
-    "get_auth_settings",
     "get_config",
     "get_db_session",
     "get_object_storage",

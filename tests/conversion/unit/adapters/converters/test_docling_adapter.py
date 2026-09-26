@@ -16,7 +16,7 @@ from aizk.conversion.adapters.converters.docling import DoclingConverter
 from aizk.conversion.core.hashing import build_output_config_snapshot
 from aizk.conversion.core.protocols import Converter
 from aizk.conversion.core.types import ContentType, ConversionArtifacts, ConversionInput, SourceMetadata
-from aizk.conversion.utilities.config import DoclingConverterConfig
+from aizk.conversion.settings import DoclingConverterConfig
 
 
 def _make_disabled_config() -> DoclingConverterConfig:

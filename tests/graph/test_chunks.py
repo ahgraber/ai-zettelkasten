@@ -37,8 +37,8 @@ from aizk.graph.chunks import (
 )
 from aizk.graph.datamodel import INPUT_KIND_RAW, Chunk, ChunkRunApplicability, ChunkRunManifest
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
-from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus
+from aizk.utilities.hashing import content_fingerprint
 
 _AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")
 _OUTPUT = "output-1"

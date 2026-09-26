@@ -37,7 +37,7 @@ _REPO_ROOT = Path(
 )
 sys.path.insert(0, str(_REPO_ROOT / "src"))
 
-from aizk.conversion.utilities.bookmark_utils import (  # noqa: E402
+from aizk.conversion.egress.bookmark_utils import (  # noqa: E402
     BookmarkContentError,
     get_bookmark_source_url,
 )

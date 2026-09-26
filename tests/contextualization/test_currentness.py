@@ -20,6 +20,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from aizk.ai.providers.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.contextualization.processing.document import (
     LoadedMarkdown,
     ProcessResult,
@@ -30,7 +31,6 @@ from aizk.contextualization.processing.markdown_source import ConversionOutputFr
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.graph.chunks import run_input
 from aizk.graph.content_index import CONTENT_FTS_DDL
-from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.pipeline.run import PipelineRun, RunStatus
 from aizk.utilities.hashing import compute_markdown_hash
 from tests.fakes.storage import MemoryS3

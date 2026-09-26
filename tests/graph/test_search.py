@@ -25,10 +25,11 @@ from sqlalchemy import Engine, create_engine
 from sqlmodel import Session
 import xxhash
 
+from aizk.ai.providers.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
+from aizk.contextualization.core.revisions import contextualize_chunks
+from aizk.contextualization.core.summary import summarize_document
 from aizk.graph.chunks import persist_chunks
-from aizk.graph.contextualization import contextualize_chunks, summarize_document
-from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.graph.search import (
     MAX_QUERY_LENGTH,
     Fts5SearchProvider,
@@ -36,7 +37,7 @@ from aizk.graph.search import (
     SearchProvider,
     escape_fts_query,
 )
-from aizk.pipeline.identity import content_fingerprint
+from aizk.utilities.hashing import content_fingerprint
 
 
 @pytest.fixture

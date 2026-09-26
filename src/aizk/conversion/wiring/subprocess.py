@@ -13,7 +13,6 @@ from typing import Literal
 from sqlalchemy.engine import Engine
 from sqlmodel import Session
 
-from aizk.conversion.core.hashing import compute_markdown_hash
 from aizk.conversion.core.source_ref import SourceRef
 from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.processing.errors import ConversionCancelledError
@@ -32,10 +31,35 @@ from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.service.bootstrap import load_process_dotenv_once, set_process_title
+from aizk.service.logging import configure_logging
+from aizk.service.settings import ServiceSettings
 from aizk.storage.settings import ObjectStorageSettings
 from aizk.utilities.clock import utcnow
+from aizk.utilities.hashing import compute_markdown_hash
 
 logger = logging.getLogger(__name__)
+
+
+class _JobIdFilter(logging.Filter):
+    """Stamp the child's job id on records that carry no ``job_id`` of their own."""
+
+    def __init__(self, job_id: int) -> None:
+        """Bind the job id to stamp."""
+        super().__init__()
+        self._job_id = job_id
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Stamp the job id on ``record`` when it carries none; always keep the record."""
+        if getattr(record, "job_id", None) is None:
+            record.job_id = self._job_id
+        return True
+
+
+def _configure_child_logging(settings: ServiceSettings, job_id: int) -> None:
+    """Configure structured logging in the conversion child and stamp its job id on every record."""
+    configure_logging(settings)
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(_JobIdFilter(job_id))
 
 
 def _raise_if_cancelled(job_id: int, engine: Engine) -> None:
@@ -95,6 +119,7 @@ def _process_job_subprocess(
 
     def _do_convert():
         load_process_dotenv_once()
+        _configure_child_logging(ServiceSettings(), job_id)
         config = ConversionConfig()
         object_storage = ObjectStorageSettings()
         engine = get_engine(DatabaseConfig().database_url)

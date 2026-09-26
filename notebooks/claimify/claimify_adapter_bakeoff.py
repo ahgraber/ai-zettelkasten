@@ -55,6 +55,7 @@ from aizk.db.backends.sqlite import (  # noqa: E402
     _resolve_litestream_binary,
     _write_config_file,
 )
+from aizk.storage.settings import ObjectStorageSettings  # noqa: E402
 
 # %%
 nest_asyncio.apply()
@@ -77,18 +78,19 @@ BAKEOFF_DIR.mkdir(parents=True, exist_ok=True)
 # %%
 # Restore the SQLite DB from Litestream (same dance as the extraction demo).
 _config = SqliteDurabilityConfig()
+_object_storage = ObjectStorageSettings()
 _db_path = (REPO_ROOT / "data" / "conversion_service.db").resolve()
 for _suffix in ("", "-wal", "-shm"):
     (_db_path.parent / f"{_db_path.name}{_suffix}").unlink(missing_ok=True)
 
-_bucket = _config.litestream_s3_bucket_name or _config.s3_bucket_name
+_bucket = _config.litestream_s3_bucket_name or _object_storage.s3_bucket_name
 _ls_config_path = _write_config_file(
     db_path=_db_path,
     bucket=_bucket,
     config_path=Path(_config.litestream_config_path),
     s3_prefix=_config.litestream_s3_prefix,
-    s3_region=_config.s3_region,
-    s3_endpoint_url=_config.s3_endpoint_url,
+    s3_region=_object_storage.s3_region,
+    s3_endpoint_url=_object_storage.s3_endpoint_url,
     s3_force_path_style=_config.litestream_s3_force_path_style,
     s3_sign_payload=_config.litestream_s3_sign_payload,
 )
@@ -96,7 +98,7 @@ _ls_binary = _resolve_litestream_binary(_config.litestream_binary)
 subprocess.run(
     [_ls_binary, "restore", "-config", str(_ls_config_path), str(_db_path)],
     check=True,
-    env=_litestream_env(_config),
+    env=_litestream_env(_object_storage),
 )
 
 # %%

@@ -1,13 +1,13 @@
-"""Behavioral tests for the extraction pipeline (``aizk.graph.extraction``).
+"""Behavioral tests for the extraction pipeline (``aizk.extraction.core.extractors``).
 
-Exercises :func:`~aizk.graph.extraction.select_extraction_input` and
-:func:`~aizk.graph.extraction.extract_chunk_mentions` against a real (file-based)
+Exercises :func:`~aizk.extraction.core.extractors.select_extraction_input` and
+:func:`~aizk.extraction.core.extractors.extract_chunk_mentions` against a real (file-based)
 SQLite schema carrying the chunk, contextualized-chunk, mention, co-occurrence,
 and shared ``pipeline_runs`` tables — the same tables
 ``tests/graph/test_mentions.py`` builds, plus the write path
 (:func:`~aizk.graph.mentions.open_extraction_run` /
 :func:`~aizk.graph.mentions.persist_mentions`) they feed. Extraction is
-wired end-to-end through a deterministic stub :class:`~aizk.graph.extraction.EntityExtractor`
+wired end-to-end through a deterministic stub :class:`~aizk.extraction.core.extractors.EntityExtractor`
 (design decision ``DeterministicStubExtractorForTests``): uniform run versions,
 the source/revision/expansion occurrence-classification partition, intra-chunk
 co-occurrence, raw-vs-contextualized input selection (including the
@@ -26,9 +26,7 @@ from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
-from aizk.graph.contextualization import VARIANT_STAGE
-from aizk.graph.datamodel import Chunk, ContextualizedChunk, Mention, MentionCooccurrence
-from aizk.graph.extraction import (
+from aizk.extraction.core.extractors import (
     MATERIALIZER_VERSION,
     Detection,
     EntityExtractor,
@@ -36,7 +34,9 @@ from aizk.graph.extraction import (
     extract_chunk_mentions,
     select_extraction_input,
 )
+from aizk.graph.datamodel import Chunk, ContextualizedChunk, Mention, MentionCooccurrence
 from aizk.graph.mentions import ResolvedExtractionConfig, open_extraction_run, persist_mentions
+from aizk.graph.variants import VARIANT_STAGE
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 
 if TYPE_CHECKING:
@@ -69,7 +69,7 @@ def _cid(label: str) -> UUID:
 class StubExtractor:
     """Deterministic :class:`EntityExtractor` test double returning configured detections per input text.
 
-    Mirrors :class:`aizk.graph.llm.StubLLMClient`: a fixed ``text -> detections``
+    Mirrors :class:`aizk.ai.providers.llm.StubLLMClient`: a fixed ``text -> detections``
     mapping and a fixed ``extractor_version``, so a test exercises extraction's
     own materialization logic (grouping, occurrence classification) without
     depending on a real NER model.

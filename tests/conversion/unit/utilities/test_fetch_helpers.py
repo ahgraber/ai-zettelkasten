@@ -19,7 +19,7 @@ from aizk.conversion.core.errors import (
     FetchTooLargeError,
 )
 from aizk.conversion.egress.fetch_helpers import fetch_arxiv_pdf
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.settings import ConversionConfig
 
 
 def _run(coro):

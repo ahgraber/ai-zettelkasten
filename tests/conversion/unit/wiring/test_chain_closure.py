@@ -174,7 +174,7 @@ def test_validate_chain_closure_considers_registered_kinds_not_ingress_policy():
 
 def test_singlefile_not_in_registered_kinds_after_register_ready_adapters():
     """SingleFileFetcher is a skeleton — register_ready_adapters must NOT register it."""
-    from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
+    from aizk.conversion.settings import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
     from aizk.conversion.wiring.registrations import register_ready_adapters
 
     cfg = ConversionConfig(_env_file=None)
@@ -196,7 +196,7 @@ def test_singlefile_not_in_registered_kinds_after_register_ready_adapters():
 
 def test_default_wiring_passes_chain_closure():
     """register_ready_adapters completes without raising ChainNotTerminated."""
-    from aizk.conversion.utilities.config import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
+    from aizk.conversion.settings import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
     from aizk.conversion.wiring.registrations import register_ready_adapters
 
     cfg = ConversionConfig(_env_file=None)

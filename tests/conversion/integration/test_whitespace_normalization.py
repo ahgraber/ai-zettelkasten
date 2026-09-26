@@ -61,9 +61,9 @@ def _make_subprocess_stub(markdowns_iter):
     def _stub(job_id: int, workspace_path: str, source_ref_json: str, status_queue) -> None:
         from pathlib import Path
 
-        from aizk.conversion.core.hashing import compute_markdown_hash
         from aizk.conversion.processing.whitespace import normalize_whitespace
         from aizk.conversion.storage.paths import OUTPUT_MARKDOWN_FILENAME, metadata_path
+        from aizk.utilities.hashing import compute_markdown_hash
 
         workspace = Path(workspace_path)
         raw_markdown = next(markdowns_iter)

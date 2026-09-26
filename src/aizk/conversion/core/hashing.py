@@ -5,13 +5,12 @@ from __future__ import annotations
 import hashlib
 
 from aizk.conversion.settings import DoclingConverterConfig
-from aizk.utilities.hashing import canonical_json, compute_markdown_hash
+from aizk.utilities.hashing import canonical_json
 
 __all__ = [
     "build_output_config_snapshot",
     "compute_config_hash",
     "compute_idempotency_key",
-    "compute_markdown_hash",
 ]
 
 

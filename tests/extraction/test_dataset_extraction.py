@@ -1,12 +1,12 @@
-"""Behavioral tests for the dataset run's orchestration (``aizk.graph.dataset_extraction``).
+"""Behavioral tests for the dataset run's orchestration (``aizk.extraction.processing.corpus``).
 
-Covers :func:`~aizk.graph.dataset_extraction.resolve_target_source_ids` (explicit
+Covers :func:`~aizk.extraction.processing.corpus.resolve_target_source_ids` (explicit
 vs. corpus-scan target selection, dedup, ordering, and ``limit``) and
-:func:`~aizk.graph.dataset_extraction.run_dataset_extraction` (the confirmation
+:func:`~aizk.extraction.processing.corpus.run_dataset_extraction` (the confirmation
 gate: an explicit target set runs unconfirmed, a corpus-scan selection refuses
 until confirmed and writes nothing when refused, and a confirmed corpus scan
 extracts every eligible source through the real
-:func:`~aizk.graph.extraction_run.extract_corpus` path).
+:func:`~aizk.extraction.processing.corpus.extract_corpus` path).
 """
 
 from __future__ import annotations
@@ -20,6 +20,8 @@ from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
+from aizk.extraction.core.extractors import Detection
+from aizk.extraction.processing.corpus import resolve_target_source_ids, run_dataset_extraction
 from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.datamodel import (
     INPUT_KIND_RAW,
@@ -31,13 +33,11 @@ from aizk.graph.datamodel import (
     Mention,
     MentionCooccurrence,
 )
-from aizk.graph.dataset_extraction import resolve_target_source_ids, run_dataset_extraction
-from aizk.graph.extraction import Detection
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
 from aizk.graph.mentions import active_extraction_run
-from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.invalidation import ReprocessingConfirmationError
 from aizk.pipeline.run import PipelineRun, record_run
+from aizk.utilities.hashing import content_fingerprint
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

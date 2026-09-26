@@ -122,9 +122,9 @@ def convert_inline(monkeypatch: "pytest.MonkeyPatch", *, on_convert: Callable[[i
     ``converting`` phase, then writes a one-line markdown document and its
     metadata into the workspace.
     """
-    from aizk.conversion.core.hashing import compute_markdown_hash
     from aizk.conversion.storage.paths import OUTPUT_MARKDOWN_FILENAME, metadata_path
     from aizk.conversion.wiring import subprocess as wiring_subprocess
+    from aizk.utilities.hashing import compute_markdown_hash
     from tests.fakes.process import InlineContext
 
     converted: list[int] = []

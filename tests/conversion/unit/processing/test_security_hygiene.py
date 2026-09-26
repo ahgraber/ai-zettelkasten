@@ -29,7 +29,7 @@ from aizk.conversion.egress.policy import assert_egress_allowed
 from aizk.conversion.egress.prefetch import prefetch_images
 from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.processing.errors import classify_job_error
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.settings import ConversionConfig
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
 
 # ---------------------------------------------------------------------------

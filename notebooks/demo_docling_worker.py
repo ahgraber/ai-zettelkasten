@@ -8,6 +8,22 @@
 # worker's whitespace normalization, and writes an `output.md` you can open and
 # eyeball — so you can see exactly what the worker would persist.
 #
+# **Where the worker runs these steps:** the conversion stage is the
+# `aizk.conversion` package — `core` holds the coordinator, protocols, and types;
+# `adapters` the fetchers and converters behind them; `egress` the outbound-network
+# helpers (the KaraKeep bookmark helpers this tour imports); `processing` the
+# converter, fetcher, and whitespace functions this tour calls, plus the worker's
+# subprocess supervision; and `wiring` the composition root, including the
+# subprocess entry (`aizk.conversion.wiring.subprocess`) that fetches and converts
+# for one job. In the worker these steps run inside a conversion job whose `status`
+# is one of `queued`, `running`, `succeeded`, `failed`, `cancelled`, or
+# `timed_out`. While the job is `running`, its `phase` is `convert` (the steps this
+# tour runs) and then `upload` (writing the output to S3); an operator cancel is
+# refused during `upload`. A `failed` job carries a `retry_class`: `retryable` when
+# a retry wait is set, else `permanent`. A job that exceeds its timeout ends
+# `timed_out` and stays there until an operator retries it. This tour runs the
+# conversion steps directly, with no job, database, or upload.
+#
 # **Run model:** open in VS Code Interactive or Jupyter and execute cells
 # top-to-bottom with **Shift+Enter**. State lives in module-scope variables that
 # later cells reuse, so run the cells in order. The final driver cell uses
@@ -33,9 +49,7 @@ from dotenv import load_dotenv
 import nest_asyncio
 from setproctitle import setproctitle
 
-from aizk.conversion.processing.converter import convert_html, convert_pdf
-from aizk.conversion.processing.fetcher import fetch_arxiv, fetch_github_readme, fetch_karakeep_asset
-from aizk.conversion.utilities.bookmark_utils import (
+from aizk.conversion.egress.bookmark_utils import (
     BookmarkContentError,
     detect_content_type,
     detect_source_type,
@@ -47,8 +61,10 @@ from aizk.conversion.utilities.bookmark_utils import (
     is_pdf_asset,
     validate_bookmark_content,
 )
-from aizk.conversion.utilities.config import DoclingConverterConfig
-from aizk.conversion.utilities.whitespace import normalize_whitespace
+from aizk.conversion.processing.converter import convert_html, convert_pdf
+from aizk.conversion.processing.fetcher import fetch_arxiv, fetch_github_readme, fetch_karakeep_asset
+from aizk.conversion.processing.whitespace import normalize_whitespace
+from aizk.conversion.settings import DoclingConverterConfig
 from karakeep_client.models import Bookmark
 
 # %% [markdown]
@@ -167,7 +183,7 @@ async def fetch_source_content(bookmark: Bookmark, source_type: str) -> tuple[Pr
 # `convert_to_markdown` runs the production converter (`convert_pdf` /
 # `convert_html`) into a per-bookmark workspace, then applies the **same
 # whitespace normalization the worker applies before writing `output.md`** (see
-# `aizk.conversion.processing.subproc`) — so the file on disk matches what the
+# `aizk.conversion.wiring.subprocess`) — so the file on disk matches what the
 # worker would persist. Set
 # `AIZK_CONVERTER__DOCLING__PICTURE_CLASSIFICATION_ENABLED=false` to disable
 # classification-based prompt routing.
@@ -196,7 +212,7 @@ def convert_to_markdown(
         )
 
     # Mirror the production worker: normalize whitespace before writing output.md
-    # (see aizk.conversion.processing.subproc).
+    # (see aizk.conversion.wiring.subprocess).
     markdown_text = normalize_whitespace(markdown_text)
     (workspace / "output.md").write_text(markdown_text)
     print(f"  title={document_title!r}  figures={len(figure_paths)}  -> {workspace / 'output.md'}")

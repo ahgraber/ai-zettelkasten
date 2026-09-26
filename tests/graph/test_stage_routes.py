@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from aizk.graph.api.main import create_app
+from aizk.console.app import create_app
 
 _INTAKE = ["201", "503", "200", "404", "422"]
 _ACTION = ["200", "422"]

@@ -17,7 +17,7 @@ import xxhash
 from aizk.chunking import Chunk as SplitterChunk
 from aizk.graph.datamodel import INPUT_KIND_CONTEXTUALIZED, INPUT_KIND_RAW, Chunk as GraphChunk
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
-from aizk.pipeline.identity import content_fingerprint
+from aizk.utilities.hashing import content_fingerprint
 
 _SOURCE_ID = UUID("11111111-1111-1111-1111-111111111111")
 

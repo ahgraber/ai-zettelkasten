@@ -34,6 +34,7 @@ from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
+from aizk.ai.providers.llm import STUB_MODEL_CONFIG, ModelConfig, StubLLMClient
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
 import aizk.contextualization.core.keys as ctx_mod
 from aizk.contextualization.core.keys import (
@@ -56,10 +57,9 @@ from aizk.graph.datamodel import (
     SummaryRunApplicability,
 )
 from aizk.graph.fingerprints import payload_fingerprint
-from aizk.graph.llm import STUB_MODEL_CONFIG, ModelConfig, StubLLMClient
 from aizk.graph.variants import SUMMARY_STAGE, VARIANT_STAGE, ContextSource, resolve_chunk_text
-from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus
+from aizk.utilities.hashing import content_fingerprint
 
 _AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")
 _OUTPUT = "output-1"

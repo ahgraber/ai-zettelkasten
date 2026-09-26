@@ -28,9 +28,9 @@ from aizk.graph.datamodel import (
     Mention,
     MentionCooccurrence,
 )
-from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, derivation_key, fingerprint
+from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, derivation_key
 from aizk.pipeline.run import PipelineRun, RunStatus, active_run, reuse_or_record_run
-from aizk.utilities.hashing import canonical_json
+from aizk.utilities.hashing import canonical_json, fingerprint
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

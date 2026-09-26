@@ -14,10 +14,10 @@ from sqlmodel import Session, select
 from _claimify.models import EvalRecord, ExtractionRecord, LoadedDoc
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
-from aizk.conversion.storage.s3_client import S3Client
-from aizk.conversion.utilities.config import ConversionConfig
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
+from aizk.storage.s3 import S3Client
+from aizk.storage.settings import ObjectStorageSettings
 
 
 def resolve_repo_root() -> Path:
@@ -74,7 +74,7 @@ def resolve_doc(
         source = "cache"
     else:
         if s3_client is None:
-            s3_client = S3Client(ConversionConfig())
+            s3_client = S3Client(ObjectStorageSettings())
         markdown = s3_client.get_object_bytes(output.markdown_key).decode("utf-8")
         cache_path.write_text(markdown, encoding="utf-8")
         source = "s3"
@@ -90,7 +90,7 @@ def resolve_doc(
 
 def load_docs(karakeep_ids: list[str]) -> list[LoadedDoc]:
     """Batch-resolve bookmark ids using a single DB session and S3 client."""
-    config = ConversionConfig()
+    config = ObjectStorageSettings()
     engine = get_engine(DatabaseConfig().database_url)
     s3_client = S3Client(config)
     with Session(engine) as session:

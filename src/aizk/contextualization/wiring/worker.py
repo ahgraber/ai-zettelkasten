@@ -6,19 +6,17 @@ Admission remains disabled unless the graph configuration enables it.
 
 from __future__ import annotations
 
-import contextlib
 import datetime
 import logging
 from typing import TYPE_CHECKING
 
 from aizk.ai.providers.llm import ModelConfig, build_llm_client
-from aizk.contextualization.events import CONTEXTUALIZATION_STAGE
+from aizk.contextualization.core.intake import contextualization_adapter
 from aizk.contextualization.handler import ContextualizationStageHandler
 from aizk.contextualization.processing.markdown_source import ConversionOutputFreshness, S3MarkdownSource
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
-from aizk.graph.admission import AdmissionLoop, admission_adapter_for
-from aizk.pipeline.admission import AdmissionConfig
+from aizk.pipeline.admission import AdmissionConfig, AdmissionLoop
 from aizk.pipeline.runner import DEFAULT_CANCEL_GRACE, StageRunner
 from aizk.pipeline.stage import require_stale_threshold
 from aizk.storage.s3 import ObjectStorageSettings, S3Client
@@ -87,11 +85,7 @@ def run_graph_worker(
         contextualization_config.llm_model,
         contextualization_config.worker_concurrency,
     )
-    adapter = admission_adapter_for(CONTEXTUALIZATION_STAGE, admission_config)
-    admission = (
-        AdmissionLoop(engine, adapter, interval_seconds=admission_config.admission_interval_seconds)
-        if adapter is not None
-        else contextlib.nullcontext()
-    )
+    adapter = contextualization_adapter(admission_config)
+    admission = AdmissionLoop(engine, adapter, interval_seconds=admission_config.admission_interval_seconds)
     with admission:
         return runner.run()

@@ -6,12 +6,12 @@ retained (the summary and per-chunk revisions are memoized as validated model
 output keyed by their input-deterministic derivation keys), only valid output is
 eligible for reuse, and retained intermediate work is never observable as
 committed contextualization state. Drives the deterministic stub
-:class:`~aizk.graph.llm.StubLLMClient` and asserts on its recorded invocations and
+:class:`~aizk.ai.providers.llm.StubLLMClient` and asserts on its recorded invocations and
 on persisted records / memo rows.
 
 These tests use a **plain** engine (no auto-``BEGIN IMMEDIATE`` listener) because
 the memo-aware resolvers and the unit-of-work own their transaction boundaries via
-:func:`aizk.graph.db.begin_immediate`; an auto-emitting listener would double-begin.
+:func:`aizk.db.engine.begin_immediate`; an auto-emitting listener would double-begin.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from sqlalchemy import Engine, text
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
+from aizk.ai.providers.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk, split
 from aizk.contextualization.core.keys import MAX_SUMMARY_CHARS
 from aizk.contextualization.core.revisions import contextualize_chunks, resolve_revisions
@@ -44,12 +45,10 @@ from aizk.graph.datamodel import (
     DocumentSummary,
     SummaryRunApplicability,
 )
-from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.graph.variants import StalePlanError
-from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.lifecycle import RetryClass
 from aizk.pipeline.run import PipelineRun, RunStatus
-from aizk.utilities.hashing import compute_markdown_hash
+from aizk.utilities.hashing import compute_markdown_hash, content_fingerprint
 from tests.fakes.markdown import StubMarkdownSource
 
 _AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")

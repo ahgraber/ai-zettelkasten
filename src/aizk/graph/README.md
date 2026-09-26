@@ -180,7 +180,7 @@ For the finer points — why `input_span` (offsets into the text actually read) 
 
 ## Extractors
 
-NER sits behind a pluggable `EntityExtractor` interface (`aizk.graph.extraction`): two pinned production implementations plus a deterministic stub for tests.
+NER sits behind a pluggable `EntityExtractor` interface (`aizk.extraction.core.extractors`): two pinned production implementations plus a deterministic stub for tests.
 
 | Extractor          | Model                                               | Install                        | Weights                                                                        |
 | ------------------ | --------------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------ |
@@ -211,7 +211,7 @@ Orchestration:
   Both modes dedupe on `idempotency_key`, honor the stage's declared capacity, and feed the one write path, so the produced records are run-mode-independent.
 - Derivations: `pending_contextualization` (with its `_outputs` / `_sources` projections), `pending_extraction_sources`, `classify_extraction_sources` / `classify_extraction_source` (the per-source and per-corpus tri-state currentness classification) and `stale_extraction_sources` (the STALE subset).
   Each is read-only, so the same query feeds both admission and the operator's coverage view and the two cannot disagree.
-- Admission: `AdmissionAdapter`, `admission_adapter_for`, `run_admission_pass`, `AdmissionLoop`; `StageAtCapacityError` and the `capacity` helpers.
+- Admission: `AdmissionAdapter`, `run_admission_pass`, `AdmissionLoop`; `StageAtCapacityError` and the `capacity` helpers.
 - `ContextualizationStageHandler` — the runtime `StageHandler` (claim / execute-in-own-transaction / finalize / recover / cancel; `ValueError` → permanent, other exceptions → retryable, success → succeeded; in-process, single-writer).
 - `MarkdownSource` / `S3MarkdownSource` (over a `BlobReader`), `ContextualizationConfig`, `build_llm_client`, `run_graph_worker`.
 

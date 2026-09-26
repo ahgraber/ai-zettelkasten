@@ -5,8 +5,7 @@ from __future__ import annotations
 import pytest
 
 from aizk.conversion.api.dependencies import get_principal
-from aizk.conversion.auth import Principal
-from aizk.conversion.utilities.config import AuthSettings
+from aizk.service.auth import AuthSettings, Principal
 
 
 def _trust_network_settings(default_principal: str = "self") -> AuthSettings:

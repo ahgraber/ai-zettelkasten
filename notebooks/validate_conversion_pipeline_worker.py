@@ -281,11 +281,12 @@ def run_runner_until_drained(max_iterations: int = 100_000) -> None:
             queue cannot loop forever in the notebook.
     """
     from aizk.conversion.handler import ConversionStageHandler
-    from aizk.conversion.utilities.config import ConversionConfig
+    from aizk.conversion.settings import ConversionConfig
     from aizk.conversion.wiring.worker import build_worker_runtime
     from aizk.db.config import DatabaseConfig
     from aizk.db.engine import get_engine
     from aizk.pipeline.runner import StageRunner
+    from aizk.storage.settings import ObjectStorageSettings
 
     # ``_LEGACY_POLL_INTERVAL_SECONDS`` / ``_TERMINATION_BUDGET_SECONDS`` mirror
     # the constants ``run_worker`` uses; inlined here so this driver does
@@ -294,7 +295,7 @@ def run_runner_until_drained(max_iterations: int = 100_000) -> None:
     termination_budget_seconds = 10.0
 
     config = ConversionConfig()
-    runtime = build_worker_runtime(config)
+    runtime = build_worker_runtime(config, object_storage=ObjectStorageSettings())
     handler = ConversionStageHandler(config, runtime=runtime)
     runner = StageRunner(
         handler,

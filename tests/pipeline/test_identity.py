@@ -14,8 +14,9 @@ from uuid import UUID
 from sqlalchemy import Engine
 from sqlmodel import Session, func, select
 
-from aizk.pipeline.identity import content_fingerprint, derivation_key, fingerprint
+from aizk.pipeline.identity import derivation_key
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run, reuse_or_record_run
+from aizk.utilities.hashing import content_fingerprint, fingerprint
 
 _STAGE = "chunking"
 _SCOPE = UUID("11111111-1111-1111-1111-111111111111")

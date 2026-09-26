@@ -1,9 +1,10 @@
-"""Cross-stage lifecycle tests: three stages, one retry policy, one clock, one result.
+"""Cross-stage lifecycle tests: four stages, one retry policy, one clock, one result.
 
 Covers the runtime spec's requirement that lifecycle behavior is identical
-across stages. The contextualization and extraction handlers and the stub stage
-are driven through the same operations under the same policy and clock, and
-each is asserted against the same expected ``(status, wait, attempts, kind)``.
+across stages. The conversion, contextualization, and extraction handlers and
+the stub stage are driven through the same operations under the same policy
+and clock, and each is asserted against the same expected
+``(status, wait, attempts, kind)``.
 Failures are driven through ``finalize`` with a terminal outcome, not through
 ``execute``.
 """
@@ -21,15 +22,21 @@ import pytest
 from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from aizk.ai.providers.llm import STUB_MODEL_CONFIG, StubLLMClient
+from aizk.contextualization.core.intake import enqueue_document
+from aizk.contextualization.handler import ContextualizationStageHandler
+from aizk.conversion.datamodel.job import ConversionJob
+from aizk.conversion.datamodel.source import Source
+from aizk.conversion.handler import ConversionStageHandler
+from aizk.conversion.settings import ConversionConfig
+from aizk.conversion.stage import CONVERSION_DEFINITION, ConversionJobParams
+from aizk.extraction.handler import ExtractionStageHandler
+from aizk.extraction.stage import enqueue_extraction
 from aizk.graph.datamodel import ContextualizationJob, ExtractionJob
-from aizk.graph.extraction_handler import ExtractionStageHandler
-from aizk.graph.extraction_workunit import enqueue_extraction
-from aizk.graph.handler import ContextualizationStageHandler
-from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
-from aizk.graph.workunit import enqueue_document
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
-from aizk.pipeline.stage import HandlerBase
+from aizk.pipeline.stage import HandlerBase, enqueue
+from tests.conversion._helpers import make_source
 from tests.fakes.markdown import StubMarkdownSource
 
 from ._stub_handler import StubStageHandler, StubWorkUnit, create_stub_file_engine
@@ -95,6 +102,52 @@ def _stamp_submission_order(engine: Engine, model: type, ids: list[int]) -> None
             row.queued_at = _NOW - dt.timedelta(seconds=len(ids) - offset)
             session.add(row)
         session.commit()
+
+
+def _conversion(tmp_path: Path) -> _Stage:
+    engine = _graph_engine(
+        tmp_path, "conversion.db", [Source.__table__, ConversionJob.__table__, PipelineEvent.__table__]
+    )
+    config = ConversionConfig(
+        _env_file=None,
+        worker_max_attempts=_CAP,
+        retry_base_delay_seconds=int(_BASE_DELAY),
+        worker_stale_job_minutes=int(_STALE_AFTER.total_seconds() / 60),
+    )
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("AIZK_DATABASE_URL", f"sqlite:///{tmp_path / 'conversion.db'}")
+        handler = ConversionStageHandler(config)
+    handler._clock = _clock
+    handler.repository._clock = _clock
+
+    def _seed(count: int) -> list[int]:
+        ids: list[int] = []
+        with Session(engine) as session:
+            for index in range(count):
+                source = make_source(session, f"bm{index}", owner_id="test")
+                params = ConversionJobParams(
+                    source_ref=source.source_ref,
+                    title=f"u{index}",
+                    payload_version=1,
+                    source_ref_hash=source.source_ref_hash,
+                    converter_name="docling",
+                    config_snapshot={},
+                )
+                job, _ = enqueue(
+                    session,
+                    CONVERSION_DEFINITION,
+                    params,
+                    origin="intake",
+                    principal="test",
+                    queue_max_depth=0,
+                    columns={"source_id": source.source_id, "owner_id": "test"},
+                )
+                ids.append(job.id)
+            session.commit()
+        _stamp_submission_order(engine, ConversionJob, ids)
+        return ids
+
+    return _Stage(handler, engine, ConversionJob, _seed)
 
 
 def _contextualization(tmp_path: Path) -> _Stage:
@@ -166,7 +219,10 @@ def _stub(tmp_path: Path) -> _Stage:
     return _Stage(handler, engine, StubWorkUnit, _seed)
 
 
-@pytest.fixture(params=[_contextualization, _extraction, _stub], ids=["contextualization", "extraction", "stub"])
+@pytest.fixture(
+    params=[_conversion, _contextualization, _extraction, _stub],
+    ids=["conversion", "contextualization", "extraction", "stub"],
+)
 def stage(request: pytest.FixtureRequest, tmp_path: Path) -> _Stage:
     built = request.param(tmp_path)
     yield built

@@ -293,9 +293,9 @@ def _make_subprocess_stub(markdown: str = "# Converted output") -> Callable:
     """Return a _process_job_subprocess stub writing pre-built workspace artifacts."""
 
     def _stub(job_id: int, workspace_path: str, source_ref_json: str, status_queue: Any) -> None:
-        from aizk.conversion.core.hashing import compute_markdown_hash
         from aizk.conversion.processing.whitespace import normalize_whitespace
         from aizk.conversion.storage.paths import OUTPUT_MARKDOWN_FILENAME, metadata_path
+        from aizk.utilities.hashing import compute_markdown_hash
 
         workspace = Path(workspace_path)
         normalized = normalize_whitespace(markdown)

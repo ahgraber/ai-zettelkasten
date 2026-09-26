@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field, ValidationError
 from setproctitle import setproctitle
 from tqdm.auto import tqdm
 
-from aizk.conversion.utilities.arxiv_utils import ArxivClient
+from aizk.conversion.egress.arxiv_utils import ArxivClient
 from aizk.utilities.file_utils import to_valid_fname
 from aizk.utilities.limiters import SlidingWindowRateLimiter
 
@@ -499,7 +499,7 @@ from pydantic_ai.providers.openrouter import OpenRouterProvider  # NOQA: E402
 
 # TODO: check if mlflow is running; raise exception if not
 # `mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000`
-mlflow.set_tracking_uri(os.environ.get("AIZK_MLFLOW_TRACKING_URI", "http://127.0.0.1:5000"))
+mlflow.set_tracking_uri(os.environ.get("AIZK_MLFLOW__TRACKING_URI", "http://127.0.0.1:5000"))
 mlflow.set_experiment("reorder_experiment")
 mlflow.pydantic_ai.autolog()
 

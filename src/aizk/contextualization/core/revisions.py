@@ -38,8 +38,9 @@ from aizk.graph.datamodel import (
 )
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
 from aizk.graph.variants import VARIANT_STAGE, StalePlanError, _active_run
-from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, content_fingerprint
+from aizk.pipeline.identity import DERIVATION_KEY_FORMAT
 from aizk.pipeline.run import PipelineRun, record_run
+from aizk.utilities.hashing import content_fingerprint
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

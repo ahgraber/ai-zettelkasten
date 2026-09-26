@@ -495,13 +495,12 @@ def test_conversion_descriptor_imports_only_conversion_domain_modules() -> None:
         elif isinstance(node, ast.Import):
             conversion_imports.update(alias.name for alias in node.names if alias.name.startswith("aizk.conversion"))
 
-    # Domain data/command modules plus the request-boundary Principal type; the
-    # route, wiring, and processing packages are the off-limits ones.
+    # Domain data/command modules; the route, wiring, and processing packages are
+    # the off-limits ones.
     allowed = (
         "aizk.conversion.datamodel",
         "aizk.conversion.stage",
         "aizk.conversion.job_actions",
-        "aizk.conversion.auth",
     )
     off_limits = {module for module in conversion_imports if not module.startswith(allowed)}
     assert not off_limits, f"conversion descriptor imports off-limits modules: {off_limits}"

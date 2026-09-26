@@ -11,8 +11,8 @@ from fastapi import APIRouter, Depends, Query
 
 from aizk.conversion.api.dependencies import get_db_session, get_principal
 from aizk.conversion.api.schemas import OutputResponse
-from aizk.conversion.auth import Principal
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.service.auth import Principal
 
 router = APIRouter(prefix="/v1/bookmarks", tags=["bookmarks"])
 

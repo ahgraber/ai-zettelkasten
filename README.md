@@ -110,9 +110,9 @@ Litestream (SQLite replication):
 
 MLflow tracing (optional):
 
-- `AIZK_MLFLOW_TRACING_ENABLED` (default `false`)
-- `AIZK_MLFLOW_TRACKING_URI` (optional; uses MLflow defaults when unset)
-- `AIZK_MLFLOW_EXPERIMENT_NAME` (optional)
+- `AIZK_MLFLOW__ENABLED` (default `false`)
+- `AIZK_MLFLOW__TRACKING_URI` (optional; uses MLflow defaults when unset)
+- `AIZK_MLFLOW__EXPERIMENT_NAME` (optional)
 
 Deployment trust model:
 
@@ -190,7 +190,7 @@ A separate worker process claims those rows and does the work:
 | `just backfill contextualization` | each source's newest conversion output       | `just graph-worker`      |
 | `just backfill extraction`        | each source that has been chunked            | `just extraction-worker` |
 
-While no worker runs, enqueued units stay `QUEUED`.
+While no worker runs, enqueued units stay `queued`.
 `just backfill` with no target runs all three.
 
 #### Re-running is safe
@@ -253,21 +253,7 @@ It pages through KaraKeep and submits bookmark IDs, with a `KARAKEEP_DRY_RUN` mo
 
 `uv run aizk-conversion db-init` creates a fresh database (see [Running `aizk`](#running-aizk)); every service entry point — `serve`, `worker`, `aizk-graph worker`, `extraction-worker`, and the backfills — runs the same migration runner at startup, so a service never starts against an unmigrated schema.
 The migration tree holds a single baseline revision; there is no chain of incremental migrations to apply in order.
-A database stamped with a revision the tree does not know, or carrying tables with no migration stamp, is refused: the runner raises without writing anything and names this section as the rebuild path.
-
-### Rebuilding the database
-
-A rebuild is a restart, not a migration event: no data crosses from an old database to a new one.
-
-1. Stop services.
-2. Archive the old database file, its WAL, the running configuration, and the binary version — this archive is the rollback path until the new corpus is accepted.
-3. Verify the archive restores.
-4. Create the fresh database with `uv run aizk-conversion db-init`, or start the new version directly (it runs the same migration runner).
-5. Start the new version.
-6. Smoke-validate on the operator console: ingest a few inputs and confirm propagation from conversion through extraction, creation events in the drill-down trail, exact pending/stale counts, and search hits.
-7. Resume normal operation.
-
-Repopulation is ordinary ingestion at the owner's pace; nothing in this procedure migrates old data.
+A database stamped with a revision the tree does not know, or carrying tables with no migration stamp, is refused: the runner raises without writing anything and names the rebuild procedure, [Rebuilding the database](docs/Rebuilding%20the%20database.md).
 
 ## Design
 

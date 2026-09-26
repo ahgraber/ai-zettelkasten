@@ -72,7 +72,7 @@ def test_adapter_does_not_import_another_adapter(adapter_file: Path) -> None:
     """Adapter modules must not import sibling adapter modules.
 
     Each adapter in aizk.conversion.adapters.* must import only from
-    aizk.conversion.core, aizk.conversion.utilities, or the stdlib/third-party.
+    aizk.conversion.core, aizk.conversion.egress, or the stdlib/third-party.
     Cross-adapter imports create tight coupling that violates the Ports & Adapters
     boundary.
     """

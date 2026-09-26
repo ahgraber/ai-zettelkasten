@@ -3,7 +3,7 @@
 from pydantic import ValidationError
 import pytest
 
-from aizk.conversion.auth import Principal
+from aizk.service.auth import Principal
 
 
 def test_principal_constructs_and_round_trips_json():

@@ -106,7 +106,9 @@ The console SHALL validate operator input before touching any work-unit: an unkn
 
 ### Requirement: Display the task monitor for every registered stage
 
-The console SHALL render a task monitor listing, for any registered stage, that stage's work-units — each showing its unit identifier, its stage-native status, attempt count, queued/started/finished times, and error code.
+The console SHALL render a task monitor listing, for any registered stage, that stage's work-units — each showing its unit identifier, its lifecycle status, attempt count, queued/started/finished times, and error code.
+A stage MAY declare additional columns; a declared column SHALL be shown for each of that stage's units.
+The conversion stage SHALL declare `karakeep_id`, `phase` (empty outside `running`), and `retry_class` (empty outside `failed`).
 For each unit it SHALL display a human-readable title: the enriched `Source.title` for the unit's source when that is non-`NULL`, falling back to a stage-declared stable identifier for the unit's source when it is not.
 
 #### Scenario: A graph stage's units render with generic lifecycle statuses
@@ -115,11 +117,11 @@ For each unit it SHALL display a human-readable title: the enriched `Source.titl
 - **WHEN** an operator opens the task monitor for the contextualization stage
 - **THEN** a table shows a row per unit with identifier, status, attempt count, queued/started/finished times, and error code
 
-#### Scenario: Conversion units render with their native statuses
+#### Scenario: Conversion units render with the same statuses and their phase
 
-- **GIVEN** conversion jobs exist in native statuses such as `UPLOAD_PENDING` and `FAILED_PERM`
+- **GIVEN** conversion jobs exist in `running` (in both the `convert` and `upload` phases) and in `failed` of both retry classes
 - **WHEN** an operator opens the task monitor for the conversion stage
-- **THEN** each row displays the stage-native status, not a collapsed generic one
+- **THEN** each row displays one of the six lifecycle statuses and the job's `karakeep_id`, a running job's row shows its phase, and a failed job's row shows its retry class
 
 #### Scenario: Title shows the enriched source title when available
 
@@ -194,7 +196,7 @@ Eligibility SHALL be judged by the stage's own action rules; the monitor SHALL d
 
 #### Scenario: Stage-native eligibility is respected
 
-- **GIVEN** a selection of conversion jobs including one in a native status outside conversion's cancellable set (such as `UPLOAD_PENDING`)
+- **GIVEN** a selection of conversion jobs including one `running` job in its `upload` phase, which conversion excludes from cancellation
 - **WHEN** the operator submits the Cancel bulk action
 - **THEN** that job is skipped as ineligible with its status unaltered, while eligible jobs in the selection are cancelled
 
@@ -254,8 +256,8 @@ The drill-down SHALL reflect the source's current state: a run or artifact that 
 
 ### Requirement: Dashboard summarizes per-stage health
 
-The console SHALL provide a dashboard listing, for every registered stage, its work-unit counts grouped by the generic work-unit lifecycle vocabulary.
-Each stage-native status SHALL be counted under exactly one generic category — no unit dropped, none double-counted.
+The console SHALL provide a dashboard listing, for every registered stage, its work-unit counts grouped by the work-unit lifecycle vocabulary.
+Each unit SHALL be counted under exactly one status — no unit dropped, none double-counted.
 Within the failed category, the dashboard SHALL distinguish units awaiting retry from permanently failed units, so repairability is visible at a glance.
 For any registered stage that declares a pending-work derivation, the dashboard SHALL also show the stage's count of pending sources.
 The pending count SHALL sit outside the lifecycle rollup — it counts no work-unit, and the per-stage unit total SHALL continue to equal the number of the stage's work-units.
@@ -267,21 +269,21 @@ A stage that declares no derivation SHALL show no pending count.
 - **WHEN** an operator loads the dashboard
 - **THEN** the contextualization row shows the count of units in each lifecycle category
 
-#### Scenario: Conversion native statuses roll up without loss
+#### Scenario: Conversion counts use the same categories without loss
 
-- **GIVEN** conversion jobs exist in native statuses including `UPLOAD_PENDING`, `FAILED_RETRYABLE`, and `FAILED_PERM`
+- **GIVEN** conversion jobs exist in `running` in both phases, in `failed` of both retry classes, and in `timed_out`
 - **WHEN** an operator loads the dashboard
-- **THEN** every job is counted under exactly one generic category, and the per-stage total equals the number of conversion jobs
+- **THEN** every job is counted under exactly one of the six statuses, the phase changes no count, and the per-stage total equals the number of conversion jobs
 
 #### Scenario: Conversion failed counts distinguish repairability
 
-- **GIVEN** conversion jobs exist in both `FAILED_RETRYABLE` and `FAILED_PERM`
+- **GIVEN** conversion jobs exist in `failed` both with and without a retry wait
 - **WHEN** an operator loads the dashboard
 - **THEN** the conversion failed count distinguishes the awaiting-retry jobs from the permanently failed ones
 
 #### Scenario: Graph-stage failed counts distinguish repairability
 
-- **GIVEN** contextualization units exist in `FAILED` both with and without a pending retry wait
+- **GIVEN** contextualization units exist in `failed` both with and without a pending retry wait
 - **WHEN** an operator loads the dashboard
 - **THEN** the stage's failed count distinguishes the awaiting-retry units from the permanently failed ones
 
@@ -375,3 +377,21 @@ A stage that declares no staleness derivation SHALL show no stale figure and no 
 - **GIVEN** a registered stage that declares no staleness derivation
 - **WHEN** an operator views the dashboard and the stage's monitor
 - **THEN** no stale count or stale marking appears for it
+
+### Requirement: Conversion's Delete action removes only a terminal job that did not succeed
+
+The conversion stage's declared Delete action SHALL accept a job in `failed`, `cancelled`, or `timed_out`, and SHALL refuse a job in `queued`, `running`, or `succeeded`, altering nothing for a refused job.
+Deleting a job SHALL remove the job and its conversion output row, SHALL record no lifecycle event, and SHALL leave the job's prior events in place.
+In a bulk selection, a refused job SHALL be reported as ineligible in the summary alongside the removed jobs.
+
+#### Scenario: A job in each deletable status is removed
+
+- **GIVEN** conversion jobs in `failed`, `cancelled`, and `timed_out`
+- **WHEN** an operator submits the Delete bulk action for all three
+- **THEN** all three jobs are removed and the summary reports three removals
+
+#### Scenario: A succeeded job is refused
+
+- **GIVEN** a `succeeded` conversion job with a conversion output
+- **WHEN** an operator submits the Delete bulk action for it
+- **THEN** the job and its output remain, and the summary reports it as ineligible

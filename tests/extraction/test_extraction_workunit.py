@@ -1,11 +1,11 @@
-"""Tests for the extraction stage's enqueue paths (``aizk.graph.extraction_workunit``).
+"""Tests for the extraction stage's enqueue paths (``aizk.extraction.stage``).
 
 ``enqueue_extraction`` dedupes on ``idempotency_key`` (keyed by the durable source
 identity), then honors the stage's declared capacity. ``enqueue_extraction_backfill``
 scopes itself to sources with an active chunking run, truncates to the batch's
 capacity headroom, and refuses to run without explicit confirmation. These mirror
-``aizk.graph.workunit``'s enqueue functions, covered in
-``tests/graph/test_enqueue.py``.
+``aizk.contextualization.core.intake``'s enqueue functions, covered in
+``tests/contextualization/test_enqueue.py``.
 """
 
 from __future__ import annotations
@@ -18,16 +18,16 @@ import pytest
 from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from aizk.graph.capacity import StageAtCapacityError
-from aizk.graph.chunks import CHUNKING_STAGE
-from aizk.graph.datamodel import ExtractionJob
-from aizk.graph.extraction_events import QueuedPayload
-from aizk.graph.extraction_workunit import (
+from aizk.extraction.events import QueuedPayload
+from aizk.extraction.stage import (
     enqueue_extraction,
     enqueue_extraction_backfill,
     pending_extraction_count,
     pending_extraction_sources,
 )
+from aizk.graph.chunks import CHUNKING_STAGE
+from aizk.graph.datamodel import ExtractionJob
+from aizk.pipeline.capacity import StageAtCapacityError
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.invalidation import ReprocessingConfirmationError
 from aizk.pipeline.lifecycle import WorkUnitStatus

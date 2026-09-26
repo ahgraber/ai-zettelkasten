@@ -18,25 +18,25 @@ from uuid import UUID
 
 import pytest
 
+from aizk.ai.providers.llm import ModelConfig, _default_responder, model_config_fingerprint
 from aizk.chunking.datamodel import Chunk, derive_chunk_content_key
 from aizk.chunking.splitter import split
+from aizk.contextualization.core import keys as contextualization_keys
 from aizk.conversion.core.hashing import compute_config_hash, compute_idempotency_key
 from aizk.conversion.core.source_ref import InlineHtmlRef, SingleFileRef, compute_source_ref_hash
-from aizk.graph import contextualization as contextualization_module
 from aizk.graph.chunks import (
     chunking_config_fingerprint,
     chunking_derivation_key,
     chunking_input_fingerprint,
 )
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
-from aizk.graph.llm import ModelConfig, _default_responder, model_config_fingerprint
 from aizk.graph.mentions import (
     ResolvedExtractionConfig,
     derive_source_occurrence_key,
     extraction_derivation_key,
 )
-from aizk.pipeline.identity import content_fingerprint, derivation_key, fingerprint
-from aizk.utilities.hashing import compute_markdown_hash
+from aizk.pipeline.identity import derivation_key
+from aizk.utilities.hashing import compute_markdown_hash, content_fingerprint, fingerprint
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -47,13 +47,13 @@ _FIXTURE = Path(__file__).parent / "fixtures" / "digests.json"
 #: without misrepresenting the parameter's declared type. They carry two integer
 #: cases instead; the ``ensure_ascii`` behavior of the shared canonicalization is
 #: locked by every other row that feeds it text.
-_INTEGER_INPUT_ROWS = frozenset({"aizk.graph.persistence::chunking_config_fingerprint"})
+_INTEGER_INPUT_ROWS = frozenset({"aizk.graph.chunks::chunking_config_fingerprint"})
 
 #: Rows computed at import time from module constants, which take no input.
 _CONSTANT_ROWS = frozenset(
     {
-        "aizk.graph.contextualization::SUMMARY_PROMPT_HASH",
-        "aizk.graph.contextualization::CONTEXT_PROMPT_HASH",
+        "aizk.contextualization.core.keys::SUMMARY_PROMPT_HASH",
+        "aizk.contextualization.core.keys::CONTEXT_PROMPT_HASH",
     }
 )
 
@@ -91,15 +91,15 @@ def _model_config(fields: dict[str, Any]) -> ModelConfig:
 #: Row key (the contract sheet's symbol) → the call that produces the pinned value.
 _BUILDERS: dict[str, "Callable[[dict[str, Any]], object]"] = {
     "aizk.utilities.hashing::compute_markdown_hash": lambda i: compute_markdown_hash(i["markdown_text"]),
-    "aizk.pipeline.identity::fingerprint": lambda i: fingerprint(i["value"]),
-    "aizk.pipeline.identity::content_fingerprint": lambda i: content_fingerprint(i["text"]),
+    "aizk.utilities.hashing::fingerprint": lambda i: fingerprint(i["value"]),
+    "aizk.utilities.hashing::content_fingerprint": lambda i: content_fingerprint(i["text"]),
     "aizk.pipeline.identity::derivation_key": lambda i: derivation_key(
         inputs=i["inputs"], upstream_keys=i["upstream_keys"]
     ),
-    "aizk.conversion.utilities.hashing::compute_idempotency_key": lambda i: compute_idempotency_key(
+    "aizk.conversion.core.hashing::compute_idempotency_key": lambda i: compute_idempotency_key(
         i["source_ref_hash"], i["converter_name"], i["config_snapshot"]
     ),
-    "aizk.conversion.utilities.hashing::compute_config_hash": lambda i: compute_config_hash(i["config_payload"]),
+    "aizk.conversion.core.hashing::compute_config_hash": lambda i: compute_config_hash(i["config_payload"]),
     "aizk.conversion.core.source_ref::compute_source_ref_hash": lambda i: compute_source_ref_hash(
         SingleFileRef(url=i["url"])
     ),
@@ -109,18 +109,18 @@ _BUILDERS: dict[str, "Callable[[dict[str, Any]], object]"] = {
     "aizk.chunking.datamodel::derive_chunk_content_key": lambda i: derive_chunk_content_key(
         i["source_id"], tuple(i["heading_path"]), i["ordinal"], i["content_hash"]
     ),
-    "aizk.graph.mention_store::derive_source_occurrence_key": lambda i: derive_source_occurrence_key(
+    "aizk.graph.mentions::derive_source_occurrence_key": lambda i: derive_source_occurrence_key(
         chunk_id=UUID(i["chunk_id"]),
         source_span_start=i["source_span_start"],
         source_span_end=i["source_span_end"],
         source_anchor_text=i["source_anchor_text"],
     ),
-    "aizk.graph.mention_store::ResolvedExtractionConfig.config_fingerprint": lambda i: ResolvedExtractionConfig(
+    "aizk.graph.mentions::ResolvedExtractionConfig.config_fingerprint": lambda i: ResolvedExtractionConfig(
         extractor_version=i["extractor_version"],
         materializer_version=i["materializer_version"],
         input_policy=i["input_policy"],
     ).config_fingerprint(),
-    "aizk.graph.mention_store::extraction_derivation_key": lambda i: extraction_derivation_key(
+    "aizk.graph.mentions::extraction_derivation_key": lambda i: extraction_derivation_key(
         input_fingerprint=i["input_fingerprint"], config_fingerprint=i["config_fingerprint"]
     ),
     "aizk.graph.fingerprints::payload_fingerprint": lambda i: payload_fingerprint(
@@ -134,44 +134,44 @@ _BUILDERS: dict[str, "Callable[[dict[str, Any]], object]"] = {
         ]
     ),
     "aizk.graph.fingerprints::chunk_key": lambda i: chunk_key(_chunk(i["chunk"])),
-    "aizk.graph.contextualization::_stable_hash": lambda i: contextualization_module._stable_hash(i["text"]),
-    "aizk.graph.contextualization::_stable_payload_hash": lambda i: contextualization_module._stable_payload_hash(
+    "aizk.contextualization.core.keys::_stable_hash": lambda i: contextualization_keys._stable_hash(i["text"]),
+    "aizk.contextualization.core.keys::_stable_payload_hash": lambda i: contextualization_keys._stable_payload_hash(
         i["payload"]
     ),
-    "aizk.graph.contextualization::SUMMARY_PROMPT_HASH": lambda i: contextualization_module.SUMMARY_PROMPT_HASH,
-    "aizk.graph.contextualization::CONTEXT_PROMPT_HASH": lambda i: contextualization_module.CONTEXT_PROMPT_HASH,
-    "aizk.graph.llm::model_config_fingerprint": lambda i: model_config_fingerprint(_model_config(i["model_config"])),
-    "aizk.graph.llm::_default_responder": lambda i: _default_responder(i["prompt"]),
-    "aizk.graph.persistence::chunking_input_fingerprint": lambda i: chunking_input_fingerprint(
-        i["markdown_fingerprint"]
+    "aizk.contextualization.core.keys::SUMMARY_PROMPT_HASH": lambda i: contextualization_keys.SUMMARY_PROMPT_HASH,
+    "aizk.contextualization.core.keys::CONTEXT_PROMPT_HASH": lambda i: contextualization_keys.CONTEXT_PROMPT_HASH,
+    "aizk.ai.providers.llm::model_config_fingerprint": lambda i: model_config_fingerprint(
+        _model_config(i["model_config"])
     ),
-    "aizk.graph.persistence::chunking_config_fingerprint": lambda i: chunking_config_fingerprint(
-        i["splitter_version"]
-    ),
-    "aizk.graph.persistence::chunking_derivation_key": lambda i: chunking_derivation_key(
+    "aizk.ai.providers.llm::_default_responder": lambda i: _default_responder(i["prompt"]),
+    "aizk.graph.chunks::chunking_input_fingerprint": lambda i: chunking_input_fingerprint(i["markdown_fingerprint"]),
+    "aizk.graph.chunks::chunking_config_fingerprint": lambda i: chunking_config_fingerprint(i["splitter_version"]),
+    "aizk.graph.chunks::chunking_derivation_key": lambda i: chunking_derivation_key(
         i["markdown_fingerprint"], i["splitter_version"]
     ),
-    "aizk.graph.contextualization::summary_input_fingerprint": (
-        lambda i: contextualization_module.summary_input_fingerprint(i["document_text"])
+    "aizk.contextualization.core.keys::summary_input_fingerprint": (
+        lambda i: contextualization_keys.summary_input_fingerprint(i["document_text"])
     ),
-    "aizk.graph.contextualization::summary_config_fingerprint": (
-        lambda i: contextualization_module.summary_config_fingerprint(
+    "aizk.contextualization.core.keys::summary_config_fingerprint": (
+        lambda i: contextualization_keys.summary_config_fingerprint(
             _model_config(i["model_config"]), i["summary_version"]
         )
     ),
-    "aizk.graph.contextualization::summary_derivation_key": lambda i: contextualization_module.summary_derivation_key(
-        i["document_text"], i["summary_version"], _model_config(i["model_config"])
+    "aizk.contextualization.core.keys::summary_derivation_key": lambda i: (
+        contextualization_keys.summary_derivation_key(
+            i["document_text"], i["summary_version"], _model_config(i["model_config"])
+        )
     ),
-    "aizk.graph.contextualization::contextualization_run_input_fingerprint": (
-        lambda i: contextualization_module.contextualization_run_input_fingerprint(i["summary_text"], i["chunk_keys"])
+    "aizk.contextualization.core.keys::contextualization_run_input_fingerprint": (
+        lambda i: contextualization_keys.contextualization_run_input_fingerprint(i["summary_text"], i["chunk_keys"])
     ),
-    "aizk.graph.contextualization::contextualization_config_fingerprint": (
-        lambda i: contextualization_module.contextualization_config_fingerprint(
+    "aizk.contextualization.core.keys::contextualization_config_fingerprint": (
+        lambda i: contextualization_keys.contextualization_config_fingerprint(
             i["splitter_version"], i["context_version"], _model_config(i["model_config"])
         )
     ),
-    "aizk.graph.contextualization::contextualization_run_derivation_key": (
-        lambda i: contextualization_module.contextualization_run_derivation_key(
+    "aizk.contextualization.core.keys::contextualization_run_derivation_key": (
+        lambda i: contextualization_keys.contextualization_run_derivation_key(
             i["summary_text"],
             [_chunk(c) for c in i["ordered_chunks"]],
             i["splitter_version"],
@@ -179,8 +179,8 @@ _BUILDERS: dict[str, "Callable[[dict[str, Any]], object]"] = {
             _model_config(i["model_config"]),
         )
     ),
-    "aizk.graph.contextualization::contextualization_row_input_fingerprint": (
-        lambda i: contextualization_module.contextualization_row_input_fingerprint(
+    "aizk.contextualization.core.keys::contextualization_row_input_fingerprint": (
+        lambda i: contextualization_keys.contextualization_row_input_fingerprint(
             i["summary_text"],
             _chunk(i["working"]),
             _optional_chunk(i["prior_2"]),
@@ -188,8 +188,8 @@ _BUILDERS: dict[str, "Callable[[dict[str, Any]], object]"] = {
             _optional_chunk(i["next_1"]),
         )
     ),
-    "aizk.graph.contextualization::contextualization_row_derivation_key": (
-        lambda i: contextualization_module.contextualization_row_derivation_key(
+    "aizk.contextualization.core.keys::contextualization_row_derivation_key": (
+        lambda i: contextualization_keys.contextualization_row_derivation_key(
             i["summary_text"],
             _chunk(i["working"]),
             _optional_chunk(i["prior_2"]),

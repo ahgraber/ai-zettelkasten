@@ -23,12 +23,12 @@ import pytest
 from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from aizk.ai.providers.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.contextualization.core.intake import enqueue_backfill, enqueue_document
 from aizk.contextualization.processing.document import LoadedMarkdown, ProcessResult, process_document
 from aizk.graph.chunks import manifest_of_run, run_input
 from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.datamodel import ContextualizationJob, ContextualizedChunk, DocumentSummary
-from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus
 from aizk.utilities.hashing import compute_markdown_hash

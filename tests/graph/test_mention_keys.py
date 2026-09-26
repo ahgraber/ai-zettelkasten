@@ -24,7 +24,8 @@ from aizk.graph.mentions import (
     derive_source_occurrence_key,
     extraction_derivation_key,
 )
-from aizk.pipeline.identity import content_fingerprint, derivation_key
+from aizk.pipeline.identity import derivation_key
+from aizk.utilities.hashing import content_fingerprint
 
 _BASE_CONFIG = ResolvedExtractionConfig(
     extractor_version="spacy/en_core_web_sm@3.7", materializer_version="1", input_policy="raw"

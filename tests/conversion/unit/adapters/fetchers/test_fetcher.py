@@ -14,7 +14,7 @@ import pytest
 
 from aizk.conversion.egress import fetch_helpers as _fetch_helpers
 from aizk.conversion.processing import fetcher
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.settings import ConversionConfig
 
 
 class _DummyBookmark:

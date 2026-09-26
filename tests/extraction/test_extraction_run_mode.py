@@ -1,8 +1,8 @@
-"""Behavioral tests for the run-mode entry points (``aizk.graph.extraction_run``).
+"""Behavioral tests for the run-mode entry points (``aizk.extraction.processing``).
 
-Exercises :func:`~aizk.graph.extraction_run.extract_document` and its two thin
-entry points, :func:`~aizk.graph.extraction_run.extract_source` (incremental) and
-:func:`~aizk.graph.extraction_run.extract_corpus` (bulk/backfill): the
+Exercises :func:`~aizk.extraction.processing.document.extract_document` and its two thin
+entry points, :func:`~aizk.extraction.processing.document.extract_source` (incremental) and
+:func:`~aizk.extraction.processing.corpus.extract_corpus` (bulk/backfill): the
 run-mode-independence contract (the same content extracted in each mode yields
 the same mentions and co-occurrence links), the unit's own boundary contract
 (an unknown ``input_policy`` and an unchunked source are both rejected clearly),
@@ -12,8 +12,8 @@ Builds Chunk rows and chunking/contextualization runs directly (bypassing
 ``persist_chunks``/``contextualize_chunks``, whose Markdown/LLM machinery this
 module does not exercise) so each test only seeds what
 :func:`~aizk.graph.chunks.document_order_chunks` and
-:func:`~aizk.graph.extraction.select_extraction_input` read. A deterministic stub
-:class:`~aizk.graph.extraction.EntityExtractor` keeps mentions reproducible,
+:func:`~aizk.extraction.core.extractors.select_extraction_input` read. A deterministic stub
+:class:`~aizk.extraction.core.extractors.EntityExtractor` keeps mentions reproducible,
 mirroring ``tests/extraction/test_extraction.py``'s conventions.
 """
 
@@ -28,9 +28,11 @@ from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
+from aizk.extraction.core.extractors import Detection
+from aizk.extraction.processing.corpus import extract_corpus
 import aizk.extraction.processing.document as extraction_run_module
+from aizk.extraction.processing.document import extract_document, extract_source
 from aizk.graph.chunks import CHUNKING_STAGE
-from aizk.graph.contextualization import VARIANT_STAGE, StalePlanError
 from aizk.graph.datamodel import (
     INPUT_KIND_CONTEXTUALIZED,
     INPUT_KIND_RAW,
@@ -44,12 +46,11 @@ from aizk.graph.datamodel import (
     Mention,
     MentionCooccurrence,
 )
-from aizk.graph.extraction import Detection
-from aizk.graph.extraction_run import extract_corpus, extract_document, extract_source
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
 from aizk.graph.mentions import MENTION_EXTRACTION_STAGE, active_extraction_run
-from aizk.pipeline.identity import content_fingerprint
+from aizk.graph.variants import VARIANT_STAGE, StalePlanError
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
+from aizk.utilities.hashing import content_fingerprint
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -184,10 +185,10 @@ def _seed_variant_run(
     ``chunks`` is the chunking run's full ordered chunk set; ``revisions`` maps a
     chunk's ``chunk_id`` to its non-empty revision text — a chunk absent from
     ``revisions`` gets an empty-revision row (the self-contained case), matching
-    how :func:`~aizk.graph.contextualization.contextualize_chunks` writes one
+    how :func:`~aizk.contextualization.core.revisions.contextualize_chunks` writes one
     variant per chunk in the chunking run's manifest. ``ContextualizationRunInput.output_fingerprint``
     is computed the same way, over exactly what
-    :func:`~aizk.graph.extraction.select_extraction_input` would then read.
+    :func:`~aizk.extraction.core.extractors.select_extraction_input` would then read.
     """
     revisions = revisions or {}
     run = record_run(session, stage=VARIANT_STAGE, scope_id=source_id, derivation_key=derivation_key)

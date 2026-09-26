@@ -95,12 +95,3 @@ def _spawn_and_supervise(
             terminate_event=terminate_event,
         )
     return process, result, deadline
-
-
-def __getattr__(name: str):
-    """Serve the child-entry names from ``aizk.conversion.wiring.subprocess`` on first access."""
-    if name in ("_raise_if_cancelled", "_report_status", "_process_job_subprocess", "_spawn_conversion_subprocess"):
-        from aizk.conversion.wiring import subprocess as wiring_subprocess
-
-        return getattr(wiring_subprocess, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

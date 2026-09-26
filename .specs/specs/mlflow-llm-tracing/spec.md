@@ -102,5 +102,5 @@ The system MUST avoid emitting secrets and raw sensitive payload content in MLfl
 
 ## Technical Notes
 
-- **Implementation**: `aizk/conversion/` worker and shared batch utilities
+- **Implementation**: `aizk/utilities/tracing.py` (the tracing mechanism), configured at process bootstrap from the `AIZK_MLFLOW__*` settings on `aizk.service.settings.ServiceSettings`; the batch utilities in `aizk/ai/providers/batch.py`
 - **Dependencies**: MLflow tracing SDK; upstream LLM and embedding provider clients

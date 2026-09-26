@@ -46,8 +46,7 @@ from aizk.contextualization.core.revisions import contextualize_chunks, resolve_
 from aizk.contextualization.core.summary import resolve_summary_text, summarize_document
 from aizk.db.engine import begin_immediate
 from aizk.graph.chunks import memo_delete_keys, persist_chunks
-from aizk.pipeline.identity import content_fingerprint
-from aizk.utilities.hashing import compute_markdown_hash
+from aizk.utilities.hashing import compute_markdown_hash, content_fingerprint
 
 if TYPE_CHECKING:
     from collections.abc import Callable

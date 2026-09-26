@@ -10,7 +10,7 @@ from aizk.conversion.adapters.fetchers.url import UrlFetcher
 from aizk.conversion.core.errors import FetchError
 from aizk.conversion.core.source_ref import UrlRef
 from aizk.conversion.core.types import ContentType, SourceMetadata
-from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
+from aizk.conversion.settings import ConversionConfig, KarakeepFetcherConfig
 
 _KARAKEEP_CFG = KarakeepFetcherConfig(base_url="https://karakeep.example.com", api_key="")
 

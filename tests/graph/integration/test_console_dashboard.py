@@ -26,11 +26,11 @@ from fastapi.testclient import TestClient
 from aizk.console import descriptors as descriptors_module
 from aizk.console.descriptors import StageDescriptor
 from aizk.console.stages._graph import build_graph_descriptor
+from aizk.contextualization.events import CONTEXTUALIZATION_STAGE
+from aizk.contextualization.job_actions import apply_contextualization_cancel, apply_contextualization_retry
+from aizk.extraction.core.currentness import Currentness
 from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.datamodel import ContextualizationJob
-from aizk.graph.events import CONTEXTUALIZATION_STAGE
-from aizk.graph.extraction_run import Currentness
-from aizk.graph.job_actions import apply_contextualization_cancel, apply_contextualization_retry
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
 

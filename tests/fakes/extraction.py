@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from aizk.graph.extraction import Detection
+from aizk.extraction.core.extractors import Detection
 
 
 class KeywordExtractor:

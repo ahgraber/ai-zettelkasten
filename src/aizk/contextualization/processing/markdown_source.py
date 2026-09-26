@@ -18,9 +18,6 @@ from sqlmodel import Session
 from aizk.contextualization.core.intake import latest_output_id
 from aizk.contextualization.processing.document import LoadedMarkdown
 from aizk.conversion.datamodel.output import ConversionOutput
-
-# The blob-reader protocol is owned by the object-storage package and re-exported
-# here for importers written against this path.
 from aizk.storage import BlobReader
 
 if TYPE_CHECKING:

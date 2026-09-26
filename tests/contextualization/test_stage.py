@@ -8,12 +8,12 @@ import pytest
 from sqlalchemy import Engine
 from sqlmodel import Session
 
+from aizk.ai.providers.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.contextualization.handler import ContextualizationStageHandler
 from aizk.contextualization.processing.markdown_source import ConversionOutputFreshness
 from aizk.contextualization.stage import CONTEXTUALIZATION_DEFINITION, ContextualizationParams
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
-from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 import aizk.pipeline.runner as runner_module
 from aizk.pipeline.runner import StageRunner
 from tests.fakes.markdown import StubMarkdownSource

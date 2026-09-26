@@ -1,4 +1,4 @@
-"""Validation tests for ``aizk.graph.extraction_run.record_extraction_run_applicability``.
+"""Validation tests for ``aizk.extraction.core.applicability.record_extraction_run_applicability``.
 
 One test per validation clause: the run must exist, be active, and be an
 extraction run; the upstream run must exist, be a chunking or
@@ -19,16 +19,16 @@ import pytest
 from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from aizk.extraction.core.applicability import record_extraction_run_applicability
 from aizk.graph.chunks import CHUNKING_STAGE
-from aizk.graph.contextualization import VARIANT_STAGE
 from aizk.graph.datamodel import (
     ChunkRunInput,
     ContextualizationRunInput,
     ExtractionRunApplicability,
     ExtractionRunInput,
 )
-from aizk.graph.extraction_run import extraction_derivation_key, record_extraction_run_applicability
-from aizk.graph.mentions import MENTION_EXTRACTION_STAGE, ResolvedExtractionConfig
+from aizk.graph.mentions import MENTION_EXTRACTION_STAGE, ResolvedExtractionConfig, extraction_derivation_key
+from aizk.graph.variants import VARIANT_STAGE
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 
 _SOURCE_A = UUID("11111111-1111-1111-1111-111111111111")

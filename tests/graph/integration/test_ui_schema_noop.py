@@ -10,8 +10,8 @@ app's OpenAPI, while the graph JSON API remains present.
 
 from __future__ import annotations
 
+from aizk.console.app import create_app as create_console_app
 from aizk.conversion.api.main import create_app as create_conversion_app
-from aizk.graph.api.main import create_app as create_console_app
 
 #: The console's HTML route prefixes, which must never appear in either OpenAPI.
 _CONSOLE_HTML_PREFIXES = ("/ui/tasks", "/ui/explore")

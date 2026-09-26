@@ -25,13 +25,13 @@ from sqlmodel import Session, select
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
-from aizk.conversion.core.errors import ConfigurationError
 from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.conversion.processing import uploader
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.storage.settings import ObjectStorageSettings
+from aizk.utilities.errors import ConfigurationError
 
 
 class _MockS3Client:

@@ -6,7 +6,7 @@ package ``conftest``), seeding true persisted state through the real
 deterministic stub LLM and precomputed revisions) so the spine, detail panel, and
 paired search results read the same committed records production reads. The
 on-demand source-markdown reconstruction is exercised against a fake
-:class:`~aizk.graph.markdown_source.BlobReader` and a seeded ``ConversionOutput``,
+:class:`~aizk.storage.BlobReader` and a seeded ``ConversionOutput``,
 never real S3.
 
 Asserts observable contracts — spine reading order and chunking facts, the detail
@@ -26,13 +26,14 @@ import xxhash
 
 from fastapi.testclient import TestClient
 
+from aizk.ai.providers.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
+from aizk.contextualization.core.revisions import contextualize_chunks
+from aizk.contextualization.core.summary import summarize_document
 from aizk.conversion.datamodel.job import ConversionJob
 from aizk.graph.chunks import memo_get, memo_upsert_and_read, persist_chunks
-from aizk.graph.contextualization import contextualize_chunks, summarize_document
 from aizk.graph.datamodel import MEMO_KIND_REVISION
-from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
-from aizk.pipeline.identity import content_fingerprint
+from aizk.utilities.hashing import content_fingerprint
 
 _HASH = "0011223344556677"
 _DOC_TEXT = "# Title\n\nThe document body the summary pass reads."

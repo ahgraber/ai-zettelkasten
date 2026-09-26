@@ -24,16 +24,16 @@ from sqlmodel import Session, SQLModel, select
 
 from fastapi.testclient import TestClient
 
+from aizk.console.app import create_app
 from aizk.console.explorer import get_blob_reader
 from aizk.contextualization.api import routes as contextualization_routes
+from aizk.contextualization.core.intake import enqueue_output
+from aizk.contextualization.events import QueuedPayload, RequeuedPayload
 from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
 from aizk.db.engine import get_engine
-from aizk.graph.api.main import create_app
 from aizk.graph.datamodel import ContextualizationJob
-from aizk.graph.enqueue import enqueue_output
-from aizk.graph.events import QueuedPayload, RequeuedPayload
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.storage.settings import ObjectStorageSettings

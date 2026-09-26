@@ -13,7 +13,7 @@ Intake is available whenever the service is up; the admission enablement flags g
 What intake does own is the shape of the refusal, which matches the conversion service's — HTTP 503 carrying `Retry-After` — so one backoff convention covers the fleet and an operator learns one set of controls rather than a different shape per stage.
 
 This capability establishes the graph work-intake contract.
-It does not retroactively specify the graph service's existing job read, retry, and cancel operations, which carry no baseline requirements.
+The graph service's job read, retry, and cancel operations follow the shared lifecycle in `pipeline-stage-runtime`; this capability adds the retry class their responses carry.
 
 ## Requirements
 
@@ -84,9 +84,52 @@ A submission referencing an upstream artifact that does not exist SHALL be rejec
 - **WHEN** the submission is made
 - **THEN** it is rejected as not found and no work-unit exists for it
 
+### Requirement: Graph job responses expose the retry class
+
+Each graph stage's job response SHALL carry a `retry_class` field derived from the unit: `retryable` when the unit is `failed` with a retry wait set, `permanent` when the unit is `failed` with no retry wait, and null for every other status.
+Each graph stage's job list SHALL accept a `retry_class` filter that returns only `failed` units of that class; combined with a `status` filter other than `failed` it SHALL return an empty page with a total of zero.
+The field SHALL be derived; a client SHALL NOT be able to set it.
+An operator retry of a graph unit SHALL record a `requeued` event carrying `requeue_reason` and `principal`.
+
+#### Scenario: A failed unit awaiting retry reads as retryable
+
+- **GIVEN** a contextualization unit that is `failed` with a retry wait set
+- **WHEN** a client retrieves it
+- **THEN** the response has `status: "failed"` and `retry_class: "retryable"`
+
+#### Scenario: A permanently failed unit reads as permanent
+
+- **GIVEN** an extraction unit that is `failed` with no retry wait
+- **WHEN** a client retrieves it
+- **THEN** the response has `status: "failed"` and `retry_class: "permanent"`
+
+#### Scenario: A unit in any other status has no retry class
+
+- **GIVEN** units in `queued`, `running`, `succeeded`, `cancelled`, and `timed_out`
+- **WHEN** a client retrieves each
+- **THEN** each response has `retry_class: null`
+
+#### Scenario: The list filter selects one retry class
+
+- **GIVEN** failed units of both retry classes and units in other statuses
+- **WHEN** a client lists with `retry_class=permanent`
+- **THEN** only the permanently failed units are returned and the total counts only them
+
+#### Scenario: Status and retry class filters intersect
+
+- **GIVEN** queued units and failed units of both retry classes
+- **WHEN** a client lists with `status=queued` and `retry_class=retryable`
+- **THEN** the page is empty and the total is zero
+
+#### Scenario: A graph retry names its principal
+
+- **GIVEN** a `failed` extraction unit
+- **WHEN** an operator retries it
+- **THEN** one `requeued` event exists for it carrying `requeue_reason` and the acting `principal`, and its attempt count is unchanged
+
 ## Technical Notes
 
-- **Implementation**: `src/aizk/graph/api/routes/__init__.py` (`POST /v1/contextualizations`) and `src/aizk/graph/api/routes/extraction.py` (`POST /v1/extractions`); request and response models in `src/aizk/graph/api/schemas.py`; the admission settings dependency in `src/aizk/graph/api/dependencies.py`.
+- **Implementation**: `src/aizk/contextualization/api/routes.py` (`POST /v1/contextualizations`) and `src/aizk/extraction/api/routes.py` (`POST /v1/extractions`), each registered through `stage_router` in `src/aizk/graph/api/stage_routes.py`; request and response models in `src/aizk/contextualization/api/schemas.py` and `src/aizk/extraction/api/schemas.py`; the admission settings dependency in `src/aizk/graph/api/dependencies.py`.
 - **Request ordering**: each route resolves the upstream reference, then calls the stage's enqueue primitive inside one write transaction it commits; the primitive deduplicates, evaluates capacity, and reports whether it created the unit, which selects 201 or 200.
 - **Rejection shape**: the refusal reuses the conversion service's `QueueFullResponse` model rather than a graph-local copy, so the two services cannot drift apart in body shape.
 - **Principal handling**: intake adopts the graph service's existing principal handling unchanged; it introduces no authorization model of its own.

@@ -26,9 +26,7 @@ from aizk.conversion.api.schemas import (
     JobResponse,
     JobStatusCounts,
     JobSubmission,
-    QueueFullResponse,
 )
-from aizk.conversion.auth import Principal
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, SourceRef, compute_source_ref_hash
 from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
@@ -44,6 +42,8 @@ from aizk.pipeline.capacity import StageAtCapacityError
 from aizk.pipeline.lifecycle import RetryClass, WorkUnitStatus, derive_retry_class, retry_class_filter
 from aizk.pipeline.repository import IneligibleTransitionError
 from aizk.pipeline.stage import enqueue
+from aizk.service.api.responses import QueueFullResponse
+from aizk.service.auth import Principal
 from aizk.utilities.clock import utcnow
 
 logger = logging.getLogger(__name__)

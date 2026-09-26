@@ -1,6 +1,6 @@
 """Integration tests for the graph operator extraction jobs page.
 
-Mirrors ``tests/graph/integration/test_ui_jobs.py`` (the contextualization jobs
+Mirrors ``tests/graph/integration/test_console_contextualization.py`` (the contextualization jobs
 page) at the same technique — driving the real graph operator app over a
 migration-built SQLite database and asserting rendered HTML and committed
 database state — scoped to the behaviors specific to the extraction stage's
@@ -21,10 +21,10 @@ from sqlmodel import Session
 
 from fastapi.testclient import TestClient
 
+from aizk.extraction.core.currentness import Currentness
+from aizk.extraction.events import EXTRACTION_STAGE
 from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.datamodel import ExtractionJob
-from aizk.graph.extraction_events import EXTRACTION_STAGE
-from aizk.graph.extraction_run import Currentness
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus

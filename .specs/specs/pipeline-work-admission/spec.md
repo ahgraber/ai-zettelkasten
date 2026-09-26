@@ -184,11 +184,11 @@ For any stage declaring a pending-work derivation, the pending work reported to 
 
 ## Technical Notes
 
-- **Implementation**: `src/aizk/graph/admission.py` — the per-stage adapter (`AdmissionAdapter`, `admission_adapter_for`), the pass (`run_admission_pass`), and the in-worker loop (`AdmissionLoop`); `src/aizk/graph/capacity.py` — the actionable-backlog count, the refusal (`StageAtCapacityError`), and the per-batch headroom bulk callers read once.
-- **Declaring stages**: contextualization derives over conversion outputs (`aizk.graph.enqueue`), mention-extraction over active chunking runs (`aizk.graph.extraction_workunit`).
+- **Implementation**: `src/aizk/pipeline/admission.py` — the adapter (`AdmissionAdapter`), the pass (`run_admission_pass`), and the in-worker loop (`AdmissionLoop`); each stage's worker builds its own adapter (`contextualization_adapter` in `aizk.contextualization.core.intake`, `extraction_adapter` in `aizk.extraction.stage`); `src/aizk/pipeline/capacity.py` — the actionable-backlog count, the refusal (`StageAtCapacityError`), and the per-batch headroom bulk callers read once.
+- **Declaring stages**: contextualization derives over conversion outputs (`aizk.contextualization.core.intake`), mention-extraction over active chunking runs (`aizk.extraction.stage`).
 - **Capacity seam**: the check sits inside the two work-unit construction sites, after the idempotency-dedupe branch, so intake routes, admission passes, backfill commands, and notebooks are all subject to it with no bypass.
   Each caller states its limit explicitly; `0` declares no limit.
-  Operator retry and re-admission (`aizk.graph.job_actions`) transition an existing unit and do not pass through the seam.
+  Operator retry and re-admission (`aizk.contextualization.job_actions`, `aizk.extraction.job_actions`) transition an existing unit and do not pass through the seam.
 - **Per-pass batch**: `run_admission_pass` caps each pass at `MAX_BULK_SELECTION` (`aizk.pipeline.lifecycle`), the same bound the bulk operator actions publish.
 - **Configuration**: `AdmissionConfig` on the graph config, per the `AIZK_<SECTION>__<FIELD>` convention — per-stage enable flags (default off), a shared loop interval, per-stage queue depths, and the retry-after seconds shared with the conversion service.
 - **Design record**: the in-worker loop, the enqueue-seam capacity placement, the per-stage adapter, and the configuration surface are decided in the change `pipeline-work-admission` design.

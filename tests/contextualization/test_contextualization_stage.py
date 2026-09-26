@@ -27,6 +27,7 @@ import pytest
 from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from aizk.ai.providers.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.contextualization.core.intake import enqueue_document
 from aizk.contextualization.handler import DEFAULT_RETRY_MAX_ATTEMPTS, ContextualizationStageHandler
 from aizk.contextualization.processing.document import Cancelled, LoadedMarkdown
@@ -37,7 +38,6 @@ from aizk.graph.datamodel import (
     ContextualizedChunk,
     DocumentSummary,
 )
-from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus

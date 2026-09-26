@@ -1,8 +1,8 @@
-"""Behavioral tests for admission (``aizk.graph.admission``).
+"""Behavioral tests for admission (``aizk.pipeline.admission``).
 
 Admission creates the work-units a stage's upstream state says should exist. A pass
-admits nothing while the stage is switched off, nothing for a stage that declared no
-derivation, nothing twice over unchanged state, and nothing beyond capacity.
+admits nothing while the stage is switched off, nothing twice over unchanged state,
+and nothing beyond capacity.
 
 Both stages run through their real adapters against real conversion outputs and
 chunking runs, so a pass uses the same enqueue primitive every other path uses and
@@ -11,6 +11,7 @@ its units are comparable with theirs.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import datetime as dt
 import os
 from pathlib import Path
@@ -25,22 +26,15 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from aizk.console.stages.contextualization import DESCRIPTOR as CONTEXTUALIZATION_DESCRIPTOR
 from aizk.console.stages.extraction import DESCRIPTOR as EXTRACTION_DESCRIPTOR
+from aizk.contextualization.core.intake import contextualization_adapter, enqueue_output
+from aizk.contextualization.events import CONTEXTUALIZATION_STAGE, QueuedPayload as ContextualizationQueuedPayload
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
-from aizk.graph.admission import (
-    AdmissionLoop,
-    admission_adapter_for,
-    contextualization_adapter,
-    extraction_adapter,
-    run_admission_pass,
-)
+from aizk.extraction.events import EXTRACTION_STAGE, QueuedPayload as ExtractionQueuedPayload
+from aizk.extraction.stage import enqueue_extraction, extraction_adapter
 from aizk.graph.chunks import CHUNKING_STAGE
-from aizk.graph.config import AdmissionConfig
 from aizk.graph.datamodel import ContextualizationJob, ExtractionJob
-from aizk.graph.enqueue import enqueue_output
-from aizk.graph.events import CONTEXTUALIZATION_STAGE, QueuedPayload as ContextualizationQueuedPayload
-from aizk.graph.extraction_events import EXTRACTION_STAGE, QueuedPayload as ExtractionQueuedPayload
-from aizk.graph.extraction_workunit import enqueue_extraction
+from aizk.pipeline.admission import AdmissionAdapter, AdmissionConfig, AdmissionLoop, run_admission_pass
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import MAX_BULK_SELECTION, WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, record_run
@@ -195,20 +189,17 @@ def _measure_cost(engine: Engine, adapter, limit: int) -> tuple[list, int, int]:
 
 
 @pytest.mark.parametrize(
-    ("stage", "expected_stage"),
-    [(CONTEXTUALIZATION_STAGE, CONTEXTUALIZATION_STAGE), (EXTRACTION_STAGE, EXTRACTION_STAGE)],
+    ("factory", "expected_stage"),
+    [(contextualization_adapter, CONTEXTUALIZATION_STAGE), (extraction_adapter, EXTRACTION_STAGE)],
 )
-def test_a_declaring_stage_reports_its_derivation(stage: str, expected_stage: str) -> None:
+def test_a_declaring_stage_reports_its_derivation(
+    factory: Callable[[AdmissionConfig], AdmissionAdapter], expected_stage: str
+) -> None:
     """A stage that declares a pending-work derivation reports it when queried."""
-    adapter = admission_adapter_for(stage, _config())
+    adapter = factory(_config())
 
     assert adapter is not None
     assert adapter.stage == expected_stage
-
-
-def test_a_stage_without_a_derivation_reports_none() -> None:
-    """A stage that declares no derivation reports none, and admission never creates work for it."""
-    assert admission_adapter_for("conversion", _config()) is None
 
 
 # --- enablement -------------------------------------------------------------

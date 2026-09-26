@@ -7,6 +7,8 @@ setup (_process_job_subprocess), and spawn/supervise behaviour
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 from pathlib import Path
 import queue as queue_module
@@ -22,6 +24,7 @@ from aizk.conversion.processing import errors as errors_mod
 from aizk.conversion.processing.supervision import _terminate_and_wait
 from aizk.conversion.wiring import subprocess as wiring_subprocess
 from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.service.settings import ServiceSettings
 from tests.conversion._helpers import make_source
 
 
@@ -149,3 +152,53 @@ def test_worker_does_not_recompute_idempotency_key():
 
     assert "compute_idempotency_key" not in inspect.getsource(wiring_subprocess)
     assert "compute_idempotency_key" not in inspect.getsource(subproc)
+
+
+@pytest.fixture
+def restore_root_logging():
+    """Restore the root logger's handlers and level after the test."""
+    root = logging.getLogger()
+    handlers, level = list(root.handlers), root.level
+    yield
+    root.handlers = handlers
+    root.setLevel(level)
+
+
+def _child_log_records(capsys) -> list[dict]:
+    return [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+
+
+def test_child_logging_renders_warning_extras_with_the_job_id(restore_root_logging, capsys) -> None:
+    """A WARNING the child emits with extra fields renders as JSON carrying those fields and the job id."""
+    wiring_subprocess._configure_child_logging(ServiceSettings(log_format="json", log_level="INFO"), 42)
+
+    logging.getLogger("aizk.conversion.egress.policy").warning(
+        "Egress denied", extra={"url": "https://10.0.0.1/", "host": "10.0.0.1", "ip": "10.0.0.1"}
+    )
+
+    [record] = _child_log_records(capsys)
+    assert record["level"] == "WARNING"
+    assert record["logger"] == "aizk.conversion.egress.policy"
+    assert record["message"] == "Egress denied"
+    assert (record["url"], record["host"], record["ip"]) == ("https://10.0.0.1/", "10.0.0.1", "10.0.0.1")
+    assert record["job_id"] == 42
+
+
+def test_child_logging_keeps_a_job_id_the_record_carries(restore_root_logging, capsys) -> None:
+    """A record emitted with its own job id renders that id, not the child's."""
+    wiring_subprocess._configure_child_logging(ServiceSettings(log_format="json", log_level="INFO"), 42)
+
+    logging.getLogger("aizk.conversion.egress.policy").warning("Egress denied", extra={"job_id": 7})
+
+    [record] = _child_log_records(capsys)
+    assert record["job_id"] == 7
+
+
+def test_child_logging_emits_info_records(restore_root_logging, capsys) -> None:
+    """The child emits INFO records at the configured level."""
+    wiring_subprocess._configure_child_logging(ServiceSettings(log_format="json", log_level="INFO"), 42)
+
+    logging.getLogger("aizk.conversion.processing").info("converting")
+
+    [record] = _child_log_records(capsys)
+    assert (record["level"], record["message"], record["job_id"]) == ("INFO", "converting", 42)

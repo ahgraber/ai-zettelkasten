@@ -1,4 +1,4 @@
-"""Tests for the shared CLI boundary gates (``aizk.utilities.cli_gates``).
+"""Tests for the shared CLI boundary gates (``aizk.service.cli``).
 
 Every command that can initiate a corpus-wide operation reports its refusal the
 same way: a plain stderr message naming the flags that resolve it, and a non-zero
@@ -12,7 +12,7 @@ import argparse
 
 import pytest
 
-from aizk.utilities.cli_gates import positive_int, refuse_unconfirmed
+from aizk.service.cli import positive_int, refuse_unconfirmed
 
 
 def test_refuse_unconfirmed_names_the_operation_and_both_resolving_flags(

@@ -35,7 +35,7 @@ from __future__ import annotations
 from aizk.pipeline.capacity import StageAtCapacityError, check_capacity, require_positive_limit, within_headroom
 from aizk.pipeline.events import PipelineEvent, record_transition
 from aizk.pipeline.handler import Isolation, StageHandler, StageResult, WorkUnitHandle
-from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, content_fingerprint, derivation_key, fingerprint
+from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, derivation_key
 from aizk.pipeline.invalidation import (
     ReprocessingConfirmationError,
     generation_is_stale,
@@ -95,10 +95,8 @@ __all__ = [
     "WorkUnitStatus",
     "active_run",
     "check_capacity",
-    "content_fingerprint",
     "derivation_key",
     "enqueue",
-    "fingerprint",
     "generation_is_stale",
     "is_terminal",
     "record_applicability",

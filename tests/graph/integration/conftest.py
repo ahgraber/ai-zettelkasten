@@ -1,6 +1,6 @@
 """Integration-test harness for the graph operator UI.
 
-Drives the real graph operator FastAPI app (``aizk.graph.api.main.create_app``)
+Drives the real graph operator FastAPI app (``aizk.console.app.create_app``)
 over a per-test SQLite database built by the **conversion Alembic migrations**, so
 every table the UI joins exists (conversion ``sources`` / ``conversion_jobs`` /
 ``conversion_outputs``, the ``graph_*`` tables, and the shared
@@ -24,19 +24,19 @@ from sqlmodel import Session
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from aizk.console.app import create_app
 from aizk.console.explorer import get_blob_reader
 from aizk.conversion.datamodel.job import ConversionJob
 from aizk.db.engine import _ENGINE_CACHE, get_engine
 from aizk.db.migrations import run_migrations
-from aizk.graph.api.main import create_app
+from aizk.extraction.core.currentness import Currentness
+from aizk.extraction.events import EXTRACTION_STAGE
 from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.datamodel import ChunkRunInput, ExtractionRunInput
-from aizk.graph.extraction_events import EXTRACTION_STAGE
-from aizk.graph.extraction_run import Currentness
 from aizk.graph.mentions import ResolvedExtractionConfig, extraction_derivation_key
-from aizk.pipeline.identity import fingerprint
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus
+from aizk.utilities.hashing import fingerprint
 
 #: The extraction configuration :func:`_fixed_extraction_config` pins the console
 #: to, and :func:`seed_extraction_state` computes its fingerprints from — so a
@@ -116,7 +116,7 @@ def client(app: FastAPI) -> Iterator[TestClient]:
 
 
 class FakeBlobReader:
-    """An in-memory :class:`~aizk.graph.markdown_source.BlobReader` for the explorer.
+    """An in-memory :class:`~aizk.storage.BlobReader` for the explorer.
 
     Maps a storage key to canned bytes, so the explorer's on-demand markdown
     reconstruction (``S3MarkdownSource(engine, blob_reader).load``) is exercised
@@ -203,7 +203,7 @@ def seed_extraction_state() -> "Callable[..., None]":
     from :data:`FIXTURE_RESOLVED_CONFIG` — the same configuration
     :func:`_fixed_extraction_config` pins the console to — so a classification
     driven through the console agrees with what this seeds. Seeds persisted
-    state only; it never calls :func:`~aizk.graph.extraction_run.extract_document`.
+    state only; it never calls :func:`~aizk.extraction.processing.document.extract_document`.
 
     ``currentness=Currentness.STALE``: the extraction run's recorded input
     fingerprint differs from the active chunking run's persisted output.

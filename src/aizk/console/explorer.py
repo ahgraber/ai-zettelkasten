@@ -34,8 +34,8 @@ from aizk.service.auth import Principal, get_principal
 from aizk.storage.s3 import S3Client
 
 if TYPE_CHECKING:
-    from aizk.contextualization.processing.markdown_source import BlobReader
     from aizk.graph.search import SearchProvider
+    from aizk.storage import BlobReader
 
 logger = logging.getLogger(__name__)
 

@@ -13,7 +13,7 @@
       }
     ]
   },
-  "aizk.pipeline.identity::fingerprint": {
+  "aizk.utilities.hashing::fingerprint": {
     "cases": [
       {
         "label": "ascii",
@@ -27,7 +27,7 @@
       }
     ]
   },
-  "aizk.pipeline.identity::content_fingerprint": {
+  "aizk.utilities.hashing::content_fingerprint": {
     "cases": [
       {
         "label": "ascii",
@@ -61,7 +61,7 @@
       }
     ]
   },
-  "aizk.conversion.utilities.hashing::compute_idempotency_key": {
+  "aizk.conversion.core.hashing::compute_idempotency_key": {
     "cases": [
       {
         "label": "ascii",
@@ -83,7 +83,7 @@
       }
     ]
   },
-  "aizk.conversion.utilities.hashing::compute_config_hash": {
+  "aizk.conversion.core.hashing::compute_config_hash": {
     "cases": [
       {
         "label": "ascii",
@@ -149,7 +149,7 @@
       }
     ]
   },
-  "aizk.graph.mention_store::derive_source_occurrence_key": {
+  "aizk.graph.mentions::derive_source_occurrence_key": {
     "cases": [
       {
         "label": "ascii",
@@ -173,7 +173,7 @@
       }
     ]
   },
-  "aizk.graph.mention_store::ResolvedExtractionConfig.config_fingerprint": {
+  "aizk.graph.mentions::ResolvedExtractionConfig.config_fingerprint": {
     "cases": [
       {
         "label": "ascii",
@@ -195,7 +195,7 @@
       }
     ]
   },
-  "aizk.graph.mention_store::extraction_derivation_key": {
+  "aizk.graph.mentions::extraction_derivation_key": {
     "cases": [
       {
         "label": "ascii",
@@ -290,7 +290,7 @@
       }
     ]
   },
-  "aizk.graph.contextualization::_stable_hash": {
+  "aizk.contextualization.core.keys::_stable_hash": {
     "cases": [
       {
         "label": "ascii",
@@ -304,7 +304,7 @@
       }
     ]
   },
-  "aizk.graph.contextualization::_stable_payload_hash": {
+  "aizk.contextualization.core.keys::_stable_payload_hash": {
     "cases": [
       {
         "label": "ascii",
@@ -320,13 +320,13 @@
       }
     ]
   },
-  "aizk.graph.contextualization::SUMMARY_PROMPT_HASH": {
+  "aizk.contextualization.core.keys::SUMMARY_PROMPT_HASH": {
     "cases": [{ "label": "constant", "inputs": {}, "expected": "97f2e2fcb0f437fb" }]
   },
-  "aizk.graph.contextualization::CONTEXT_PROMPT_HASH": {
+  "aizk.contextualization.core.keys::CONTEXT_PROMPT_HASH": {
     "cases": [{ "label": "constant", "inputs": {}, "expected": "506537c150fb72a1" }]
   },
-  "aizk.graph.llm::model_config_fingerprint": {
+  "aizk.ai.providers.llm::model_config_fingerprint": {
     "cases": [
       {
         "label": "ascii",
@@ -352,7 +352,7 @@
       }
     ]
   },
-  "aizk.graph.llm::_default_responder": {
+  "aizk.ai.providers.llm::_default_responder": {
     "cases": [
       {
         "label": "ascii",
@@ -366,7 +366,7 @@
       }
     ]
   },
-  "aizk.graph.persistence::chunking_input_fingerprint": {
+  "aizk.graph.chunks::chunking_input_fingerprint": {
     "cases": [
       {
         "label": "ascii",
@@ -382,7 +382,7 @@
       }
     ]
   },
-  "aizk.graph.persistence::chunking_config_fingerprint": {
+  "aizk.graph.chunks::chunking_config_fingerprint": {
     "cases": [
       {
         "label": "splitter_version_1",
@@ -396,7 +396,7 @@
       }
     ]
   },
-  "aizk.graph.persistence::chunking_derivation_key": {
+  "aizk.graph.chunks::chunking_derivation_key": {
     "cases": [
       {
         "label": "ascii",
@@ -413,7 +413,7 @@
       }
     ]
   },
-  "aizk.graph.contextualization::summary_input_fingerprint": {
+  "aizk.contextualization.core.keys::summary_input_fingerprint": {
     "cases": [
       {
         "label": "ascii",
@@ -427,7 +427,7 @@
       }
     ]
   },
-  "aizk.graph.contextualization::summary_config_fingerprint": {
+  "aizk.contextualization.core.keys::summary_config_fingerprint": {
     "cases": [
       {
         "label": "ascii",
@@ -455,7 +455,7 @@
       }
     ]
   },
-  "aizk.graph.contextualization::summary_derivation_key": {
+  "aizk.contextualization.core.keys::summary_derivation_key": {
     "cases": [
       {
         "label": "ascii",
@@ -485,7 +485,7 @@
       }
     ]
   },
-  "aizk.graph.contextualization::contextualization_run_input_fingerprint": {
+  "aizk.contextualization.core.keys::contextualization_run_input_fingerprint": {
     "cases": [
       {
         "label": "ascii",
@@ -502,7 +502,7 @@
       }
     ]
   },
-  "aizk.graph.contextualization::contextualization_config_fingerprint": {
+  "aizk.contextualization.core.keys::contextualization_config_fingerprint": {
     "cases": [
       {
         "label": "ascii",
@@ -532,7 +532,7 @@
       }
     ]
   },
-  "aizk.graph.contextualization::contextualization_run_derivation_key": {
+  "aizk.contextualization.core.keys::contextualization_run_derivation_key": {
     "cases": [
       {
         "label": "ascii",
@@ -592,7 +592,7 @@
       }
     ]
   },
-  "aizk.graph.contextualization::contextualization_row_input_fingerprint": {
+  "aizk.contextualization.core.keys::contextualization_row_input_fingerprint": {
     "cases": [
       {
         "label": "ascii",
@@ -651,7 +651,7 @@
       }
     ]
   },
-  "aizk.graph.contextualization::contextualization_row_derivation_key": {
+  "aizk.contextualization.core.keys::contextualization_row_derivation_key": {
     "cases": [
       {
         "label": "ascii",

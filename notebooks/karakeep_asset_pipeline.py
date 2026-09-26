@@ -9,13 +9,9 @@ import logging
 from dotenv import load_dotenv
 import nest_asyncio
 
+from aizk.conversion.egress.bookmark_utils import fetch_karakeep_bookmark, get_bookmark_asset_id, is_pdf_asset
 from aizk.conversion.processing.fetcher import fetch_karakeep_asset
-from aizk.conversion.utilities.bookmark_utils import (
-    fetch_karakeep_bookmark,
-    get_bookmark_asset_id,
-    is_pdf_asset,
-)
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.settings import ConversionConfig
 from aizk.utilities.async_utils import run_async
 
 nest_asyncio.apply()

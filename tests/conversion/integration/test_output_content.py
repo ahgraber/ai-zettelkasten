@@ -20,8 +20,8 @@ from aizk.conversion.storage.manifest import (
     ManifestSource,
     ManifestV1,
 )
-from aizk.conversion.storage.s3_client import S3Client, S3Error, S3NotFoundError
 from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.storage.s3 import S3Client, S3Error, S3NotFoundError
 from tests.conversion._helpers import make_job, make_source
 
 
@@ -121,7 +121,7 @@ def mock_s3() -> MagicMock:
 @pytest.fixture()
 def client(db_session, mock_s3) -> TestClient:
     from aizk.conversion.api.dependencies import get_db_session, get_principal, get_s3_client
-    from aizk.conversion.auth import Principal
+    from aizk.service.auth import Principal
 
     app = create_app()
     app.dependency_overrides[get_db_session] = lambda: db_session

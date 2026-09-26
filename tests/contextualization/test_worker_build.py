@@ -20,9 +20,8 @@ from aizk.contextualization.events import CONTEXTUALIZATION_STAGE
 from aizk.contextualization.settings import ContextualizationConfig
 from aizk.contextualization.wiring import worker as worker_module
 from aizk.contextualization.wiring.worker import run_graph_worker
-from aizk.conversion.utilities.startup import StartupValidationError
-from aizk.graph.admission import AdmissionAdapter
-from aizk.graph.config import AdmissionConfig
+from aizk.pipeline.admission import AdmissionAdapter, AdmissionConfig
+from aizk.utilities.errors import StartupValidationError
 
 
 def _configured_config(**overrides: object) -> ContextualizationConfig:
@@ -159,22 +158,10 @@ def test_the_worker_reads_admission_settings_when_none_are_supplied(stubbed_work
     assert loop.adapter.enabled is False
 
 
-def test_the_worker_starts_no_admission_loop_when_the_stage_declares_no_adapter(
+def test_the_worker_hands_the_loop_the_adapter_contextualization_adapter_returns(
     stubbed_worker: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A stage with no declared adapter runs no admission loop, but the worker still builds and starts."""
-    monkeypatch.setattr(worker_module, "admission_adapter_for", lambda _stage, _config: None)
-
-    assert run_graph_worker(SimpleNamespace(), _configured_config()) == 0
-
-    assert _RecordingAdmissionLoop.instances == []
-    assert stubbed_worker == ["runner"]
-
-
-def test_the_worker_hands_the_loop_the_adapter_admission_adapter_for_resolves(
-    stubbed_worker: list[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The loop receives the adapter object ``admission_adapter_for`` returns for this stage."""
+    """The loop receives the adapter object ``contextualization_adapter`` returns for this stage."""
     resolved = AdmissionAdapter(
         stage=CONTEXTUALIZATION_STAGE,
         model=object(),
@@ -183,7 +170,7 @@ def test_the_worker_hands_the_loop_the_adapter_admission_adapter_for_resolves(
         queue_max_depth=99,
         enabled=True,
     )
-    monkeypatch.setattr(worker_module, "admission_adapter_for", lambda _stage, _config: resolved)
+    monkeypatch.setattr(worker_module, "contextualization_adapter", lambda _config: resolved)
 
     run_graph_worker(SimpleNamespace(), _configured_config())
 

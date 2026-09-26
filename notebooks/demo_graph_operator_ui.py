@@ -4,9 +4,9 @@
 # A hands-on walkthrough that **interactively drives the contextualization
 # pipeline** for one document — split → summarize → contextualize → persist,
 # one step per cell — then inspects what was persisted, searches the content
-# index, and finally spins up the **graph operator Web UI** so you can click
-# through the jobs monitor and the content explorer over the very data you just
-# built.
+# index, and finally spins up the **operator console** (`aizk.console`) so you can
+# click through the dashboard, the task monitor, and the content explorer over the
+# very data you just built.
 #
 # **Run model:** open in VS Code Interactive or Jupyter and execute cells
 # top-to-bottom with **Shift+Enter**. State lives in notebook-scope variables
@@ -40,28 +40,26 @@ from sqlmodel import Session, select
 import uvicorn
 import xxhash
 
+from aizk.ai.providers.llm import STUB_MODEL_CONFIG
 from aizk.chunking import SPLITTER_VERSION, split
+from aizk.console.app import create_app
 from aizk.console.explorer import get_blob_reader
-from aizk.graph.api.main import create_app
-from aizk.graph.contextualization import (
-    VARIANT_STAGE,
-    generate_revisions,
-    generate_summary_text,
-    resolve_chunk_text,
-)
+from aizk.contextualization.core.intake import enqueue_output
+from aizk.contextualization.core.revisions import generate_revisions
+from aizk.contextualization.core.summary import generate_summary_text
+from aizk.contextualization.handler import ContextualizationStageHandler
+from aizk.contextualization.processing.markdown_source import ConversionOutputFreshness
+from aizk.graph.chunks import active_chunking_run, document_order_chunks
 from aizk.graph.datamodel import ContextualizationJob, ContextualizedChunk
-from aizk.graph.enqueue import enqueue_output
-from aizk.graph.handler import ContextualizationStageHandler
-from aizk.graph.markdown_source import ConversionOutputFreshness
-from aizk.graph.persistence import active_chunking_run, document_order_chunks
 from aizk.graph.search import Fts5SearchProvider, SearchKind
+from aizk.graph.variants import VARIANT_STAGE, resolve_chunk_text
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.run import PipelineRun, RunStatus
 from aizk.pipeline.runner import StageRunner
 
 logging.basicConfig(level=logging.WARNING)
 
-# The graph app's TrustedHostMiddleware admits these; a browser on localhost uses one.
+# The console app's TrustedHostMiddleware admits these; a browser on localhost uses one.
 GRAPH_UI_HOST = "127.0.0.1"
 GRAPH_UI_PORT = 8800
 
@@ -94,7 +92,7 @@ def _demo_responder(prompt: str) -> str:
     and reads the embedded JSON payload so the output is grounded in the actual
     document/chunk text rather than random.
     """
-    from aizk.graph.contextualization import CONTEXT_PROMPT_KIND, SUMMARY_PROMPT_KIND
+    from aizk.contextualization.core.keys import CONTEXT_PROMPT_KIND, SUMMARY_PROMPT_KIND
 
     parts = prompt.split("\n", 2)
     kind = parts[0]
@@ -122,7 +120,7 @@ def _demo_responder(prompt: str) -> str:
 
 def demo_setup() -> tuple:
     """Isolate a temp DB, run migrations, and return ``(engine, stub_client, tmp_dir)``."""
-    from aizk.graph.llm import StubLLMClient
+    from aizk.ai.providers.llm import StubLLMClient
 
     tmp_dir = tempfile.mkdtemp(prefix="aizk_graph_ui_tour_")
     tmp_url = f"sqlite:///{Path(tmp_dir) / 'graph_ui_tour.db'}"
@@ -184,7 +182,7 @@ class LocalMarkdownSource:
 
     def register(self, conversion_output_id: int, text: str, markdown_hash: str) -> None:
         """Register a conversion output's Markdown text + recorded hash."""
-        from aizk.graph.workunit import LoadedMarkdown
+        from aizk.contextualization.processing.document import LoadedMarkdown
 
         self._by_output[conversion_output_id] = LoadedMarkdown(text=text, markdown_hash_xx64=markdown_hash)
 
@@ -200,9 +198,10 @@ def seed_conversion_output(engine, *, text: str, label: str, markdown_source, bl
     """
     from sqlmodel import Session
 
-    from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+    from aizk.conversion.datamodel.job import ConversionJob
     from aizk.conversion.datamodel.output import ConversionOutput
     from aizk.conversion.datamodel.source import Source
+    from aizk.pipeline.lifecycle import WorkUnitStatus
     from aizk.utilities.hashing import compute_markdown_hash
 
     source_id = uuid4()
@@ -225,7 +224,7 @@ def seed_conversion_output(engine, *, text: str, label: str, markdown_source, bl
             owner_id="demo",
             title=label,
             idempotency_key=f"demo-conv-{uuid4().hex}",
-            status=ConversionJobStatus.SUCCEEDED,
+            status=WorkUnitStatus.SUCCEEDED,
         )
         session.add(job)
         session.flush()
@@ -286,10 +285,11 @@ print(f"markdown_hash        : {focal_hash}")
 # ## 3. Split the document into chunks
 #
 # `split()` is the pure, deterministic structural splitter — identical input
-# always yields identical chunks in document order. Each chunk carries a
-# content-addressed `chunk_id`, its `heading_path`, an `ordinal` within that
+# always yields identical chunks in document order. Each chunk carries the
+# `content_hash` of its text, its `heading_path`, an `ordinal` within that
 # heading, and (from the splitter) its character `span` in the source Markdown.
-# No database is touched yet. Edit `FOCAL_MARKDOWN` above and re-run to watch the
+# Its `chunk_id` is `None` until persistence assigns the surrogate id, so the
+# previews below show the `content_hash`. No database is touched yet. Edit `FOCAL_MARKDOWN` above and re-run to watch the
 # chunk set change.
 
 # %%
@@ -302,7 +302,7 @@ chunks = split(
 print(f"splitter v{SPLITTER_VERSION} produced {len(chunks)} chunks (document order):\n")
 for chunk in chunks:
     preview = chunk.text.strip().replace("\n", " ")[:64]
-    print(f"  {chunk.chunk_id[:12]}  span={chunk.span}  heading={chunk.heading_path}  ord={chunk.ordinal}")
+    print(f"  {chunk.content_hash[:12]}  span={chunk.span}  heading={chunk.heading_path}  ord={chunk.ordinal}")
     print(f"      {preview!r}")
 
 # %% [markdown]
@@ -337,7 +337,7 @@ print(f"  {summary_text}")
 # %%
 revisions = generate_revisions(client, summary_text, chunks)
 for chunk, revision in zip(chunks, revisions, strict=True):
-    print(f"--- chunk {chunk.chunk_id[:12]} ---")
+    print(f"--- chunk {chunk.content_hash[:12]} ---")
     print(f"  raw     : {chunk.text.strip().replace(chr(10), ' ')[:80]!r}")
     shown = revision.strip().replace("\n", " ")[:90] if revision.strip() else "<empty: already self-contained>"
     print(f"  revision: {shown!r}\n")
@@ -348,20 +348,24 @@ for chunk, revision in zip(chunks, revisions, strict=True):
 # The previews above are exactly what the runtime persists. Now drive the genuine
 # `ContextualizationStageHandler` under a `StageRunner` — the same path
 # `aizk-graph worker` runs. Enqueuing the conversion output and draining the
-# runner performs `split → persist_chunks → summarize → contextualize` inside one
-# short transaction, which:
+# runner performs `split → persist_chunks → summarize → contextualize`, with the
+# model passes outside any write transaction and the writes in one short
+# transaction, which:
 #
 # * records the chunking / document-summary / chunk-contextualization **runs**,
 # * persists the chunk rows, the summary, and the per-chunk variants,
 # * inserts the rows into the `graph_content_fts` **search index**, and
-# * drives the work-unit lifecycle, leaving a `claimed → succeeded` **event
-#   trail** the operator jobs drill-down reads.
+# * drives the work-unit lifecycle from `queued` through `running` to
+#   `succeeded`, leaving a `queued → claimed → succeeded` **event trail** the
+#   task monitor's drill-down reads.
 #
 # (The stub makes the worker re-derive the same summary/revisions you previewed,
 # so what you saw is what lands.)
 
 # %%
-handler = ContextualizationStageHandler(engine, client, markdown_source, ConversionOutputFreshness())
+handler = ContextualizationStageHandler(
+    engine, client, markdown_source, ConversionOutputFreshness(), model_config=STUB_MODEL_CONFIG
+)
 with Session(engine) as session:
     enqueue_output(session, focal_output_id, queue_max_depth=0, origin="backfill", principal="notebook")
     session.commit()
@@ -462,8 +466,9 @@ show_results("", SearchKind.EITHER)  # empty -> empty, never the corpus
 # remaining surfaces in bulk (kept as functions — this is context, not the focus):
 #
 # * two more fully-contextualized documents (distinct vocabularies, for ranking),
-# * a few work-units parked in failed / queued / cancelled states (for the status
-#   filter and bulk Retry/Cancel), and
+# * a few work-units parked in `failed` (with no retry wait, so its retry class is
+#   `permanent`) / `queued` / `cancelled` states (for the status filter and bulk
+#   Retry/Cancel), and
 # * one source that was **chunked but never contextualized** — so the jobs
 #   drill-down shows the contextualization run *absent* with a failure event, and
 #   the explorer shows its raw chunks with *no* contextualized representation.
@@ -528,7 +533,7 @@ def seed_assorted_job_states() -> None:
     from aizk.utilities.hashing import compute_markdown_hash
 
     specs = [
-        ("retryable failed note", WorkUnitStatus.FAILED, 3, "demo_timeout"),
+        ("permanently failed note", WorkUnitStatus.FAILED, 3, "demo_timeout"),
         ("queued note", WorkUnitStatus.QUEUED, 0, None),
         ("cancelled note", WorkUnitStatus.CANCELLED, 1, None),
     ]
@@ -560,11 +565,12 @@ def seed_assorted_job_states() -> None:
 
 def seed_chunked_not_contextualized() -> UUID:
     """Chunk a source without contextualizing it; fail its work-unit after chunking."""
-    from aizk.graph.db import begin_immediate
-    from aizk.graph.events import CONTEXTUALIZATION_STAGE, ClaimedPayload, FailedPayload, GraphEventKind
-    from aizk.graph.persistence import persist_chunks
+    from aizk.contextualization.events import CONTEXTUALIZATION_STAGE, ClaimedPayload, FailedPayload, GraphEventKind
+    from aizk.db.engine import begin_immediate
+    from aizk.graph.chunks import persist_chunks
     from aizk.pipeline.events import record_transition
     from aizk.pipeline.lifecycle import WorkUnitStatus
+    from aizk.utilities.hashing import content_fingerprint
 
     text = (
         "# Partially Processed Note\n\n"
@@ -586,6 +592,7 @@ def seed_chunked_not_contextualized() -> UUID:
             source_id=source_id,
             conversion_output_id=str(output_id),
             markdown_hash_xx64=markdown_hash,
+            markdown_fingerprint=content_fingerprint(text),
             splitter_version=SPLITTER_VERSION,
             chunks=gap_chunks,
         )
@@ -622,7 +629,7 @@ def seed_chunked_not_contextualized() -> UUID:
             payload=FailedPayload(
                 error_code="demo_contextualization_error",
                 error_message="Contextualization failed after chunking (seeded demo failure).",
-                retryable=True,
+                retryable=False,
             ),
         )
     return source_id
@@ -637,14 +644,21 @@ print(
 )
 
 # %% [markdown]
-# ## 10. Serve the graph operator Web UI
+# ## 10. Serve the operator console
 #
-# Build the graph operator app (the one `aizk-graph` serves), inject the fake
-# `BlobReader` so the detail panel reconstructs Markdown without S3, and run
-# uvicorn in a background thread so this cell returns and the kernel keeps
-# serving. The single app hosts **both** operator surfaces — the jobs monitor and
-# the content explorer — behind the same trusted-host + principal perimeter as the
-# JSON API.
+# Build the operator console app (`aizk.console.app.create_app`, the one
+# `aizk-graph serve` runs), inject the fake `BlobReader` so the detail panel
+# reconstructs Markdown without S3, and run uvicorn in a background thread so this
+# cell returns and the kernel keeps serving. The single app hosts the dashboard,
+# the task monitor, and the content explorer behind the same trusted-host +
+# principal perimeter as the JSON API.
+#
+# The dashboard counts every stage's units under the six lowercase statuses
+# (`queued`, `running`, `succeeded`, `failed`, `cancelled`, `timed_out`) and splits
+# each stage's `failed` count into units awaiting an automatic retry and
+# permanent ones. The contextualization task monitor filters by those statuses and
+# adds no stage-specific column; the conversion monitor adds `phase` (`convert` or
+# `upload` while a job is `running`) and `retry_class` columns.
 
 # %%
 app = create_app()
@@ -678,14 +692,16 @@ print("  (Running this file as a plain script exits after starting the daemon se
 # ## Where this lives
 #
 # The split → summarize → contextualize → persist unit of work is
-# `aizk.graph.handler.ContextualizationStageHandler` under
-# `aizk.pipeline.runner.StageRunner`; the pure model and read-time pieces are in
-# `aizk.graph.contextualization` (`generate_summary_text`, `generate_revisions`,
-# `resolve_chunk_text`) and the splitter in `aizk.chunking`. Persistence and the
-# explorer's read helpers are in `aizk.graph.persistence`; the ranked, type-filtered
-# search is `aizk.graph.search.Fts5SearchProvider`. The operator surfaces — the JSON
-# API, the jobs monitor, and the content explorer — are in `aizk.graph.api`. Worked
-# examples live in `tests/graph/`.
+# `aizk.contextualization.handler.ContextualizationStageHandler` under
+# `aizk.pipeline.runner.StageRunner`; the pure model pieces are in
+# `aizk.contextualization.core` (`generate_summary_text`, `generate_revisions`),
+# the read-time toggle is `aizk.graph.variants.resolve_chunk_text`, and the
+# splitter is in `aizk.chunking`. Persistence and the explorer's read helpers are
+# in `aizk.graph.chunks`; the ranked, type-filtered search is
+# `aizk.graph.search.Fts5SearchProvider`. The contextualization JSON API is
+# `aizk.contextualization.api`; the console app, the dashboard, the task monitor,
+# and the content explorer are in `aizk.console`. Worked examples live in
+# `tests/graph/`.
 
 # %% [markdown]
 # ## Cleanup

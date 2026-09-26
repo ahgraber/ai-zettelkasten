@@ -1,4 +1,4 @@
-"""Behavioral tests for the corpus dataset's cold-start statistics (``aizk.graph.dataset_stats``).
+"""Behavioral tests for the corpus dataset's cold-start statistics (``aizk.extraction.core.dataset_stats``).
 
 Seeds a small mention dataset through the real write path
 (:func:`~aizk.graph.mentions.open_extraction_run` /
@@ -23,8 +23,8 @@ import pytest
 from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine
 
+from aizk.extraction.core.dataset_stats import compute_dataset_statistics
 from aizk.graph.datamodel import Chunk, ContextualizedChunk, Mention, MentionCooccurrence
-from aizk.graph.dataset_stats import compute_dataset_statistics
 from aizk.graph.mentions import MentionDraft, ResolvedExtractionConfig, open_extraction_run, persist_mentions
 from aizk.pipeline.run import PipelineRun
 

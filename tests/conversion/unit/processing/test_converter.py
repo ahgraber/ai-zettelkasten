@@ -27,7 +27,7 @@ from aizk.conversion.processing.converter import (
     _enrich_picture_descriptions,
     _get_classification_label,
 )
-from aizk.conversion.utilities.config import DoclingConverterConfig
+from aizk.conversion.settings import DoclingConverterConfig
 
 # ---------------------------------------------------------------------------
 # Helpers to build a PictureItem-like mock with classification/description meta

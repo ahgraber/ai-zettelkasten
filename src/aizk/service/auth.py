@@ -4,7 +4,7 @@ The module holds the deployment trust mode (:class:`AuthSettings`), the
 resolved subject (:class:`Principal`), and the two request dependencies that
 connect them. ``get_auth_settings`` sits here rather than beside the other
 request dependencies because ``get_principal``'s ``Depends`` default is
-evaluated at import; :mod:`aizk.service.api.dependencies` re-exports it.
+evaluated at import.
 
 At this build the only implemented auth mode is ``trust_network``: the API
 treats every inbound request as authenticated and resolves a single

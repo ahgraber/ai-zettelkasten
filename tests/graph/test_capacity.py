@@ -1,4 +1,4 @@
-"""Unit tests for the graph stages' capacity primitives (``aizk.graph.capacity``).
+"""Unit tests for the graph stages' capacity primitives (``aizk.pipeline.capacity``).
 
 Covers what counts as a stage's actionable backlog and how a declared limit
 turns that count into a refusal or a batch headroom. The per-write-site evidence
@@ -15,14 +15,8 @@ from uuid import UUID, uuid4
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
-from aizk.graph.capacity import (
-    StageAtCapacityError,
-    actionable_backlog,
-    check_capacity,
-    headroom,
-    within_headroom,
-)
 from aizk.graph.datamodel import ExtractionJob
+from aizk.pipeline.capacity import StageAtCapacityError, actionable_backlog, check_capacity, headroom, within_headroom
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
 _RETRY_AT = dt.datetime(2026, 3, 1, tzinfo=dt.timezone.utc)

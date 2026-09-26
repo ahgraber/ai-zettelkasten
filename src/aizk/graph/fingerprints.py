@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from aizk.chunking import Chunk as SplitterChunk
 from aizk.chunking.datamodel import derive_chunk_content_key
 from aizk.graph.datamodel import Chunk as GraphChunk
-from aizk.pipeline.identity import fingerprint
+from aizk.utilities.hashing import fingerprint
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

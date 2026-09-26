@@ -20,7 +20,7 @@ class LegacyDatabaseError(RuntimeError):
     produced an older schema, so a database from before the rebuild cannot be
     migrated — whether it carries an ``alembic_version`` stamp this tree does
     not recognize, or has tables with no stamp at all. Rebuild the database
-    instead; see README.md, "Rebuilding the database".
+    instead; see docs/Rebuilding the database.md.
     """
 
 
@@ -57,7 +57,7 @@ def _refuse_legacy_database(database_url: str, cfg: Config) -> None:
             if schema_tables:
                 raise LegacyDatabaseError(
                     f"database at {database_url} has tables but no migration stamp; this version "
-                    'does not migrate it; rebuild it (README.md, "Rebuilding the database")'
+                    "does not migrate it; rebuild it (docs/Rebuilding the database.md)"
                 )
             return
 
@@ -69,7 +69,7 @@ def _refuse_legacy_database(database_url: str, cfg: Config) -> None:
         if not known_revision:
             raise LegacyDatabaseError(
                 f"database at {database_url} is stamped with revision {version_num}, which this "
-                'version does not migrate; rebuild it (README.md, "Rebuilding the database")'
+                "version does not migrate; rebuild it (docs/Rebuilding the database.md)"
             )
     finally:
         engine.dispose()

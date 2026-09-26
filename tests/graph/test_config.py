@@ -10,7 +10,7 @@ from __future__ import annotations
 from pydantic import ValidationError
 import pytest
 
-from aizk.graph.config import AdmissionConfig
+from aizk.pipeline.admission import AdmissionConfig
 
 
 def test_capacity_limits_default_to_no_limit() -> None:

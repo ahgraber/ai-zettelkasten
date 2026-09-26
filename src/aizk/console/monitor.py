@@ -2,8 +2,9 @@
 
 A stage's ``list_units`` builds a :class:`MonitorPage` — the paginated, filtered,
 searched view of its work-units — which the generic monitor template renders. The
-helpers here own the parts every stage shares (limit/offset clamping, count +
-page execution, pager arithmetic, and the applied-vs-skipped summary); each stage
+helpers here own the parts every stage shares (limit/offset clamping, status-filter
+parsing, count + page execution, the failed count split by retry class, pager
+arithmetic, and the applied-vs-skipped summary); each stage
 supplies only its own model, source join, search predicate, sort mapping, and row
 projection.
 """

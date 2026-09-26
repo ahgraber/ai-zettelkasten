@@ -17,7 +17,7 @@ from aizk.conversion.core.source_ref import (
     UrlRef,
 )
 from aizk.conversion.core.types import ContentType, SourceMetadata
-from aizk.conversion.utilities.config import KarakeepFetcherConfig
+from aizk.conversion.settings import KarakeepFetcherConfig
 from karakeep_client.models import Bookmark
 
 _DEFAULT_CFG = KarakeepFetcherConfig(_env_file=None, base_url="", api_key="")

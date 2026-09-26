@@ -23,9 +23,9 @@ from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.processing import converter, errors as errors_mod, fetcher
 from aizk.conversion.processing.errors import ReportedChildError, SubprocessMetadataInvalid
 from aizk.conversion.settings import ConversionConfig
-from aizk.conversion.storage.s3_client import S3Error, S3UploadError
 from aizk.conversion.wiring.subprocess import _report_status
 from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.storage.s3 import S3Error, S3UploadError
 from aizk.storage.settings import ObjectStorageSettings
 
 

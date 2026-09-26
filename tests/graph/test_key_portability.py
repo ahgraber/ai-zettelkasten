@@ -22,14 +22,14 @@ from uuid import UUID, uuid4
 from sqlalchemy import Engine, text
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from aizk.ai.providers.llm import STUB_MODEL_CONFIG, StubLLMClient
+from aizk.contextualization.processing.document import ProcessResult, process_document
+from aizk.extraction.processing.document import extract_document
 from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.content_index import CONTENT_FTS_DDL
-from aizk.graph.contextualization import SUMMARY_STAGE, VARIANT_STAGE
 from aizk.graph.datamodel import Chunk
-from aizk.graph.extraction_run import extract_document
-from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.graph.mentions import INPUT_POLICY_RAW, MENTION_EXTRACTION_STAGE
-from aizk.graph.workunit import ProcessResult, process_document
+from aizk.graph.variants import SUMMARY_STAGE, VARIANT_STAGE
 from aizk.pipeline.run import PipelineRun, RunStatus
 from tests.fakes.markdown import StubMarkdownSource
 

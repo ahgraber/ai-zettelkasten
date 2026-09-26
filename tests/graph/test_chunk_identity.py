@@ -20,7 +20,7 @@ import xxhash
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
 from aizk.graph.chunks import persist_chunks
 from aizk.graph.datamodel import Chunk
-from aizk.pipeline.identity import content_fingerprint
+from aizk.utilities.hashing import content_fingerprint
 
 _SOURCE_ID = UUID("11111111-1111-1111-1111-111111111111")
 _OUTPUT_A = "output-a"

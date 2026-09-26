@@ -12,7 +12,7 @@ from aizk.conversion.core.errors import GitHubReadmeNotFoundError
 from aizk.conversion.core.protocols import ContentFetcher
 from aizk.conversion.core.source_ref import GithubReadmeRef
 from aizk.conversion.core.types import ContentType, SourceMetadata
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.settings import ConversionConfig
 
 _README_BYTES = b"# My README\n\nHello world."
 _README_URL = "https://raw.githubusercontent.com/owner/repo/main/README.md"

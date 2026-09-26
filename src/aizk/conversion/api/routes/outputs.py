@@ -10,8 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 
 from aizk.conversion.api.dependencies import get_db_session, get_principal, get_s3_client
-from aizk.conversion.auth import Principal
 from aizk.conversion.datamodel.output import ConversionOutput
+from aizk.service.auth import Principal
 from aizk.storage.s3 import S3Client, S3Error, S3NotFoundError
 
 router = APIRouter(prefix="/v1/outputs", tags=["outputs"])

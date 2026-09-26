@@ -18,8 +18,8 @@ from sqlmodel import Session
 
 from fastapi.testclient import TestClient
 
+from aizk.console.app import create_app as create_graph_app
 from aizk.conversion.api.main import create_app as create_conversion_app
-from aizk.graph.api.main import create_app as create_graph_app
 from aizk.pipeline.lifecycle import WorkUnitStatus
 
 #: Set on both services so an equal ``Retry-After`` means agreement, not coincidence.

@@ -26,6 +26,7 @@ import pytest
 from sqlmodel import Session, select
 import xxhash
 
+from aizk.ai.providers.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
 from aizk.contextualization.core.applicability import (
     record_contextualization_run_applicability,
@@ -49,10 +50,9 @@ from aizk.graph.datamodel import (
     DocumentSummary,
     SummaryRunApplicability,
 )
-from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.graph.variants import SUMMARY_STAGE, VARIANT_STAGE
-from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.run import PipelineRun, RunStatus
+from aizk.utilities.hashing import content_fingerprint
 
 _AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")
 _OTHER_UUID = UUID("22222222-2222-2222-2222-222222222222")

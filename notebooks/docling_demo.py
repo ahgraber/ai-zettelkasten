@@ -65,7 +65,6 @@ from docling_core.types.doc.document import (
 )
 from docling_core.types.io import DocumentStream
 
-from aizk.datamodel.schema import ScrapeStatus, Source
 from karakeep_client.karakeep import APIError, AuthenticationError, KarakeepClient, get_all_urls
 from karakeep_client.models import (
     Bookmark,

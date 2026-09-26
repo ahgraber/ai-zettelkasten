@@ -14,21 +14,9 @@ import pytest
 #: ``(name, path that also exports it, path that defines it)``.
 SHARED_OBJECTS: list[tuple[str, str, str]] = [
     ("get_principal", "aizk.conversion.api.dependencies", "aizk.service.auth"),
-    ("get_auth_settings", "aizk.conversion.api.dependencies", "aizk.service.auth"),
     ("get_config", "aizk.conversion.api.dependencies", "aizk.service.api.dependencies"),
     ("get_db_session", "aizk.conversion.api.dependencies", "aizk.service.api.dependencies"),
     ("get_object_storage", "aizk.conversion.api.dependencies", "aizk.service.api.dependencies"),
-    ("get_db_session", "aizk.graph.api.dependencies", "aizk.service.api.dependencies"),
-    ("get_object_storage", "aizk.graph.api.dependencies", "aizk.service.api.dependencies"),
-    ("Principal", "aizk.conversion.auth", "aizk.service.auth"),
-    ("Principal", "aizk.conversion.auth.principal", "aizk.service.auth"),
-    ("AuthSettings", "aizk.conversion.utilities.config", "aizk.service.auth"),
-    ("QueueFullResponse", "aizk.conversion.api.schemas", "aizk.service.api.responses"),
-    ("QueueFullResponse", "aizk.conversion.api.schemas.jobs", "aizk.service.api.responses"),
-    ("INTAKE_RESPONSES", "aizk.graph.api.routes", "aizk.service.api.responses"),
-    ("queue_full_response", "aizk.graph.api.routes", "aizk.service.api.responses"),
-    ("ConfigurationError", "aizk.conversion.core.errors", "aizk.utilities.errors"),
-    ("StartupValidationError", "aizk.conversion.utilities.startup", "aizk.utilities.errors"),
 ]
 
 

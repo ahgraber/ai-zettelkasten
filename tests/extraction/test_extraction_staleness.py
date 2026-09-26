@@ -1,7 +1,7 @@
 """Tests for the extraction stage's currentness classification and re-admission.
 
 A source's active extraction run is classified from persisted columns alone
-(``aizk.graph.extraction_run.classify_extraction_sources`` /
+(``aizk.extraction.core.currentness.classify_extraction_sources`` /
 ``classify_extraction_source``): ``STALE`` when the payload or configuration a
 re-extraction would consume differs from what the run recorded; ``NEEDS_RECONCILIATION``
 when the payload is unchanged but the run recorded a different, now-superseded
@@ -9,7 +9,7 @@ upstream run than the one currently resolved; ``CURRENT`` otherwise. Staleness
 (the ``STALE`` subset, ``stale_extraction_sources``) marks work an operator may
 re-admit; it never makes a source pending.
 
-Every case drives the real :func:`~aizk.graph.extraction_run.extract_document` over
+Every case drives the real :func:`~aizk.extraction.processing.document.extract_document` over
 a deterministic stub extractor, so the run records under test are the ones the write
 path produces, not hand-built rows.
 """
@@ -24,8 +24,17 @@ from sqlalchemy import Engine, event
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
+from aizk.extraction.core.applicability import record_extraction_run_applicability
+from aizk.extraction.core.currentness import (
+    Currentness,
+    classify_extraction_source,
+    classify_extraction_sources,
+    stale_extraction_sources,
+)
+from aizk.extraction.job_actions import apply_extraction_readmission
+from aizk.extraction.processing.document import extract_document
+from aizk.extraction.stage import pending_extraction_sources
 from aizk.graph.chunks import CHUNKING_STAGE
-from aizk.graph.contextualization import VARIANT_STAGE
 from aizk.graph.datamodel import (
     INPUT_KIND_CONTEXTUALIZED,
     INPUT_KIND_RAW,
@@ -40,27 +49,18 @@ from aizk.graph.datamodel import (
     Mention,
     MentionCooccurrence,
 )
-from aizk.graph.extraction_run import (
-    Currentness,
-    classify_extraction_source,
-    classify_extraction_sources,
-    extract_document,
-    record_extraction_run_applicability,
-    stale_extraction_sources,
-)
-from aizk.graph.extraction_workunit import pending_extraction_sources
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
-from aizk.graph.job_actions import apply_extraction_readmission
 from aizk.graph.mentions import ResolvedExtractionConfig
+from aizk.graph.variants import VARIANT_STAGE
 from aizk.pipeline.events import PipelineEvent
-from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
+from aizk.utilities.hashing import content_fingerprint
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from aizk.graph.extraction import Detection
+    from aizk.extraction.core.extractors import Detection
 
 _SCHEMA_TABLES = [
     Chunk.__table__,
@@ -90,7 +90,7 @@ _RESOLVED_CONTEXTUALIZED = ResolvedExtractionConfig(
 
 
 class _SilentExtractor:
-    """An :class:`~aizk.graph.extraction.EntityExtractor` that detects nothing and records its calls.
+    """An :class:`~aizk.extraction.core.extractors.EntityExtractor` that detects nothing and records its calls.
 
     Currentness is decided by persisted columns, not by the mentions a run
     emits, so these tests need a deterministic extractor whose invocation count

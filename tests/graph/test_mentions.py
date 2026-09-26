@@ -28,6 +28,8 @@ from sqlalchemy import Engine, inspect
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
+from aizk.extraction.core.extractors import Detection
+from aizk.extraction.processing.document import extract_document
 from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.datamodel import (
     Chunk,
@@ -38,8 +40,6 @@ from aizk.graph.datamodel import (
     Mention,
     MentionCooccurrence,
 )
-from aizk.graph.extraction import Detection
-from aizk.graph.extraction_run import extract_document
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
 from aizk.graph.mentions import (
     MentionDraft,
@@ -49,8 +49,9 @@ from aizk.graph.mentions import (
     open_extraction_run,
     persist_mentions,
 )
-from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, content_fingerprint
+from aizk.pipeline.identity import DERIVATION_KEY_FORMAT
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
+from aizk.utilities.hashing import content_fingerprint
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -978,7 +979,7 @@ def test_partial_failure_exposes_no_active_run(
 ) -> None:
     """A document extraction forced to fail mid-persist leaves no newly-active run and no readable mentions.
 
-    Driven through the real :func:`~aizk.graph.extraction_run.extract_document`
+    Driven through the real :func:`~aizk.extraction.processing.document.extract_document`
     unit (not a hand-rolled transaction). A first, successful extraction seeds an
     active run with mentions; a second attempt under a differing
     ``extractor_version`` (so :func:`open_extraction_run` would otherwise open a

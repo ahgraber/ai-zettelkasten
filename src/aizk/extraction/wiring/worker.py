@@ -6,7 +6,6 @@ The worker also hosts admission when graph configuration enables it.
 
 from __future__ import annotations
 
-import contextlib
 import datetime
 import logging
 from typing import TYPE_CHECKING
@@ -14,10 +13,9 @@ from typing import TYPE_CHECKING
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 from aizk.extraction.core.extractors import EntityExtractor, Gliner2Extractor, SpacyExtractor
-from aizk.extraction.events import EXTRACTION_STAGE
 from aizk.extraction.handler import ExtractionStageHandler
-from aizk.graph.admission import AdmissionLoop, admission_adapter_for
-from aizk.pipeline.admission import AdmissionConfig
+from aizk.extraction.stage import extraction_adapter
+from aizk.pipeline.admission import AdmissionConfig, AdmissionLoop
 from aizk.pipeline.runner import DEFAULT_CANCEL_GRACE, StageRunner
 from aizk.pipeline.stage import require_stale_threshold
 
@@ -86,11 +84,7 @@ def run_extraction_worker(
         extraction_config.input_policy,
         extraction_config.worker_concurrency,
     )
-    adapter = admission_adapter_for(EXTRACTION_STAGE, admission_config)
-    admission = (
-        AdmissionLoop(engine, adapter, interval_seconds=admission_config.admission_interval_seconds)
-        if adapter is not None
-        else contextlib.nullcontext()
-    )
+    adapter = extraction_adapter(admission_config)
+    admission = AdmissionLoop(engine, adapter, interval_seconds=admission_config.admission_interval_seconds)
     with admission:
         return runner.run()

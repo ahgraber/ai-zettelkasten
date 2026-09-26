@@ -32,8 +32,8 @@ from aizk.contextualization.stage import (
     pending_contextualization_sources,
 )
 from aizk.conversion.datamodel.output import ConversionOutput
-from aizk.graph.capacity import StageAtCapacityError
 from aizk.graph.datamodel import ContextualizationJob
+from aizk.pipeline.capacity import StageAtCapacityError
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.invalidation import ReprocessingConfirmationError
 from aizk.pipeline.lifecycle import WorkUnitStatus

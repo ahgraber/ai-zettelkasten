@@ -21,12 +21,12 @@ from sqlmodel import Session, SQLModel, select
 
 from fastapi.testclient import TestClient
 
+from aizk.console.app import create_app
 from aizk.conversion.datamodel.source import Source
 from aizk.db.engine import get_engine
-from aizk.graph.api.main import create_app
+from aizk.extraction.events import QueuedPayload, RequeuedPayload
+from aizk.extraction.stage import enqueue_extraction
 from aizk.graph.datamodel import ExtractionJob
-from aizk.graph.extraction_events import QueuedPayload, RequeuedPayload
-from aizk.graph.extraction_workunit import enqueue_extraction
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
 

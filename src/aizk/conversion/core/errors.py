@@ -4,10 +4,6 @@ from __future__ import annotations
 
 from typing import ClassVar, Literal, Sequence
 
-# ConfigurationError is defined in the leaf error module so any layer can raise it,
-# and is re-exported here beside the other conversion error classes.
-from aizk.utilities.errors import ConfigurationError
-
 
 class FetcherNotRegistered(LookupError):  # noqa: N818 — canonical spec name
     """Raised when dispatch is attempted for a kind with no registered adapter."""

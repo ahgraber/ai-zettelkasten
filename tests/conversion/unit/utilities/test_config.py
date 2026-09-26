@@ -9,7 +9,6 @@ from pathlib import Path
 from pydantic import ValidationError
 import pytest
 
-from aizk.conversion.core.errors import ConfigurationError
 from aizk.conversion.settings import (
     ConversionConfig,
     DoclingConverterConfig,
@@ -20,6 +19,7 @@ from aizk.pipeline.stage import require_stale_threshold
 from aizk.service.auth import AuthSettings
 from aizk.service.settings import ServiceSettings
 from aizk.storage.settings import ObjectStorageSettings
+from aizk.utilities.errors import ConfigurationError
 
 
 def test_config_reads_env_vars(monkeypatch):

@@ -9,17 +9,13 @@ from botocore.exceptions import ClientError
 import httpx2
 import pytest
 
-from aizk.conversion.utilities.config import DoclingConverterConfig, KarakeepFetcherConfig
-from aizk.conversion.utilities.startup import (
-    StartupValidationError,
-    log_feature_summary,
-    probe_database,
-    probe_karakeep,
-    probe_picture_description,
-    probe_s3,
-)
+from aizk.conversion.settings import DoclingConverterConfig, KarakeepFetcherConfig
+from aizk.conversion.wiring.probes import log_feature_summary, probe_karakeep, probe_picture_description
+from aizk.db.engine import probe_database
 from aizk.service.settings import ServiceSettings
+from aizk.storage.probe import probe_s3
 from aizk.storage.settings import ObjectStorageSettings
+from aizk.utilities.errors import StartupValidationError
 
 # ---------------------------------------------------------------------------
 # Fixtures

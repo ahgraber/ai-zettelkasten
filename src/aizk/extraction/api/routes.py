@@ -19,8 +19,9 @@ from aizk.extraction.job_actions import (
     apply_extraction_retry as _apply_retry,
 )
 from aizk.extraction.stage import EXTRACTION_DEFINITION, enqueue_extraction
-from aizk.graph.api.dependencies import get_admission_config, get_db_session
+from aizk.graph.api.dependencies import get_admission_config
 from aizk.graph.api.stage_routes import stage_router
+from aizk.service.api.dependencies import get_db_session
 from aizk.service.api.responses import INTAKE_RESPONSES, queue_full_response
 from aizk.service.auth import get_principal
 

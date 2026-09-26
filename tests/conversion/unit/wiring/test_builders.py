@@ -16,7 +16,6 @@ from typing import Any, ClassVar
 
 import pytest
 
-from aizk.conversion.core.errors import ConfigurationError
 from aizk.conversion.core.registry import FetcherRegistry
 from aizk.conversion.core.types import ContentType, ConversionInput
 from aizk.conversion.settings import ConversionConfig, DoclingConverterConfig, KarakeepFetcherConfig
@@ -28,6 +27,7 @@ from aizk.conversion.wiring.subprocess import _spawn_conversion_subprocess
 from aizk.conversion.wiring.testing import TestRuntime, build_test_runtime
 from aizk.conversion.wiring.worker import WorkerRuntime, build_worker_runtime
 from aizk.storage.settings import ObjectStorageSettings
+from aizk.utilities.errors import ConfigurationError
 
 # ---------------------------------------------------------------------------
 # Helpers

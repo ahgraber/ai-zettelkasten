@@ -18,7 +18,7 @@ from pyleak import no_task_leaks
 import pytest
 import xxhash
 
-from aizk.datamodel.graph import (
+from aizk.ai.graph import (
     Graph,
     Node,
     NodeFactory,

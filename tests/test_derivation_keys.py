@@ -22,17 +22,9 @@ from sqlalchemy import Engine, text
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
+from aizk.ai.providers.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.chunking import Chunk as SplitterChunk
-from aizk.graph.chunks import (
-    CHUNKING_STAGE,
-    chunking_config_fingerprint,
-    chunking_derivation_key,
-    chunking_input_fingerprint,
-)
-from aizk.graph.content_index import CONTENT_FTS_DDL
-from aizk.graph.contextualization import (
-    SUMMARY_STAGE,
-    VARIANT_STAGE,
+from aizk.contextualization.core.keys import (
     contextualization_config_fingerprint,
     contextualization_row_derivation_key,
     contextualization_row_input_fingerprint,
@@ -42,19 +34,27 @@ from aizk.graph.contextualization import (
     summary_derivation_key,
     summary_input_fingerprint,
 )
-from aizk.graph.extraction_run import extract_document
+from aizk.contextualization.processing.document import ProcessResult, process_document
+from aizk.extraction.processing.document import extract_document
+from aizk.graph.chunks import (
+    CHUNKING_STAGE,
+    chunking_config_fingerprint,
+    chunking_derivation_key,
+    chunking_input_fingerprint,
+)
+from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.fingerprints import chunk_key
-from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.graph.mentions import INPUT_POLICY_RAW, MENTION_EXTRACTION_STAGE, extraction_derivation_key
-from aizk.graph.workunit import ProcessResult, process_document
-from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, content_fingerprint, derivation_key
+from aizk.graph.variants import SUMMARY_STAGE, VARIANT_STAGE
+from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, derivation_key
 from aizk.pipeline.run import PipelineRun, RunStatus
+from aizk.utilities.hashing import content_fingerprint
 from tests.fakes.markdown import StubMarkdownSource
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from aizk.graph.extraction import Detection
+    from aizk.extraction.core.extractors import Detection
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SRC_ROOT = _REPO_ROOT / "src" / "aizk"

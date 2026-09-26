@@ -132,6 +132,10 @@ The system SHALL include the `source_ref` in the job response as the canonical s
 Existing fields `url: AnyUrl | None` and `title: str | None` SHALL retain their current names and semantics (populated for sources that have been enriched with a URL or title; null otherwise). (Previously: response always included a non-null top-level `karakeep_id`.
 Now `karakeep_id` is nullable, and `source_ref` is added alongside it.)
 
+The `status` field SHALL be one of the six lifecycle values `queued`, `running`, `succeeded`, `failed`, `cancelled`, `timed_out`.
+The response SHALL carry a derived `retry_class` field: `retryable` when the job is `failed` with a retry wait set, `permanent` when the job is `failed` with no retry wait, null for every other status.
+The response SHALL carry a `phase` field: `convert` or `upload` while the job is `running`, null otherwise.
+
 The system SHALL return 404 when the resolved `principal.subject` does not match the job's `owner_id`.
 The `principal` SHALL be resolved via the `get_principal` dependency and injected into the handler on every request.
 The response body and status code SHALL be identical to the not-found case so that cross-owner access does not leak job existence. (Previously: any job retrievable by id regardless of `owner_id`; `get_principal` not injected.)
@@ -150,6 +154,18 @@ The response body and status code SHALL be identical to the not-found case so th
 - **WHEN** the job is retrieved
 - **THEN** the response includes `source_ref` with kind `"url"`, and `karakeep_id` is null
 
+#### Scenario: A failed job reports its retry class
+
+- **GIVEN** one job `failed` with a retry wait set and one job `failed` with no retry wait
+- **WHEN** each is retrieved
+- **THEN** the first has `status: "failed"` and `retry_class: "retryable"`, the second has `status: "failed"` and `retry_class: "permanent"`
+
+#### Scenario: A running job reports its phase
+
+- **GIVEN** a `running` job in its upload phase
+- **WHEN** it is retrieved
+- **THEN** the response has `status: "running"`, `phase: "upload"`, and `retry_class: null`
+
 #### Scenario: Cross-owner get returns 404
 
 - **GIVEN** a job exists with `owner_id != principal.subject`
@@ -159,16 +175,37 @@ The response body and status code SHALL be identical to the not-found case so th
 ### Requirement: List jobs with filters and pagination
 
 The system SHALL expose an endpoint to list conversion jobs filterable by status, internal source identifier, and supporting pagination.
+The `status` filter SHALL accept the six lifecycle values and no other value.
+The list SHALL also accept a `retry_class` filter (`retryable` or `permanent`) that returns only `failed` jobs of that class.
+Filters SHALL combine as an intersection: `status` other than `failed` together with a `retry_class` returns an empty page with `total: 0`.
 The system SHALL filter the job list to jobs whose `owner_id` matches `principal.subject`.
 The `principal` SHALL be resolved via the `get_principal` dependency and injected into the handler on every request. (Previously: all jobs returned regardless of `owner_id`; `get_principal` not injected.)
 
-**Schema reference:** `GET /v1/jobs` · query params: status, source_id, created_after, created_before, limit (1–1000, default 50), offset (≥0, default 0) · response: `JobList`
+**Schema reference:** `GET /v1/jobs` · query params: status, retry_class, source_id, created_after, created_before, limit (1–1000, default 50), offset (≥0, default 0) · response: `JobList`
 
 #### Scenario: Filter jobs by status
 
 - **GIVEN** jobs exist with multiple statuses
 - **WHEN** a client requests jobs filtered by a specific status
 - **THEN** only jobs matching that status are returned
+
+#### Scenario: Filter jobs by retry class
+
+- **GIVEN** failed jobs of both retry classes and jobs in other statuses
+- **WHEN** a client requests jobs with `retry_class=retryable`
+- **THEN** only the failed jobs with a retry wait set are returned and the `total` counts only them
+
+#### Scenario: A status value outside the vocabulary is rejected
+
+- **GIVEN** any set of jobs
+- **WHEN** a client requests jobs with `status=FAILED_PERM`
+- **THEN** the request is rejected as invalid and no jobs are returned
+
+#### Scenario: Status and retry class filters intersect
+
+- **GIVEN** queued jobs and failed jobs of both retry classes
+- **WHEN** a client requests jobs with `status=queued&retry_class=retryable`
+- **THEN** the response is an empty page with `total: 0`
 
 #### Scenario: Filter jobs by identifier
 
@@ -191,6 +228,8 @@ The `principal` SHALL be resolved via the `get_principal` dependency and injecte
 ### Requirement: Return aggregate job status counts
 
 The system SHALL expose an endpoint returning the count of jobs grouped by status.
+The `counts` object SHALL keep its shape of status value to integer, keyed by the six lifecycle values, and `total` SHALL be unchanged.
+The response SHALL additionally carry a sibling object `failed_by_retry_class` with the two integer keys `retryable` and `permanent`, always present, whose values sum to `counts.failed`.
 The system SHALL count only jobs whose `owner_id` matches `principal.subject`.
 The `principal` SHALL be resolved via the `get_principal` dependency and injected into the handler on every request. (Previously: counts are global across all jobs; `get_principal` not injected.)
 
@@ -200,7 +239,19 @@ The `principal` SHALL be resolved via the `get_principal` dependency and injecte
 
 - **GIVEN** jobs exist in various statuses
 - **WHEN** a client requests the status counts endpoint
-- **THEN** the response returns a count for each status value present in the system
+- **THEN** the response returns a count for each of the six status values present in the system
+
+#### Scenario: Failed counts are split by retry class
+
+- **GIVEN** two jobs `failed` with a retry wait set and one job `failed` with no retry wait
+- **WHEN** a client requests the status counts endpoint
+- **THEN** `counts.failed` is 3 and `failed_by_retry_class` is `{"retryable": 2, "permanent": 1}`
+
+#### Scenario: The split is present when no job has failed
+
+- **GIVEN** no job in status `failed`
+- **WHEN** a client requests the status counts endpoint
+- **THEN** `failed_by_retry_class` is `{"retryable": 0, "permanent": 0}`
 
 #### Scenario: Status counts are owner-scoped
 
@@ -216,16 +267,23 @@ The `principal` SHALL be resolved via the `get_principal` dependency and injecte
 
 ### Requirement: Retry failed jobs
 
-The system SHALL expose an endpoint to retry a failed or permanently failed job by resetting its status to QUEUED and incrementing its attempt count.
+The system SHALL expose an endpoint to retry a job in `failed`, `cancelled`, or `timed_out` by returning it to `queued`, clearing its retry wait and error fields, and leaving its attempt count unchanged; the retry SHALL record a `requeued` event carrying the reason and the acting principal.
+A retry of a job in any other status SHALL be refused with HTTP 409 and the structured error body `error: job_not_retryable`, and SHALL alter nothing.
 The system SHALL return 404 when the resolved `principal.subject` does not match the target job's `owner_id`, using the same response body as the not-found case. (Previously: `principal` injected but not used for authorization enforcement.)
 
-**Schema reference:** `POST /v1/jobs/{job_id}/retry` · response: `JobResponse`
+**Schema reference:** `POST /v1/jobs/{job_id}/retry` · response: `JobResponse` · `409` for an ineligible status
 
-#### Scenario: Retry a failed-retryable job
+#### Scenario: Retry a failed job
 
-- **GIVEN** a job has status FAILED_RETRYABLE or FAILED_PERM
+- **GIVEN** a job has status `failed`, `cancelled`, or `timed_out`
 - **WHEN** a client posts a retry request for that job
-- **THEN** the job status resets to QUEUED, the attempt count increments by one, and the retry scheduling timestamp is cleared
+- **THEN** the job status is `queued`, the retry wait and error fields are cleared, the attempt count is unchanged, and the response is the updated job
+
+#### Scenario: Retry of an ineligible job is refused
+
+- **GIVEN** a job has status `queued`, `running`, or `succeeded`
+- **WHEN** a client posts a retry request for that job
+- **THEN** the system returns HTTP 409 with `error: job_not_retryable` and the job is unchanged
 
 #### Scenario: Cross-owner retry returns 404
 
@@ -235,22 +293,48 @@ The system SHALL return 404 when the resolved `principal.subject` does not match
 
 ### Requirement: Cancel jobs
 
-The system SHALL expose an endpoint to cancel queued or running jobs on a best-effort basis.
+The system SHALL expose an endpoint to cancel a job in `queued`, `running`, or `failed`; the job SHALL become `cancelled`, any retry wait SHALL be cleared, its error fields SHALL be kept, and a running job's cancellation is best-effort within the runtime's bounded interval.
+A `running` job in its `upload` phase SHALL NOT be cancellable.
+A cancel of a job in that phase or in `succeeded`, `cancelled`, or `timed_out` SHALL be refused with HTTP 409 and the structured error body `error: job_not_cancellable`, and SHALL alter nothing.
 The system SHALL return 404 when the resolved `principal.subject` does not match the target job's `owner_id`, using the same response body as the not-found case. (Previously: `principal` injected but not used for authorization enforcement.)
 
-**Schema reference:** `POST /v1/jobs/{job_id}/cancel` · response: `JobResponse`
+**Schema reference:** `POST /v1/jobs/{job_id}/cancel` · response: `JobResponse` · `409` for an ineligible status
 
 #### Scenario: Cancel a queued job
 
-- **GIVEN** a job has status QUEUED
+- **GIVEN** a job has status `queued`
 - **WHEN** a client posts a cancel request for that job
-- **THEN** the job transitions to CANCELLED and will not be processed
+- **THEN** the job transitions to `cancelled` and will not be processed
 
 #### Scenario: Cancel a running job
 
-- **GIVEN** a job has status RUNNING
+- **GIVEN** a job has status `running` in its `convert` phase
 - **WHEN** a client posts a cancel request for that job
-- **THEN** the system attempts best-effort cancellation and updates the job status to CANCELLED
+- **THEN** the system attempts best-effort cancellation and updates the job status to `cancelled`
+
+#### Scenario: Cancel a failed job awaiting retry
+
+- **GIVEN** a job has status `failed` with a retry wait set
+- **WHEN** a client posts a cancel request for that job
+- **THEN** the job transitions to `cancelled`, the retry wait is cleared, and the job is never claimed again
+
+#### Scenario: Cancel during upload is refused
+
+- **GIVEN** a job has status `running` in its `upload` phase
+- **WHEN** a client posts a cancel request for that job
+- **THEN** the system returns HTTP 409 with `error: job_not_cancellable` and the job continues to its terminal status
+
+#### Scenario: Cancel of a terminal job is refused
+
+- **GIVEN** a job has status `succeeded`, `cancelled`, or `timed_out`
+- **WHEN** a client posts a cancel request for that job
+- **THEN** the system returns HTTP 409 with `error: job_not_cancellable` and the job is unchanged
+
+#### Scenario: Cancel of a failed job keeps its error fields
+
+- **GIVEN** a job has status `failed` with an error code and message recorded
+- **WHEN** a client posts a cancel request for that job
+- **THEN** the job is `cancelled` and its response still carries the same error code and message
 
 #### Scenario: Cross-owner cancel returns 404
 
@@ -262,7 +346,8 @@ The system SHALL return 404 when the resolved `principal.subject` does not match
 
 The system SHALL expose an endpoint accepting a list of job identifiers and a bulk action (retry or cancel) to apply to all specified jobs, accepting between 1 and 100 job identifiers.
 The system SHALL treat each job in the request independently: a job whose `owner_id` does not match `principal.subject` SHALL be returned with `status: "error"` and `error: "job_not_found"` in the per-job result, consistent with the existing not-found error path and the 404-posture for cross-owner access.
-The presence of cross-owner job ids in the request SHALL NOT cause the entire bulk operation to fail; eligible owned jobs SHALL still be actioned. (Previously: `principal` injected but not used for authorization enforcement.)
+Each job's eligibility SHALL be judged by the same rules as the single-job retry and cancel endpoints; an ineligible job SHALL be returned with `status: "error"` and the per-job error code `job_not_retryable` or `job_not_cancellable`, and SHALL be unaltered.
+The presence of cross-owner or ineligible job ids in the request SHALL NOT cause the entire bulk operation to fail; eligible owned jobs SHALL still be actioned, and the response status SHALL be HTTP 200. (Previously: `principal` injected but not used for authorization enforcement.)
 
 **Schema reference:** `POST /v1/jobs/actions` · request: `BulkJobActionRequest` · response: `BulkActionResponse`
 
@@ -270,13 +355,19 @@ The presence of cross-owner job ids in the request SHALL NOT cause the entire bu
 
 - **GIVEN** multiple failed jobs are selected
 - **WHEN** a client posts a bulk retry action with their identifiers
-- **THEN** all eligible jobs are reset to QUEUED and a result summary is returned
+- **THEN** all eligible jobs are `queued` with their attempt counts unchanged and a result summary is returned
 
 #### Scenario: Bulk cancel
 
 - **GIVEN** multiple queued or running jobs are selected
 - **WHEN** a client posts a bulk cancel action with their identifiers
-- **THEN** all eligible jobs are transitioned to CANCELLED and a result summary is returned
+- **THEN** all eligible jobs are `cancelled` and a result summary is returned
+
+#### Scenario: Bulk action skips ineligible jobs
+
+- **GIVEN** a bulk cancel request containing one `queued` job and one `running` job in its `upload` phase
+- **WHEN** a client posts `POST /v1/jobs/actions`
+- **THEN** the response is HTTP 200; the queued job is `cancelled` and returned with `status: "success"`; the uploading job is unaltered and returned with `status: "error"` and `error: "job_not_cancellable"`; the summary `errors` count includes it
 
 #### Scenario: Bulk action skips cross-owner jobs
 
@@ -480,11 +571,11 @@ The system SHALL enforce a per-check timeout on each readiness dependency check 
 
 ### Requirement: Reject job submissions when queue depth exceeds configured limit
 
-The system SHALL reject job submissions with HTTP 503 when the number of actionable jobs (status `QUEUED` or `FAILED_RETRYABLE`) meets or exceeds the configured `queue_max_depth`, and SHALL include a `Retry-After` header whose value is the configured `queue_retry_after_seconds` (default: 30).
+The system SHALL reject job submissions with HTTP 503 when the number of actionable jobs — those `queued`, or `failed` with a retry wait set — meets or exceeds the configured `queue_max_depth`, and SHALL include a `Retry-After` header whose value is the configured `queue_retry_after_seconds` (default: 30).
 
 #### Scenario: Queue at capacity rejects submission
 
-- **GIVEN** the number of jobs with status `QUEUED` or `FAILED_RETRYABLE` is equal to or greater than `queue_max_depth`
+- **GIVEN** the number of jobs that are `queued` or `failed` with a retry wait set is equal to or greater than `queue_max_depth`
 - **WHEN** a client submits a new conversion job
 - **THEN** the system returns HTTP 503 with a structured error body indicating the queue is full and a `Retry-After` header
 
@@ -492,9 +583,15 @@ The system SHALL reject job submissions with HTTP 503 when the number of actiona
 
 #### Scenario: Queue below capacity accepts submission
 
-- **GIVEN** the number of jobs with status `QUEUED` or `FAILED_RETRYABLE` is below `queue_max_depth`
+- **GIVEN** the number of jobs that are `queued` or `failed` with a retry wait set is below `queue_max_depth`
 - **WHEN** a client submits a new conversion job
 - **THEN** the system processes the submission normally (existing 201/200 behavior)
+
+#### Scenario: Permanently failed jobs do not count toward capacity
+
+- **GIVEN** `queue_max_depth` jobs that are `failed` with no retry wait and no other actionable jobs
+- **WHEN** a client submits a new conversion job
+- **THEN** the submission is accepted
 
 #### Scenario: Duplicate submission bypasses queue depth check
 
@@ -602,11 +699,11 @@ The normative requirements above (`Validate auth mode at API startup`, `Resolve 
 - **Implementation**: `src/aizk/conversion/api/`
 - **Routes**:
   - `POST /v1/jobs` — submit job
-  - `GET /v1/jobs` — list jobs (filters: status, source_id, created_after, created_before; pagination: limit, offset)
+  - `GET /v1/jobs` — list jobs (filters: status, retry_class, source_id, created_after, created_before; pagination: limit, offset)
   - `GET /v1/jobs/status-counts` — aggregate counts by status
   - `GET /v1/jobs/{job_id}` — get single job
-  - `POST /v1/jobs/{job_id}/retry` — retry failed/cancelled job
-  - `POST /v1/jobs/{job_id}/cancel` — cancel queued/running job
+  - `POST /v1/jobs/{job_id}/retry` — retry a `failed`, `cancelled`, or `timed_out` job
+  - `POST /v1/jobs/{job_id}/cancel` — cancel a `queued`, `running` (not during `upload`), or `failed` job
   - `POST /v1/jobs/actions` — bulk retry or cancel (1–100 job IDs)
   - `GET /v1/bookmarks/{source_id}/outputs` — list conversion outputs for a bookmark
   - `GET /v1/outputs/{output_id}/manifest` — raw manifest JSON from S3

@@ -10,8 +10,8 @@ from aizk.ai.providers.llm import ModelConfig, model_config_fingerprint
 from aizk.graph._version import CONTEXT_VERSION, SUMMARY_VERSION
 from aizk.graph.datamodel import MEMO_KIND_REVISION, MEMO_KIND_SUMMARY
 from aizk.graph.fingerprints import chunk_key
-from aizk.pipeline.identity import content_fingerprint, derivation_key, fingerprint
-from aizk.utilities.hashing import canonical_json
+from aizk.pipeline.identity import derivation_key
+from aizk.utilities.hashing import canonical_json, content_fingerprint, fingerprint
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

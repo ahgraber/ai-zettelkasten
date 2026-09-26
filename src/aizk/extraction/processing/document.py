@@ -38,7 +38,7 @@ from aizk.graph.mentions import (
     persist_mentions,
 )
 from aizk.graph.variants import StalePlanError
-from aizk.pipeline.identity import content_fingerprint
+from aizk.utilities.hashing import content_fingerprint
 
 if TYPE_CHECKING:
     from collections.abc import Callable

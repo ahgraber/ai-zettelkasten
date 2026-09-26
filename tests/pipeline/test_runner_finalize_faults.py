@@ -19,17 +19,20 @@ Execution is thread-pool (not asyncio); act phases wrap ``no_thread_leaks``.
 
 from __future__ import annotations
 
+import datetime as dt
 import threading
 
 from pyleak import no_thread_leaks
 import pytest
 from sqlalchemy.exc import DBAPIError, OperationalError
+from sqlmodel import Session
 
 from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.pipeline.repository import STALE_RUNNING_ERROR_CODE
 from aizk.pipeline.runner import StageRunner
 from aizk.pipeline.shutdown import ShutdownController
 
-from ._stub_handler import StubStageHandler, create_stub_engine, succeed
+from ._stub_handler import StubStageHandler, StubWorkUnit, create_stub_engine, succeed
 
 
 def _op_lock() -> OperationalError:
@@ -208,3 +211,57 @@ def test_finalize_fault_outlasting_the_drain_keeps_the_completed_outcome() -> No
 
     assert handler.get_status(unit_id) == WorkUnitStatus.SUCCEEDED.value, "the completed outcome survived the drain"
     assert handler.recorded.cleaned_up == [str(unit_id)]
+
+
+def test_unit_whose_terminal_write_fails_during_drain_is_recovered_by_the_stale_sweep() -> None:
+    """A unit left ``running`` by a finalize failing through the drain is reclaimed by a later runtime's stale sweep."""
+    engine = create_stub_engine()
+    started_at = dt.datetime(2026, 9, 9, 12, 0, tzinfo=dt.timezone.utc)
+    stale_after = dt.timedelta(minutes=5)
+    handler = StubStageHandler(engine, concurrency_limit=1, stale_after=stale_after, clock=lambda: started_at)
+    controller = ShutdownController()
+    started = threading.Event()
+
+    def _succeed_and_signal(label: str) -> str:
+        started.set()
+        return f"ok:{label}"
+
+    unit_id = handler.enqueue("completes", behavior=_succeed_and_signal)
+    handler.inject_finalize_fault(times=100_000, error=_op_lock())
+    runner = StageRunner(
+        handler,
+        engine,
+        shutdown=controller,
+        poll_interval=0.01,
+        drain_timeout=0.2,
+        cancel_grace=0.2,
+        force_exit=lambda _code: None,
+    )
+    exit_code: list[int] = []
+
+    with no_thread_leaks(action="raise"):
+        driver = threading.Thread(target=lambda: exit_code.append(runner.run()))
+        driver.start()
+        assert started.wait(timeout=5.0), "unit began executing"
+        controller.request_shutdown()
+        driver.join(timeout=10.0)
+        assert not driver.is_alive(), "runner exited forced with the finalize still failing"
+
+    assert exit_code == [1]
+    assert handler.get_status(unit_id) == WorkUnitStatus.RUNNING.value, "the terminal write never committed"
+    assert handler.recorded.executed == [str(unit_id)], "the unit's execution ran to completion"
+    assert [slot.future.done() for slot in runner._slots.values()] == [True], (
+        "no execution of the exited runner remains for the unit"
+    )
+
+    recovered_at = started_at + stale_after + dt.timedelta(seconds=1)
+    later = StubStageHandler(engine, stale_after=stale_after, clock=lambda: recovered_at)
+
+    assert StageRunner(later, engine).recover_stale() == 1
+
+    with Session(engine) as session:
+        unit = session.get(StubWorkUnit, unit_id)
+        assert unit is not None
+        assert WorkUnitStatus(unit.status) is WorkUnitStatus.FAILED
+        assert unit.error_code == STALE_RUNNING_ERROR_CODE
+        assert unit.earliest_next_attempt_at == recovered_at.replace(tzinfo=None)

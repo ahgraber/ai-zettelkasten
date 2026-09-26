@@ -161,7 +161,7 @@ plot = [
     "seaborn>=0.13",
     # "topic-wizard>=1.1.4",
 ]
-# opt-in: the graph stage's pinned NER extractors (aizk.graph.extraction).
+# opt-in: the graph stage's pinned NER extractors (aizk.extraction.core.extractors).
 # Not installed by default; `uv sync --group ner` installs it explicitly.
 ner = [
     "en_core_web_sm",

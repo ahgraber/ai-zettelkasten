@@ -1,7 +1,7 @@
 # SQLite Replication Specification
 
 > Generated from code analysis on 2026-04-15
-> Source files: `src/aizk/conversion/utilities/litestream.py`, `tests/conversion/unit/test_litestream.py`
+> Source files: `src/aizk/db/backends/sqlite.py`, `tests/db/backends/test_sqlite.py`
 
 ## Purpose
 
@@ -123,8 +123,8 @@ Operators MAY opt into a permissive mode that converts restore failures into war
 
 ## Technical Notes
 
-- **Implementation:** `src/aizk/conversion/utilities/litestream.py`
-- **Tests:** `tests/conversion/unit/test_litestream.py`
+- **Implementation:** `src/aizk/db/backends/sqlite.py`
+- **Tests:** `tests/db/backends/test_sqlite.py`
 - **Dependencies:** `litestream` binary (must be on `PATH` or at configured absolute path), `yaml`, `pydantic`, `sqlalchemy.engine.make_url`, S3-compatible object store
 - **Process Model:** Replication runs as a long-lived subprocess in its own process group (`os.setpgrp`) so the manager can signal the whole group atomically. `atexit` registration ensures cleanup on interpreter shutdown.
 - **Scope Boundary:** This spec covers the manager lifecycle and configuration-file emission.

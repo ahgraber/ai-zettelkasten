@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from aizk.graph.config import NerConfig
+from aizk.extraction.settings import NerConfig
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("AIZK_RUN_NER_DETERMINISM") != "1",
@@ -63,7 +63,7 @@ _GLINER2_TEXT = "Apple CEO Tim Cook announced the iPhone 15 in Cupertino yesterd
 @pytest.mark.skipif(not _spacy_available(), reason="spaCy / en_core_web_sm not installed (uv sync --group ner)")
 def test_spacy_extractor_is_deterministic() -> None:
     """Two SpacyExtractor invocations on identical text yield identical detection sequences."""
-    from aizk.graph.extraction import SpacyExtractor
+    from aizk.extraction.core.extractors import SpacyExtractor
 
     extractor = SpacyExtractor()
 
@@ -80,7 +80,7 @@ def test_spacy_extractor_is_deterministic() -> None:
 )
 def test_gliner2_extractor_is_deterministic() -> None:
     """Two Gliner2Extractor invocations on identical text yield identical detection sequences."""
-    from aizk.graph.extraction import Gliner2Extractor
+    from aizk.extraction.core.extractors import Gliner2Extractor
 
     extractor = Gliner2Extractor()
 
@@ -96,13 +96,13 @@ def test_resolve_extraction_config_agrees_with_a_constructed_spacy_extractor() -
     """The cheap, no-model-load resolution reports the same version a constructed extractor does.
 
     A currentness check must never disagree with what the worker would actually
-    extract under, so :func:`~aizk.graph.extraction.resolve_extraction_config`'s
+    extract under, so :func:`~aizk.extraction.core.extractors.resolve_extraction_config`'s
     ``extractor_version`` (derived from installed-package metadata alone) must
-    equal :class:`~aizk.graph.extraction.SpacyExtractor`'s (derived from loading
+    equal :class:`~aizk.extraction.core.extractors.SpacyExtractor`'s (derived from loading
     the pipeline).
     """
-    from aizk.graph.config import ExtractionConfig
-    from aizk.graph.extraction import SpacyExtractor, resolve_extraction_config
+    from aizk.extraction.core.extractors import SpacyExtractor, resolve_extraction_config
+    from aizk.extraction.settings import ExtractionConfig
 
     resolved = resolve_extraction_config(ExtractionConfig(_env_file=None, extractor="spacy"))
 

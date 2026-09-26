@@ -17,7 +17,7 @@ from __future__ import annotations
 import threading
 import time
 
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.settings import ConversionConfig
 
 
 class TestGpuSemaphoreGuard:

@@ -12,10 +12,6 @@ from aizk.conversion.api.schemas.ingress import IngressSourceRef
 from aizk.conversion.core.source_ref import SourceRef
 from aizk.pipeline.lifecycle import MAX_BULK_SELECTION, RetryClass, WorkUnitStatus
 
-# The capacity refusal body is shared with the other stages' intake routes and is
-# re-exported here beside the conversion job schemas.
-from aizk.service.api.responses import QueueFullResponse
-
 
 class JobSubmission(BaseModel):
     """Request schema for job submission."""

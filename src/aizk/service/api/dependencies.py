@@ -11,9 +11,8 @@ from fastapi import Request
 
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine, get_session
-from aizk.service.auth import get_auth_settings
 
-__all__ = ["get_auth_settings", "get_config", "get_db_session", "get_object_storage"]
+__all__ = ["get_config", "get_db_session", "get_object_storage"]
 
 
 def get_config(request: Request) -> Any:

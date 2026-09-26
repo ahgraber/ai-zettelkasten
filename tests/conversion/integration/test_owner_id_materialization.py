@@ -16,9 +16,9 @@ from fastapi.testclient import TestClient
 
 from aizk.conversion.api.dependencies import get_principal
 from aizk.conversion.api.main import create_app
-from aizk.conversion.auth import Principal
 from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.source import Source
+from aizk.service.auth import Principal
 
 
 def _submit(client: TestClient, bookmark_id: str) -> dict:

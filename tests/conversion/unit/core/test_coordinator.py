@@ -250,7 +250,7 @@ def test_depth_limit_exceeded_raises_fetcher_depth_exceeded():
     assert "AIZK_TEST__DEPTH" in message
 
 
-def test_coordinator_has_no_transitive_import_of_adapter_modules():
+def test_coordinator_has_no_transitive_import_of_adapter_modules(monkeypatch: pytest.MonkeyPatch):
     # Ensure a clean import graph: remove any cached entries for the
     # coordinator and its candidate leak targets (adapters, wiring) so the
     # subsequent re-import measures ONLY the coordinator's own transitive
@@ -261,7 +261,8 @@ def test_coordinator_has_no_transitive_import_of_adapter_modules():
             or name.startswith("aizk.conversion.adapters")
             or name.startswith("aizk.conversion.wiring")
         ):
-            del sys.modules[name]
+            monkeypatch.delitem(sys.modules, name)
+    monkeypatch.delattr(sys.modules["aizk.conversion.core"], "coordinator")
 
     importlib.import_module("aizk.conversion.core.coordinator")
 

@@ -380,7 +380,7 @@ def test_upload_converted_shortcut_manifest_upload_is_retryable(
             upload_attempts.append(s3_key)
             if fail_next["value"]:
                 fail_next["value"] = False
-                from aizk.conversion.storage.s3_client import S3UploadError
+                from aizk.storage.s3 import S3UploadError
 
                 raise S3UploadError(s3_key, "transient failure for retry test")
             return f"s3://bucket/{s3_key}"
@@ -397,7 +397,7 @@ def test_upload_converted_shortcut_manifest_upload_is_retryable(
     assert upload_attempts == [], "_prepare_upload must not perform any S3 PUTs"
 
     # Step 2: first execute attempt fails on the manifest PUT.
-    from aizk.conversion.storage.s3_client import S3UploadError
+    from aizk.storage.s3 import S3UploadError
 
     with pytest.raises(S3UploadError):
         uploader._execute_upload(plan, new_job.id, object_storage)

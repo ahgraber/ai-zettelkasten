@@ -28,13 +28,13 @@ from uuid import UUID, uuid4
 from sqlalchemy import Engine, text
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from aizk.ai.providers.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.contextualization.processing.document import ProcessResult, process_document
 from aizk.conversion.core.source_ref import KarakeepBookmarkRef, compute_source_ref_hash
 from aizk.conversion.datamodel.source import Source
 from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.datamodel import ChunkRunInput, DocumentSummary
-from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.graph.variants import SUMMARY_STAGE
 from aizk.pipeline.run import PipelineRun, RunStatus
 from tests.fakes.markdown import StubMarkdownSource

@@ -1,6 +1,6 @@
 """Worker-driven tests for the extraction stage adapter.
 
-Drives :class:`aizk.graph.extraction_handler.ExtractionStageHandler` through the
+Drives :class:`aizk.extraction.handler.ExtractionStageHandler` through the
 shared :class:`aizk.pipeline.runner.StageRunner` over a real (file-based) SQLite
 database, exercising the full claim → execute (own transaction) → finalize path
 with a deterministic stub extractor:
@@ -30,8 +30,10 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
+from aizk.extraction.core.extractors import Detection
+from aizk.extraction.handler import DEFAULT_RETRY_MAX_ATTEMPTS, ExtractionStageHandler
+from aizk.extraction.stage import enqueue_extraction
 from aizk.graph.chunks import CHUNKING_STAGE
-from aizk.graph.contextualization import StalePlanError
 from aizk.graph.datamodel import (
     INPUT_KIND_RAW,
     Chunk,
@@ -42,16 +44,14 @@ from aizk.graph.datamodel import (
     Mention,
     MentionCooccurrence,
 )
-from aizk.graph.extraction import Detection
-from aizk.graph.extraction_handler import DEFAULT_RETRY_MAX_ATTEMPTS, ExtractionStageHandler
-from aizk.graph.extraction_workunit import enqueue_extraction
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
+from aizk.graph.variants import StalePlanError
 from aizk.pipeline.events import PipelineEvent
-from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus, record_run
 import aizk.pipeline.runner as runner_module
 from aizk.pipeline.runner import StageRunner
+from aizk.utilities.hashing import content_fingerprint
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

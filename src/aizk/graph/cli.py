@@ -30,7 +30,7 @@ from aizk.extraction.processing.corpus import run_dataset_extraction
 from aizk.extraction.settings import ExtractionConfig, NerConfig
 from aizk.extraction.wiring.worker import build_extractor, run_extraction_worker
 from aizk.graph.backfill import BackfillResult
-from aizk.graph.config import AdmissionConfig
+from aizk.pipeline.admission import AdmissionConfig
 from aizk.pipeline.capacity import StageAtCapacityError
 from aizk.pipeline.invalidation import ReprocessingConfirmationError
 from aizk.service.bootstrap import set_process_title

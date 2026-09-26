@@ -199,7 +199,7 @@ Represent nodes and edges primarily as embeddings, then materialize query-specif
 
 ### Addendum (2026-07-12): implemented techstack
 
-The NER extractor named in this ADR's Decision and Rationale is implemented as a pluggable interface (`aizk.graph.extraction.EntityExtractor`), with two concrete, pinned production implementations plus a deterministic stub for the contract test suite:
+The NER extractor named in this ADR's Decision and Rationale is implemented as a pluggable interface (`aizk.extraction.core.extractors.EntityExtractor`), with two concrete, pinned production implementations plus a deterministic stub for the contract test suite:
 
 - **spaCy** — the `en_core_web_sm` 3.8.0 pipeline, installed as a direct URL-wheel dependency (no runtime resolution against PyPI or a model hub).
 - **GLiNER2** — `gliner2==1.3.2` running the `fastino/gliner2-base-v1` weights, pinned to an exact HuggingFace revision and pre-fetched to a local directory by a one-time setup step (`aizk-graph fetch-gliner2-weights`); the runtime loads strictly from that local path and never reaches the network.

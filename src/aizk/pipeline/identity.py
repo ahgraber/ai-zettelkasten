@@ -62,16 +62,14 @@ from __future__ import annotations
 import hashlib
 from typing import TYPE_CHECKING
 
-from aizk.utilities.hashing import canonical_json, content_fingerprint, fingerprint
+from aizk.utilities.hashing import canonical_json
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
 __all__ = [
     "DERIVATION_KEY_FORMAT",
-    "content_fingerprint",
     "derivation_key",
-    "fingerprint",
 ]
 
 #: The composition every shipped output-sensitive derivation key follows:

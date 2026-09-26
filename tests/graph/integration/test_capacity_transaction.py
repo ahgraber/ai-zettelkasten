@@ -26,12 +26,13 @@ from sqlmodel import Session
 
 from fastapi.testclient import TestClient
 
-from aizk.graph.admission import contextualization_adapter, run_admission_pass
-from aizk.graph.api.main import create_app
-from aizk.graph.backfill import run_contextualization_backfill, run_extraction_backfill
+from aizk.console.app import create_app
+from aizk.contextualization.backfill import run_contextualization_backfill
+from aizk.contextualization.core.intake import contextualization_adapter
+from aizk.extraction.backfill import run_extraction_backfill
 from aizk.graph.chunks import CHUNKING_STAGE
-from aizk.graph.config import AdmissionConfig
 from aizk.pipeline import capacity
+from aizk.pipeline.admission import AdmissionConfig, run_admission_pass
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus
 

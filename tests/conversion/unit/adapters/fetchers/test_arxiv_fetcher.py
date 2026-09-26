@@ -8,7 +8,7 @@ from __future__ import annotations
 from aizk.conversion.adapters.fetchers.arxiv import ArxivFetcher
 from aizk.conversion.core.source_ref import ArxivRef
 from aizk.conversion.core.types import ContentType, ConversionInput, SourceMetadata
-from aizk.conversion.utilities.config import ConversionConfig, KarakeepFetcherConfig
+from aizk.conversion.settings import ConversionConfig, KarakeepFetcherConfig
 
 _EMPTY_META = SourceMetadata()
 

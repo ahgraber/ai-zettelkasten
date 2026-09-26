@@ -615,8 +615,7 @@ URLs that merely share a textual prefix with `karakeep_base_url` SHALL NOT quali
 Same-origin URLs outside the asset path prefix SHALL NOT qualify.
 Non-qualifying URLs SHALL be treated as ordinary outbound URLs and SHALL go through the normal egress-validation path.
 
-**Trust boundary — fetch time, not construction time.**
-`UrlRef` construction performs URL normalization for dedup identity but does **not** call the egress validator and does **not** resolve DNS.
+**Trust boundary — fetch time, not construction time.** `UrlRef` construction performs URL normalization for dedup identity but does **not** call the egress validator and does **not** resolve DNS.
 The load-bearing trust boundary is fetch time: every fetcher (`UrlFetcher`, `ArxivFetcher`, `GithubReadmeFetcher`) and the image-prefetch path route through `egress_fetch_bytes`, which calls the async egress validator for the initial hop and again for every redirect target.
 A `UrlRef` instance therefore _can_ exist in the system carrying a deny-set URL — the security property is that no outbound socket connection ever opens to a deny-set destination, not that the model rejects the URL at construction.
 This shape exists because (1) operator-configured KaraKeep base URLs are typically on a private network and asset fetches that target them are routed through `KarakeepClient` (operator-trusted infrastructure, intentionally exempt from the egress gate), and (2) construction-time DNS would otherwise run synchronously in API request handling, in worker rehydration paths, and inside every resolver-built `UrlRef` — duplicating DNS load and creating a queryable resolution-latency oracle on the public submission endpoint.
@@ -750,7 +749,6 @@ This shape exists because (1) operator-configured KaraKeep base URLs are typical
 - **WHEN** the fetcher decides whether to use the KaraKeep trusted-infrastructure path
 - **THEN** the URL does not qualify for the carve-out because the path is outside `/api/v1/assets/`, and it is processed through the normal egress-validation path
 
-
 ### Requirement: Preserve non-retryable fetch-error classification through fetcher dispatch
 
 A fetcher that delegates to lower-level helpers (the egress helper, the KaraKeep client, the arXiv export API) SHALL propagate any typed error whose declared retry classification is non-retryable without re-wrapping it as a retryable error.
@@ -793,7 +791,7 @@ This requirement closes a classification hole on the arXiv path where oversized 
 - **Core types**: `aizk/conversion/core/types.py` — `ContentType` enum (7 members), `ConversionInput`, `ConversionArtifacts`, `SOURCE_TYPE_BY_KIND`
 - **SourceRef union**: `aizk/conversion/core/source_ref.py` — `SourceRef` pydantic discriminated union (6 variants); `compute_source_ref_hash(ref)` — SHA-256 of `json.dumps(ref.to_dedup_payload(), sort_keys=True, separators=(",", ":"))`
 - **Adapters**: `aizk/conversion/adapters/fetchers/` (karakeep, arxiv, github, url, inline, singlefile-skeleton), `aizk/conversion/adapters/converters/docling.py`
-- **Wiring**: `aizk/conversion/wiring/` — `build_worker_runtime`, `build_api_runtime`, `register_ready_adapters`, `validate_chain_closure`; sole import site for both core and adapters
+- **Wiring**: `aizk/conversion/wiring/` — `build_worker_runtime`, `build_api_runtime`, `register_ready_adapters`, `validate_chain_closure`; sole import site for both core and adapters; `wiring/subprocess.py` is the spawned conversion child's entry
 - **GPU guard**: `threading.BoundedSemaphore` wrapped as `ResourceGuard` context manager; BoundedSemaphore chosen over plain Semaphore so extra release raises immediately rather than silently incrementing the counter
 - **Chain closure validation**: runs after `register_ready_adapters` completes; walks `resolves_to` edges against `registered_kinds()`, asserts no cycles and no path exceeds depth cap; raises `ChainNotTerminated` on violation
 - **IngressPolicy**: `accepted_submission_kinds: frozenset[str]` default `{"karakeep_bookmark"}`; validated as a subset of `registered_kinds()` at wiring time; widening is a config-only change

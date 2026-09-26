@@ -69,7 +69,7 @@ All other constraints from the prior requirement (immutability of identity colum
 
 - **GIVEN** a conversion completes successfully but the Source-row UPDATE fails with a transient database error
 - **WHEN** the manifest and `ConversionOutput` are written
-- **THEN** both carry the values from `SubprocessMetadata` (not `NULL`s read back from the failed Source row), the failure is logged, and the job is marked SUCCEEDED
+- **THEN** both carry the values from `SubprocessMetadata` (not `NULL`s read back from the failed Source row), the failure is logged, and the job is marked `succeeded`
 
 #### Scenario: Source title NULL when subprocess selected None
 
@@ -118,12 +118,13 @@ When `source_url` is `None` or fails URL validation, `normalized_url` SHALL be `
 The system SHALL assign each conversion job an idempotency key that is stable across resubmissions with identical contributing inputs and distinct whenever any contributing input differs, and SHALL reject submissions whose key matches an existing record.
 Contributing inputs are: the internal bookmark identifier, the payload version, the Docling version, the Docling configuration fields that affect replayable output, and whether picture description is enabled.
 A Docling configuration field contributes to the key if and only if its value affects replayable output; fields that only identify an external provider, authenticate to one, or control transport behavior without affecting output SHALL NOT contribute.
+A newly created job SHALL be `queued`; no earlier status exists.
 
 #### Scenario: New job created for unique parameters
 
 - **GIVEN** no existing job has a matching idempotency key
 - **WHEN** a conversion job is submitted
-- **THEN** a new job record is created with status NEW and the computed idempotency key
+- **THEN** a new job record is created with status `queued`, its creation event, and the computed idempotency key
 
 #### Scenario: Duplicate job rejected
 
@@ -388,25 +389,48 @@ The system SHALL write Markdown, figures, and a manifest to an ephemeral tempora
 
 ### Requirement: Upload artifacts to S3 and verify before marking success
 
-The system SHALL upload all conversion artifacts to S3 and verify each upload before transitioning the job to succeeded.
+The system SHALL upload all conversion artifacts to S3 and verify each upload before transitioning the job to `succeeded`.
+While a job is `running`, its record SHALL state its phase: `convert` until conversion completes, and `upload` from the start of upload until the job reaches a terminal status; a job in no other status carries a phase.
+A job in the `upload` phase SHALL NOT be cancellable.
+The job's phase is distinct from the subprocess-reported progress events of kind `phase`, whose values are the subprocess's own closed set; neither is derived from the other.
+An upload that still fails after the upload's own retries SHALL leave the job `failed` with a retry wait, and the next attempt SHALL run the whole conversion again; no conversion artifact is kept for an upload-only attempt.
+A job interrupted by an abrupt worker stop SHALL be recovered the same way in either phase.
 
 #### Scenario: Successful upload and verification
 
 - **GIVEN** conversion artifacts are ready in the workspace
 - **WHEN** the worker uploads all artifacts and verification passes
-- **THEN** the job status transitions to SUCCEEDED only after all uploads are confirmed
+- **THEN** the job status transitions to `succeeded` only after all uploads are confirmed
 
 #### Scenario: S3 upload fails transiently
 
-- **GIVEN** an S3 upload fails due to a transient error
+- **GIVEN** an S3 upload fails due to a transient error and the upload's own retries are exhausted
 - **WHEN** the worker cannot complete all uploads
-- **THEN** the job status transitions to UPLOAD_PENDING for retry without re-running conversion; if cached artifacts are missing, the job falls back to retryable-failed for a full retry
+- **THEN** the job is `failed` with a retry wait set, and the next attempt converts the document again before uploading
 
 #### Scenario: Upload failure does not mark job succeeded
 
 - **GIVEN** an S3 upload fails or verification fails
 - **WHEN** the error is detected
-- **THEN** the job is not marked SUCCEEDED and no partial artifact paths are published
+- **THEN** the job is not marked `succeeded` and no partial artifact paths are published
+
+#### Scenario: The phase follows the job through conversion and upload
+
+- **GIVEN** a job claimed for processing
+- **WHEN** its record is read during conversion, during upload, and after the terminal status
+- **THEN** the phase reads `convert`, then `upload`, then nothing
+
+#### Scenario: A job in the upload phase cannot be cancelled
+
+- **GIVEN** a `running` job whose phase is `upload`
+- **WHEN** a cancel is requested
+- **THEN** the cancel is refused and the job continues to its terminal status
+
+#### Scenario: An interrupted job is recovered the same way in either phase
+
+- **GIVEN** one job left `running` in the `convert` phase and one left `running` in the `upload` phase by an abrupt worker stop
+- **WHEN** stale recovery runs
+- **THEN** both jobs leave `running` with the same status and the same retry wait, both record a recovery event with the same cause, and the next attempt of each runs the whole conversion again
 
 ### Requirement: Skip S3 overwrite when content hash matches
 
@@ -468,26 +492,27 @@ All other constraints from the prior requirement (`owner_id` copied from `Job.ow
 
 ### Requirement: Transition job status atomically
 
-The system SHALL update job status to `SUCCEEDED`, `FAILED_RETRYABLE`, or `FAILED_PERM` only after the associated S3 or error state is confirmed.
-The atomicity of the status update with its transition event is provided by the generic co-commit helper; conversion retains the constraint that a conversion status is set only after the associated S3/error state is confirmed, and that the conversion outcome statuses are `SUCCEEDED`, `FAILED_RETRYABLE`, and `FAILED_PERM`.
+The system SHALL set a conversion job's terminal status — `succeeded`, or `failed` with its retry class — only after the associated S3 or error state is confirmed.
+The atomicity of the status update with its transition event is provided by the generic co-commit helper; conversion retains the constraint that a terminal status is set only after the associated S3/error state is confirmed.
+A retryable failure SHALL leave the job `failed` with a retry wait set; a permanent failure SHALL leave the job `failed` with no retry wait and a finished time.
 
-#### Scenario: Status set to SUCCEEDED after verified upload
+#### Scenario: Status set to succeeded after verified upload
 
 - **GIVEN** all S3 uploads are verified
 - **WHEN** the transition commits
-- **THEN** the job status is `SUCCEEDED`, a succeeded event record is co-committed, and the output record is visible to consumers
+- **THEN** the job status is `succeeded`, a succeeded event record is co-committed, and the output record is visible to consumers
 
-#### Scenario: Retryable error sets status to FAILED_RETRYABLE
+#### Scenario: Retryable error sets failed with a retry wait
 
 - **GIVEN** a transient error occurs during fetch, conversion, or upload
 - **WHEN** the error handler runs
-- **THEN** the job status transitions to `FAILED_RETRYABLE`, a failure event record carrying the sanitized error identifiers is co-committed, and the prior attempt's event records remain observable
+- **THEN** the job status is `failed` with a retry wait set, a failure event record carrying the sanitized error identifiers is co-committed, and the prior attempt's event records remain observable
 
-#### Scenario: Permanent error sets status to FAILED_PERM
+#### Scenario: Permanent error sets failed with no retry wait
 
 - **GIVEN** a non-recoverable error (missing content, empty output, egress-policy rejection)
 - **WHEN** the error handler runs
-- **THEN** the job status transitions to `FAILED_PERM`, a failure event record carrying the sanitized error identifiers and the non-retryable indicator is co-committed, and the full attempt history remains observable
+- **THEN** the job status is `failed` with no retry wait and a finished time, a failure event record carrying the sanitized error identifiers and the permanent retry class is co-committed, and the full attempt history remains observable
 
 ### Requirement: Record every ConversionJob status transition as a durable event
 
@@ -503,9 +528,9 @@ The `ConversionJob.status` field SHALL remain the authoritative current-state pr
 
 #### Scenario: Status transition produces exactly one event atomic with the projection
 
-- **GIVEN** a ConversionJob currently in `QUEUED`
-- **WHEN** the worker claims the job and transitions it to `RUNNING`
-- **THEN** the same commit that mutates `ConversionJob.status` to `RUNNING` also persists exactly one event record with prior status `QUEUED`, new status `RUNNING`, the attempt number that the new RUNNING state belongs to, and a typed cause payload identifying the claim
+- **GIVEN** a ConversionJob currently in `queued`
+- **WHEN** the worker claims the job and transitions it to `running`
+- **THEN** the same commit that mutates `ConversionJob.status` to `running` also persists exactly one event record with prior status `queued`, new status `running`, the attempt number that the new running state belongs to, and a typed cause payload identifying the claim
 
 #### Scenario: Transition rollback leaves job in prior status with no event record
 
@@ -515,33 +540,39 @@ The `ConversionJob.status` field SHALL remain the authoritative current-state pr
 
 #### Scenario: Retry preserves prior attempt's event records
 
-- **GIVEN** a ConversionJob whose first attempt transitioned through `RUNNING → FAILED_RETRYABLE` with one or more recorded event records carrying the attempt-1 attempt number
+- **GIVEN** a ConversionJob whose first attempt transitioned through `running → failed` with one or more recorded event records carrying the attempt-1 attempt number
 - **WHEN** the job is reclaimed for a second attempt and subsequently succeeds
 - **THEN** the event records for attempt 1 remain observable with the attempt-1 number, and the event records for attempt 2 are observable with the attempt-2 number, with no overwrite or deletion of prior records
 
 #### Scenario: Initial submission event has no prior status
 
-- **GIVEN** a new ConversionJob submitted via the API and persisted with status `QUEUED`
+- **GIVEN** a new ConversionJob submitted via the API and persisted with status `queued`
 - **WHEN** the corresponding event record is written
-- **THEN** the event record carries no prior status, new status `QUEUED`, and the kind that identifies an initial submission
+- **THEN** the event record carries no prior status, new status `queued`, and the kind that identifies an initial submission
 
 #### Scenario: Permanent failure transition is recorded
 
-- **GIVEN** a job in status `RUNNING` whose subprocess produces a non-retryable failure
-- **WHEN** the stage handler transitions the job to `FAILED_PERM`
-- **THEN** an event record is committed with prior status `RUNNING`, new status `FAILED_PERM`, and a typed cause payload carrying the non-retryable indicator and the sanitized error identifiers
+- **GIVEN** a job in status `running` whose subprocess produces a non-retryable failure
+- **WHEN** the stage handler transitions the job to `failed` with no retry wait
+- **THEN** an event record is committed with prior status `running`, new status `failed`, and a typed cause payload carrying the permanent retry class and the sanitized error identifiers
 
-#### Scenario: Upload-pending transition is recorded
+#### Scenario: The end of conversion is recorded as progress within running
 
 - **GIVEN** a job whose subprocess has completed conversion successfully
-- **WHEN** the stage handler transitions the job to `UPLOAD_PENDING` prior to invoking upload
-- **THEN** an event record is committed with prior status `RUNNING`, new status `UPLOAD_PENDING`, and a typed cause payload identifying the artifact that is about to upload
+- **WHEN** the stage handler starts the upload
+- **THEN** an event record of kind `conversion_completed` is committed with no status change, carrying the `content_hash` of the artifacts about to upload, and `ConversionJob.status` remains `running`; no event of kind `upload_pending` exists
+
+#### Scenario: Operator retry is recorded as a requeued event
+
+- **GIVEN** a job in status `failed`
+- **WHEN** an operator retries it
+- **THEN** an event record is committed with prior status `failed`, new status `queued`, the kind `requeued`, and a typed cause payload carrying `requeue_reason` and `submitted_by` (the acting principal), and the job's attempt count is unchanged; the `queued` kind is written only at job creation
 
 #### Scenario: Cancellation mid-conversion is recorded
 
-- **GIVEN** a job in status `RUNNING` whose cancellation is requested via the API
-- **WHEN** the cancellation transition commits the job to `CANCELLED`
-- **THEN** an event record is committed with prior status `RUNNING`, new status `CANCELLED`, and a typed cause payload carrying the cancellation context
+- **GIVEN** a job in status `running` whose cancellation is requested via the API
+- **WHEN** the cancellation transition commits the job to `cancelled`
+- **THEN** an event record is committed with prior status `running`, new status `cancelled`, and a typed cause payload carrying the cancellation context
 
 #### Scenario: Event records are append-only
 
@@ -552,7 +583,7 @@ The `ConversionJob.status` field SHALL remain the authoritative current-state pr
 ### Requirement: Persist subprocess-reported phase events to the event log
 
 The system SHALL persist every `phase` event that the conversion subprocess reports to the parent process as an event record scoped to the job and attempt under which the subprocess is running.
-A `phase` event reports progress within the `RUNNING` state and SHALL produce an event record without altering `ConversionJob.status`.
+A `phase` event reports progress within the `running` state and SHALL produce an event record without altering `ConversionJob.status`.
 A failure to persist a phase event record SHALL be logged and SHALL NOT halt processing of the job; the subprocess channel is the authoritative real-time signal, and the event record set is a durable replay record.
 
 Subprocess-reported terminal events (`completed`, `failed`, `cancelled`) SHALL drive the parent's control flow but SHALL NOT produce their own event records.
@@ -562,7 +593,7 @@ Subprocess-reported phase event payloads SHALL be validated against the closed c
 
 #### Scenario: Phase event recorded without status change
 
-- **GIVEN** a job in status `RUNNING` whose subprocess reports a recognized phase
+- **GIVEN** a job in status `running` whose subprocess reports a recognized phase
 - **WHEN** the parent drains the report
 - **THEN** one event record is committed identifying the phase and the current attempt, and `ConversionJob.status` is unchanged
 
@@ -574,7 +605,7 @@ Subprocess-reported phase event payloads SHALL be validated against the closed c
 
 #### Scenario: Subprocess-reported terminal event does not produce its own record
 
-- **GIVEN** a subprocess that reports `failed` with a retryable error code, followed by the stage handler transitioning the job to `FAILED_RETRYABLE`
+- **GIVEN** a subprocess that reports `failed` with a retryable error code, followed by the stage handler transitioning the job to `failed` with a retry wait
 - **WHEN** the parent drains the subprocess report and the stage handler commits the transition
 - **THEN** the only failure-related event record observable for that attempt is the stage-handler-committed transition event carrying the sanitized error identifiers
 
@@ -947,14 +978,14 @@ Rejection SHALL surface as a typed error and SHALL fail the job as a non-retryab
 - **Idempotency key**: hash of `source_id + payload_version + docling_version + config_hash + picture_description_enabled`; `config_hash` covers the converter output-affecting fields (e.g., OCR, table structure, page limit, picture timeout, picture description model, `picture_classification_enabled`) and excludes provider identity and credentials (`picture_description_base_url`, `picture_description_api_key`)
 - **Raw source provenance**: KaraKeep is the authoritative store for raw source content; `karakeep_id` is the durable provenance reference.
   Raw bytes are not archived locally.
-- **Whitespace normalization**: `aizk/conversion/utilities/whitespace.py` → `normalize_whitespace()`; applied in `_run_conversion()` before file write and hash computation; preserves code-fence content, list indentation, and strips trailing spaces
+- **Whitespace normalization**: `aizk/conversion/processing/whitespace.py` → `normalize_whitespace()`; applied in the conversion child (`aizk/conversion/wiring/subprocess.py`) before file write and hash computation; preserves code-fence content, list indentation, and strips trailing spaces
 - **Content hash**: xxhash64 of normalized Markdown (UTF-8, LF line endings) stored in the output record
 - **Manifest config_snapshot**: manifest includes a `config_snapshot` section with the Docling config fields that affect replayable output (including `picture_classification_enabled`) and `picture_description_enabled` to enable exact replay; provider identity and credentials are excluded, and secrets are never persisted to durable artifact storage.
   The snapshot contract is enforced by `ManifestConfigSnapshot` (pydantic model with `extra="forbid"`) in `aizk/conversion/storage/manifest.py`.
 - **S3 layout**: artifacts at `s3://<bucket>/<source_id>/`; upload verification via ETag match (single-part) or content length (multipart)
 - **Database**: SQLite in WAL mode with foreign keys, synchronous=NORMAL, and busy timeout; indexes on job status/scheduling, bookmark URL, and output lookup by bookmark identifier
 - **Workspace**: ephemeral temp directory cleaned up via context manager; figures named figure-001.png, figure-002.png, etc.
-- **arXiv client**: `aizk.utilities.arxiv_utils`; URL parsing: `aizk.utilities.url_utils`
+- **arXiv client**: `aizk.conversion.egress.arxiv_utils`; URL parsing: `aizk.utilities.url_utils`
 - **Process role labeling**: implemented via `setproctitle`
-- **Startup validation**: `aizk/conversion/utilities/startup.py` → `validate_startup()`; probes S3 (HEAD bucket), KaraKeep (GET bookmarks?limit=1), and — when configured — picture description endpoint (GET /models) with 10s timeouts; logs feature summary for picture descriptions, picture classification, MLflow, and Litestream
+- **Startup validation**: `aizk/conversion/wiring/registrations.py` → `build_startup_probes()`, with the probes in `aizk/conversion/wiring/probes.py`; probes S3 (HEAD bucket), KaraKeep (GET bookmarks?limit=1), and — when configured — picture description endpoint (GET /models) with 10s timeouts; logs feature summary for picture descriptions, picture classification, MLflow, and Litestream
 - **Picture classification**: `AIZK_CONVERTER__DOCLING__PICTURE_CLASSIFICATION_ENABLED` (default: `True`); controls `ThreadedPdfPipelineOptions.do_picture_classification` and the post-conversion enrichment loop in `converter.py`; prompt routing table `_LABEL_TO_PROMPT` maps classifier labels to `<chart2summary>` / `<tables_html>` / generic alt-text

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from aizk.graph.workunit import LoadedMarkdown
+from aizk.contextualization.processing.document import LoadedMarkdown
 from aizk.utilities.hashing import compute_markdown_hash
 
 

@@ -2,9 +2,9 @@
 
 A retry or a re-admission returns an existing work-unit to a stage's actionable
 backlog rather than creating one, so none of the three transitions
-(:func:`~aizk.graph.job_actions.apply_contextualization_retry`,
-:func:`~aizk.graph.job_actions.apply_extraction_retry`,
-:func:`~aizk.graph.job_actions.apply_extraction_readmission`) check capacity:
+(:func:`~aizk.contextualization.job_actions.apply_contextualization_retry`,
+:func:`~aizk.extraction.job_actions.apply_extraction_retry`,
+:func:`~aizk.extraction.job_actions.apply_extraction_readmission`) check capacity:
 each must succeed even while the stage's backlog sits at its declared limit.
 Each transition keeps ``attempts`` as it is, so the numbers on a unit's event
 trail never repeat: the next claim increments the count, and a retry of a unit
@@ -29,8 +29,18 @@ from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 import xxhash
 
+from aizk.ai.providers.llm import STUB_MODEL_CONFIG, StubLLMClient
+from aizk.contextualization.events import CONTEXTUALIZATION_STAGE
+from aizk.contextualization.handler import (
+    DEFAULT_RETRY_MAX_ATTEMPTS as CONTEXTUALIZATION_RETRY_MAX_ATTEMPTS,
+    ContextualizationStageHandler,
+)
+from aizk.contextualization.job_actions import apply_contextualization_cancel, apply_contextualization_retry
 from aizk.conversion.datamodel.source import Source
-from aizk.graph.capacity import StageAtCapacityError, check_capacity
+from aizk.extraction.events import EXTRACTION_STAGE
+from aizk.extraction.handler import DEFAULT_RETRY_MAX_ATTEMPTS as EXTRACTION_RETRY_MAX_ATTEMPTS, ExtractionStageHandler
+from aizk.extraction.job_actions import apply_extraction_cancel, apply_extraction_readmission, apply_extraction_retry
+from aizk.extraction.processing.document import extract_document
 from aizk.graph.chunks import CHUNKING_STAGE
 from aizk.graph.datamodel import (
     INPUT_KIND_RAW,
@@ -44,32 +54,14 @@ from aizk.graph.datamodel import (
     ExtractionRunApplicability,
     ExtractionRunInput,
 )
-from aizk.graph.events import CONTEXTUALIZATION_STAGE
-from aizk.graph.extraction_events import EXTRACTION_STAGE
-from aizk.graph.extraction_handler import (
-    DEFAULT_RETRY_MAX_ATTEMPTS as EXTRACTION_RETRY_MAX_ATTEMPTS,
-    ExtractionStageHandler,
-)
-from aizk.graph.extraction_run import extract_document
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
-from aizk.graph.handler import (
-    DEFAULT_RETRY_MAX_ATTEMPTS as CONTEXTUALIZATION_RETRY_MAX_ATTEMPTS,
-    ContextualizationStageHandler,
-)
-from aizk.graph.job_actions import (
-    apply_contextualization_cancel,
-    apply_contextualization_retry,
-    apply_extraction_cancel,
-    apply_extraction_readmission,
-    apply_extraction_retry,
-)
-from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.graph.mentions import ResolvedExtractionConfig
+from aizk.pipeline.capacity import StageAtCapacityError, check_capacity
 from aizk.pipeline.events import PipelineEvent
-from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, record_run
 from aizk.pipeline.stage import HandlerBase
+from aizk.utilities.hashing import content_fingerprint
 from tests.fakes.markdown import StubMarkdownSource
 
 #: The extraction configuration the re-admission test resolves against.
@@ -84,7 +76,7 @@ _MOMENT = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
 #: Tables the re-admission test's own engine needs. Built separately from the
 #: ``engine``/``session`` fixtures (``tests/graph/conftest.py``), whose engine
 #: auto-issues ``BEGIN IMMEDIATE`` per transaction; ``extract_document`` opens its
-#: own ``BEGIN IMMEDIATE`` transaction (:func:`aizk.graph.db.begin_immediate`), and
+#: own ``BEGIN IMMEDIATE`` transaction (:func:`aizk.db.engine.begin_immediate`), and
 #: layering the two would double-issue it.
 _READMISSION_SCHEMA_TABLES = [
     Chunk.__table__,

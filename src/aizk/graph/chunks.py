@@ -56,8 +56,9 @@ from aizk.graph.datamodel import (
     ContextualizationOutputMemo,
 )
 from aizk.graph.fingerprints import PayloadItem, chunk_key, payload_fingerprint
-from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, content_fingerprint, derivation_key, fingerprint
+from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, derivation_key
 from aizk.pipeline.run import PipelineRun, active_run, record_applicability, record_run, require_active_run
+from aizk.utilities.hashing import content_fingerprint, fingerprint
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

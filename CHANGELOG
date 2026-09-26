@@ -4,12 +4,136 @@
 
 ### Breaking Changes
 
-- A pre-0.2.0 database is not upgradeable: the migration tree is re-baselined to a single revision, and `alembic upgrade head` refuses a legacy-stamped database rather than migrating it — rebuild the database per the README
+- A pre-0.2.0 database is not upgradeable: the migration tree is re-baselined to a single revision, and `alembic upgrade head` refuses a legacy-stamped database rather than migrating it — rebuild the database per `docs/Rebuilding the database.md`
 - Retype `pipeline_runs.scope_id`, `graph_chunks.source_id`, `chunk_id`, and `mention_id` (with `mention_id_lo`/`mention_id_hi`) from string to `Uuid`
 - `derivation_key` values are now opaque digests carrying a `derivation_key_format` version stamp, not human-readable composites
 - Contextualization's stage functions take a resolved model configuration (provider and model) in place of a profile alias; every caller changes
 - Default the picture-description model to `openai/gpt-5.6-luna`; the model name is part of the conversion output config hash, so conversions under the default re-key
 - Raise dependency majors: `pydantic-ai` to 2.x, the OpenAI SDK to 3.x, `mcp` to 2.x, `starlette` to 1.x, `docling` to 2.124, and `torch` to 2.14 (cu130 index on Linux)
+- Conversion job statuses are the six lowercase values `queued`, `running`, `succeeded`, `failed`, `cancelled`, and `timed_out`, in responses, the `status` filter, and the status-count keys; `NEW`, `QUEUED`, `RUNNING`, `UPLOAD_PENDING`, `SUCCEEDED`, `FAILED_RETRYABLE`, `FAILED_PERM`, and `CANCELLED` are gone, and a failed job's retry class is the new `retry_class` field
+- Conversion retry and cancel of an ineligible job answer 409 instead of 400, with the same error body; cancel is also refused while the job uploads (`phase` is `upload`)
+- A conversion job that exceeds its timeout ends `timed_out` and stays there until an operator retries it, instead of failing as retryable
+- Remove the conversion `upload_pending` event kind; the end of conversion is recorded as `conversion_completed` while the job stays `running`, and a conversion job that times out records a `timed_out` event
+- The baseline migration has a new revision id (`a62f1bf47735`); a database stamped at `fc430997788f` is refused and must be rebuilt
+- The conversion worker refuses to start when `AIZK_WORKER_STALE_JOB_MINUTES` is at or below the job timeout plus the drain timeout and the cancel allowance; unset it to use the derived default (126 minutes at the default timeouts)
+- Rename environment variables: `AIZK_GRAPH__CONTEXTUALIZATION__OPERATOR_API_HOST`, `_PORT`, and `_RELOAD` become `AIZK_SERVICE__OPERATOR_API_HOST`, `_PORT`, and `_RELOAD`; `AIZK_MLFLOW_TRACKING_URI`, `AIZK_MLFLOW_EXPERIMENT_NAME`, and `AIZK_MLFLOW_TRACING_ENABLED` become `AIZK_MLFLOW__TRACKING_URI`, `AIZK_MLFLOW__EXPERIMENT_NAME`, and `AIZK_MLFLOW__ENABLED`; the SQLite replication settings read the one `AIZK_S3_*` set; no old name is read
+- Move each stage into its own package (`aizk.conversion`, `aizk.contextualization`, `aizk.extraction`), the shared stage kit into `aizk.pipeline`, process bootstrap into `aizk.service`, object storage into `aizk.storage`, and the operator app into `aizk.console`; the old import paths are removed without re-exports:
+  - `aizk.conversion.auth` (now `aizk.service.auth`)
+  - `aizk.conversion.auth.principal` (now `aizk.service.auth`)
+  - `aizk.conversion.queries` (now `aizk.pipeline.repository`)
+  - `aizk.conversion.storage.s3_client` (now `aizk.storage.s3`)
+  - `aizk.conversion.utilities` (now `aizk.conversion.processing.whitespace`)
+  - `aizk.conversion.utilities.arxiv_utils` (now `aizk.conversion.egress.arxiv_utils`)
+  - `aizk.conversion.utilities.bookmark_utils` (now `aizk.conversion.egress.bookmark_utils`)
+  - `aizk.conversion.utilities.config` (now `aizk.conversion.settings`, `aizk.service.auth`, and `aizk.storage.settings`)
+  - `aizk.conversion.utilities.dotenv` (now `aizk.service.bootstrap`)
+  - `aizk.conversion.utilities.egress` (now `aizk.conversion.egress.policy`)
+  - `aizk.conversion.utilities.egress_fetch` (now `aizk.conversion.egress.fetch`)
+  - `aizk.conversion.utilities.egress_transport` (now `aizk.conversion.egress.transport`)
+  - `aizk.conversion.utilities.fetch_helpers` (now `aizk.conversion.egress.fetch_helpers`)
+  - `aizk.conversion.utilities.github_utils` (now `aizk.conversion.egress.github_utils`)
+  - `aizk.conversion.utilities.hashing` (now `aizk.conversion.core.hashing` and `aizk.utilities.hashing`)
+  - `aizk.conversion.utilities.html_prefetch` (now `aizk.conversion.egress.prefetch` and `aizk.conversion.settings`)
+  - `aizk.conversion.utilities.logging` (now `aizk.service.logging`)
+  - `aizk.conversion.utilities.paths` (now `aizk.conversion.storage.paths`)
+  - `aizk.conversion.utilities.startup` (now `aizk.conversion.wiring.probes`, `aizk.db.engine`, `aizk.storage.probe`, and `aizk.utilities.errors`)
+  - `aizk.conversion.utilities.whitespace` (now `aizk.conversion.processing.whitespace`)
+  - `aizk.graph.admission` (now `aizk.pipeline.admission`, `aizk.contextualization.core.intake`, and `aizk.extraction.stage`)
+  - `aizk.graph.api.main` (now `aizk.console.app`)
+  - `aizk.graph.api.routes` (now `aizk.contextualization.api.routes` and `aizk.service.api.responses`)
+  - `aizk.graph.api.routes.extraction` (now `aizk.extraction.api.routes`)
+  - `aizk.graph.api.routes.ui` (now `aizk.console.explorer`)
+  - `aizk.graph.api.schemas` (now `aizk.contextualization.api.schemas` and `aizk.extraction.api.schemas`)
+  - `aizk.graph.api.schemas.contextualization` (now `aizk.contextualization.api.schemas`)
+  - `aizk.graph.api.schemas.extraction` (now `aizk.extraction.api.schemas`)
+  - `aizk.graph.capacity` (now `aizk.pipeline.capacity`)
+  - `aizk.graph.config` (now `aizk.contextualization.settings`, `aizk.extraction.settings`, and `aizk.pipeline.admission`)
+  - `aizk.graph.contextualization` (now `aizk.contextualization.core.{applicability,keys,revisions,summary}` and `aizk.graph.variants`)
+  - `aizk.graph.dataset_extraction` (now `aizk.extraction.processing.corpus`)
+  - `aizk.graph.dataset_stats` (now `aizk.extraction.core.dataset_stats`)
+  - `aizk.graph.db` (now `aizk.db.engine`)
+  - `aizk.graph.enqueue` (now `aizk.contextualization.core.intake` and `aizk.contextualization.stage`)
+  - `aizk.graph.events` (now `aizk.contextualization.events`)
+  - `aizk.graph.extraction` (now `aizk.extraction.core.extractors`)
+  - `aizk.graph.extraction_events` (now `aizk.extraction.events`)
+  - `aizk.graph.extraction_handler` (now `aizk.extraction.handler`)
+  - `aizk.graph.extraction_run` (now `aizk.extraction.core.{applicability,currentness}`, `aizk.extraction.processing.{document,corpus}`, and `aizk.graph.mentions`)
+  - `aizk.graph.extraction_worker` (now `aizk.extraction.wiring.worker`)
+  - `aizk.graph.extraction_workunit` (now `aizk.extraction.stage`)
+  - `aizk.graph.handler` (now `aizk.contextualization.handler`)
+  - `aizk.graph.job_actions` (now `aizk.contextualization.job_actions`, `aizk.extraction.job_actions`, and `aizk.pipeline.repository`)
+  - `aizk.graph.llm` (now `aizk.ai.providers.llm`)
+  - `aizk.graph.markdown_source` (now `aizk.contextualization.processing.markdown_source` and `aizk.storage`)
+  - `aizk.graph.mention_store` (now `aizk.graph.mentions`)
+  - `aizk.graph.persistence` (now `aizk.graph.chunks`)
+  - `aizk.graph.worker` (now `aizk.contextualization.wiring.worker` and `aizk.ai.providers.llm`)
+  - `aizk.graph.workunit` (now `aizk.contextualization.core.intake`, `aizk.contextualization.processing.document`, and `aizk.contextualization.stage`)
+  - `aizk.utilities.batch_utils` (now `aizk.ai.providers.batch`)
+  - `aizk.utilities.cli_gates` (now `aizk.service.cli`)
+  - `aizk.utilities.log_utils`
+  - `aizk.utilities.mlflow_tracing` (now `aizk.utilities.tracing`)
+  - `aizk.conversion.api.dependencies.get_auth_settings`
+  - `aizk.conversion.api.schemas.jobs.QueueFullResponse`
+  - `aizk.conversion.api.schemas.QueueFullResponse`
+  - `aizk.conversion.core.errors.ConfigurationError`
+  - `aizk.conversion.core.hashing.compute_markdown_hash`
+  - `aizk.conversion.datamodel.events.UploadPendingPayload`
+  - `aizk.conversion.datamodel.job.ConversionJobStatus`
+  - `aizk.conversion.job_actions.apply_job_cancel`
+  - `aizk.conversion.job_actions.apply_job_retry`
+  - `aizk.conversion.job_actions.CANCELLABLE_STATUSES`
+  - `aizk.conversion.job_actions.RETRYABLE_STATUSES`
+  - `aizk.conversion.processing.subproc._process_job_subprocess`
+  - `aizk.conversion.processing.subproc._raise_if_cancelled`
+  - `aizk.conversion.processing.subproc._report_status`
+  - `aizk.conversion.processing.subproc._spawn_conversion_subprocess`
+  - `aizk.graph.active_chunking_run`
+  - `aizk.graph.api.create_app`
+  - `aizk.graph.api.dependencies.get_blob_reader`
+  - `aizk.graph.api.dependencies.get_config`
+  - `aizk.graph.api.dependencies.get_db_session`
+  - `aizk.graph.api.dependencies.get_search_provider`
+  - `aizk.graph.backfill.run_contextualization_backfill`
+  - `aizk.graph.backfill.run_extraction_backfill`
+  - `aizk.graph.Chunk`
+  - `aizk.graph.CHUNKING_STAGE`
+  - `aizk.graph.ChunkRunInput`
+  - `aizk.graph.ChunkRunManifest`
+  - `aizk.graph.chunks_of_run`
+  - `aizk.graph.CONTEXT_VERSION`
+  - `aizk.graph.ContextSource`
+  - `aizk.graph.ContextualizationJob`
+  - `aizk.graph.ContextualizationStageHandler`
+  - `aizk.graph.contextualize_chunks`
+  - `aizk.graph.ContextualizedChunk`
+  - `aizk.graph.current_chunk_ids`
+  - `aizk.graph.DocumentSummary`
+  - `aizk.graph.enqueue_backfill`
+  - `aizk.graph.enqueue_document`
+  - `aizk.graph.LLMClient`
+  - `aizk.graph.LoadedMarkdown`
+  - `aizk.graph.manifest_of_run`
+  - `aizk.graph.MarkdownSource`
+  - `aizk.graph.members_of_run`
+  - `aizk.graph.persist_chunks`
+  - `aizk.graph.process_document`
+  - `aizk.graph.ProcessResult`
+  - `aizk.graph.PydanticAILLMClient`
+  - `aizk.graph.reconstruct_chunk`
+  - `aizk.graph.resolve_chunk_text`
+  - `aizk.graph.ResolvedChunkText`
+  - `aizk.graph.run_input`
+  - `aizk.graph.StubLLMClient`
+  - `aizk.graph.summarize_document`
+  - `aizk.graph.SUMMARY_STAGE`
+  - `aizk.graph.SUMMARY_VERSION`
+  - `aizk.graph.VARIANT_STAGE`
+  - `aizk.pipeline.content_fingerprint`
+  - `aizk.pipeline.fingerprint`
+  - `aizk.pipeline.identity.content_fingerprint`
+  - `aizk.pipeline.identity.fingerprint`
+  - `aizk.utilities.process.process_manager`
+- Logger names follow the new module paths; the old-to-new list is in the `stage-kit-and-layout` change's design document under `.specs/changes/archive/`, section "No public renames; logger names follow module paths"
 
 ### Added
 
@@ -17,15 +141,27 @@
 - Checkpoint validated contextualization model output (the document summary and each per-chunk revision) in a new `graph_contextualization_output_memo` table, so a retry of a partially-completed contextualization re-invokes the model only for outputs not already retained; consumed entries are pruned atomically with a successful persist
 - Record a creation event with origin and principal on every graph work-unit creation (intake, the admission loop, backfill); the enqueue primitives return `(job, created)` so reuse of an existing unit writes no event
 - Cap admission at a fixed batch per pass regardless of a stage's declared capacity, draining the remainder on later passes
-- Reset the attempt counter on operator retry and re-admission
 - Record each stage's consumed content and produced-output fingerprint in run-input and applicability tables, so a downstream stage reconciles a byte-identical upstream regeneration against its active run without a model or extractor call
 - Surface tri-state extraction currentness (current, needs reconciliation, stale) on the console, with re-extract eligible for the latter two states
+- Conversion job responses carry `retry_class` (`retryable`, `permanent`, or null) and `phase` (`convert` or `upload` while `running`, else null); `GET /v1/jobs` filters by `retry_class`; status counts carry `failed_by_retry_class`
+- Contextualization and extraction job responses carry `retry_class`, and their list routes filter by it
+- Record a `requeued` event with the reason and the actor on every operator retry and re-admission, in every stage
+- Cap automatic conversion attempts with `AIZK_WORKER_MAX_ATTEMPTS` (default 3)
+- Count `pipeline.work_unit.finalize_skipped` (tags `stage`, `outcome`) when a unit's final write is skipped because another process already ended it, for example an operator cancel committed while the unit ran
 
 ### Changed
 
 - Migrate the Docling figure converter off the deprecated `PictureItem.annotations` field to the `PictureItem.meta` API (`meta.classification`, `meta.description`)
 - Derive derivation keys from the content a stage consumed and the configuration it ran under, rather than from upstream run keys, so an upstream regeneration that yields byte-identical input leaves the downstream key unchanged
 - Derive the extraction pending backlog as a SQL anti-join over `pipeline_runs`, bounding the query at the requested limit instead of scanning the corpus in Python
+- Keep the attempt count and `started_at` on operator retry and re-admission; the next claim increments the count
+- Count `pipeline.work_unit.<outcome>` only when the unit's final write happened
+- Stop a conversion upload at the job's deadline: past it, the job ends `timed_out` and its `timed_out` event records the `upload` phase
+- A worker that is shut down with units still running ends them `failed` with `error_code` `worker_drain_terminated` and a retry wait that has already passed, so the next worker picks them up
+- Stale-unit recovery writes the shared kit's `error_message` text; `error_code` is unchanged
+- Delete a conversion job in any terminal status except `succeeded`, including `timed_out`
+- The spawned conversion child logs in the configured structured format and stamps `job_id` on every record, so its INFO records, Docling's included, now reach the worker's output
+- Move HTTP clients from `httpx` to `httpx2`; default TLS verification uses the operating system's trust store, and the User-Agent is `python-httpx2/<version>`; require `karakeep-client` 0.5.0
 
 ### Fixed
 

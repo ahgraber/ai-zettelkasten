@@ -26,8 +26,8 @@ _FIXTURE_DIR = Path(__file__).parent / "fixtures" / "events"
 #: Fixture stem → (module holding the payload classes, name of that module's kind enum).
 _EVENT_MODULES: dict[str, tuple[str, str]] = {
     "conversion": ("aizk.conversion.datamodel.events", "ConversionEventKind"),
-    "contextualization": ("aizk.graph.events", "GraphEventKind"),
-    "extraction": ("aizk.graph.extraction_events", "ExtractionEventKind"),
+    "contextualization": ("aizk.contextualization.events", "GraphEventKind"),
+    "extraction": ("aizk.extraction.events", "ExtractionEventKind"),
 }
 
 #: Marker wrapping an ISO-8601 timestamp in a fixture, so the test hands the payload

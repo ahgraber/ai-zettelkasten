@@ -18,11 +18,7 @@ import logging
 
 import pytest
 
-from aizk.conversion.utilities.logging import (
-    ContextFilter,
-    JsonFormatter,
-    configure_logging,
-)
+from aizk.service.logging import ContextFilter, JsonFormatter, configure_logging
 
 
 def _make_record(

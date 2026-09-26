@@ -10,7 +10,7 @@ fingerprint.
 from __future__ import annotations
 
 from aizk.ai.providers.llm import STUB_MODEL_CONFIG, ModelConfig, model_config_fingerprint
-from aizk.graph.config import ContextualizationConfig
+from aizk.contextualization.settings import ContextualizationConfig
 
 
 def test_different_provider_or_model_changes_the_fingerprint() -> None:

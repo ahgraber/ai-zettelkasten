@@ -47,7 +47,7 @@ from aizk.conversion.processing.errors import (
     SubprocessMetadataInvalid,
 )
 from aizk.conversion.processing.types import SubprocessMetadata, SupervisionResult
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.settings import ConversionConfig
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.handler import Isolation, StageHandler
 from aizk.pipeline.lifecycle import RetryClass, TerminalOutcome, WorkUnitStatus
@@ -114,7 +114,7 @@ def test_validate_dependencies_propagates_probe_failure() -> None:
     """A probe that raises blocks work acceptance by propagating the error."""
     from types import SimpleNamespace
 
-    from aizk.conversion.utilities.startup import StartupValidationError
+    from aizk.utilities.errors import StartupValidationError
 
     def _boom() -> None:
         raise StartupValidationError("S3 bucket unreachable")

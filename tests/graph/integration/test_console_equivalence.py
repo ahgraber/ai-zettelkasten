@@ -5,7 +5,7 @@ transition and the same durable lifecycle event as the stage's own action pathwa
 the console is thin command dispatch to the same domain helper, not a second
 implementation. This pins that equivalence for both graph stages (contextualization
 and extraction), retry and cancel, against the lifted
-:mod:`aizk.graph.job_actions` helpers the JSON API and worker also call.
+:mod:`aizk.contextualization.job_actions` and :mod:`aizk.extraction.job_actions` helpers the JSON API and worker also call.
 """
 
 from __future__ import annotations
@@ -16,15 +16,11 @@ from sqlmodel import Session, select
 
 from fastapi.testclient import TestClient
 
+from aizk.contextualization.events import CONTEXTUALIZATION_STAGE
+from aizk.contextualization.job_actions import apply_contextualization_cancel, apply_contextualization_retry
+from aizk.extraction.events import EXTRACTION_STAGE
+from aizk.extraction.job_actions import apply_extraction_cancel, apply_extraction_retry
 from aizk.graph.datamodel import ContextualizationJob, ExtractionJob
-from aizk.graph.events import CONTEXTUALIZATION_STAGE
-from aizk.graph.extraction_events import EXTRACTION_STAGE
-from aizk.graph.job_actions import (
-    apply_contextualization_cancel,
-    apply_contextualization_retry,
-    apply_extraction_cancel,
-    apply_extraction_retry,
-)
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
 

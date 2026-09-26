@@ -11,11 +11,7 @@ import sys
 
 from setproctitle import setproctitle
 
-from aizk.conversion.utilities.arxiv_utils import (
-    ArxivClient,
-    arxiv_pdf_url,
-    get_arxiv_id,
-)
+from aizk.conversion.egress.arxiv_utils import ArxivClient, arxiv_pdf_url, get_arxiv_id
 
 # %%
 # define python process name

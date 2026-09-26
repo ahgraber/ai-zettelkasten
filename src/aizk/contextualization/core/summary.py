@@ -27,8 +27,9 @@ from aizk.graph._version import SUMMARY_VERSION
 from aizk.graph.chunks import memo_get, memo_upsert_and_read
 from aizk.graph.datamodel import MEMO_KIND_SUMMARY, DocumentSummary
 from aizk.graph.variants import SUMMARY_STAGE, StalePlanError, _active_run
-from aizk.pipeline.identity import DERIVATION_KEY_FORMAT, content_fingerprint
+from aizk.pipeline.identity import DERIVATION_KEY_FORMAT
 from aizk.pipeline.run import record_run
+from aizk.utilities.hashing import content_fingerprint
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine

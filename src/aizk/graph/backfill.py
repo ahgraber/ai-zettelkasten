@@ -8,7 +8,6 @@ and reused work-units.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import importlib
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from sqlmodel import Session, func, select
@@ -77,17 +76,3 @@ def run_backfill(
             session.commit()
 
     return BackfillResult(targeted=len(units), enqueued=enqueued, reused=len(units) - enqueued)
-
-
-_LAZY_NAMES = {
-    "run_contextualization_backfill": "aizk.contextualization.backfill",
-    "run_extraction_backfill": "aizk.extraction.backfill",
-}
-
-
-def __getattr__(name: str) -> object:
-    """Import the stage backfill that defines ``name`` on first access and return it."""
-    module_path = _LAZY_NAMES.get(name)
-    if module_path is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    return getattr(importlib.import_module(module_path), name)

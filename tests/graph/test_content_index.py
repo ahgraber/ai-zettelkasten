@@ -23,13 +23,14 @@ from sqlalchemy import create_engine, inspect, text
 from sqlmodel import Session
 import xxhash
 
+from aizk.ai.providers.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
+from aizk.contextualization.core.revisions import contextualize_chunks
+from aizk.contextualization.core.summary import summarize_document
 from aizk.db.migrations.versions.a62f1bf47735_baseline import _assert_fts5_available
 from aizk.graph.chunks import persist_chunks
 from aizk.graph.content_index import index_chunk_content, index_contextualized_content, rebuild_content_index
-from aizk.graph.contextualization import contextualize_chunks, summarize_document
-from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
-from aizk.pipeline.identity import content_fingerprint
+from aizk.utilities.hashing import content_fingerprint
 
 _AIZK_UUID = UUID("11111111-1111-1111-1111-111111111111")
 _AIZK_UUID_B = UUID("22222222-2222-2222-2222-222222222222")

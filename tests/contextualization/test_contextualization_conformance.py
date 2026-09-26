@@ -22,6 +22,7 @@ import pytest
 from sqlmodel import Session, select
 import xxhash
 
+from aizk.ai.providers.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.chunking import SPLITTER_VERSION, Chunk as SplitterChunk
 from aizk.contextualization.core.intake import enqueue_backfill
 from aizk.contextualization.core.revisions import contextualize_chunks
@@ -29,11 +30,10 @@ from aizk.contextualization.core.summary import summarize_document
 from aizk.graph._version import CONTEXT_VERSION
 from aizk.graph.chunks import persist_chunks
 from aizk.graph.datamodel import ContextualizedChunk
-from aizk.graph.llm import STUB_MODEL_CONFIG, StubLLMClient
 from aizk.graph.variants import VARIANT_STAGE
-from aizk.pipeline.identity import content_fingerprint
 from aizk.pipeline.invalidation import ReprocessingConfirmationError, generation_is_stale
 from aizk.pipeline.run import PipelineRun, RunStatus
+from aizk.utilities.hashing import content_fingerprint
 
 _SOURCE_A = UUID("11111111-1111-1111-1111-111111111111")
 _SOURCE_B = UUID("22222222-2222-2222-2222-222222222222")

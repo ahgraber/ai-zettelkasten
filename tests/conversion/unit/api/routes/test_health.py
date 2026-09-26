@@ -14,7 +14,7 @@ from pyleak import no_task_leaks
 import pytest
 
 from aizk.conversion.api.routes.health import _check_db, _check_picture_description, _check_s3
-from aizk.conversion.utilities.config import DoclingConverterConfig
+from aizk.conversion.settings import DoclingConverterConfig
 
 
 @pytest.mark.asyncio

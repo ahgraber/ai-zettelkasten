@@ -1,6 +1,6 @@
 """Tests for the extraction worker composition root.
 
-``build_extractor`` selects the pinned :class:`~aizk.graph.extraction.EntityExtractor`
+``build_extractor`` selects the pinned :class:`~aizk.extraction.core.extractors.EntityExtractor`
 implementation named by ``ExtractionConfig.extractor``, and
 ``run_extraction_worker`` wires the stage's admission loop around the runner.
 Construction is patched at the composition root's import location so the suite stays
@@ -16,11 +16,11 @@ from typing import Any
 from pydantic import ValidationError
 import pytest
 
+from aizk.extraction.events import EXTRACTION_STAGE
+from aizk.extraction.settings import ExtractionConfig
 from aizk.extraction.wiring import worker as extraction_worker_module
-from aizk.graph.admission import AdmissionAdapter
-from aizk.graph.config import AdmissionConfig, ExtractionConfig
-from aizk.graph.extraction_events import EXTRACTION_STAGE
-from aizk.graph.extraction_worker import build_extractor, run_extraction_worker
+from aizk.extraction.wiring.worker import build_extractor, run_extraction_worker
+from aizk.pipeline.admission import AdmissionAdapter, AdmissionConfig
 
 
 def test_build_extractor_selects_spacy(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -142,22 +142,10 @@ def test_the_worker_reads_admission_settings_when_none_are_supplied(stubbed_work
     assert loop.adapter.enabled is False
 
 
-def test_the_worker_starts_no_admission_loop_when_the_stage_declares_no_adapter(
+def test_the_worker_hands_the_loop_the_adapter_extraction_adapter_returns(
     stubbed_worker: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A stage with no declared adapter runs no admission loop, but the worker still builds and starts."""
-    monkeypatch.setattr(extraction_worker_module, "admission_adapter_for", lambda _stage, _config: None)
-
-    assert run_extraction_worker(ExtractionConfig(_env_file=None)) == 0
-
-    assert _RecordingAdmissionLoop.instances == []
-    assert stubbed_worker == ["runner"]
-
-
-def test_the_worker_hands_the_loop_the_adapter_admission_adapter_for_resolves(
-    stubbed_worker: list[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The loop receives the adapter object ``admission_adapter_for`` returns for this stage."""
+    """The loop receives the adapter object ``extraction_adapter`` returns for this stage."""
     resolved = AdmissionAdapter(
         stage=EXTRACTION_STAGE,
         model=object(),
@@ -166,7 +154,7 @@ def test_the_worker_hands_the_loop_the_adapter_admission_adapter_for_resolves(
         queue_max_depth=99,
         enabled=True,
     )
-    monkeypatch.setattr(extraction_worker_module, "admission_adapter_for", lambda _stage, _config: resolved)
+    monkeypatch.setattr(extraction_worker_module, "extraction_adapter", lambda _config: resolved)
 
     run_extraction_worker(ExtractionConfig(_env_file=None))
 

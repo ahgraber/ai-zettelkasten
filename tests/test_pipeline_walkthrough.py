@@ -15,6 +15,9 @@ from sqlmodel import Session, select
 from fastapi.testclient import TestClient
 
 from aizk.ai.providers.llm import STUB_MODEL_CONFIG, StubLLMClient
+from aizk.contextualization.core.intake import enqueue_output
+from aizk.contextualization.handler import ContextualizationStageHandler
+from aizk.contextualization.processing.markdown_source import ConversionOutputFreshness, S3MarkdownSource
 from aizk.conversion.adapters.fetchers.arxiv import ArxivFetcher
 from aizk.conversion.adapters.fetchers.github import GithubReadmeFetcher
 from aizk.conversion.api.main import create_app
@@ -33,15 +36,12 @@ from aizk.conversion.wiring.registrations import register_fetchers
 from aizk.conversion.wiring.worker import WorkerRuntime
 from aizk.db.engine import _ENGINE_CACHE, get_engine
 from aizk.db.migrations import run_migrations
+from aizk.extraction.handler import ExtractionStageHandler
+from aizk.extraction.stage import enqueue_extraction
 from aizk.graph.chunks import active_chunking_run
-from aizk.graph.contextualization import VARIANT_STAGE
 from aizk.graph.datamodel import Chunk, ChunkRunInput, ContextualizationJob, ContextualizedChunk, Mention
-from aizk.graph.enqueue import enqueue_output
-from aizk.graph.extraction_handler import ExtractionStageHandler
-from aizk.graph.extraction_workunit import enqueue_extraction
-from aizk.graph.handler import ContextualizationStageHandler
-from aizk.graph.markdown_source import ConversionOutputFreshness, S3MarkdownSource
 from aizk.graph.mentions import INPUT_POLICY_RAW
+from aizk.graph.variants import VARIANT_STAGE
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import active_run
 from aizk.storage.settings import ObjectStorageSettings

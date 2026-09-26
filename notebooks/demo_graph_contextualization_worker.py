@@ -15,8 +15,9 @@
 #
 # - **conversion output** — one converted Markdown artifact (text + locator + hash)
 #   for a source; the graph stage's input.
-# - **chunk identity** — a content-addressed `chunk_id` carrying only stable facts
-#   (text, heading path, ordinal); it never changes when a run re-derives it.
+# - **chunk identity** — a surrogate `chunk_id` assigned at persistence and reused
+#   while a chunk's stable facts (text, heading path, ordinal) match; it never
+#   changes when a run re-derives it.
 # - **chunking run / manifest / input** — a run records *which* conversion output it
 #   consumed (`input`, with hash) and *where* each chunk fell in the source
 #   (`manifest`, the character `span`). Run-scoped, not chunk-scoped.
@@ -27,10 +28,17 @@
 # - **resolve-at-use toggle** — `resolve_chunk_text` picks raw vs revised text at
 #   read time; the raw chunk is never mutated.
 # - **work-unit** — the queued unit of work the runner claims, executes, and
-#   drives through a lifecycle; deduped on an idempotency key.
+#   drives through the shared lifecycle, deduped on an idempotency key. Its
+#   `status` is `queued`, then `running`, then one of `succeeded`, `failed`,
+#   `cancelled`, or `timed_out`; a `failed` unit's `retry_class` is `retryable`
+#   when a retry wait is set, else `permanent`. A contextualization unit has no
+#   `phase`: every write it makes is safe to interrupt and redo.
 # - **generation / supersession** — re-converting a source produces a newer
 #   generation and supersedes the prior one's runs; a **freshness gate** keeps
 #   "current" monotonic so a late older output cannot drag it back.
+#
+# The stage is the `aizk.contextualization` package; this tour drives its handler,
+# intake, and operator API over the shared `aizk.pipeline` runner.
 #
 # Step through in **VS Code Interactive** or **Jupyter**, top to bottom. This tour
 # does **real model work**: the summary and per-chunk passes call a configured
@@ -58,33 +66,28 @@ from sqlmodel import Session, select
 
 from fastapi.testclient import TestClient
 
-from aizk.conversion.datamodel.job import ConversionJob, ConversionJobStatus
+from aizk.ai.providers.llm import ModelConfig, build_llm_client
+from aizk.console.app import create_app
+from aizk.contextualization.core.intake import enqueue_backfill_outputs, enqueue_output
+from aizk.contextualization.handler import ContextualizationStageHandler
+from aizk.contextualization.processing.document import LoadedMarkdown
+from aizk.contextualization.processing.markdown_source import ConversionOutputFreshness
+from aizk.contextualization.settings import ContextualizationConfig
+from aizk.conversion.datamodel.job import ConversionJob
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.conversion.datamodel.source import Source
-from aizk.conversion.utilities.config import ConversionConfig
+from aizk.conversion.settings import ConversionConfig
 from aizk.db.config import DatabaseConfig
 from aizk.db.engine import get_engine
 from aizk.db.migrations import run_migrations
-from aizk.graph.api.main import create_app
-from aizk.graph.config import ContextualizationConfig
-from aizk.graph.contextualization import (
-    SUMMARY_STAGE,
-    VARIANT_STAGE,
-    ContextSource,
-    resolve_chunk_text,
-)
+from aizk.graph.chunks import active_chunking_run, chunks_of_run, manifest_of_run, run_input
 from aizk.graph.datamodel import (
     Chunk,
     ContextualizationJob,
     ContextualizedChunk,
     DocumentSummary,
 )
-from aizk.graph.enqueue import enqueue_backfill_outputs, enqueue_output
-from aizk.graph.handler import ContextualizationStageHandler
-from aizk.graph.markdown_source import ConversionOutputFreshness
-from aizk.graph.persistence import active_chunking_run, chunks_of_run, manifest_of_run, run_input
-from aizk.graph.worker import build_llm_client
-from aizk.graph.workunit import LoadedMarkdown
+from aizk.graph.variants import SUMMARY_STAGE, VARIANT_STAGE, ContextSource, resolve_chunk_text
 from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.pipeline.run import PipelineRun, RunStatus
@@ -168,7 +171,7 @@ if "${" in (_ctx_config.llm_base_url + _ctx_config.llm_api_key + _ctx_config.llm
     print("Define the referent vars ABOVE these lines in .env, or set literal values, then restart the kernel.")
 else:
     try:
-        _candidate = build_llm_client(_ctx_config)  # raises StartupValidationError if the LLM_* triple is unset
+        _candidate = build_llm_client(_ctx_config.llm_base_url, _ctx_config.llm_api_key, _ctx_config.llm_model)
         _reply = _candidate.generate("Reply with the single word: OK")
     except Exception as exc:  # noqa: BLE001 - probe degrades to guidance, no traceback
         print("Contextualization endpoint not usable — the cells below need it.")
@@ -261,7 +264,7 @@ class SeededDoc:
 
 
 class LocalMarkdownSource:
-    """An in-memory :class:`~aizk.graph.workunit.MarkdownSource` over seeded text.
+    """An in-memory :class:`~aizk.contextualization.processing.document.MarkdownSource` over seeded text.
 
     Returns the Markdown registered for a ``conversion_output_id``; stands in for
     the production S3-backed source so the demo runs without object storage.
@@ -304,7 +307,7 @@ def seed_conversion_output(session, *, text: str, label: str, source_id: UUID) -
         owner_id="demo",
         title=label,
         idempotency_key=f"demo-{uuid4().hex}",
-        status=ConversionJobStatus.SUCCEEDED,
+        status=WorkUnitStatus.SUCCEEDED,
     )
     session.add(job)
     session.flush()
@@ -373,7 +376,10 @@ for doc in seeded:
 def build_handler(source: LocalMarkdownSource, llm_client) -> ContextualizationStageHandler:
     """Build the real contextualization stage handler (with the real freshness gate) over the temp DB."""
     engine = get_engine(DatabaseConfig().database_url)
-    return ContextualizationStageHandler(engine, llm_client, source, ConversionOutputFreshness())
+    model_config = ModelConfig.from_contextualization_config(ContextualizationConfig())
+    return ContextualizationStageHandler(
+        engine, llm_client, source, ConversionOutputFreshness(), model_config=model_config
+    )
 
 
 def drain(stage_handler: ContextualizationStageHandler, *, max_iterations: int = 100_000) -> None:
@@ -827,9 +833,11 @@ assert active_consumes(supersede_uuid) == new_output
 # %% [markdown]
 # ## Operator surface: list, detail, retry, cancel
 #
-# The stage owns a FastAPI surface over the same database an operator uses to drive
-# stuck work. Seed two units in known states (a retryable `failed` and a `queued`),
-# then open a `TestClient` (its lifespan loads the shared config onto `app.state`).
+# The stage owns a FastAPI surface (`aizk.contextualization.api`, served by the
+# operator console app) over the same database an operator uses to drive stuck
+# work. Seed two units in known states (a `failed` with no retry wait, so its
+# `retry_class` is `permanent`, and a `queued`), then open a `TestClient` (its
+# lifespan loads the shared config onto `app.state`).
 # The `ExitStack` keeps the client open across the cells below; the Cleanup cell
 # closes it.
 
@@ -862,37 +870,45 @@ print(f"seeded operator units: failed id={failed_id}, queued id={queued_id}")
 # ### List enumerates every work-unit
 #
 # `GET /v1/contextualizations` returns the paged list the jobs monitor renders, with
-# a `total` count across all statuses.
+# a `total` count across all statuses. Each job carries its lowercase `status` and
+# its `retry_class` (null unless the unit is `failed`); the list filters by either.
 
 # %%
 listed = op_client.get("/v1/contextualizations").json()
 print(f"list -> total={listed['total']}, returned {len(listed['jobs'])} job(s)")
 for item in listed["jobs"]:
-    print(f"  id={item['id']} status={item['status']} conversion_output_id={item['conversion_output_id']}")
+    print(
+        f"  id={item['id']} status={item['status']} retry_class={item['retry_class']} "
+        f"conversion_output_id={item['conversion_output_id']}"
+    )
 
 # %% [markdown]
 # ### Detail returns one unit's full record
 #
 # `GET /v1/contextualizations/{id}` is the drill-down: the failed unit shows its
-# `error_code` and attempt count, the data an operator reads before deciding to
-# retry.
+# `error_code`, attempt count, and `retry_class`, the data an operator reads
+# before deciding to retry.
 
 # %%
 detail = op_client.get(f"/v1/contextualizations/{failed_id}").json()
 print(
-    f"detail id={detail['id']} status={detail['status']} attempts={detail['attempts']} error_code={detail['error_code']}"
+    f"detail id={detail['id']} status={detail['status']} attempts={detail['attempts']} "
+    f"error_code={detail['error_code']} retry_class={detail['retry_class']}"
 )
 
 # %% [markdown]
 # ### Retry re-queues a failed unit
 #
 # `POST /{id}/retry` moves the failed unit back to `queued` so the runner will pick
-# it up again — the before/after status is the proof.
+# it up again, clears its error fields, keeps its attempt count (the next claim
+# increments it), and records a `requeued` event — the before/after status is the
+# proof. A unit that is not `failed`, `cancelled`, or `timed_out` is refused with
+# 409.
 
 # %%
 print(f"before retry: status={op_client.get(f'/v1/contextualizations/{failed_id}').json()['status']}")
 retried = op_client.post(f"/v1/contextualizations/{failed_id}/retry").json()
-print(f"after retry : status={retried['status']}")
+print(f"after retry : status={retried['status']} attempts={retried['attempts']}")
 
 # %% [markdown]
 # ### Cancel stops a queued unit
@@ -944,13 +960,16 @@ assert before_counts == after_counts, "re-execution must not create duplicate ru
 # %% [markdown]
 # ## Where this lives
 #
-# The unit of work is `aizk.graph.handler.ContextualizationStageHandler` driven by
-# `aizk.pipeline.runner.StageRunner`; the model passes and the read-time toggle are
-# in `aizk.graph.contextualization` (`generate_summary_text`, `generate_revisions`,
-# `resolve_chunk_text`); persistence and the provenance joins are in
-# `aizk.graph.persistence`; the freshness/supersession gate is in
-# `aizk.graph.markdown_source`; the operator API is in `aizk.graph.api`. Worked
-# examples live in `tests/graph/`.
+# The unit of work is `aizk.contextualization.handler.ContextualizationStageHandler` driven by
+# `aizk.pipeline.runner.StageRunner`; the model passes are in
+# `aizk.contextualization.core` (`generate_summary_text`, `generate_revisions`)
+# and the read-time toggle is `aizk.graph.variants.resolve_chunk_text`;
+# persistence and the provenance joins are in `aizk.graph.chunks`; the
+# freshness/supersession gate is in
+# `aizk.contextualization.processing.markdown_source`; the operator API is
+# `aizk.contextualization.api`, built on `aizk.graph.api.stage_routes` and served
+# by `aizk.console.app`. Worked examples live in `tests/contextualization/` and
+# `tests/graph/`.
 
 # %% [markdown]
 # ## Cleanup
