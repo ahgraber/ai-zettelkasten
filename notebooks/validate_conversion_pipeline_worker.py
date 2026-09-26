@@ -7,10 +7,9 @@ i.e. ``StageRunner`` over ``ConversionStageHandler`` — the path
 ``aizk-conversion worker`` now runs) against:
 
 * a REAL KaraKeep instance (a small, bounded sample of bookmarks), and
-* REAL Docling conversion (subprocess + provider work),
-
-end-to-end, into a THROWAWAY temporary SQLite database. The default
-``data/conversion_service.db`` is never touched.
+* REAL Docling conversion (subprocess + provider work), end-to-end,
+  into a THROWAWAY temporary SQLite database.
+  The default ``data/conversion_service.db`` is never touched.
 
 It performs REAL network and provider work (KaraKeep API calls, source
 fetches, Docling conversion, and S3 artifact uploads). Do not run it in CI or
@@ -31,7 +30,21 @@ Required environment variables (set in your shell or ``.env``/direnv):
   ``AIZK_S3_ENDPOINT_URL``, ``AIZK_S3_BUCKET_NAME``, ``AIZK_S3_ACCESS_KEY_ID``,
   ``AIZK_S3_SECRET_ACCESS_KEY`` (and optionally ``AIZK_S3_REGION``). Without a
   reachable bucket the conversion succeeds but the upload step fails and jobs
-  land in ``failed_retryable``.
+  end ``failed`` with ``retry_class`` ``retryable``.
+
+To upload to a throwaway local store instead of a real bucket, start the RustFS
+stack with ``just compose dev up`` and run the notebook with the stack's S3
+settings. Setting them inside ``op run``'s child keeps them ahead of any
+``AIZK_S3_*`` that ``.env.op`` injects::
+
+    op run --env-file=.env.op -- env \
+        AIZK_S3_ENDPOINT_URL=http://localhost:9000 \
+        AIZK_S3_BUCKET_NAME=aizk \
+        AIZK_S3_ACCESS_KEY_ID=rustfsadmin \
+        AIZK_S3_SECRET_ACCESS_KEY=rustfsadmin \
+        uv run python notebooks/validate_conversion_pipeline_worker.py
+
+``just compose dev down`` discards the uploaded objects.
 
 Optional environment variables (only if the converter needs them):
 

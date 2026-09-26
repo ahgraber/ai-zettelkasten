@@ -173,6 +173,9 @@ down:
 logs *ARGS:
     podman-compose -f containers/podman-compose.yaml logs -f {{ ARGS }}
 
+# Local stand-ins for external services: `just compose dev up|down`.
+mod compose 'containers/compose.just'
+
 # ------------------------------------------------------------- release ---
 
 # Preview a release. BUMP is one of: major | minor | patch.

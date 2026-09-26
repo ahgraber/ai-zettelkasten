@@ -1,0 +1,51 @@
+# Throwaway S3 for running the conversion pipeline against a local object store.
+#
+# The validation notebook runs the conversion worker on the host; point it at
+# this stack with:
+#
+#   AIZK_S3_ENDPOINT_URL=http://localhost:9000
+#   AIZK_S3_BUCKET_NAME=aizk
+#   AIZK_S3_ACCESS_KEY_ID=rustfsadmin
+#   AIZK_S3_SECRET_ACCESS_KEY=rustfsadmin
+#
+# The credentials are the RustFS defaults and only reach this local stack.
+# Nothing is persisted: `just compose dev down` discards every object.
+services:
+  rustfs:
+    image: docker.io/rustfs/rustfs:1.0.0
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # console
+    environment:
+      RUSTFS_ADDRESS: "0.0.0.0:9000"
+      RUSTFS_CONSOLE_ADDRESS: "0.0.0.0:9001"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_ACCESS_KEY: rustfsadmin
+      RUSTFS_SECRET_KEY: rustfsadmin
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # Creates the bucket once RustFS answers; re-running it is harmless.
+  rustfs-init:
+    image: docker.io/amazon/aws-cli:2.37.4
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: rustfsadmin
+      AWS_SECRET_ACCESS_KEY: rustfsadmin
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        aws configure set default.s3.addressing_style path &&
+        for attempt in 1 2 3 4 5 6 7 8 9 10; do
+          aws --endpoint-url http://rustfs:9000 s3api head-bucket --bucket aizk && exit 0;
+          aws --endpoint-url http://rustfs:9000 s3api create-bucket --bucket aizk && exit 0;
+          sleep 2;
+        done;
+        exit 1
+    restart: "no"
