@@ -41,20 +41,21 @@ router = APIRouter(prefix="/ui/tasks", tags=["console"])
 def _reject_cross_origin(request: Request) -> None:
     """Reject a browser cross-origin POST — a defense-in-depth CSRF guard.
 
-    A same-origin console POST (the htmx form) carries an ``Origin`` matching the
-    request ``Host``; a cross-site auto-submitting form carries a foreign ``Origin``
-    and is rejected (403). A request with no ``Origin`` (a non-browser client, which
-    carries no ambient browser credential to abuse) is allowed, so JSON-parity API
-    clients are unaffected. This layers over — it does not replace — the trusted-host
-    perimeter, which reverse proxies satisfy by rewriting ``Host``.
+    A same-origin console POST (the htmx form) carries an ``Origin`` whose host and
+    port match the request ``Host``; a cross-site auto-submitting form, or a page
+    served from another port on the same host, carries a different ``Origin`` and is
+    rejected (403). The scheme is not compared, because a TLS-terminating proxy hides
+    the scheme the browser used. A request with no ``Origin`` (a non-browser client,
+    which carries no ambient browser credential to abuse) is allowed, so JSON-parity
+    API clients are unaffected. This layers over — it does not replace — the
+    trusted-host perimeter, which reverse proxies satisfy by rewriting ``Host``.
     """
     origin = request.headers.get("origin")
     if origin is None:
         return
-    origin_host = urlparse(origin).hostname
-    host_header = request.headers.get("host", "")
-    request_host = host_header.rsplit(":", 1)[0] if host_header else ""
-    if origin_host != request_host:
+    origin_netloc = urlparse(origin).netloc.lower()
+    request_netloc = request.headers.get("host", "").lower()
+    if origin_netloc != request_netloc:
         raise HTTPException(
             status_code=403,
             detail={"error": "cross_origin", "message": "Cross-origin request rejected"},

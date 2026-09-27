@@ -119,6 +119,26 @@ def test_actions_rejects_a_browser_cross_origin_post(
     assert db_session.get(ContextualizationJob, job.id).status is WorkUnitStatus.FAILED
 
 
+def test_actions_rejects_a_post_from_another_port_on_the_same_host(
+    client: TestClient, db_session, seed_source, seed_contextualization_job
+) -> None:
+    """A page served from another port on the console's hostname is a different origin and is rejected."""
+    source = seed_source(db_session, karakeep_id="bm_otherport", title="Other Port Doc")
+    job = seed_contextualization_job(
+        db_session, source_id=source.source_id, conversion_output_id=3, status=WorkUnitStatus.FAILED
+    )
+
+    response = client.post(
+        "/ui/tasks/contextualization/actions",
+        data={"action": "retry", "job_ids": [job.id]},
+        headers={"Origin": "http://testserver:8443"},
+    )
+
+    assert response.status_code == 403
+    db_session.expire_all()
+    assert db_session.get(ContextualizationJob, job.id).status is WorkUnitStatus.FAILED
+
+
 def test_actions_allows_a_same_origin_post(
     client: TestClient, db_session, seed_source, seed_contextualization_job
 ) -> None:
