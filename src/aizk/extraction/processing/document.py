@@ -299,18 +299,23 @@ def extract_document(
             session, source_id=source_id, resolved=resolved, input_fingerprint=planned_input_fingerprint
         )
         assert run.id is not None  # noqa: S101 — a persisted run always carries an id
-        # One immutable ExtractionRunInput row per run: a retry that reuses the
-        # active run must not insert a second row under the same run_id.
-        if session.get(ExtractionRunInput, run.id) is None:
-            session.add(
-                ExtractionRunInput(
-                    run_id=run.id,
-                    upstream_run_id=current_upstream.id,
-                    input_policy=input_policy,
-                    input_fingerprint=planned_input_fingerprint,
-                    config_fingerprint=resolved.config_fingerprint(),
-                )
+        # A run that already has its input row was committed by an overlapping
+        # attempt. Adding this attempt's mentions would mix two extractions in one
+        # run, so the retry reuses the committed run instead.
+        if session.get(ExtractionRunInput, run.id) is not None:
+            raise StalePlanError(
+                f"an extraction run for source {source_id!r} was committed before persist; "
+                "retry to reuse the committed run"
             )
+        session.add(
+            ExtractionRunInput(
+                run_id=run.id,
+                upstream_run_id=current_upstream.id,
+                input_policy=input_policy,
+                input_fingerprint=planned_input_fingerprint,
+                config_fingerprint=resolved.config_fingerprint(),
+            )
+        )
         persisted = persist_mentions(session, run=run, mentions=drafts)
         result = DocumentExtractionResult(
             run_id=run.id,

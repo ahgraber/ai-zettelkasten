@@ -170,6 +170,12 @@ A change to any ordered input item or to the extraction-owned configuration SHAL
 - **WHEN** the stage reconciles the source
 - **THEN** the active extraction run is retained with an applicability relation to the new upstream, and the extractor is invoked zero times
 
+#### Scenario: An overlapping attempt does not add to a committed run
+
+- **GIVEN** an attempt that planned extraction for a source, and a run with the same key committed for that source by another attempt before this attempt persists
+- **WHEN** this attempt persists
+- **THEN** the outcome is a retryable stale-plan result, and the committed run's mentions are unchanged
+
 #### Scenario: A changed input text changes the key
 
 - **GIVEN** an active extraction run and current inputs in which any chunk's selected input text differs

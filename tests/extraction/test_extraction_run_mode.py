@@ -658,6 +658,36 @@ def test_the_active_run_superseded_between_read_and_write_raises_stale_plan_erro
         assert session.exec(select(ExtractionRunApplicability)).all() == [], "no applicability was recorded"
 
 
+def test_a_matching_run_committed_between_read_and_write_raises_stale_plan_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An overlapping attempt does not add its mentions to the run another attempt already committed.
+
+    The read phase is faked to see no active run, so the attempt extracts; by the
+    write phase a run with the same derivation key is active. Merging would mix two
+    stochastic extractions into one run, so the attempt fails retryably instead.
+    """
+    engine = _make_engine(tmp_path, "stale_plan_overlap.db")
+    chunk_text = "Acme Corp announced results."
+    with Session(engine) as session:
+        _seed_chunking_run(session, source_id=_SOURCE_A, texts=[chunk_text], derivation_key="chunking-v1")
+    first = extract_document(
+        engine,
+        source_id=_SOURCE_A,
+        extractor=_StubExtractor({chunk_text: [Detection(surface_form="Acme Corp", span_start=0, span_end=9)]}),
+        input_policy="raw",
+    )
+    monkeypatch.setattr(extraction_run_module, "active_extraction_run", lambda session, source_id: None)
+    overlapping = _StubExtractor({chunk_text: [Detection(surface_form="results", span_start=20, span_end=27)]})
+
+    with pytest.raises(StalePlanError):
+        extract_document(engine, source_id=_SOURCE_A, extractor=overlapping, input_policy="raw")
+
+    with Session(engine) as session:
+        mentions = session.exec(select(Mention).where(Mention.run_id == first.run_id)).all()
+        assert [m.surface_form for m in mentions] == ["Acme Corp"]
+
+
 def _extraction_row_counts(engine: Engine) -> tuple[int, int, int]:
     """Count the extraction runs, run inputs, and mentions in ``engine``."""
     with Session(engine) as session:
