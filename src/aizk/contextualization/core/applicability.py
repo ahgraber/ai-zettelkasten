@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from sqlmodel import Session, select
 
 from aizk.ai.providers.llm import ModelConfig
@@ -13,8 +15,10 @@ from aizk.contextualization.core.keys import (
 from aizk.conversion.datamodel.output import ConversionOutput
 from aizk.graph.chunks import CHUNKING_STAGE, document_order_chunks, manifest_of_run, run_input
 from aizk.graph.datamodel import (
+    Chunk,
     ChunkRunApplicability,
     ContextualizationRunApplicability,
+    ContextualizationRunInput,
     ContextualizedChunk,
     DocumentSummary,
     SummaryRunApplicability,
@@ -24,6 +28,9 @@ from aizk.graph.variants import SUMMARY_STAGE, VARIANT_STAGE
 from aizk.pipeline.identity import derivation_key
 from aizk.pipeline.run import PipelineRun, record_applicability, require_active_run
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
 
 def _conversion_output(session: "Session", conversion_output_id: str) -> ConversionOutput | None:
     """Resolve a stringified conversion-output locator to its row, or ``None`` if absent or unparsable."""
@@ -32,6 +39,27 @@ def _conversion_output(session: "Session", conversion_output_id: str) -> Convers
     except ValueError:
         return None
     return session.get(ConversionOutput, native_id)
+
+
+def _variant_chunk_keys(session: "Session", run_id: int) -> list[str]:
+    """Return the chunk keys of the chunks a variant run's variants belong to."""
+    rows = session.exec(
+        select(Chunk)
+        .join(ContextualizedChunk, ContextualizedChunk.chunk_id == Chunk.chunk_id)
+        .where(ContextualizedChunk.run_id == run_id)
+    ).all()
+    return [chunk_key(chunk) for chunk in rows]
+
+
+def variant_run_is_complete(session: "Session", run_id: int, expected_chunk_keys: "Sequence[str]") -> bool:
+    """Report whether a variant run has its run input and exactly one variant per expected chunk.
+
+    Chunks are compared by chunk key, so ``expected_chunk_keys`` may come from
+    splitter chunks that have no persisted ``chunk_id`` yet.
+    """
+    if session.get(ContextualizationRunInput, run_id) is None:
+        return False
+    return sorted(_variant_chunk_keys(session, run_id)) == sorted(expected_chunk_keys)
 
 
 def record_summary_run_applicability(
@@ -152,6 +180,10 @@ def record_contextualization_run_applicability(
     if variant_count != manifest_size:
         raise ValueError(
             f"variant run {run_id!r} has {variant_count} variants, expected {manifest_size} (one per manifested chunk)"
+        )
+    if sorted(_variant_chunk_keys(session, run_id)) != sorted(chunk_keys):
+        raise ValueError(
+            f"variant run {run_id!r}'s variants do not cover chunking run {chunking_run_id!r}'s manifested chunks"
         )
 
     summary_outputs = _conversion_outputs_of_summary_run(session, summary_run_id)

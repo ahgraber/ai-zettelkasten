@@ -10,7 +10,10 @@ from uuid import UUID
 from sqlmodel import Session, select
 
 from aizk.ai.providers.llm import ModelConfig
-from aizk.contextualization.core.applicability import record_contextualization_run_applicability
+from aizk.contextualization.core.applicability import (
+    record_contextualization_run_applicability,
+    variant_run_is_complete,
+)
 from aizk.contextualization.core.keys import (
     CONTEXT_PROMPT_DATA_POLICY,
     CONTEXT_PROMPT_HASH,
@@ -192,10 +195,12 @@ def resolve_revisions(
     )
     with Session(engine) as read:
         active = _active_run(read, VARIANT_STAGE, source_id)
-        if active is not None and active.derivation_key == run_key:
-            count = len(read.exec(select(ContextualizedChunk).where(ContextualizedChunk.run_id == active.id)).all())
-            if count == len(ordered):
-                return None
+        if (
+            active is not None
+            and active.derivation_key == run_key
+            and variant_run_is_complete(read, active.id, [chunk_key(c) for c in ordered])
+        ):
+            return None
 
     revisions: list[str] = []
     for index, chunk in enumerate(ordered):
@@ -284,9 +289,10 @@ def contextualize_chunks(
             ).all()
         )
         # A matching active run already holds one variant per chunk (zero when the
-        # document has no chunks); reuse it. A short count means a partial prior
-        # write, so fall through and regenerate rather than reuse a torn run.
-        if len(existing) == len(ordered):
+        # document has no chunks); reuse it. Missing variants, variants for other
+        # chunks, or a missing run input mean a torn run, so fall through and
+        # regenerate rather than reuse it.
+        if variant_run_is_complete(session, active.id, [chunk_key(c) for c in ordered]):
             active_input = session.get(ContextualizationRunInput, active.id)
             if active_input is not None and (active_input.summary_run_id, active_input.chunking_run_id) != (
                 summary.run_id,

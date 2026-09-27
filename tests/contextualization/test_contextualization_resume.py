@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 import contextlib
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import Engine, text
@@ -39,8 +39,10 @@ from aizk.graph.content_index import CONTENT_FTS_DDL
 from aizk.graph.datamodel import (
     MEMO_KIND_REVISION,
     MEMO_KIND_SUMMARY,
+    Chunk,
     ContextualizationOutputMemo,
     ContextualizationRunApplicability,
+    ContextualizationRunInput,
     ContextualizedChunk,
     DocumentSummary,
     SummaryRunApplicability,
@@ -717,6 +719,122 @@ def test_contextualize_chunks_reuse_only_without_active_run_is_retryable(engine:
         # No variant run and no applicability row were created by the failed plan.
         assert session.exec(select(PipelineRun).where(PipelineRun.stage == "chunk_contextualization")).all() == []
         assert session.exec(select(ContextualizationRunApplicability)).all() == []
+
+
+def _contextualize_two_chunks(session: Session) -> tuple[list[SplitterChunk], list[SplitterChunk], DocumentSummary]:
+    """Persist two chunks, a summary, and a complete variant run; return (raw, persisted, summary)."""
+    chunks = [_chunk("body one", 0), _chunk("body two", 1)]
+    run, persisted = persist_chunks(
+        session,
+        source_id=_SCOPE,
+        conversion_output_id="out",
+        markdown_hash_xx64=_HASH,
+        markdown_fingerprint=content_fingerprint(_HASH),
+        splitter_version=SPLITTER_VERSION,
+        chunks=chunks,
+    )
+    summary = summarize_document(
+        session,
+        StubLLMClient(),
+        source_id=_SCOPE,
+        conversion_output_id="out",
+        markdown_hash_xx64=_HASH,
+        document_text=_DOC_TEXT,
+        model_config=STUB_MODEL_CONFIG,
+    )
+    contextualize_chunks(
+        session,
+        StubLLMClient(),
+        source_id=_SCOPE,
+        summary=summary,
+        chunks=persisted,
+        chunking_run_id=run.id,
+        splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
+    )
+    session.commit()
+    return chunks, persisted, summary
+
+
+def _point_one_variant_at_a_stray_chunk(session: Session) -> None:
+    """Move one variant onto a persisted chunk outside the run's manifest, keeping the variant count."""
+    stray = Chunk(
+        chunk_id=uuid4(),
+        content_hash="ffffffffffffffff",
+        source_id=_SCOPE,
+        heading_path_json="[]",
+        ordinal=9,
+        text="stray",
+        char_count=5,
+    )
+    session.add(stray)
+    session.flush()
+    session.exec(select(ContextualizedChunk)).first().chunk_id = stray.chunk_id
+    session.commit()
+
+
+def test_resolve_revisions_does_not_reuse_a_run_whose_variants_cover_other_chunks(engine: Engine) -> None:
+    """An active run with one variant per chunk by count, but for the wrong chunks, is not reused."""
+    with Session(engine) as session:
+        chunks, _persisted, summary = _contextualize_two_chunks(session)
+        summary_text = summary.summary_text
+        _point_one_variant_at_a_stray_chunk(session)
+
+    revisions = resolve_revisions(
+        engine,
+        StubLLMClient(),
+        source_id=_SCOPE,
+        summary_text=summary_text,
+        ordered_chunks=chunks,
+        splitter_version=SPLITTER_VERSION,
+        model_config=STUB_MODEL_CONFIG,
+    )
+
+    assert revisions is not None
+
+
+def test_contextualize_chunks_does_not_reuse_a_run_whose_variants_cover_other_chunks(engine: Engine) -> None:
+    """The persist path regenerates instead of returning variants for chunks outside the manifest."""
+    with Session(engine) as session:
+        _chunks, persisted, summary = _contextualize_two_chunks(session)
+        _point_one_variant_at_a_stray_chunk(session)
+        chunking_run_id = session.exec(select(PipelineRun).where(PipelineRun.stage == "chunking")).one().id
+
+        variants = contextualize_chunks(
+            session,
+            StubLLMClient(),
+            source_id=_SCOPE,
+            summary=summary,
+            chunks=persisted,
+            chunking_run_id=chunking_run_id,
+            splitter_version=SPLITTER_VERSION,
+            model_config=STUB_MODEL_CONFIG,
+        )
+
+        assert {v.chunk_id for v in variants} == {UUID(c.chunk_id) for c in persisted}
+
+
+def test_contextualize_chunks_does_not_reuse_a_run_without_its_run_input(engine: Engine) -> None:
+    """A variant run missing its ``ContextualizationRunInput`` is torn and is regenerated."""
+    with Session(engine) as session:
+        _chunks, persisted, summary = _contextualize_two_chunks(session)
+        torn_run_id = session.exec(select(ContextualizationRunInput)).one().run_id
+        session.delete(session.get(ContextualizationRunInput, torn_run_id))
+        session.commit()
+        chunking_run_id = session.exec(select(PipelineRun).where(PipelineRun.stage == "chunking")).one().id
+
+        variants = contextualize_chunks(
+            session,
+            StubLLMClient(),
+            source_id=_SCOPE,
+            summary=summary,
+            chunks=persisted,
+            chunking_run_id=chunking_run_id,
+            splitter_version=SPLITTER_VERSION,
+            model_config=STUB_MODEL_CONFIG,
+        )
+
+        assert {v.run_id for v in variants} != {torn_run_id}
 
 
 def test_stale_plan_error_is_classified_retryable_not_permanent() -> None:

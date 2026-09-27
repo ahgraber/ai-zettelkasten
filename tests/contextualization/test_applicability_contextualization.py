@@ -20,7 +20,7 @@ other write-time guards; it is not repeated here.
 
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlmodel import Session, select
@@ -44,6 +44,7 @@ from aizk.graph.chunks import (
     record_chunk_run_applicability,
 )
 from aizk.graph.datamodel import (
+    Chunk,
     ChunkRunApplicability,
     ContextualizationRunApplicability,
     ContextualizedChunk,
@@ -205,6 +206,24 @@ def test_chunk_applicability_rejects_a_torn_run_with_an_unexplained_empty_manife
             input_fingerprint=chunking_input_fingerprint(content_fingerprint(_HASH_A)),
             splitter_version=SPLITTER_VERSION,
         )
+
+
+def test_chunk_applicability_rejects_a_partial_manifest(session: Session) -> None:
+    """Clause 4: a manifest missing one of the run's recorded chunks is incomplete."""
+    run, _ = _persist_chunking(session, [_make_chunk("first", ordinal=0), _make_chunk("second", ordinal=1)])
+    _seed_conversion_output(session, output_id=_OTHER_OUTPUT_ID, source_id=_AIZK_UUID, markdown_hash=_HASH_A)
+    session.delete(manifest_of_run(session, run.id)[0])
+    session.commit()
+
+    with pytest.raises(ValueError, match="does not match its recorded chunk set"):
+        record_chunk_run_applicability(
+            session,
+            run_id=run.id,
+            conversion_output_id=_OTHER_OUTPUT_ID,
+            input_fingerprint=chunking_input_fingerprint(content_fingerprint(_HASH_A)),
+            splitter_version=SPLITTER_VERSION,
+        )
+    assert session.exec(select(ChunkRunApplicability).where(ChunkRunApplicability.run_id == run.id)).all() == []
 
 
 def test_chunk_applicability_is_idempotent(session: Session) -> None:
@@ -544,6 +563,46 @@ def test_contextualization_applicability_rejects_a_torn_run_missing_variants(ses
             splitter_version=SPLITTER_VERSION,
             context_version=CONTEXT_VERSION,
         )
+
+
+def test_contextualization_applicability_rejects_variants_for_the_wrong_chunks(session: Session) -> None:
+    """Clause 4: an equal variant count is not enough; the variants must cover the manifested chunks."""
+    chunking_run, summary, variants = _seed_contextualization(session)
+    active_variant_run = session.exec(
+        select(PipelineRun).where(PipelineRun.stage == VARIANT_STAGE, PipelineRun.status == RunStatus.ACTIVE)
+    ).one()
+    stray = Chunk(
+        chunk_id=uuid4(),
+        content_hash="ffffffffffffffff",
+        source_id=_AIZK_UUID,
+        heading_path_json="[]",
+        ordinal=9,
+        text="stray",
+        char_count=5,
+    )
+    session.add(stray)
+    session.flush()
+    session.get(ContextualizedChunk, variants[0].id).chunk_id = stray.chunk_id
+    session.commit()
+
+    with pytest.raises(ValueError, match="do not cover chunking run"):
+        record_contextualization_run_applicability(
+            session,
+            run_id=active_variant_run.id,
+            summary_run_id=summary.run_id,
+            chunking_run_id=chunking_run.id,
+            model_config=STUB_MODEL_CONFIG,
+            splitter_version=SPLITTER_VERSION,
+            context_version=CONTEXT_VERSION,
+        )
+    assert (
+        session.exec(
+            select(ContextualizationRunApplicability).where(
+                ContextualizationRunApplicability.run_id == active_variant_run.id
+            )
+        ).all()
+        == []
+    )
 
 
 def test_contextualization_applicability_rejects_summary_and_chunking_sharing_no_output(session: Session) -> None:

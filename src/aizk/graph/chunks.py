@@ -394,6 +394,14 @@ def record_chunk_run_applicability(
         raise ValueError(f"chunking run {run_id!r} has no recorded input (a torn run)")
     if len(manifest_of_run(session, run_id)) == 0 and stored_input.chunk_set_fingerprint != payload_fingerprint([]):
         raise ValueError(f"chunking run {run_id!r} has an empty manifest but a non-empty recorded chunk set")
+    manifest_fingerprint = payload_fingerprint(
+        [
+            PayloadItem(chunk_key(chunk), INPUT_KIND_RAW, content_fingerprint(chunk.text))
+            for chunk, _, _ in document_order_chunks(session, run_id)
+        ]
+    )
+    if manifest_fingerprint != stored_input.chunk_set_fingerprint:
+        raise ValueError(f"chunking run {run_id!r}'s manifest does not match its recorded chunk set")
 
     return record_applicability(
         session,
