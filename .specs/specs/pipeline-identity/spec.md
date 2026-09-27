@@ -189,6 +189,7 @@ Where a producer yields a stable sameness-key for its rows, the data store SHALL
 
 When an upstream generation changes and the candidate key for the new inputs under the currently-resolved stage configuration equals the active run's `derivation_key`, the stage SHALL record an append-only **applicability** relation from the active run to the new inputs, without superseding the run and without invoking the producer.
 An applicability relation SHALL be valid only when its referenced inputs exist, carry the expected role, belong to the run's source scope, and match the recomputed candidate key, and only when the run's outputs are present and complete; an invalid relation SHALL be rejected.
+For a stage whose outputs may validly be empty, the stage-owned input record committed in the same transaction as the outputs SHALL be the evidence that the outputs are complete.
 Writing an identical relation twice SHALL be idempotent.
 A run referenced by a retained provenance or applicability record SHALL remain resolvable; it is not eligible for compaction while the reference is retained.
 Applicability is distinct from provenance: the original provenance pointers remain immutable and continue to identify the exact inputs the producer consumed.
