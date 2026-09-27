@@ -5,13 +5,14 @@ from __future__ import annotations
 import datetime as dt
 
 import pytest
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
 from aizk.conversion.handler import ConversionStageHandler
 from aizk.conversion.settings import ConversionConfig
+from aizk.pipeline.events import PipelineEvent
 from aizk.pipeline.lifecycle import WorkUnitStatus
 from aizk.utilities.clock import utcnow
 from tests.conversion._helpers import make_job, make_source
@@ -126,6 +127,11 @@ _NOT_RETRYABLE = {"detail": {"error": "job_not_retryable", "message": "Job canno
 _NOT_CANCELLABLE = {"detail": {"error": "job_not_cancellable", "message": "Job cannot be cancelled"}}
 
 
+def _event_count(session: Session) -> int:
+    """Count every recorded lifecycle event."""
+    return len(session.exec(select(PipelineEvent)).all())
+
+
 @pytest.mark.parametrize("status", [WorkUnitStatus.FAILED, WorkUnitStatus.CANCELLED, WorkUnitStatus.TIMED_OUT])
 def test_single_retry_requeues_a_terminal_job_keeping_its_attempts(db_session, status: WorkUnitStatus) -> None:
     """A retry from ``failed``, ``cancelled``, or ``timed_out`` returns the job ``queued`` with ``attempts`` unchanged."""
@@ -149,6 +155,7 @@ def test_single_retry_of_an_ineligible_job_answers_409(db_session, status: WorkU
     job = make_job(
         db_session, source_id=source.source_id, idempotency_key="i" * 64, status=status, attempts=1, phase=phase
     )
+    job_before, events_before = job.model_dump(), _event_count(db_session)
 
     with TestClient(create_app()) as client:
         response = client.post(f"/v1/jobs/{job.id}/retry")
@@ -156,7 +163,8 @@ def test_single_retry_of_an_ineligible_job_answers_409(db_session, status: WorkU
     assert response.status_code == 409
     assert response.json() == _NOT_RETRYABLE
     db_session.refresh(job)
-    assert (job.status, job.attempts, job.phase) == (status, 1, phase)
+    assert job.model_dump() == job_before
+    assert _event_count(db_session) == events_before
 
 
 @pytest.mark.parametrize(
@@ -204,6 +212,7 @@ def test_single_cancel_of_an_ineligible_job_answers_409(db_session, status: Work
     """A cancel of an uploading, ``succeeded``, ``cancelled``, or ``timed_out`` job answers 409 with the ``job_not_cancellable`` body and alters nothing."""
     source = make_source(db_session, "bm_cancel_ineligible")
     job = make_job(db_session, source_id=source.source_id, idempotency_key="n" * 64, status=status, phase=phase)
+    job_before, events_before = job.model_dump(), _event_count(db_session)
 
     with TestClient(create_app()) as client:
         response = client.post(f"/v1/jobs/{job.id}/cancel")
@@ -211,7 +220,8 @@ def test_single_cancel_of_an_ineligible_job_answers_409(db_session, status: Work
     assert response.status_code == 409
     assert response.json() == _NOT_CANCELLABLE
     db_session.refresh(job)
-    assert (job.status, job.phase) == (status, phase)
+    assert job.model_dump() == job_before
+    assert _event_count(db_session) == events_before
 
 
 def test_cancelling_a_failed_job_keeps_its_error_code_and_message(db_session) -> None:

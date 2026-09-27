@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from aizk.conversion.api.main import create_app
 from aizk.pipeline.lifecycle import WorkUnitStatus
+from aizk.service.auth import AuthSettings, get_auth_settings
 from aizk.utilities.clock import utcnow
 from tests.conversion._helpers import make_job, make_source
 
@@ -185,3 +186,35 @@ def test_bulk_action_skips_cross_owner_jobs(db_session) -> None:
     db_session.refresh(cross)
     assert owned.status == WorkUnitStatus.QUEUED
     assert cross.status == WorkUnitStatus.FAILED
+
+
+def test_reads_and_actions_follow_a_non_default_principal(db_session) -> None:
+    """Ownership filters use the resolved principal, not a hard-coded default subject."""
+    bookmark = make_source(db_session, "bm_alice_owner")
+    alices = make_job(
+        db_session,
+        source_id=bookmark.source_id,
+        idempotency_key="p" * 64,
+        status=WorkUnitStatus.FAILED,
+        owner_id="alice",
+    )
+    defaults = make_job(
+        db_session,
+        source_id=bookmark.source_id,
+        idempotency_key="q" * 64,
+        status=WorkUnitStatus.FAILED,
+        owner_id="self",
+    )
+
+    app = create_app()
+    app.dependency_overrides[get_auth_settings] = lambda: AuthSettings(
+        _env_file=None, auth_mode="trust_network", default_principal="alice"
+    )
+    with TestClient(app) as client:
+        listed = client.get("/v1/jobs")
+        retry_default = client.post(f"/v1/jobs/{defaults.id}/retry")
+        retry_alices = client.post(f"/v1/jobs/{alices.id}/retry")
+
+    assert [j["id"] for j in listed.json()["jobs"]] == [alices.id]
+    assert retry_default.status_code == 404
+    assert retry_alices.status_code == 200
