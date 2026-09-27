@@ -136,12 +136,12 @@ workers := `n=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 3); echo $(( n / 3
 # Run the test suite in parallel, excluding the subprocess lifecycle tests.
 [positional-arguments]
 test *ARGS:
-    uv run pytest -n {{ workers }} -m "not integration_lifecycle" tests/ "$@"
+    uv run pytest -n {{ workers }} -m "not integration_lifecycle" "$@"
 
 # Run the subprocess lifecycle tests; these are incompatible with xdist.
 [positional-arguments]
 test-lifecycle *ARGS:
-    uv run pytest -m integration_lifecycle tests/ "$@"
+    uv run pytest -m integration_lifecycle "$@"
 
 # Run both test suites.
 test-all: test test-lifecycle
