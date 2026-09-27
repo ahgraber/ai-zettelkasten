@@ -331,7 +331,7 @@ def retry_job(
     session: Annotated[Session, Depends(get_db_session)],
     principal: Annotated[Principal, Depends(get_principal)],
 ) -> JobResponse:
-    """Retry a failed or cancelled job."""
+    """Retry a failed, cancelled, or timed-out job."""
     begin_immediate_on(session)
     job = session.get(ConversionJob, job_id)
     if not job or job.owner_id != principal.subject:
@@ -360,7 +360,7 @@ def cancel_job(
     session: Annotated[Session, Depends(get_db_session)],
     principal: Annotated[Principal, Depends(get_principal)],
 ) -> JobResponse:
-    """Cancel a queued or running job."""
+    """Cancel a queued, running, or failed job; a running job that is uploading cannot be cancelled."""
     begin_immediate_on(session)
     job = session.get(ConversionJob, job_id)
     if not job or job.owner_id != principal.subject:

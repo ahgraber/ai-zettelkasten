@@ -141,6 +141,6 @@ The conversion-specific mapping SHALL be:
 
 - **Concurrency**: main thread polls and dispatches jobs to a ThreadPoolExecutor (`worker_concurrency`, default 4); GPU subprocess spawning gated by a semaphore (`worker_gpu_concurrency`, default 1) to prevent GPU OOM; preflight and upload phases run outside the semaphore
 
-- **Graceful shutdown**: signal handlers set a flag; main loop checks it before each poll; drain waits for all in-flight jobs up to `worker_drain_timeout_seconds` (default 300) plus a 15-second buffer; second signal forces immediate termination; force-terminated jobs transition to FAILED_RETRYABLE
+- **Graceful shutdown**: signal handlers set a flag; main loop checks it before each poll; drain waits for all in-flight jobs up to `worker_drain_timeout_seconds` (default 300) plus a 15-second buffer; second signal forces immediate termination; force-terminated jobs transition to `failed` with error code `worker_drain_terminated`, and the next worker claims them again until the attempt limit is reached
 
 - **Platform**: POSIX only (Linux, macOS); Windows not supported
