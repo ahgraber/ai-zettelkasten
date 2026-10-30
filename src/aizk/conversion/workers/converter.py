@@ -184,11 +184,13 @@ def _create_document_converter(
     else:
         html_pipeline_opts.do_picture_description = False
 
-    # Docling's HTML backend only calls _load_image_data for <img src>; every
-    # other resource-referencing tag type produces no I/O, so enable_remote_fetch=False
-    # fully prevents outbound network activity. HTMLBackendOptions has no
-    # local_fetch_root field, so workspace containment requires the subclass
-    # returned by make_confined_backend (see utilities/docling_backend.py).
+    # Docling's HTML backend fetches only <img src> (through ImageResourceLoader);
+    # every other resource-referencing tag type produces no I/O, so
+    # enable_remote_fetch=False fully prevents outbound network activity.
+    # Docling has no option to confine image reads to the job workspace, and it
+    # joins prefetched absolute paths onto a remote source_uri, so workspace
+    # containment and loading of prefetched images require the subclass returned
+    # by make_confined_backend (see utilities/docling_backend.py).
     html_backend_opts = HTMLBackendOptions(
         kind="html",
         fetch_images=True,
