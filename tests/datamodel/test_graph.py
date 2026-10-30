@@ -72,7 +72,7 @@ class TestNode:
 
         # Assert
         assert node1.id == node2.id
-        assert node1.id == xxhash.xxh128_hexdigest(text)
+        assert node1.id == xxhash.xxh128_hexdigest(text.encode("utf-8"))
 
     @pytest.mark.parametrize(
         "text1,text2,should_be_equal",

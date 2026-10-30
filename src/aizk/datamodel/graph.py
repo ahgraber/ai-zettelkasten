@@ -67,7 +67,7 @@ class Node(BaseModel):
     def generate_id(cls, data: Any) -> Any:
         """Generate ID."""
         if isinstance(data, dict) and not data.get("id") and data.get("text"):
-            data["id"] = xxhash.xxh128_hexdigest(data["text"])
+            data["id"] = xxhash.xxh128_hexdigest(data["text"].encode("utf-8"))
         return data
 
     def __hash__(self) -> int:
