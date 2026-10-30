@@ -108,10 +108,9 @@ def test_stale_recovery_uses_recovered_stale_kind(monkeypatch, db_session: Sessi
 
     source = make_source(db_session, "bm_stale_event", url="https://example.com", title="Stale")
     job = _make_running_job(db_session, source, attempts=1)
-    # SQLite (sa.DateTime, no timezone=True) stores datetimes as naive, so the
-    # round-trip through the payload JSON also produces a naive value. Use a
-    # naive timestamp here to make the comparison apples-to-apples.
-    prior_started_at = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)).replace(tzinfo=None)
+    # SQLModel binds datetime fields as timezone-aware UTC: naive values are
+    # rejected on write, and values read back from SQLite carry UTC.
+    prior_started_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)
     job.started_at = prior_started_at
     db_session.add(job)
     db_session.commit()
@@ -137,12 +136,10 @@ def test_stale_recovery_uses_recovered_stale_kind(monkeypatch, db_session: Sessi
     payload = parse_payload_lenient(evt.payload_json)
     assert payload.stale_after_minutes == 0
     assert payload.last_started_at is not None
-    # Both sides are naive after the SQLite + JSON round-trip; small tolerance
+    # Both sides are aware after the SQLite + JSON round-trip; small tolerance
     # for serialization rounding.
-    last_naive = (
-        payload.last_started_at.replace(tzinfo=None) if payload.last_started_at.tzinfo else payload.last_started_at
-    )
-    assert abs((last_naive - prior_started_at).total_seconds()) < 1
+    assert payload.last_started_at.tzinfo is not None
+    assert abs((payload.last_started_at - prior_started_at).total_seconds()) < 1
 
 
 def test_permanent_failure_arm_emits_failed_event_with_non_retryable_indicator(
