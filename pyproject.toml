@@ -92,12 +92,10 @@ dev = [
     "pandas>=2.2",
     "playwright>=1.57.0",
     "python-dotenv>=1.1.0",
-    "trace-opt>=0.1.3.8",
     # "turftopic>=0.17.2",
 ]
 experiment = [
     "aiolimiter>=1.2.1",
-    "dspy>=2.6.24",
     "duckdb>=0.10.3",
     "gitingest>=0.1.4",
     "json-repair>=0.30.3",
@@ -169,7 +167,6 @@ default-groups = [ "dev", "experiment", "ipynb", "lint", "test", "type" ]
 python-preference = "managed"
 exclude-newer = "3 days"
 exclude-newer-package = { torch = false, torchvision = false }
-override-dependencies = ["litellm>=1.83"] # override dspy 3.2's upper bound
 
 
 [tool.uv.build-backend]
