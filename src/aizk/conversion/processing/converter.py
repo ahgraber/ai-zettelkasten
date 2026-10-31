@@ -213,9 +213,10 @@ def _create_document_converter(
     #   2. `enable_remote_services` (set above for picture description) governs
     #      model inference engines only, never resource fetching.
     #   3. `render_page` is a separate lever. Its headless-browser request filter
-    #      permits the file, data, about, and blob schemes outright and consults
-    #      enable_remote_fetch only for remote URLs, so a rendered page could read
-    #      local files regardless of enable_local_fetch. It is pinned off here.
+    #      permits the data, about, and blob schemes outright, admits file URLs
+    #      only when enable_local_fetch is set and the file is inside the source
+    #      document's directory, and consults enable_remote_fetch for remote URLs.
+    #      It is pinned off here.
     html_backend_opts = HTMLBackendOptions(
         kind="html",
         fetch_images=True,
