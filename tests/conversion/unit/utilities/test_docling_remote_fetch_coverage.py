@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import builtins
 from io import BytesIO
-from pathlib import Path
+from pathlib import Path, PurePath
 
 import pytest
 
@@ -73,6 +74,48 @@ def _png_bytes() -> bytes:
     return buf.getvalue()
 
 
+def _record_outbound_connections(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Replace Docling's connection openers with recorders that refuse to connect.
+
+    Covers both the direct path and the environment-proxy path, so the result does
+    not depend on proxy variables. The recorder raises ``ValueError``, which
+    Docling's image loader turns into a warning.
+    """
+    opened_urls: list[str] = []
+
+    def _record_and_refuse(url: str, headers: dict[str, str]):
+        opened_urls.append(url)
+        raise ValueError("test: blocking outbound connection")
+
+    monkeypatch.setattr(_image_loader_mod, "_open_direct", _record_and_refuse)
+    monkeypatch.setattr(_image_loader_mod, "_open_with_proxy", _record_and_refuse)
+    return opened_urls
+
+
+def _record_local_opens(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record every path opened through ``Path.open`` or the built-in ``open``.
+
+    Docling's image loader reads local files with the built-in ``open``; recording
+    ``Path.open`` as well keeps the check independent of which one a Docling
+    version uses.
+    """
+    opened: list[str] = []
+    real_path_open = Path.open
+    real_builtin_open = builtins.open
+
+    def _record_path_open(self, *args, **kwargs):
+        opened.append(str(self))
+        return real_path_open(self, *args, **kwargs)
+
+    def _record_builtin_open(file, *args, **kwargs):
+        opened.append(str(file))
+        return real_builtin_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", _record_path_open)
+    monkeypatch.setattr(builtins, "open", _record_builtin_open)
+    return opened
+
+
 # Every resource-bearing shape a page might use to name a location, including
 # the ones the admission step does not recognise. None of these may produce I/O.
 _ALL_RESOURCE_HTML = """
@@ -119,19 +162,8 @@ def test_no_resource_shape_produces_a_dereference(monkeypatch: pytest.MonkeyPatc
     target = tmp_path / "local-resource.png"
     target.write_bytes(b"\x89PNG local")
 
-    def _fail_on_get(self, url, **kwargs):
-        raise AssertionError(f"unexpected outbound request: {url}")
-
-    monkeypatch.setattr(_image_loader_mod.requests.Session, "get", _fail_on_get)
-
-    opened: list[str] = []
-    real_open = Path.open
-
-    def _record_open(self, *args, **kwargs):
-        opened.append(str(self))
-        return real_open(self, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "open", _record_open)
+    opened_urls = _record_outbound_connections(monkeypatch)
+    opened = _record_local_opens(monkeypatch)
 
     # Name the same set of shapes at a real local file as well as at remote URLs,
     # so a converter that resolved any of them locally would be caught.
@@ -151,34 +183,45 @@ def test_no_resource_shape_produces_a_dereference(monkeypatch: pytest.MonkeyPatc
     assert in_doc._backend is not None
     in_doc._backend.convert()
 
+    assert opened_urls == [], f"conversion opened an outbound connection: {opened_urls}"
     # Scoped to paths the page named. The converter legitimately opens its own
     # bundled resources (charset-detection models and the like) during a parse.
     page_named = [path for path in opened if str(tmp_path) in path]
     assert page_named == [], f"conversion dereferenced a page-named local path: {page_named}"
 
 
-def test_remote_fetch_when_enabled_reaches_the_session(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Inverse control: the mock above is genuinely on the path the converter would use.
+def test_remote_fetch_when_enabled_opens_a_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inverse control: the connection recorder is genuinely on the path the converter would use.
 
     Without this, a passing coverage test could mean the patch target was wrong
     rather than that no request was made.
     """
-    requested: list[str] = []
-
-    def _record_get(self, url, **kwargs):
-        requested.append(url)
-        import requests as _requests
-
-        raise _requests.HTTPError("blocked for test")
-
-    monkeypatch.setattr(_image_loader_mod.requests.Session, "get", _record_get)
+    opened_urls = _record_outbound_connections(monkeypatch)
 
     options = _pipeline_backend_options(enable_remote_fetch=True)
     in_doc = _make_input_doc('<html><body><img src="https://cdn.example/img.png"></body></html>', options)
     assert in_doc._backend is not None
     in_doc._backend.convert()
 
-    assert requested == ["https://cdn.example/img.png"]
+    assert opened_urls == ["https://cdn.example/img.png"]
+
+
+def test_local_fetch_when_enabled_reaches_the_open_recorder(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Inverse control: the local-open recorder is genuinely on the path the converter would use.
+
+    Without this, a passing coverage test could mean the recorder watched the wrong
+    call rather than that no file was opened.
+    """
+    image = tmp_path / "image.png"
+    image.write_bytes(_png_bytes())
+    opened = _record_local_opens(monkeypatch)
+
+    options = _pipeline_backend_options(enable_local_fetch=True, source_uri=PurePath(tmp_path / "document.html"))
+    in_doc = _make_input_doc('<html><body><img src="image.png"></body></html>', options)
+    assert in_doc._backend is not None
+    in_doc._backend.convert()
+
+    assert str(image) in opened
 
 
 def test_local_reference_is_not_read_even_when_the_file_exists(tmp_path: Path) -> None:
