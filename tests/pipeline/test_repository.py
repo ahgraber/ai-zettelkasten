@@ -60,11 +60,6 @@ class _Clock:
         self.now += dt.timedelta(**delta)
 
 
-def _naive(moment: dt.datetime) -> dt.datetime:
-    """Return ``moment`` as the naive UTC value SQLite hands back."""
-    return moment.replace(tzinfo=None)
-
-
 @pytest.fixture
 def clock() -> _Clock:
     return _Clock()
@@ -212,10 +207,10 @@ def test_retryable_failure_below_the_cap_sets_the_wait(engine: Engine, handler: 
 
     row = _row(engine, unit_id)
     assert row.status is WorkUnitStatus.FAILED
-    assert row.earliest_next_attempt_at == _naive(_NOW + dt.timedelta(seconds=_BASE_DELAY * 2))
+    assert row.earliest_next_attempt_at == _NOW + dt.timedelta(seconds=_BASE_DELAY * 2)
     assert row.finished_at is None
     assert (row.error_code, row.error_message) == _ERROR
-    assert row.last_error_at == _naive(_NOW)
+    assert row.last_error_at == _NOW
     failed = _events(engine, unit_id)[-1]
     assert failed.kind == "failed"
     assert json.loads(failed.payload_json)["retryable"] is True
@@ -233,7 +228,7 @@ def test_retryable_failure_at_the_cap_is_permanent(engine: Engine, handler: Stub
     row = _row(engine, unit_id)
     assert row.status is WorkUnitStatus.FAILED
     assert row.earliest_next_attempt_at is None
-    assert row.finished_at == _naive(_NOW)
+    assert row.finished_at == _NOW
     assert json.loads(_events(engine, unit_id)[-1].payload_json)["retryable"] is False
 
 
@@ -247,7 +242,7 @@ def test_permanent_failure_has_no_wait(engine: Engine, handler: StubStageHandler
     row = _row(engine, unit_id)
     assert row.status is WorkUnitStatus.FAILED
     assert row.earliest_next_attempt_at is None
-    assert row.finished_at == _naive(_NOW)
+    assert row.finished_at == _NOW
     assert json.loads(_events(engine, unit_id)[-1].payload_json)["retryable"] is False
 
 
@@ -452,7 +447,7 @@ def test_units_enqueued_at_the_same_instant_are_claimed_in_id_order(
     """Under one fixed clock two units share ``queued_at``; the lower id is claimed first."""
     first = handler.enqueue("first")
     second = handler.enqueue("second")
-    assert _row(engine, first).queued_at == _row(engine, second).queued_at == _naive(_NOW)
+    assert _row(engine, first).queued_at == _row(engine, second).queued_at == _NOW
 
     assert [_claim(engine, repository) for _ in range(2)] == [first, second]
 
@@ -488,7 +483,7 @@ def test_stale_recovery_below_the_cap_sets_an_immediate_wait(
 
     row = _row(engine, unit_id)
     assert row.status is WorkUnitStatus.FAILED
-    assert row.earliest_next_attempt_at == _naive(_NOW)
+    assert row.earliest_next_attempt_at == _NOW
     assert row.error_code == "worker_stale_running"
     assert row.finished_at is None
     assert row.attempts == 1
@@ -496,7 +491,7 @@ def test_stale_recovery_below_the_cap_sets_an_immediate_wait(
     assert recovery.kind == "recovered_stale"
     payload = json.loads(recovery.payload_json)
     assert payload["stale_after_minutes"] == _STALE_AFTER.total_seconds() / 60
-    assert payload["last_started_at"] == _naive(stranded_at).isoformat()
+    assert dt.datetime.fromisoformat(payload["last_started_at"]) == stranded_at
 
 
 def test_stale_recovery_at_the_cap_is_permanent(engine: Engine, handler: StubStageHandler, repository) -> None:
@@ -511,7 +506,7 @@ def test_stale_recovery_at_the_cap_is_permanent(engine: Engine, handler: StubSta
     row = _row(engine, unit_id)
     assert row.status is WorkUnitStatus.FAILED
     assert row.earliest_next_attempt_at is None
-    assert row.finished_at == _naive(_NOW)
+    assert row.finished_at == _NOW
     assert row.attempts == _CAP
     assert _events(engine, unit_id)[-1].kind == "recovered_stale"
 
@@ -598,7 +593,7 @@ def test_operator_retry_returns_the_unit_to_queued(
     assert row.earliest_next_attempt_at is None
     assert (row.error_code, row.error_message, row.last_error_at, row.finished_at) == (None, None, None, None)
     assert row.attempts == 2
-    assert row.queued_at == _naive(_NOW)
+    assert row.queued_at == _NOW
     requeued = [event for event in _events(engine, unit_id) if event.kind == "requeued"]
     assert len(requeued) == 1
     assert json.loads(requeued[0].payload_json) == {
@@ -657,7 +652,7 @@ def test_a_retried_unit_at_the_cap_runs_exactly_once_more(
     row = _row(engine, unit_id)
     assert row.status is WorkUnitStatus.FAILED
     assert row.earliest_next_attempt_at is None
-    assert row.finished_at == _naive(_NOW)
+    assert row.finished_at == _NOW
     assert json.loads(_events(engine, unit_id)[-1].payload_json)["retryable"] is False
     assert _claim(engine, repository) is None, "it ran exactly once after the retry"
 
@@ -677,8 +672,8 @@ def test_cancel_of_a_failed_unit_awaiting_retry_clears_the_wait_and_keeps_the_er
     assert row.status is WorkUnitStatus.CANCELLED
     assert row.earliest_next_attempt_at is None
     assert (row.error_code, row.error_message) == ("stub_error", "earlier failure")
-    assert row.last_error_at == _naive(_NOW - dt.timedelta(minutes=1))
-    assert row.finished_at == _naive(_NOW)
+    assert row.last_error_at == _NOW - dt.timedelta(minutes=1)
+    assert row.finished_at == _NOW
     cancelled = _events(engine, unit_id)[-1]
     assert cancelled.kind == "cancelled"
     assert json.loads(cancelled.payload_json)["cancellation_reason"] == "operator_cancel"

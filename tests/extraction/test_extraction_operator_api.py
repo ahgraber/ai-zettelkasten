@@ -257,7 +257,7 @@ def test_list_and_filter_by_status(client: TestClient, engine) -> None:
 
 def test_retry_class_is_derived_from_status_and_retry_wait(client: TestClient, engine) -> None:
     """A failed unit with a retry wait is retryable, without one permanent, and every other status null."""
-    wait = dt.datetime(2026, 3, 1)
+    wait = dt.datetime(2026, 3, 1, tzinfo=dt.timezone.utc)
     retryable_id = _seed(
         engine, source_id=_SOURCE_A, status=WorkUnitStatus.FAILED, idempotency_key="r", earliest_next_attempt_at=wait
     )
@@ -292,7 +292,7 @@ def test_list_filters_by_retry_class_and_intersects_with_status(client: TestClie
         source_id=_SOURCE_A,
         status=WorkUnitStatus.FAILED,
         idempotency_key="r",
-        earliest_next_attempt_at=dt.datetime(2026, 3, 1),
+        earliest_next_attempt_at=dt.datetime(2026, 3, 1, tzinfo=dt.timezone.utc),
     )
     permanent_id = _seed(engine, source_id=_SOURCE_A, status=WorkUnitStatus.FAILED, idempotency_key="p")
 

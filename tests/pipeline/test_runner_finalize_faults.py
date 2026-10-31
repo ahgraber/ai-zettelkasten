@@ -264,4 +264,4 @@ def test_unit_whose_terminal_write_fails_during_drain_is_recovered_by_the_stale_
         assert unit is not None
         assert WorkUnitStatus(unit.status) is WorkUnitStatus.FAILED
         assert unit.error_code == STALE_RUNNING_ERROR_CODE
-        assert unit.earliest_next_attempt_at == recovered_at.replace(tzinfo=None)
+        assert unit.earliest_next_attempt_at == recovered_at

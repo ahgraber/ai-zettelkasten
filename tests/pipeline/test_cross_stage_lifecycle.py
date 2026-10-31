@@ -58,10 +58,6 @@ def _clock() -> dt.datetime:
     return _NOW
 
 
-def _naive(moment: dt.datetime) -> dt.datetime:
-    return moment.replace(tzinfo=None)
-
-
 class _AlwaysCurrent:
     """A freshness stub treating every output as current; never called here."""
 
@@ -279,7 +275,7 @@ def test_retryable_failure_below_the_cap_waits_the_same_way(stage: _Stage) -> No
 
     _finalize(stage, unit_id, _RETRYABLE)
 
-    expected_wait = _naive(_NOW + dt.timedelta(seconds=_BASE_DELAY * 2))
+    expected_wait = _NOW + dt.timedelta(seconds=_BASE_DELAY * 2)
     assert _observe(stage, unit_id) == (WorkUnitStatus.FAILED, expected_wait, 1, "failed")
 
 
@@ -318,7 +314,7 @@ def test_interrupted_unit_is_recovered_the_same_way(stage: _Stage) -> None:
         session.commit()
 
     assert recovered == [unit_id]
-    assert _observe(stage, unit_id) == (WorkUnitStatus.FAILED, _naive(_NOW), 1, "recovered_stale")
+    assert _observe(stage, unit_id) == (WorkUnitStatus.FAILED, _NOW, 1, "recovered_stale")
 
 
 def test_operator_retry_has_the_same_effect(stage: _Stage) -> None:
